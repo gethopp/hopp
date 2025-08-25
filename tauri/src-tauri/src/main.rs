@@ -28,8 +28,6 @@ use std::time::Duration;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
 
-//testab
-
 #[tauri::command]
 async fn screenshare(
     app: tauri::AppHandle,
@@ -38,6 +36,16 @@ async fn screenshare(
     resolution: Extent,
 ) -> bool {
     log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
+    /*
+     * If the user was previously a controller, we need to hide the viewing
+     * window, to hide the delay from requesting the screen share to
+     * screen share starting and the viewing window automatically being closed.
+     */
+    let window = app.get_webview_window("screenshare");
+    if let Some(window) = window {
+        log::info!("screenshare: closing window");
+        let _ = window.hide();
+    }
 
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
