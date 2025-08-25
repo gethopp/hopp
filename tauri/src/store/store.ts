@@ -12,12 +12,17 @@ const windowName = getCurrentWindow().label;
 export const SidebarTabs = ["user-list", "invite", "debug", "login", "report-issue", "rooms"] as const;
 export type Tab = (typeof SidebarTabs)[number];
 
+export enum ParticipantRole {
+  SHARER = "sharer",
+  CONTROLLER = "controller",
+  NONE = "none",
+};
+
 export type CallState = {
   timeStarted: Date;
   hasAudioEnabled: boolean;
   // Managing buttons for starting/joining/terminating screenshare streams
-  isSharer: boolean;
-  isController: boolean;
+  role: ParticipantRole;
   isRemoteControlEnabled: boolean;
   isRoomCall?: boolean;
 } & TCallTokensMessage["payload"];

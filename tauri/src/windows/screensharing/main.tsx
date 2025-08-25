@@ -3,7 +3,6 @@ import "../../App.css";
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { SharingScreen } from "@/components/SharingScreen/SharingScreen";
-import { URLS } from "@/constants";
 import { SharingProvider, useSharingContext } from "./context";
 import { ScreenSharingControls } from "@/components/SharingScreen/Controls";
 import { Toaster } from "react-hot-toast";

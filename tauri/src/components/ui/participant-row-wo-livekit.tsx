@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
 import { TCallRequestMessage, TWebSocketMessage } from "@/payloads";
-import useStore from "@/store/store";
+import useStore, { ParticipantRole } from "@/store/store";
 import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
@@ -97,8 +97,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             ...data.payload,
             timeStarted: new Date(),
             hasAudioEnabled: true,
-            isSharer: false,
-            isController: false,
+            role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
           });
           break;

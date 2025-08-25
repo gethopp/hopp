@@ -1,7 +1,7 @@
 import { BACKEND_URLS } from "@/constants";
 import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
-import useStore from "@/store/store";
+import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useMemo } from "react";
 import toast from "react-hot-toast";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
@@ -31,8 +31,7 @@ export const Rooms = () => {
         isRoomCall: true,
         timeStarted: new Date(),
         hasAudioEnabled: true,
-        isSharer: false,
-        isController: false,
+        role: ParticipantRole.NONE,
         isRemoteControlEnabled: true,
       });
     } catch (error) {

@@ -1,6 +1,6 @@
 import { formatDistanceToNow } from "date-fns";
 import { HiMiniComputerDesktop, HiOutlineMicrophone, HiOutlinePhoneXMark } from "react-icons/hi2";
-import useStore, { CallState } from "@/store/store";
+import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
@@ -83,7 +83,7 @@ export function ConnectedActions({ token }: { token: string }) {
     sounds.callAccepted.play();
 
     // Clear call tokens
-    if (callTokens.isSharer) {
+    if (callTokens.role === ParticipantRole.SHARER) {
       tauriUtils.stopSharing();
     }
     tauriUtils.endCallCleanup();
@@ -101,33 +101,13 @@ export function ConnectedActions({ token }: { token: string }) {
     });
   }, [callTokens, setCallTokens]);
 
-  const handleControllerChange = useCallback(
-    (value: boolean) => {
-      if (!callTokens) return;
-
-      setCallTokens({
-        ...callTokens,
-        isController: value,
-        isSharer: !value,
-        isRemoteControlEnabled: true,
-      });
-    },
-    [callTokens],
-  );
-
-  const handleIsSharerChange = useCallback(
-    (value: boolean) => {
-      if (!callTokens) return;
-
-      setCallTokens({
-        ...callTokens,
-        isSharer: value,
-        isController: !value,
-        isRemoteControlEnabled: true,
-      });
-    },
-    [callTokens],
-  );
+  const handleRoleChange = useCallback((value: ParticipantRole) => {
+    if (!callTokens) return;
+    setCallTokens({
+      ...callTokens,
+      role: value,
+    });
+  }, [callTokens]);
 
   // Stop call when teammate disconnects
   useEffect(() => {
@@ -142,8 +122,7 @@ export function ConnectedActions({ token }: { token: string }) {
     <>
       <ScreensharingEventListener
         callTokens={callTokens}
-        updateState={handleControllerChange}
-        setIsSharer={handleIsSharerChange}
+        updateRole={handleRoleChange}
       />
       {/* <ConnectionsHealthDebug /> */}
       <div
@@ -175,7 +154,7 @@ export function ConnectedActions({ token }: { token: string }) {
             <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
           </div>
           <div className="flex flex-col gap-2 w-full">
-            {callTokens?.isController && (
+            {callTokens?.role === ParticipantRole.CONTROLLER && (
               <Button
                 className="w-full border-gray-500 text-gray-600 flex flex-row gap-2"
                 variant="gradient-white"
@@ -188,7 +167,7 @@ export function ConnectedActions({ token }: { token: string }) {
               </Button>
             )}
             <div className="w-full flex flex-row gap-2">
-              {callTokens?.isSharer && (
+              {callTokens?.role === ParticipantRole.SHARER && (
                 <TooltipProvider>
                   <Tooltip delayDuration={100}>
                     <TooltipTrigger>
@@ -365,13 +344,13 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
   const toggleScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
 
-    if ((!callTokens.isSharer && !callTokens.isController) || callTokens.isController) {
+    if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
       tauriUtils.createContentPickerWindow(callTokens.videoToken);
-    } else if (callTokens.isSharer) {
+    } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
-        isSharer: false,
+        role: ParticipantRole.NONE,
         isRemoteControlEnabled: true,
       });
       tauriUtils.stopSharing();
@@ -379,7 +358,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
   }, [callTokens, callTokens?.videoToken]);
 
   const changeScreenShare = useCallback(() => {
-    if (!callTokens || !callTokens.videoToken || !callTokens.isSharer) return;
+    if (!callTokens || !callTokens.videoToken) return;
     tauriUtils.createContentPickerWindow(callTokens.videoToken);
   }, [callTokens, callTokens?.videoToken]);
 
@@ -387,9 +366,9 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
     <ToggleIconButton
       onClick={toggleScreenShare}
       icon={<HiMiniComputerDesktop className="size-5" />}
-      state={callTokens?.isSharer ? "active" : "neutral"}
+      state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       cornerIcon={
-        callTokens?.isSharer && (
+        callTokens?.role === ParticipantRole.SHARER && (
           <button
             onClick={changeScreenShare}
             className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-sm"
@@ -399,7 +378,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
         )
       }
     >
-      {callTokens?.isSharer ? "Stop sharing" : "Share screen"}
+      {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
     </ToggleIconButton>
   )
 }
@@ -425,49 +404,48 @@ const ListenToRemoteAudio = () => {
 
 function ScreensharingEventListener({
   callTokens,
-  updateState,
-  setIsSharer,
+  updateRole,
 }: {
   callTokens: CallState | null;
-  updateState: (value: boolean) => void;
-  setIsSharer: (value: boolean) => void;
+  updateRole: (value: ParticipantRole) => void;
 }) {
+  if (!callTokens || !callTokens.videoToken) return null;
+
   const tracks = useTracks([Track.Source.ScreenShare]);
   const localParticipant = useLocalParticipant();
   useEffect(() => {
     const localParticipantId = localParticipant?.localParticipant.identity.split(":").slice(0, -1).join(":") || "";
     let trackFound = false;
-    let screenshare_track_found = false;
+    let screenshareTrackFound = false;
     for (const track of tracks) {
       const trackParticipantId = track.participant.identity.split(":").slice(0, -1).join(":");
 
       if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
-        screenshare_track_found = true;
-        setIsSharer(true);
+        screenshareTrackFound = true;
+        break;
       }
 
       if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
         trackFound = true;
-        if (!callTokens?.isController) {
-          updateState(true);
-          if (callTokens?.videoToken) {
-            tauriUtils.createScreenShareWindow(callTokens.videoToken);
-          }
-          break;
-        }
+        break;
       }
     }
 
-    if (!trackFound && callTokens?.isController) {
-      updateState(false);
-      tauriUtils.closeScreenShareWindow();
-      tauriUtils.setDockIconVisible(false);
-    }
-
-    // When the stream is stopped outside of the app,
-    // we need to update the sharer state
-    if (callTokens?.isSharer && !screenshare_track_found) {
-      setIsSharer(false);
+    if (trackFound) {
+      updateRole(ParticipantRole.CONTROLLER);
+      tauriUtils.createScreenShareWindow(callTokens.videoToken);
+    } else if (screenshareTrackFound) {
+      if (!trackFound && callTokens?.role === ParticipantRole.CONTROLLER) {
+        tauriUtils.closeScreenShareWindow();
+        tauriUtils.setDockIconVisible(false);
+      }
+      updateRole(ParticipantRole.SHARER);
+    } else {
+      if (!trackFound && callTokens?.role === ParticipantRole.CONTROLLER) {
+        tauriUtils.closeScreenShareWindow();
+        tauriUtils.setDockIconVisible(false);
+      }
+      updateRole(ParticipantRole.NONE);
     }
   }, [tracks]);
   return <div />;

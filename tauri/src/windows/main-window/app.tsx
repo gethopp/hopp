@@ -26,7 +26,6 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
 import { Rooms } from "./tabs/Rooms";
 import { LiveKitRoom } from "@livekit/components-react";
-import { URLS } from "@/constants";
 import { ConditionalWrap } from "@/components/conditional-wrapper";
 
 function App() {

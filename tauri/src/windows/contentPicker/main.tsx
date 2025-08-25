@@ -7,7 +7,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast, Toaster } from "react-hot-toast";
-import useStore from "@/store/store";
+import useStore, { ParticipantRole } from "@/store/store";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
@@ -74,17 +74,6 @@ function Window() {
     }
   }, [hasFetched]);
 
-  const handleStateUpdate = useCallback(() => {
-    // This should never happen
-    if (!callTokens) return;
-
-    setCallTokens({
-      ...callTokens,
-      isSharer: true,
-      isRemoteControlEnabled: true,
-    });
-  }, [callTokens]);
-
   const handleItemClick = async (content: CaptureContent["content"]) => {
     // TODO make this faster
     try {
@@ -94,7 +83,6 @@ function Window() {
       }
       const success = await screenshare(content, resolution, videoToken);
       if (success) {
-        handleStateUpdate();
         await appWindow.close();
       } else {
         toast.error(
