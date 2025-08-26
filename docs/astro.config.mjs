@@ -28,6 +28,7 @@ export default defineConfig({
                 { label: "Prerequisites", slug: "quick-start/local-development/prerequisites" },
                 { label: "Repository Structure", slug: "quick-start/local-development/repository-structure" },
                 { label: "Development Workflow", slug: "quick-start/local-development/development-workflow" },
+                { label: "FAQ", slug: "quick-start/local-development/faq" },
               ],
             }
           ],
