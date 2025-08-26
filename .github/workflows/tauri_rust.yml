@@ -21,14 +21,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check for changes in tauri/src-tauri
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: ${{ github.event.workflow_run.head_sha }}^
+          base: ${{ github.event.workflow_run.base_sha }}
           filters: |
             tauri:
               - 'tauri/src-tauri/**'
@@ -38,13 +38,12 @@ jobs:
     needs: check-files
     if: ${{ needs.check-files.outputs.tauri-changed == 'true' || github.event_name == 'workflow_dispatch' }}
 
-    defaults:
-      run:
-        working-directory: core
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -52,6 +51,7 @@ jobs:
           toolchain: stable
 
       - name: Run rustfmt
+        working-directory: tauri/src-tauri
         run: cargo fmt --all -- --check
 
   build:
@@ -69,16 +69,15 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
 
-    defaults:
-      run:
-        working-directory: tauri/src-tauri
-
     env:
       SENTRY_DSN_RUST: ""
-      VITE_LIVEKIT_SERVER_URL: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -94,8 +93,15 @@ jobs:
         run: |
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
+      - name: Create dist
+        working-directory: tauri
+        shell: bash
+        run: |
+          mkdir -p dist
+
       - name: Create hopp_core release
         working-directory: core
+        shell: bash
         run: |
           mkdir -p target/release
           EXT=""
@@ -106,6 +112,7 @@ jobs:
 
       - name: Create hopp_core debug
         working-directory: core
+        shell: bash
         run: |
           mkdir -p target/debug
           EXT=""
@@ -115,7 +122,9 @@ jobs:
           touch target/debug/hopp_core-${{ matrix.target }}$EXT
 
       - name: Build
+        working-directory: tauri/src-tauri
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Lint (clippy)
+        working-directory: tauri/src-tauri
         run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings

@@ -21,15 +21,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Fetch the commit that triggered the workflow and its parent
-          fetch-depth: 2
+          fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check for changes in core/
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: ${{ github.event.workflow_run.head_sha }}^
+          base: ${{ github.event.workflow_run.base_sha }}
           filters: |
             core:
               - 'core/**'
@@ -39,13 +38,12 @@ jobs:
     needs: check-files
     if: ${{ needs.check-files.outputs.core-changed == 'true' || github.event_name == 'workflow_dispatch' }}
 
-    defaults:
-      run:
-        working-directory: core
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -53,6 +51,7 @@ jobs:
           toolchain: stable
 
       - name: Run rustfmt
+        working-directory: core
         run: cargo fmt --all -- --check
 
   build:
@@ -70,15 +69,15 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
 
-    defaults:
-      run:
-        working-directory: core
-
     env:
       HOPP_CORE_BIN_DEFAULT: "1"
 
     steps:
+      - name: Checkout code
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -95,7 +94,9 @@ jobs:
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
       - name: Build
+        working-directory: core
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Lint (clippy)
+        working-directory: core
         run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
