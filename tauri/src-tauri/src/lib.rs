@@ -498,7 +498,5 @@ pub fn setup_start_on_launch(manager: &AutoLaunchManager, first_run: bool) {
 }
 
 pub fn get_sentry_dsn() -> String {
-    std::env::var("SENTRY_DSN_RUST")
-        .unwrap_or_default()
-        .to_string()
+    env!("SENTRY_DSN_RUST").to_string()
 }
