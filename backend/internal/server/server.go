@@ -11,8 +11,10 @@ import (
 	"hopp-backend/internal/models"
 	"html/template"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/markbates/goth/gothic"
 	"github.com/markbates/goth/providers/google"
 	"github.com/markbates/goth/providers/slack"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	resend "github.com/resend/resend-go/v2"
 	"github.com/wader/gormstore/v2"
@@ -114,6 +117,8 @@ func (s *Server) Initialize() error {
 	// Setup goth providers
 	s.setupGothProviders()
 
+	s.setupMetrics()
+
 	// Setup middleware -
 	// Keep last to avoid Recover middleware and panic if something goes wrong on init
 	s.setupMiddleware()
@@ -189,6 +194,27 @@ func (s *Server) setupMiddleware() {
 	s.Echo.Use(session.Middleware(s.Store))
 	s.Echo.Use(middleware.Recover())
 	s.Echo.Use(echoprometheus.NewMiddleware("renkey_backend"))
+}
+
+func (s *Server) setupMetrics() {
+	prometheus.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Subsystem: "redis",
+			Name:      "connected_clients",
+			Help:      "The number of clients currently connected to Redis",
+		},
+		func() float64 {
+			ctx := context.Background()
+			connectedClientsRaw := s.Redis.InfoMap(ctx).Item("Clients", "connected_clients")
+
+			connectedClients, err := strconv.ParseFloat(connectedClientsRaw, 64)
+			if err != nil {
+				return math.NaN()
+			}
+
+			return connectedClients
+		},
+	))
 }
 
 func (s *Server) setupGothProviders() {
