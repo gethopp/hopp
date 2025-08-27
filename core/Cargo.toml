@@ -10,6 +10,13 @@ authors = ["Iason Paraskevopoulos <iaswnparaskev@gmail.com>"]
 name = "hopp_core"
 path = "src/main.rs"
 
+[profile.dev]
+incremental = true
+
+[profile.release]
+lto = true
+codegen-units = 1
+
 [workspace]
 exclude = [ "tests" ]
 
