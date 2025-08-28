@@ -1,0 +1,17 @@
+name: Precommit Reusable Workflow
+
+on:
+  workflow_call:
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n5
+    #   - uses: actions/setup-python@v5
+    #     with:
+    #       python-version: "3.11"
+    #       architecture: x64
+    #   - uses: pre-commit/action@v3.0.1

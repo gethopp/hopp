@@ -1,0 +1,26 @@
+name: Hopp Core Reusable Workflow
+
+on:
+  workflow_call:
+
+jobs:
+  check-files:
+    runs-on: ubuntu-latest
+    outputs:
+      core-changed: ${{ steps.filter.outputs.core }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes in core/
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            core:
+              - 'core/**'
+      - run: |
+          echo "Arrived here" && git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n5
+          echo "Changed files: ${{ steps.filter.outputs.core }}"
