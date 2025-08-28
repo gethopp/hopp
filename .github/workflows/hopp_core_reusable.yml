@@ -76,7 +76,7 @@ jobs:
       - name: Cache Cargo builds
         uses: Swatinem/rust-cache@v2
 
-       - name: Set XCode
+      - name: Set XCode
         if: ${{ matrix.os == 'macos-latest' }}
         run: |
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
