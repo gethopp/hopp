@@ -10,9 +10,11 @@ rendering.
 We are using [Task](https://taskfile.dev/) as our build tool.
 
 ### Build and run
+
 ```bash
 task build_dev
 ```
+
 ### Testing
 
 Currently rust unit tests are missing (it's on our TODOs), but we have created a few visual integration
@@ -30,9 +32,9 @@ cargo run -- cursor move
 
 ## Key Concepts
 
-* **Sharer**: The user who is sharing their screen and allow remote control of their machine.
-* **Controller**: A participant to the room who views the screen sharing stream and can
-control the sharer's machine.
+- **Sharer**: The user who is sharing their screen and allow remote control of their machine.
+- **Controller**: A participant to the room who views the screen sharing stream and can
+  control the sharer's machine.
 
 ## Overview
 
@@ -87,11 +89,12 @@ The `Tauri` app starts the core process and communicates with it via a socket.
 generation, and the `RoomService` which handles asynchronous `LiveKit` operations.
 
 During a screen sharing session the following happens:
-* `RoomService` connects to the `LiveKit` room and creates the video stream infrastructure.
-* `Capturer` begins capturing the selected display and sends frames to `LiveKit`'s `NativeVideoSource` buffer for real-time streaming.
-* An overlay window is created for rendering the virtual cursors.
-* Remote control is handled via the cursor and keyboard controllers.
-* Controller input events arrive as `LiveKit` `DataPackets` through the room service, get converted to `UserEvents` in the event loop, and are forwarded to the appropriate input controllers for processing.
+
+- `RoomService` connects to the `LiveKit` room and creates the video stream infrastructure.
+- `Capturer` begins capturing the selected display and sends frames to `LiveKit`'s `NativeVideoSource` buffer for real-time streaming.
+- An overlay window is created for rendering the virtual cursors.
+- Remote control is handled via the cursor and keyboard controllers.
+- Controller input events arrive as `LiveKit` `DataPackets` through the room service, get converted to `UserEvents` in the event loop, and are forwarded to the appropriate input controllers for processing.
 
 ### Remote Control Engine
 
@@ -138,8 +141,9 @@ graph TD
 ```
 
 The remote control engine consist of two components:
-* `CursorController`: Handles mouse and keyboard input from controllers.
-* `KeyboardController`: Handles keyboard input from controllers.
+
+- `CursorController`: Handles mouse and keyboard input from controllers.
+- `KeyboardController`: Handles keyboard input from controllers.
 
 Each component owns platform specific components which are using the platform specific apis.
 
@@ -148,26 +152,31 @@ Each component owns platform specific components which are using the platform sp
 `CursorController` manages multi-user cursor interaction and visual feedback.
 
 **Core Responsibility:**
-* Coordinate control switching between sharer and controllers.
-* Manage virtual cursor rendering on the overlay window.
-* Handle input simulation through platform-specific components.
+
+- Coordinate control switching between sharer and controllers.
+- Manage virtual cursor rendering on the overlay window.
+- Handle input simulation through platform-specific components.
 
 **Control Logic:**
-* Only one cursor can have physical control at a time (OS limitation).
-* Click or scroll events trigger control transfer to that cursor.
-* Non-controlling cursors appear as virtual overlays.
+
+- Only one cursor can have physical control at a time (OS limitation).
+- Click or scroll events trigger control transfer to that cursor.
+- Non-controlling cursors appear as virtual overlays.
 
 **Events:**
-* The movement and events of the controller cursor are arriving to the core process through the
+
+- The movement and events of the controller cursor are arriving to the core process through the
   `WebRTC` data channel, then they are converted to `UserEvents` and forwarded to the cursor controller.
-* The sharer's position is tracked by the mouse observer and broadcasted to the controllers via the
+- The sharer's position is tracked by the mouse observer and broadcasted to the controllers via the
   `WebRTC` data channel.
 
 **Platform Components:**
-* **`MouseObserver`**: Captures local sharer mouse movements.
-* **`CursorSimulator`**: Injects controller input into the `OS`.
+
+- **`MouseObserver`**: Captures local sharer mouse movements.
+- **`CursorSimulator`**: Injects controller input into the `OS`.
 
 Here follows a sequence diagram of the cursor controller:
+
 ```mermaid
 sequenceDiagram
     participant LK as LiveKit Server
@@ -212,12 +221,14 @@ High-level controller for keyboard input simulation across platforms. The `Keybo
 orchestrates keyboard simulation by managing layout detection, key mapping, and event generation.
 
 **Core Responsibility:**
-* Automatically handle layout changes and rebuild key mapping tables.
-* Provide simple interface for simulating keystrokes from high-level keystroke data.
+
+- Automatically handle layout changes and rebuild key mapping tables.
+- Provide simple interface for simulating keystrokes from high-level keystroke data.
 
 **Platform Components:**
-* **`KeyboardLayout`**: Detects layout changes and translates keycodes to characters.
-* **`KeyboardEvent`**: Generates platform-specific keyboard events for the `OS`.
+
+- **`KeyboardLayout`**: Detects layout changes and translates keycodes to characters.
+- **`KeyboardEvent`**: Generates platform-specific keyboard events for the `OS`.
 
 ### Screen Capture
 
@@ -265,10 +276,11 @@ graph TD
 The `Capturer` manages the screen capture lifecycle and coordinates with `LiveKit` for real-time streaming.
 
 **Core Responsibility:**
-* Start/stop screen sharing sessions and manage capture streams.
-* Generate thumbnails for content selection UI.
-* Handle error recovery through automatic stream restart.
-* Coordinate with `RoomService` for buffer sharing.
+
+- Start/stop screen sharing sessions and manage capture streams.
+- Generate thumbnails for content selection UI.
+- Handle error recovery through automatic stream restart.
+- Coordinate with `RoomService` for buffer sharing.
 
 For platform-agnostic screen capturing, we use the `DesktopCapturer` object from our `LiveKit` fork
 (we have modified `LiveKit` to expose libwebrtc's `DesktopCapturer`).
@@ -316,3 +328,5 @@ sequenceDiagram
         }
     }}%%
 ```
+
+Test change
