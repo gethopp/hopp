@@ -9,9 +9,6 @@ jobs:
     outputs:
       tauri-changed: ${{ steps.filter.outputs.tauri }}
     steps:
-      - run: |
-          echo "Last commit:"
-          git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n1
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -26,6 +23,9 @@ jobs:
           filters: |
             tauri:
               - 'tauri/src-tauri/**'
+      - run: |
+          echo "Last commit:"
+          git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n1
 
   fmt:
     runs-on: ubuntu-latest
