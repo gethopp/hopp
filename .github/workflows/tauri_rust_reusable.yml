@@ -139,16 +139,16 @@ jobs:
         run: |
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
-      - name: Create hopp_core release
+      - name: Create hopp_core debug
         working-directory: core
         shell: bash
         run: |
-          mkdir -p target/release
+          mkdir -p target/debug
           EXT=""
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             EXT=".exe"
           fi
-          touch target/release/hopp_core-${{ matrix.target }}$EXT
+          touch target/debug/hopp_core-${{ matrix.target }}$EXT
 
       - name: Build
         working-directory: tauri/src-tauri
