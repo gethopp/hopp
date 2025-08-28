@@ -53,6 +53,58 @@ jobs:
         working-directory: tauri/src-tauri
         run: cargo fmt --all -- --check
 
+  lint:
+    name: Lint (clippy)
+    runs-on: ${{ matrix.os }}
+    needs: check-files
+    if: ${{ needs.check-files.outputs.tauri-changed == 'true' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    env:
+      SENTRY_DSN_RUST: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@5
+        with:
+          toolchain: '1.87.0'
+          components: clippy
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create dist
+        working-directory: tauri
+        shell: bash
+        run: |
+          mkdir -p dist
+
+      - name: Create hopp_core debug
+        working-directory: core
+        shell: bash
+        run: |
+          mkdir -p target/debug
+          EXT=""
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            EXT=".exe"
+          fi
+          touch target/debug/hopp_core-${{ matrix.target }}$EXT
+
+      - name: Run clippy
+        working-directory: tauri/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -92,12 +144,6 @@ jobs:
         run: |
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
-      - name: Create dist
-        working-directory: tauri
-        shell: bash
-        run: |
-          mkdir -p dist
-
       - name: Create hopp_core release
         working-directory: core
         shell: bash
@@ -109,21 +155,6 @@ jobs:
           fi
           touch target/release/hopp_core-${{ matrix.target }}$EXT
 
-      - name: Create hopp_core debug
-        working-directory: core
-        shell: bash
-        run: |
-          mkdir -p target/debug
-          EXT=""
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            EXT=".exe"
-          fi
-          touch target/debug/hopp_core-${{ matrix.target }}$EXT
-
       - name: Build
         working-directory: tauri/src-tauri
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Lint (clippy)
-        working-directory: tauri/src-tauri
-        run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
