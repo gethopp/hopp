@@ -484,6 +484,7 @@ fn main() {
     let dock_enabled = Arc::new(Mutex::new(false));
 
     /* This is used to guard against showing the main window if the location is not set. */
+    #[allow(unused_variables)]
     let location_set = Arc::new(Mutex::new(false));
     let location_set_clone = location_set.clone();
     let location_set_setup = location_set.clone();
