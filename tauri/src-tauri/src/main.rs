@@ -688,7 +688,7 @@ fn main() {
                     }
                 }
 
-                if permissions::has_ungranted_permissions() && !cfg!(debug_assertions) {
+                if permissions::has_ungranted_permissions() {
                     log::info!("Opening permissions window");
                     let permissions_window = tauri::WebviewWindowBuilder::new(
                         app,
