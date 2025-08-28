@@ -3,10 +3,6 @@ name: Hopp core package CI
 on:
   workflow_call:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   check-files:
     runs-on: ubuntu-latest
@@ -75,7 +71,7 @@ jobs:
       - name: Install Rust MSRV
         uses: dtolnay/rust-toolchain@5
         with:
-          toolchain: '1.87.0'
+          toolchain: "1.87.0"
           components: clippy
 
       - name: Cache Cargo builds
