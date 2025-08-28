@@ -1,11 +1,7 @@
 name: Tauri rust CI
 
 on:
-  workflow_run:
-    workflows: ["pre-commit"]
-    types:
-      - completed
-  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,17 +14,20 @@ jobs:
     outputs:
       tauri-changed: ${{ steps.filter.outputs.tauri }}
     steps:
+      - run: |
+          echo "Last commit:"
+          git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n1
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check for changes in tauri/src-tauri
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: ${{ github.event.workflow_run.head_sha }}^
+          base: ${{ github.event.workflow_run.base_sha }}
           filters: |
             tauri:
               - 'tauri/src-tauri/**'
@@ -38,13 +37,12 @@ jobs:
     needs: check-files
     if: ${{ needs.check-files.outputs.tauri-changed == 'true' || github.event_name == 'workflow_dispatch' }}
 
-    defaults:
-      run:
-        working-directory: core
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -52,7 +50,60 @@ jobs:
           toolchain: stable
 
       - name: Run rustfmt
+        working-directory: tauri/src-tauri
         run: cargo fmt --all -- --check
+
+  lint:
+    name: Lint (clippy)
+    runs-on: ${{ matrix.os }}
+    needs: check-files
+    if: ${{ needs.check-files.outputs.tauri-changed == 'true' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    env:
+      SENTRY_DSN_RUST: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@5
+        with:
+          toolchain: '1.87.0'
+          components: clippy
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create dist
+        working-directory: tauri
+        shell: bash
+        run: |
+          mkdir -p dist
+
+      - name: Create hopp_core debug
+        working-directory: core
+        shell: bash
+        run: |
+          mkdir -p target/debug
+          EXT=""
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            EXT=".exe"
+          fi
+          touch target/debug/hopp_core-${{ matrix.target }}$EXT
+
+      - name: Run clippy
+        working-directory: tauri/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   build:
     name: Build on ${{ matrix.os }}
@@ -69,16 +120,15 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
 
-    defaults:
-      run:
-        working-directory: tauri/src-tauri
-
     env:
       SENTRY_DSN_RUST: ""
-      VITE_LIVEKIT_SERVER_URL: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -96,6 +146,7 @@ jobs:
 
       - name: Create hopp_core release
         working-directory: core
+        shell: bash
         run: |
           mkdir -p target/release
           EXT=""
@@ -104,18 +155,6 @@ jobs:
           fi
           touch target/release/hopp_core-${{ matrix.target }}$EXT
 
-      - name: Create hopp_core debug
-        working-directory: core
-        run: |
-          mkdir -p target/debug
-          EXT=""
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            EXT=".exe"
-          fi
-          touch target/debug/hopp_core-${{ matrix.target }}$EXT
-
       - name: Build
+        working-directory: tauri/src-tauri
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Lint (clippy)
-        run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings

@@ -1,11 +1,7 @@
-name: hopp_core CI
+name: Hopp core package CI
 
 on:
-  workflow_run:
-    workflows: ["pre-commit"]
-    types:
-      - completed
-  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,18 +14,20 @@ jobs:
     outputs:
       core-changed: ${{ steps.filter.outputs.core }}
     steps:
+      - run: |
+          echo "Last commit:"
+          git --no-pager log --decorate=short --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' -n1
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Fetch the commit that triggered the workflow and its parent
-          fetch-depth: 2
+          fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check for changes in core/
         uses: dorny/paths-filter@v3
         id: filter
         with:
-          base: ${{ github.event.workflow_run.head_sha }}^
+          base: ${{ github.event.workflow_run.base_sha }}
           filters: |
             core:
               - 'core/**'
@@ -39,13 +37,12 @@ jobs:
     needs: check-files
     if: ${{ needs.check-files.outputs.core-changed == 'true' || github.event_name == 'workflow_dispatch' }}
 
-    defaults:
-      run:
-        working-directory: core
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -53,7 +50,40 @@ jobs:
           toolchain: stable
 
       - name: Run rustfmt
+        working-directory: core
         run: cargo fmt --all -- --check
+
+  lint:
+    name: Lint (clippy)
+    runs-on: ${{ matrix.os }}
+    needs: check-files
+    if: ${{ needs.check-files.outputs.core-changed == 'true' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install Rust MSRV
+        uses: dtolnay/rust-toolchain@5
+        with:
+          toolchain: '1.87.0'
+          components: clippy
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        working-directory: core
+        run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
 
   build:
     name: Build on ${{ matrix.os }}
@@ -70,15 +100,15 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
 
-    defaults:
-      run:
-        working-directory: core
-
     env:
       HOPP_CORE_BIN_DEFAULT: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -95,7 +125,5 @@ jobs:
           sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
       - name: Build
+        working-directory: core
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Lint (clippy)
-        run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
