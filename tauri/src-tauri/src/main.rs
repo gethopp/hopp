@@ -486,7 +486,9 @@ fn main() {
     /* This is used to guard against showing the main window if the location is not set. */
     #[allow(unused_variables)]
     let location_set = Arc::new(Mutex::new(false));
+    #[allow(unused_variables)]
     let location_set_clone = location_set.clone();
+    #[allow(unused_variables)]
     let location_set_setup = location_set.clone();
 
     let log_level = get_log_level();
