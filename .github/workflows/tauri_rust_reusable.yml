@@ -71,7 +71,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust MSRV
-        uses: dtolnay/rust-toolchain@5
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           toolchain: "1.87.0"
           components: clippy
