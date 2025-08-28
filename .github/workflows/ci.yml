@@ -12,12 +12,12 @@ concurrency:
 
 jobs:
   precommit:
-    uses: ./.github/workflows/precommit-reusable.yml
+    uses: ./.github/workflows/lintint_reusable.yml
 
   hopp-core:
     needs: precommit
-    uses: ./.github/workflows/hopp-core-reusable.yml
+    uses: ./.github/workflows/hopp_core_reusable.yml
 
   tauri-rust:
     needs: precommit
-    uses: ./.github/workflows/hopp-core-reusable.yml
+    uses: ./.github/workflows/tauri_rust_reusable.yml
