@@ -1043,6 +1043,6 @@ fn set_fullscreen(
 
         window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor))));
 
-        return Ok(());
+        Ok(())
     }
 }
