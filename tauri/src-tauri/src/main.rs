@@ -28,8 +28,6 @@ use std::time::Duration;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
 
-//testab
-
 #[tauri::command]
 async fn screenshare(
     app: tauri::AppHandle,
@@ -38,6 +36,16 @@ async fn screenshare(
     resolution: Extent,
 ) -> bool {
     log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
+    /*
+     * If the user was previously a controller, we need to hide the viewing
+     * window, to hide the delay from requesting the screen share to
+     * screen share starting and the viewing window automatically being closed.
+     */
+    let window = app.get_webview_window("screenshare");
+    if let Some(window) = window {
+        log::info!("screenshare: closing window");
+        let _ = window.hide();
+    }
 
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
@@ -476,8 +484,11 @@ fn main() {
     let dock_enabled = Arc::new(Mutex::new(false));
 
     /* This is used to guard against showing the main window if the location is not set. */
+    #[allow(unused_variables)]
     let location_set = Arc::new(Mutex::new(false));
+    #[allow(unused_variables)]
     let location_set_clone = location_set.clone();
+    #[allow(unused_variables)]
     let location_set_setup = location_set.clone();
 
     let log_level = get_log_level();
@@ -679,7 +690,7 @@ fn main() {
                     }
                 }
 
-                if permissions::has_ungranted_permissions() && !cfg!(debug_assertions) {
+                if permissions::has_ungranted_permissions() {
                     log::info!("Opening permissions window");
                     let permissions_window = tauri::WebviewWindowBuilder::new(
                         app,

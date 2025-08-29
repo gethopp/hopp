@@ -109,10 +109,11 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
     while let Some(event) = receiver.recv().await {
         match event {
             CommandEvent::Stdout(line) => {
-                log::error!("{}", String::from_utf8(line).unwrap_or_default());
+                log::info!("{}", String::from_utf8(line).unwrap_or_default());
             }
             CommandEvent::Stderr(line) => {
-                log::error!("{}", String::from_utf8(line).unwrap_or_default());
+                /* For some reason the sidecar process logs to stderr. */
+                log::info!("{}", String::from_utf8(line).unwrap_or_default());
             }
             CommandEvent::Terminated(payload) => {
                 log::error!("show_stdout: Terminated {payload:?}");
@@ -498,7 +499,5 @@ pub fn setup_start_on_launch(manager: &AutoLaunchManager, first_run: bool) {
 }
 
 pub fn get_sentry_dsn() -> String {
-    std::env::var("SENTRY_DSN_RUST")
-        .unwrap_or_default()
-        .to_string()
+    env!("SENTRY_DSN_RUST").to_string()
 }

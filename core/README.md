@@ -11,8 +11,13 @@ We are using [Task](https://taskfile.dev/) as our build tool.
 
 ### Build and run
 ```bash
-task build_dev
+task dev
 ```
+
+#### Logging
+For logging core is using [env-logger](https://docs.rs/env_logger/latest/env_logger/). For example debug logs can be enabled by setting the `RUST_LOG` environment variable to `hopp_core=debug`.
+It is recommended to set the log level to `info` and enable `debug` only if needed, because `debug` logs are spamming.
+
 ### Testing
 
 Currently rust unit tests are missing (it's on our TODOs), but we have created a few visual integration

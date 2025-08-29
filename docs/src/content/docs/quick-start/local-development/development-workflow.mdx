@@ -96,3 +96,17 @@ This configuration will:
 Don't forget to update the server's configuration in `env-files/.env.local` when you expose the services to the internet.
 
 Then you have to set the `VITE_API_BASE_URL` environment variable before running the Tauri app.
+
+## Logging
+
+For the tauri app you can enable logging by setting the `RUST_LOG` environment variable.
+The values are the same as the ones from [env-logger](https://docs.rs/env_logger/latest/env_logger/#enabling-logging)
+, which is what `hopp_core` is using.
+
+For example you could run the app with:
+
+```bash
+RUST_LOG=info task app:dev
+```
+
+The tauri backend when launches `hopp_core` forwards the log level to it.

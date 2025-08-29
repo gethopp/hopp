@@ -2,7 +2,7 @@
 import toast from "react-hot-toast";
 import { HiMiniPhoneArrowDownLeft, HiMiniPhoneXMark } from "react-icons/hi2";
 import { Button } from "./button";
-import useStore from "@/store/store";
+import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useEffect } from "react";
 import { socketService } from "@/services/socket";
 import { TWebSocketMessage } from "@/payloads";
@@ -60,8 +60,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           ...data.payload,
           timeStarted: new Date(),
           hasAudioEnabled: true,
-          isSharer: false,
-          isController: false,
+          role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
         });
 
