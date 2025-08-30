@@ -317,7 +317,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 
 	// Next steps after accepting call
 	// 1. Create a room with the two participants
-	// 2. Create 4 tokens, 2 for each participant per video+data stream and audio streams
+	// 2. Create 6 tokens, 2 for each participant per video+data stream, audio stream, and camera stream
 	// 3. Send the tokens to the participants
 	callerID := message.Payload.CallerID
 	caller, err := models.GetUserByID(s.DB, callerID)
@@ -356,6 +356,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	calleeMsg := messages.NewCallTokens(common.LivekitTokenSet{
 		AudioToken:  calleeTokens.AudioToken,
 		VideoToken:  calleeTokens.VideoToken,
+		CameraToken: calleeTokens.CameraToken,
 		Participant: callerID,
 	})
 	calleeMsgJSON, err := json.Marshal(calleeMsg)
@@ -367,6 +368,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	callerMsg := messages.NewCallTokens(common.LivekitTokenSet{
 		AudioToken:  callerTokens.AudioToken,
 		VideoToken:  callerTokens.VideoToken,
+		CameraToken: callerTokens.CameraToken,
 		Participant: calleeID,
 	})
 	callerMsgJSON, err := json.Marshal(callerMsg)

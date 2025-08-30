@@ -26,7 +26,7 @@ function Window() {
   const [livekitUrl, setLivekitUrl] = useState<string>("");
 
   useEffect(() => {
-    const videoTokenFromUrl = tauriUtils.getVideoTokenParam();
+    const videoTokenFromUrl = tauriUtils.getTokenParam("videoToken");
 
     if (videoTokenFromUrl) {
       setVideoToken(videoTokenFromUrl);

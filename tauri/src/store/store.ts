@@ -21,6 +21,7 @@ export enum ParticipantRole {
 export type CallState = {
   timeStarted: Date;
   hasAudioEnabled: boolean;
+  hasCameraEnabled?: boolean;
   // Managing buttons for starting/joining/terminating screenshare streams
   role: ParticipantRole;
   isRemoteControlEnabled: boolean;
