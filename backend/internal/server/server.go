@@ -279,6 +279,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/teammates", auth.Teammates)
 	protectedAPI.GET("/websocket", handlers.CreateWSHandler(&s.ServerState))
 	protectedAPI.GET("/get-invite-uuid", auth.GetInviteUUID)
+	protectedAPI.POST("/change-team/:uuid", auth.ChangeTeam)
 	protectedAPI.POST("/send-team-invites", auth.SendTeamInvites)
 	protectedAPI.POST("/metadata/onboarding-form", auth.UpdateOnboardingFormStatus)
 	// Temporary room functionality for alpha
