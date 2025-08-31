@@ -85,7 +85,7 @@ const ConsumerComponent = React.memo(() => {
   const [mouse, mouseRef] = useMouse();
 
   // Boolean to control when to show custom cursor
-  const [showCustomCursor, setShowCustomCursor] = useState(false);
+  const [showCustomCursor, setShowCustomCursor] = useState(true);
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
