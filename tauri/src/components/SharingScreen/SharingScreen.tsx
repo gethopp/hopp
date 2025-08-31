@@ -5,6 +5,7 @@ import { RiDraggable } from "react-icons/ri";
 import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { renderToString } from "react-dom/server";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
@@ -19,11 +20,12 @@ import {
 } from "@/payloads";
 import { useHover } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK } from "@/constants";
-import { Cursor } from "../ui/cursor";
+import { Cursor, SvgComponent } from "../ui/cursor";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 
 const CURSORS_TOPIC = "participant_location";
+const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -81,6 +83,14 @@ const ConsumerComponent = React.memo(() => {
   let { isSharingMouse, isSharingKeyEvents, parentKeyTrap } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
+
+  // Create custom cursor using the actual SvgComponent from Cursor
+  const createCustomCursorDataURL = useMemo(() => {
+    const svgString = renderToString(<SvgComponent color="#3B82F6" />);
+    return `data:image/svg+xml;base64,${btoa(svgString)}`;
+  }, []);
+
+  const [cursorStyle, setCursorStyle] = useState(`url("${createCustomCursorDataURL}") 2 2, auto`);
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -174,6 +184,17 @@ const ConsumerComponent = React.memo(() => {
         icon: "🔓",
         duration: 1500,
       });
+    }
+  });
+
+  useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
+    const decoder = new TextDecoder();
+    const payload = decoder.decode(msg.payload);
+    console.log("payload", payload);
+    if (payload === localParticipant.localParticipant?.sid) {
+      setCursorStyle("default");
+    } else {
+      setCursorStyle(`url("${createCustomCursorDataURL}") 2 2, auto`);
     }
   });
 
@@ -510,6 +531,7 @@ const ConsumerComponent = React.memo(() => {
         style={{
           aspectRatio: `${aspectRatio}`,
           width: "100%",
+          cursor: `${cursorStyle}`,
         }}
       />
       {cursorSlots.map((slot, index) => {

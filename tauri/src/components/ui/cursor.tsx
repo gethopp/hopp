@@ -63,4 +63,4 @@ const Cursor = (props: CursorProps) => {
 
 export default Cursor;
 
-export { Cursor };
+export { Cursor, SvgComponent };
