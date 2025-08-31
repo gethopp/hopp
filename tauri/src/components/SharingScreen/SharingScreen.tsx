@@ -190,7 +190,6 @@ const ConsumerComponent = React.memo(() => {
   useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
     const decoder = new TextDecoder();
     const payload = decoder.decode(msg.payload);
-    console.log("payload", payload);
     if (payload === localParticipant.localParticipant?.sid) {
       setCursorStyle("default");
     } else {
