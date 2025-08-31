@@ -17,13 +17,14 @@ import {
   TPRemoteControlEnabled,
   TPWheelEvent,
 } from "@/payloads";
-import { useHover } from "@uidotdev/usehooks";
+import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK } from "@/constants";
-import { Cursor } from "../ui/cursor";
+import { Cursor, SvgComponent } from "../ui/cursor";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 
 const CURSORS_TOPIC = "participant_location";
+const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -81,6 +82,10 @@ const ConsumerComponent = React.memo(() => {
   let { isSharingMouse, isSharingKeyEvents, parentKeyTrap } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
+  const [mouse, mouseRef] = useMouse();
+
+  // Boolean to control when to show custom cursor
+  const [showCustomCursor, setShowCustomCursor] = useState(true);
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -174,6 +179,16 @@ const ConsumerComponent = React.memo(() => {
         icon: "🔓",
         duration: 1500,
       });
+    }
+  });
+
+  useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
+    const decoder = new TextDecoder();
+    const payload = decoder.decode(msg.payload);
+    if (payload === localParticipant.localParticipant?.sid) {
+      setShowCustomCursor(false);
+    } else {
+      setShowCustomCursor(true);
     }
   });
 
@@ -503,15 +518,17 @@ const ConsumerComponent = React.memo(() => {
         </div>
       )}
       <VideoTrack
-        className=""
         {...track}
+        className={"personal-cursor"}
         trackRef={track}
         ref={videoRef}
         style={{
           aspectRatio: `${aspectRatio}`,
           width: "100%",
+          cursor: showCustomCursor ? "none" : "default",
         }}
       />
+
       {cursorSlots.map((slot, index) => {
         const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
 
@@ -527,6 +544,19 @@ const ConsumerComponent = React.memo(() => {
           />
         );
       })}
+
+      {/* Custom cursor rendered at mouse position */}
+      {showCustomCursor && mouse.x !== null && mouse.y !== null && (
+        <div
+          className="absolute pointer-events-none z-50"
+          style={{
+            left: `${mouse.x - (videoRef.current?.getBoundingClientRect().left || 0) - 4}px`,
+            top: `${mouse.y - (videoRef.current?.getBoundingClientRect().top || 0) - 4}px`,
+          }}
+        >
+          <SvgComponent color="#3B82F6" />
+        </div>
+      )}
     </div>
   );
 });

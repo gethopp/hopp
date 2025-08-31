@@ -515,6 +515,13 @@ impl SharerCursor {
             ctrl: false,
             meta: false,
         });
+
+        let res = self
+            .event_loop_proxy
+            .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
+        if let Err(e) = res {
+            error!("sharer_cursor: click: error sending participant in control: {e:?}");
+        }
     }
 
     fn scroll(&mut self) {
@@ -542,6 +549,13 @@ impl SharerCursor {
             if controller.has_control() {
                 controller.show();
             }
+        }
+
+        let res = self
+            .event_loop_proxy
+            .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
+        if let Err(e) = res {
+            error!("sharer_cursor: scroll: error sending participant in control: {e:?}");
         }
     }
 
@@ -649,6 +663,8 @@ pub struct CursorController {
     redraw_thread: Option<JoinHandle<()>>,
     /// Sender for the redraw thread
     redraw_thread_sender: Sender<RedrawThreadCommands>,
+    /// Event loop proxy for sending events
+    event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl CursorController {
@@ -704,6 +720,7 @@ impl CursorController {
         }
         let mouse_observer = mouse_observer.unwrap();
 
+        let event_loop_proxy_clone = event_loop_proxy.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         Ok(Self {
             sharer_cursor,
@@ -712,9 +729,10 @@ impl CursorController {
             overlay_window,
             _mouse_observer: mouse_observer,
             redraw_thread: Some(std::thread::spawn(move || {
-                redraw_thread(event_loop_proxy.clone(), receiver);
+                redraw_thread(event_loop_proxy_clone, receiver);
             })),
             redraw_thread_sender: sender,
+            event_loop_proxy,
         })
     }
 
@@ -914,6 +932,16 @@ impl CursorController {
         if sharer_cursor.has_control() && control_changed {
             sharer_cursor.show();
         }
+
+        /* Notify controllers who has control. */
+        if control_changed {
+            let res = self
+                .event_loop_proxy
+                .send_event(UserEvent::ParticipantInControl(sid.to_string()));
+            if let Err(e) = res {
+                error!("mouse_click_controller: error sending participant in control: {e:?}");
+            }
+        }
     }
 
     /// Handles scroll wheel events from a specific remote controller.
@@ -966,6 +994,16 @@ impl CursorController {
         let mut sharer_cursor = self.sharer_cursor.lock().unwrap();
         if sharer_cursor.has_control() && control_changed {
             sharer_cursor.show();
+        }
+
+        /* Notify controllers who has control. */
+        if control_changed {
+            let res = self
+                .event_loop_proxy
+                .send_event(UserEvent::ParticipantInControl(sid.to_string()));
+            if let Err(e) = res {
+                error!("scroll_controller: error sending participant in control: {e:?}");
+            }
         }
     }
 

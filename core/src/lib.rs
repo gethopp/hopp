@@ -772,6 +772,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: Controller takes screen share");
                 self.stop_screenshare();
             }
+            UserEvent::ParticipantInControl(participant) => {
+                log::debug!("user_event: participant in control: {participant:?}");
+                if self.room_service.is_none() {
+                    log::warn!("user_event: room service is none participant in control");
+                    return;
+                }
+                self.room_service
+                    .as_ref()
+                    .unwrap()
+                    .publish_participant_in_control(participant);
+            }
         }
     }
 
@@ -855,6 +866,7 @@ pub enum UserEvent {
     ParticipantDisconnected(ParticipantData),
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
+    ParticipantInControl(String),
 }
 
 pub struct RenderEventLoop {

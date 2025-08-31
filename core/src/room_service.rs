@@ -16,6 +16,7 @@ use crate::{ParticipantData, UserEvent};
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
 const TOPIC_REMOTE_CONTROL_ENABLED: &str = "remote_control_enabled";
+const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
 const MAX_FRAMERATE: f64 = 30.0;
@@ -44,6 +45,7 @@ enum RoomServiceCommand {
     DestroyRoom,
     TickResponse(u128),
     IterateParticipants,
+    PublishParticipantInControl(String),
 }
 
 #[derive(Debug)]
@@ -272,6 +274,17 @@ impl RoomService {
             .send(RoomServiceCommand::IterateParticipants);
         if let Err(e) = res {
             log::error!("iterate_participants: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes controller controls to the room.
+    pub fn publish_participant_in_control(&self, participant: String) {
+        log::info!("publish_participant_in_control: {participant:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishParticipantInControl(participant));
+        if let Err(e) = res {
+            log::error!("publish_participant_in_control: Failed to send command: {e:?}");
         }
     }
 }
@@ -528,6 +541,31 @@ async fn room_service_commands(
                             "handle_room_events: Failed to send participant disconnected event: {e:?}"
                         );
                     }
+                }
+            }
+            RoomServiceCommand::PublishParticipantInControl(participant) => {
+                log::info!(
+                    "room_service_commands: Publishing participant in control: {participant:?}"
+                );
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload: participant.to_string().as_bytes().to_vec(),
+                        reliable: true,
+                        topic: Some(TOPIC_PARTICIPANT_IN_CONTROL.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+                if let Err(e) = res {
+                    log::error!(
+                        "room_service_commands: Failed to publish participant in control: {e:?}"
+                    );
                 }
             }
         }
