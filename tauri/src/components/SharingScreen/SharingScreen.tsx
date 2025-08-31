@@ -5,7 +5,6 @@ import { RiDraggable } from "react-icons/ri";
 import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { renderToString } from "react-dom/server";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
@@ -18,7 +17,7 @@ import {
   TPRemoteControlEnabled,
   TPWheelEvent,
 } from "@/payloads";
-import { useHover } from "@uidotdev/usehooks";
+import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK } from "@/constants";
 import { Cursor, SvgComponent } from "../ui/cursor";
 import toast from "react-hot-toast";
@@ -83,14 +82,10 @@ const ConsumerComponent = React.memo(() => {
   let { isSharingMouse, isSharingKeyEvents, parentKeyTrap } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
+  const [mouse, mouseRef] = useMouse();
 
-  // Create custom cursor using the actual SvgComponent from Cursor
-  const createCustomCursorDataURL = useMemo(() => {
-    const svgString = renderToString(<SvgComponent color="#3B82F6" />);
-    return `data:image/svg+xml;base64,${btoa(svgString)}`;
-  }, []);
-
-  const [cursorStyle, setCursorStyle] = useState(`url("${createCustomCursorDataURL}") 2 2, auto`);
+  // Boolean to control when to show custom cursor
+  const [showCustomCursor, setShowCustomCursor] = useState(false);
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -191,9 +186,9 @@ const ConsumerComponent = React.memo(() => {
     const decoder = new TextDecoder();
     const payload = decoder.decode(msg.payload);
     if (payload === localParticipant.localParticipant?.sid) {
-      setCursorStyle("default");
+      setShowCustomCursor(false);
     } else {
-      setCursorStyle(`url("${createCustomCursorDataURL}") 2 2, auto`);
+      setShowCustomCursor(true);
     }
   });
 
@@ -523,16 +518,17 @@ const ConsumerComponent = React.memo(() => {
         </div>
       )}
       <VideoTrack
-        className=""
         {...track}
+        className={"personal-cursor"}
         trackRef={track}
         ref={videoRef}
         style={{
           aspectRatio: `${aspectRatio}`,
           width: "100%",
-          cursor: `${cursorStyle}`,
+          cursor: showCustomCursor ? "none" : "default",
         }}
       />
+
       {cursorSlots.map((slot, index) => {
         const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
 
@@ -548,6 +544,19 @@ const ConsumerComponent = React.memo(() => {
           />
         );
       })}
+
+      {/* Custom cursor rendered at mouse position */}
+      {showCustomCursor && mouse.x !== null && mouse.y !== null && (
+        <div
+          className="absolute pointer-events-none z-50"
+          style={{
+            left: `${mouse.x - (videoRef.current?.getBoundingClientRect().left || 0) - 4}px`,
+            top: `${mouse.y - (videoRef.current?.getBoundingClientRect().top || 0) - 4}px`,
+          }}
+        >
+          <SvgComponent color="#3B82F6" />
+        </div>
+      )}
     </div>
   );
 });

@@ -43,7 +43,7 @@ export interface CursorProps extends React.SVGAttributes<SVGSVGElement> {
 
 const Cursor = (props: CursorProps) => {
   return (
-    <div className="absolute" style={{ ...props.style }}>
+    <div className="absolute pointer-events-none" style={{ ...props.style }}>
       <div className="relative flex flex-col justify-start max-w-[120px]">
         <SvgComponent {...props} />
         <div
