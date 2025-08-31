@@ -337,6 +337,16 @@ fn open_microphone_settings(_app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn open_camera_settings(_app: tauri::AppHandle) {
+    log::info!("open_camera_settings");
+    let mut process = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
+        .spawn()
+        .expect("Failed to open System Preferences for Camera permissions");
+    let _ = process.wait();
+}
+
+#[tauri::command]
 fn open_screenshare_settings(_app: tauri::AppHandle) {
     log::info!("open_screenshare_settings");
     let mut process = std::process::Command::new("open")
@@ -378,6 +388,13 @@ fn get_microphone_permission(_app: tauri::AppHandle) -> bool {
 fn get_screenshare_permission(_app: tauri::AppHandle) -> bool {
     let res = permissions::screenshare();
     log::info!("get_screenshare_permission: {res}");
+    res
+}
+
+#[tauri::command]
+fn get_camera_permission(_app: tauri::AppHandle) -> bool {
+    let res = permissions::camera();
+    log::info!("get_camera_permission: {res}");
     res
 }
 
@@ -704,7 +721,7 @@ fn main() {
                     .always_on_top(false)
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .title("Permissions Configuration")
-                    .inner_size(900., 620.)
+                    .inner_size(900., 730.)
                     .build();
                     if let Err(e) = permissions_window {
                         log::error!("Failed to create permissions window: {e:?}");
@@ -794,6 +811,8 @@ fn main() {
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,
+            get_camera_permission,
+            open_camera_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

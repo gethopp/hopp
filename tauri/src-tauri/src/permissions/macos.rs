@@ -1,7 +1,7 @@
 use accessibility_sys::AXIsProcessTrusted;
 use av_foundation::{
     capture_device::{AVAuthorizationStatusAuthorized, AVCaptureDevice},
-    media_format::AVMediaTypeAudio,
+    media_format::{AVMediaTypeAudio, AVMediaTypeVideo},
 };
 use core_graphics::access::ScreenCaptureAccess;
 
@@ -26,6 +26,15 @@ impl PermissionsTrait for PlatformPermissions {
         log::info!("macOS microphone permission check");
         unsafe {
             let media_type = AVMediaTypeAudio;
+            AVCaptureDevice::authorization_status_for_media_type(media_type)
+                == AVAuthorizationStatusAuthorized
+        }
+    }
+
+    fn camera() -> bool {
+        log::info!("macOS camera permission check");
+        unsafe {
+            let media_type = AVMediaTypeVideo;
             AVCaptureDevice::authorization_status_for_media_type(media_type)
                 == AVAuthorizationStatusAuthorized
         }

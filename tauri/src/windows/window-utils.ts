@@ -185,6 +185,10 @@ const openMicrophoneSettings = async () => {
   return await invoke("open_microphone_settings");
 };
 
+const openCameraSettings = async () => {
+  return await invoke("open_camera_settings");
+};
+
 const openScreenShareSettings = async () => {
   return await invoke("open_screenshare_settings");
 };
@@ -204,6 +208,11 @@ const getMicPermission = async () => {
 const getScreenSharePermission = async () => {
   return await invoke<boolean>("get_screenshare_permission");
 };
+
+const getCameraPermission = async () => {
+  return await invoke<boolean>("get_camera_permission");
+};
+
 
 const hideTrayIconInstruction = async () => {
   await invoke("skip_tray_notification_selection_window");
@@ -252,10 +261,12 @@ export const tauriUtils = {
   openAccessibilitySettings,
   openMicrophoneSettings,
   openScreenShareSettings,
+  openCameraSettings,
   triggerScreenSharePermission,
   getControlPermission,
   getMicPermission,
   getScreenSharePermission,
+  getCameraPermission,
   setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
