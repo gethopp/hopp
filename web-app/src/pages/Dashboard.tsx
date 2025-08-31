@@ -1,4 +1,4 @@
-import { useAPI } from "@/hooks/useQueryClients";
+import { useAPI, isFetchError } from "@/hooks/useQueryClients";
 import { useHoppStore } from "@/store/store";
 import { FiEdit } from "react-icons/fi";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "react-hot-toast";
 import { BACKEND_URLS } from "@/constants";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { BsApple, BsWindows, BsShieldLockFill } from "react-icons/bs";
 import { VscTerminalLinux } from "react-icons/vsc";
 import { z } from "zod";
@@ -17,6 +17,7 @@ import CreatableSelect from "react-select/creatable";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SignInSuccessModal } from "@/components/SignInSuccessModal";
 import { usePostHog } from "posthog-js/react";
+import { queryClient } from "@/App";
 
 // Create email validation schema using zod
 const emailSchema = z.string().email("Invalid email format");
@@ -36,6 +37,11 @@ interface EmailOption {
 }
 
 type DownloadSystem = "MACOS_INTEL" | "MACOS_APPLE_SILICON" | "WINDOWS" | "LINUX";
+
+const ErrorMessages: Record<number, string> = {
+  409: "You cannot change teams while you have teammates. Please contact support for assistance.",
+  404: "The invitation link is invalid or has expired. Please contact the team admin for a new invitation.",
+};
 
 /**
  * This can happen in cases that GitHub API returns an error
@@ -59,6 +65,7 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const hasAppAuthBanner = searchParams.get("show_app_token_banner");
+  const inviteParam = searchParams.get("invite");
 
   const [latestRelease, setLatestRelease] = useState<GitHubRelease | null>(null);
   // Updated state for react-select
@@ -197,7 +204,66 @@ export function Dashboard() {
 
   const { mutateAsync: inviteTeammates, isPending: isInviting } = useMutation("post", "/api/auth/send-team-invites");
 
+  const { mutateAsync: changeTeam } = useMutation("post", "/api/auth/change-team/{uuid}", {
+    retry: false,
+  });
+
   const inviteUrl = inviteData?.invite_uuid ? `${BACKEND_URLS.BASE}/invitation/${inviteData.invite_uuid}` : "";
+
+  // Ref to track if team invite has been processed to prevent double execution in Strict Mode
+  const inviteProcessedRef = useRef<string | null>(null);
+
+  // Handle team change invitation
+  useEffect(() => {
+    const handleTeamInvite = async () => {
+      console.log("Executing handleTeamInvite");
+      if (!inviteParam) return;
+
+      // Prevent double execution in React Strict Mode
+      if (inviteProcessedRef.current === inviteParam) {
+        console.log("Invite already processed, skipping");
+        return;
+      }
+
+      inviteProcessedRef.current = inviteParam;
+
+      try {
+        const result = await changeTeam({
+          params: {
+            path: {
+              uuid: inviteParam,
+            },
+          },
+        });
+
+        if (result && result.team_name) {
+          toast.success(`Successfully joined team: ${result.team_name}`);
+          // Remove the invite parameter from URL
+          const newSearchParams = new URLSearchParams(searchParams);
+          newSearchParams.delete("invite");
+          navigate(`?${newSearchParams.toString()}`, { replace: true });
+          // Invalidate all cached queries
+          queryClient.invalidateQueries();
+          queryClient.clear();
+        }
+      } catch (error: unknown) {
+        if (isFetchError(error)) {
+          const message =
+            ErrorMessages[error.response.status] || "Failed to join the team. Contact us if the problem persists.";
+          toast.error(message);
+        } else {
+          toast.error("Failed to join the team. Contact us if the problem persists.");
+        }
+
+        // Remove the invalid invite parameter from URL
+        const newSearchParams = new URLSearchParams(searchParams);
+        newSearchParams.delete("invite");
+        navigate("/dashboard");
+      }
+    };
+
+    handleTeamInvite();
+  }, [inviteParam, searchParams, navigate, changeTeam]);
 
   // Validate email format
   const validateEmail = (email: string): boolean => {

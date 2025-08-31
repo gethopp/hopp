@@ -787,3 +787,58 @@ func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {
 		"url": h.Config.Livekit.ServerURL,
 	})
 }
+
+// ChangeTeam allows a logged-in user to change teams using an invitation UUID.
+// It validates the user has no teammates before allowing the change
+func (h *AuthHandler) ChangeTeam(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	invitationUUID := c.Param("uuid")
+
+	var invitation models.TeamInvitation
+	result := h.DB.Where("unique_id = ?", invitationUUID).Preload("Team").First(&invitation)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "Invitation not found or has expired")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to retrieve invitation details")
+	}
+
+	teammates, err := user.GetTeammates(h.DB)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get user teammates")
+	}
+
+	teammateCount := len(teammates)
+
+	if teammateCount > 0 {
+		// Send telegram notification for attention
+		message := fmt.Sprintf("🚨 User %s attempted to change teams but has %d teammate(s). Invitation UUID: %s",
+			user.ID,
+			teammateCount,
+			invitationUUID)
+
+		_ = notifications.SendTelegramNotification(message, h.Config)
+
+		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("Cannot change teams: you currently have %d teammate(s). Please contact support for assistance.", teammateCount))
+	}
+
+	c.Logger().Infof("Changing user %s team to %d", user.ID, invitation.TeamID)
+
+	teamID := uint(invitation.TeamID)
+	user.TeamID = &teamID
+	user.Team = &invitation.Team
+
+	if err := h.DB.Save(&user).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user team")
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":   "Successfully changed team",
+		"team_name": invitation.Team.Name,
+		"team_id":   invitation.TeamID,
+	})
+}

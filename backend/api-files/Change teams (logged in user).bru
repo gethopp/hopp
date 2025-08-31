@@ -1,0 +1,19 @@
+meta {
+  name: Change teams (logged in user)
+  type: http
+  seq: 12
+}
+
+post {
+  url: https://localhost:1926/api/auth/change-team/:uuid
+  body: none
+  auth: none
+}
+
+params:path {
+  uuid: 0198d2c9-40ec-7b46-b318-bb3ec64f5e27
+}
+
+headers {
+  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImppbTJAZHVuZGVybWlmZmxpbi5jb20iLCJleHAiOjE3ODgxNzE2OTN9.7MzTtCvDTWpDPuJNRXUc2kdXsd6jltyVFjZA2mCoSl0
+}

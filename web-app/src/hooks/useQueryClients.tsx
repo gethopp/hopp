@@ -5,6 +5,17 @@ import type { paths } from "../openapi";
 import { useHoppStore } from "@/store/store";
 import { BACKEND_URLS } from "@/constants";
 
+// Custom error type for fetch errors
+export interface FetchError extends Error {
+  name: "FetchError";
+  response: Response;
+}
+
+// Type-guard for FetchError
+export const isFetchError = (error: unknown): error is FetchError => {
+  return error instanceof Error && error.name === "FetchError";
+};
+
 type QueryContextType = {
   fetchClient: ReturnType<typeof createFetchClient<paths>>;
   apiClient: OpenapiQueryClient<paths>;
@@ -23,31 +34,43 @@ export function QueryProvider({ children }: QueryProviderProps) {
     () =>
       createFetchClient<paths>({
         baseUrl: BACKEND_URLS.BASE,
-        headers: authToken
-          ? {
+        headers:
+          authToken ?
+            {
               Authorization: `Bearer ${authToken}`,
             }
           : undefined,
       }),
-    [authToken]
+    [authToken],
   );
 
-  const apiClient = useMemo(
-    () => createClient<paths>(fetchClient),
-    [fetchClient]
-  );
+  const apiClient = useMemo(() => createClient<paths>(fetchClient), [fetchClient]);
+
+  if (fetchClient) {
+    fetchClient.use({
+      async onResponse({ response }) {
+        if (!response.ok) {
+          // Create a custom error with response details
+          const error = new Error(`HTTP ${response.status}: ${response.statusText}`) as FetchError;
+          error.name = "FetchError";
+          error.response = response;
+
+          throw error;
+        }
+        return response;
+      },
+    });
+  }
 
   const value = useMemo(
     () => ({
       fetchClient,
       apiClient,
     }),
-    [fetchClient, apiClient]
+    [fetchClient, apiClient],
   );
 
-  return (
-    <QueryContext.Provider value={value}>{children}</QueryContext.Provider>
-  );
+  return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;
 }
 
 export function useFetchClient() {

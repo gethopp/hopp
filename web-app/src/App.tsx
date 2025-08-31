@@ -14,6 +14,7 @@ import { Teammates } from "./pages/Teammates";
 import { BACKEND_URLS, META } from "./constants";
 import { PostHogProvider } from "posthog-js/react";
 import { PostHogConfig } from "posthog-js";
+import { InvitationHandler } from "./pages/InvitationHandler";
 
 const options: Partial<PostHogConfig> = {
   api_host: "https://eu.i.posthog.com",
@@ -81,11 +82,11 @@ const router = createBrowserRouter([
   },
   {
     path: "/invitation/:uuid",
-    element: <Providers requireAuth={false} overrideRedirect={false} />,
+    element: <Providers requireAuth={false} overrideRedirect={true} />,
     children: [
       {
         path: "",
-        element: <LoginForm isInvitation={true} />,
+        element: <InvitationHandler />,
       },
     ],
   },

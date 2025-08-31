@@ -513,3 +513,60 @@ paths:
                   url:
                     type: string
                     description: LiveKit server url
+
+  /api/auth/change-team/{uuid}:
+    post:
+      summary: Change user's team using invitation UUID
+      description: Allows a logged-in user to change teams using an invitation UUID. The user must have no teammates to perform this operation.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the team invitation
+      responses:
+        "200":
+          description: Successfully changed team
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully changed team"
+                  team_name:
+                    type: string
+                    description: Name of the new team
+                  team_id:
+                    type: integer
+                    format: uint
+                    description: ID of the new team
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Invitation not found or has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Cannot change teams - user has teammates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
