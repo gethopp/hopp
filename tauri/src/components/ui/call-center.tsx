@@ -344,7 +344,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken);
+      tauriUtils.createContentPickerWindow();
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -357,7 +357,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken);
+    tauriUtils.createContentPickerWindow();
   }, [callTokens, callTokens?.videoToken]);
 
   return (

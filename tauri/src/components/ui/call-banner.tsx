@@ -8,6 +8,7 @@ import { socketService } from "@/services/socket";
 import { TWebSocketMessage } from "@/payloads";
 import { sounds } from "@/constants/sounds";
 import { HoppAvatar } from "./hopp-avatar";
+import { tauriUtils } from "@/windows/window-utils";
 
 export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: string }) => {
   let caller = useStore((state) => state?.teammates?.find((user) => user.id === callerId));
@@ -50,7 +51,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
     // for users that are not with a call-banner (the callers)
     let tokensReceived = false;
 
-    const handleCallTokens = (data: TWebSocketMessage) => {
+    const handleCallTokens = async (data: TWebSocketMessage) => {
       if (data.type === "call_tokens") {
         console.log("Received call_tokens", data);
         tokensReceived = true;
@@ -65,6 +66,13 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         });
 
         toast.dismiss(toastId);
+
+        let result = await tauriUtils.callStarted(data.payload.videoToken);
+        if (!result) {
+          toast.error("Failed to connect to LiveKit room, screenshare not available", {
+            duration: 2500,
+          });
+        }
       }
     };
 

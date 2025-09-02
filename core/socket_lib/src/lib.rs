@@ -96,7 +96,6 @@ pub struct AvailableContentMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenShareMessage {
     pub content: Content,
-    pub token: String,
     pub resolution: Extent,
 }
 
@@ -111,6 +110,9 @@ pub enum Message {
     Ping,
     ControllerCursorEnabled(bool),
     LivekitServerUrl(String),
+    CallStarted { token: String },
+    CallStartedResult(bool),
+    CallEnded,
 }
 
 #[derive(Debug)]

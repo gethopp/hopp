@@ -9,6 +9,17 @@ getVersion().then((version) => {
   appVersion = version;
 });
 
+export interface CaptureContent {
+  content: {
+    content_type: "Display" | { Window: { display_id: number } };
+    id: number;
+  };
+  base64: string;
+  title: string;
+}
+
+export type ResolutionKey = "1080p" | "2K" | "1440p" | "2160p" | "4K";
+
 const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
   const URL = `screenshare.html?videoToken=${videoToken}`;
 
@@ -42,8 +53,8 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string) => {
-  const URL = `contentPicker.html?videoToken=${videoToken}`;
+const createContentPickerWindow = async () => {
+  const URL = `contentPicker.html`;
 
   if (isTauri) {
     const newWindow = new WebviewWindow("contentPicker", {
@@ -90,6 +101,21 @@ const deleteStoredToken = async () => {
   }
 };
 
+const getAvailableContent = async () => {
+  return await invoke<CaptureContent[]>("get_available_content");
+};
+
+const screenshare = async (content: CaptureContent["content"], resolution: ResolutionKey) => {
+  const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
+    "1080p": { width: 1920, height: 1080 },
+    "2K": { width: 2048, height: 1080 },
+    "1440p": { width: 2560, height: 1440 },
+    "2160p": { width: 3840, height: 2160 },
+    "4K": { width: 4096, height: 2160 },
+  };
+  return await invoke<boolean>("screenshare", { content, resolution: resolutionMap[resolution] });
+};
+
 const stopSharing = async () => {
   await invoke("stop_sharing");
 };
@@ -115,8 +141,12 @@ const closeScreenShareWindow = async () => {
   }
 };
 
-const resetCoreProcess = async () => {
-  await invoke("reset_core_process");
+const callStarted = async (token: string) => {
+  return await invoke<boolean>("call_started", { token });
+};
+
+const callEnded = async () => {
+  await invoke("call_ended");
 };
 
 const closeContentPickerWindow = async () => {
@@ -135,7 +165,7 @@ const getVideoTokenParam = () => {
 };
 
 const endCallCleanup = async () => {
-  await resetCoreProcess();
+  await callEnded();
   await closeScreenShareWindow();
   await closeContentPickerWindow();
   await setDockIconVisible(false);
@@ -210,7 +240,10 @@ export const tauriUtils = {
   storeTokenBackend,
   getStoredToken,
   deleteStoredToken,
+  getAvailableContent,
+  screenshare,
   stopSharing,
+  callStarted,
   endCallCleanup,
   hideTrayIconInstruction,
   setControllerCursor,

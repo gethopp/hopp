@@ -1,22 +1,18 @@
 import "@/services/sentry";
 import "../../App.css";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast, Toaster } from "react-hot-toast";
-import useStore, { ParticipantRole } from "@/store/store";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
-import { tauriUtils } from "../window-utils";
+import { tauriUtils, CaptureContent, ResolutionKey } from "../window-utils";
 
 const appWindow = getCurrentWebviewWindow();
-
-type ResolutionKey = "1080p" | "2K" | "1440p" | "2160p" | "4K";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -24,35 +20,14 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-interface CaptureContent {
-  content: {
-    content_type: "Display" | { Window: { display_id: number } };
-    id: number;
-  };
-  base64: string;
-  title: string;
-}
-
 async function getContent(setContent: React.Dispatch<React.SetStateAction<CaptureContent[]>>) {
-  const message: CaptureContent[] = await invoke("get_available_content");
+  const message = await tauriUtils.getAvailableContent();
   console.log(message);
   setContent(message);
 }
 
-async function screenshare(content: CaptureContent["content"], resolution: ResolutionKey, videoToken: string) {
-  const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
-    "1080p": { width: 1920, height: 1080 },
-    "2K": { width: 2048, height: 1080 },
-    "1440p": { width: 2560, height: 1440 },
-    "2160p": { width: 3840, height: 2160 },
-    "4K": { width: 4096, height: 2160 },
-  };
-
-  const message: boolean = await invoke("screenshare", {
-    content: content,
-    token: videoToken,
-    resolution: resolutionMap[resolution],
-  });
+async function screenshare(content: CaptureContent["content"], resolution: ResolutionKey) {
+  const message = await tauriUtils.screenshare(content, resolution);
   return message;
 }
 
@@ -61,7 +36,6 @@ function Window() {
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
-  const videoToken = tauriUtils.getVideoTokenParam();
 
   useEffect(() => {
     if (!hasFetched) {
@@ -74,13 +48,8 @@ function Window() {
   }, [hasFetched]);
 
   const handleItemClick = async (content: CaptureContent["content"]) => {
-    // TODO make this faster
     try {
-      if (videoToken == null || videoToken == "") {
-        toast.error("No video token found");
-        return;
-      }
-      const success = await screenshare(content, resolution, videoToken);
+      const success = await screenshare(content, resolution);
       if (success) {
         await appWindow.close();
       } else {

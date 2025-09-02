@@ -29,13 +29,8 @@ use std::time::Duration;
 use tauri::PhysicalPosition;
 
 #[tauri::command]
-async fn screenshare(
-    app: tauri::AppHandle,
-    content: Content,
-    token: String,
-    resolution: Extent,
-) -> bool {
-    log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
+async fn screenshare(app: tauri::AppHandle, content: Content, resolution: Extent) -> bool {
+    log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
     /*
      * If the user was previously a controller, we need to hide the viewing
      * window, to hide the delay from requesting the screen share to
@@ -53,7 +48,6 @@ async fn screenshare(
         .socket
         .send_message(Message::StartScreenShare(ScreenShareMessage {
             content,
-            token: token.clone(),
             resolution,
         }));
     if let Err(e) = res {
@@ -203,16 +197,6 @@ fn stop_sound(app: tauri::AppHandle, sound_name: String) {
         }
     }
     log::debug!("stop_sound: entries left: {}", data.sound_entries.len());
-}
-
-#[tauri::command]
-fn reset_core_process(app: tauri::AppHandle) {
-    let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    let res = data.socket.send_message(Message::Reset);
-    if let Err(e) = res {
-        log::error!("reset_core_process: failed to send message: {e:?}");
-    }
 }
 
 #[tauri::command]
@@ -459,6 +443,48 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
     data.livekit_server_url.clone()
+}
+
+#[tauri::command]
+fn call_started(app: tauri::AppHandle, token: String) -> bool {
+    log::info!("call_started");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let res = data.socket.send_message(Message::CallStarted { token });
+    if let Err(e) = res {
+        log::error!("call_started: failed to send message: {e:?}");
+        return false;
+    }
+
+    let res = data.socket.receive_message();
+    if let Err(e) = res {
+        log::error!("call_started: failed to receive message: {e:?}");
+        return false;
+    }
+    match res.unwrap() {
+        Message::CallStartedResult(result) => {
+            if !result {
+                log::error!("call_started: failed to start call");
+                return false;
+            }
+        }
+        _ => {
+            log::error!("call_started: unexpected message");
+        }
+    }
+
+    true
+}
+
+#[tauri::command]
+fn call_ended(app: tauri::AppHandle) {
+    log::info!("call_ended");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let res = data.socket.send_message(Message::CallEnded);
+    if let Err(e) = res {
+        log::error!("call_ended: failed to send message: {e:?}");
+    }
 }
 
 fn main() {
@@ -776,7 +802,6 @@ fn main() {
             delete_stored_token,
             play_sound,
             stop_sound,
-            reset_core_process,
             get_logs,
             set_deactivate_hiding,
             set_controller_cursor,
@@ -794,6 +819,8 @@ fn main() {
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,
+            call_started,
+            call_ended,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
