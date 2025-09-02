@@ -71,6 +71,8 @@ pub enum ServerError {
     RoomServiceNotFound,
     #[error("Failed to create room")]
     RoomCreationError,
+    #[error("Failed to publish track")]
+    TrackPublicationError,
     #[error("Display not found")]
     DisplayNotFound,
     #[error("Window not found")]
@@ -311,17 +313,18 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.create_room(
-            screenshare_input.token,
-            extent.width as u32,
-            extent.height as u32,
-            self.event_loop_proxy.clone(),
-        );
+        let res = room_service.create_room(screenshare_input.token, self.event_loop_proxy.clone());
         if let Err(error) = res {
             log::error!("screenshare: error creating room: {error:?}");
             return Err(ServerError::RoomCreationError);
         }
         log::info!("screenshare: room created");
+
+        let res = room_service.publish_track(extent.width as u32, extent.height as u32);
+        if let Err(error) = res {
+            log::error!("screenshare: error publishing track: {error:?}");
+            return Err(ServerError::TrackPublicationError);
+        }
 
         let buffer_source = room_service.get_buffer_source();
         screen_capturer.set_buffer_source(buffer_source);
