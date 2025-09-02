@@ -30,12 +30,22 @@ pub fn request_screenshare(
 ) -> io::Result<()> {
     let token = livekit_utils::generate_token("Test Screenshare");
 
+    let message = Message::CallStarted { token };
+    socket.send_message(message)?;
+    let res = socket.receive_message()?;
+    if let Message::CallStartedResult(res) = res {
+        if !res {
+            return Err(io::Error::other("Failed to start call"));
+        }
+    } else {
+        return Err(io::Error::other("Failed to receive call started result"));
+    }
+
     let message = Message::StartScreenShare(ScreenShareMessage {
         content: Content {
             content_type: ContentType::Display, // Assuming Display type
             id: content_id,
         },
-        token,
         resolution: Extent { width, height },
     });
     socket.send_message(message)

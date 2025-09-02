@@ -311,14 +311,7 @@ impl<'a> Application<'a> {
         if self.room_service.is_none() {
             return Err(ServerError::RoomServiceNotFound);
         }
-
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.create_room(screenshare_input.token, self.event_loop_proxy.clone());
-        if let Err(error) = res {
-            log::error!("screenshare: error creating room: {error:?}");
-            return Err(ServerError::RoomCreationError);
-        }
-        log::info!("screenshare: room created");
 
         let res = room_service.publish_track(extent.width as u32, extent.height as u32);
         if let Err(error) = res {
@@ -354,9 +347,6 @@ impl<'a> Application<'a> {
         }
         let mut screen_capturer = screen_capturer.unwrap();
         screen_capturer.stop_capture();
-        if let Some(room_service) = self.room_service.as_mut() {
-            room_service.destroy_room();
-        }
         drop(screen_capturer);
         self.destroy_overlay_window();
     }
@@ -490,7 +480,7 @@ impl<'a> Application<'a> {
         self.remote_control = None;
     }
 
-    /// Resets the application state after a session ends or encounters an error.
+    /// Ends the call and resets the application state.
     ///
     /// This method performs comprehensive cleanup and state reset:
     /// - Stops active screen sharing sessions
@@ -518,7 +508,7 @@ impl<'a> Application<'a> {
     /// - Uploads "Ending call" event to Sentry for telemetry
     /// - May create new threads for screen capture polling
     /// - Resets all session-specific state to initial values
-    fn reset_state(&mut self) {
+    fn end_call(&mut self) {
         let capturer_valid = {
             let screen_capturer = self.screen_capturer.lock();
             screen_capturer.is_ok()
@@ -526,11 +516,8 @@ impl<'a> Application<'a> {
         if capturer_valid {
             self.stop_screenshare();
         } else {
-            log::warn!("reset_state: Screen capturer is not valid");
+            log::warn!("end_call: Screen capturer is not valid");
             self.destroy_overlay_window();
-            if let Some(room_service) = self.room_service.as_mut() {
-                room_service.destroy_room();
-            }
 
             /* Restart the screen capturer. */
             self.screen_capturer =
@@ -545,6 +532,11 @@ impl<'a> Application<'a> {
             self._screen_capturer_events = Some(std::thread::spawn(move || {
                 poll_stream(screen_capturer_clone)
             }));
+        }
+
+        /* Disconnect from the livekit room. */
+        if let Some(room_service) = self.room_service.as_mut() {
+            room_service.destroy_room();
         }
 
         // Upload logs to sentry when ending call.
@@ -718,10 +710,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_sharer_location(x, y, true);
             }
-            UserEvent::ResetState => {
-                debug!("user_event: Resetting state");
-                self.reset_state();
-            }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
                 if self.room_service.is_none() {
@@ -785,6 +773,33 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .as_ref()
                     .unwrap()
                     .publish_participant_in_control(participant);
+            }
+            UserEvent::CallStarted(token) => {
+                log::info!("user_event: Call started");
+                if self.room_service.is_none() {
+                    log::warn!("user_event: room service is none call started");
+                    return;
+                }
+                let res = self
+                    .room_service
+                    .as_ref()
+                    .unwrap()
+                    .create_room(token, self.event_loop_proxy.clone());
+                let res = res.is_ok();
+                if !res {
+                    sentry_utils::upload_logs_event("Failed to create room".to_string());
+                }
+                let res = self.socket.send_message(Message::CallStartedResult(res));
+                if res.is_err() {
+                    error!(
+                        "user_event: Error sending call started result: {:?}",
+                        res.err()
+                    );
+                }
+            }
+            UserEvent::CallEnded => {
+                debug!("user_event: Ending call");
+                self.end_call();
             }
         }
     }
@@ -863,13 +878,14 @@ pub enum UserEvent {
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
-    ResetState,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
+    CallStarted(String),
+    CallEnded,
 }
 
 pub struct RenderEventLoop {
@@ -966,7 +982,6 @@ impl RenderEventLoop {
                     UserEvent::ScreenShare(screen_share_message)
                 }
                 Message::StopScreenshare => UserEvent::StopScreenShare,
-                Message::Reset => UserEvent::ResetState,
                 Message::ControllerCursorEnabled(enabled) => {
                     UserEvent::ControllerCursorEnabled(enabled)
                 }
@@ -975,6 +990,8 @@ impl RenderEventLoop {
                     continue;
                 }
                 Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
+                Message::CallStarted { token } => UserEvent::CallStarted(token),
+                Message::CallEnded => UserEvent::CallEnded,
                 _ => {
                     log::error!("RenderEventLoop::run Unknown message: {message:?}");
                     continue;

@@ -63,7 +63,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   // that will unsubscribe from the socket when the component unmounts
   useEffect(() => {
     // Add listener for call response
-    socketService.on(callbackIdRef.current, (data: TWebSocketMessage) => {
+    socketService.on(callbackIdRef.current, async (data: TWebSocketMessage) => {
       if (!isCalling) return;
 
       switch (data.type) {
@@ -87,6 +87,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.success(`${props.user.first_name} accepted your call`, {
             duration: 1500,
           });
+
           break;
         case "call_tokens":
           setCalling(null);
@@ -100,6 +101,13 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
           });
+
+          let result = await tauriUtils.callStarted(data.payload.videoToken);
+          if (!result) {
+            toast.error("Failed to connect to LiveKit room, screenshare not available", {
+              duration: 2500,
+            });
+          }
           break;
       }
     });
