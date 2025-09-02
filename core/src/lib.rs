@@ -1,5 +1,3 @@
-pub mod room_service;
-
 pub mod input {
     pub mod keyboard;
     pub mod mouse;
@@ -16,6 +14,10 @@ pub mod graphics {
     pub mod direct_composition;
 }
 
+pub mod room_service {
+    pub mod room_service;
+}
+
 pub mod utils {
     pub mod geometry;
     pub mod svg_renderer;
@@ -29,7 +31,7 @@ use input::keyboard::{KeyboardController, KeyboardLayout};
 use input::mouse::CursorController;
 use log::{debug, error};
 use overlay_window::OverlayWindow;
-use room_service::RoomService;
+use room_service::room_service::RoomService;
 use socket_lib::{
     AvailableContentMessage, CaptureContent, CursorSocket, Message, ScreenShareMessage,
 };
@@ -759,8 +761,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: Room service created: {room_service:?}");
                 self.room_service = Some(room_service.unwrap());
             }
-            UserEvent::ControllerTakesScreenShare => {
-                log::info!("user_event: Controller takes screen share");
+            UserEvent::ScreenShareTrackPublished => {
+                log::info!("user_event: Screen share track published from another participant");
                 self.stop_screenshare();
             }
             UserEvent::ParticipantInControl(participant) => {
@@ -882,7 +884,7 @@ pub enum UserEvent {
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
     LivekitServerUrl(String),
-    ControllerTakesScreenShare,
+    ScreenShareTrackPublished,
     ParticipantInControl(String),
     CallStarted(String),
     CallEnded,

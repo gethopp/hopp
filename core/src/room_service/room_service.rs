@@ -1,7 +1,10 @@
+#[path = "livekit_client.rs"]
+mod livekit_client;
+
 use std::sync::Arc;
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
-use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
+use livekit::track::{LocalTrack, LocalVideoTrack, RemoteTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
@@ -10,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
+
+use livekit_client::VideoClient;
 
 use crate::{ParticipantData, UserEvent};
 
@@ -73,6 +78,7 @@ struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
+    video_client: Mutex<Option<VideoClient>>,
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -122,6 +128,7 @@ impl RoomService {
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
+            video_client: Mutex::new(None),
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -402,9 +409,13 @@ async fn room_service_commands(
                 };
 
                 let user_sid = room.local_participant().sid().as_str().to_string();
-                // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
-                tokio::spawn(handle_room_events(rx, event_loop_proxy, user_sid));
+                tokio::spawn(handle_room_events(
+                    rx,
+                    event_loop_proxy,
+                    user_sid,
+                    inner.clone(),
+                ));
 
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
@@ -747,6 +758,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
+    inner: Arc<RoomServiceInner>,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -880,14 +892,31 @@ async fn handle_room_events(
                 let name = participant.name();
                 let participant_id = participant.identity().as_str().to_string();
                 if participant_id.contains("video") {
-                    log::info!("handle_room_events: Controller {name} takes screen share");
+                    log::info!("handle_room_events: {name} takes screen share");
                     if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ControllerTakesScreenShare)
+                        event_loop_proxy.send_event(UserEvent::ScreenShareTrackPublished)
                     {
                         log::error!(
-                            "handle_room_events: Failed to send controller takes screen share event: {e:?}"
+                            "handle_room_events: Failed to send screen share track published event: {e:?}"
                         );
                     }
+                }
+            }
+            RoomEvent::TrackSubscribed {
+                track,
+                publication: _,
+                participant: _,
+            } => {
+                log::info!("handle_room_events: Track subscribed: {track:?}");
+                if let RemoteTrack::Video(video_track) = track {
+                    if video_track.source() != TrackSource::Screenshare {
+                        log::info!("handle_room_events: Track source is not screenshare, video client not created");
+                        continue;
+                    }
+
+                    let video_client = VideoClient::new(video_track.rtc_track());
+                    let mut inner_video_client = inner.video_client.lock().await;
+                    *inner_video_client = Some(video_client);
                 }
             }
             _ => {}
