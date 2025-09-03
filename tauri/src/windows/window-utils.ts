@@ -9,13 +9,13 @@ getVersion().then((version) => {
   appVersion = version;
 });
 
-const createScreenShareWindow = async (videoToken: string) => {
+const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
   const URL = `screenshare.html?videoToken=${videoToken}`;
 
   // Check if there is already a window open,
   // then focus on it and bring it to the front
   const isWindowOpen = await WebviewWindow.getByLabel("screenshare");
-  if (isWindowOpen) {
+  if (isWindowOpen && bringToFront) {
     await isWindowOpen.setFocus();
     return;
   }

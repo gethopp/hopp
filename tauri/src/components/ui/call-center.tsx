@@ -433,7 +433,7 @@ function ScreensharingEventListener({
 
     if (trackFound) {
       updateRole(ParticipantRole.CONTROLLER);
-      tauriUtils.createScreenShareWindow(callTokens.videoToken);
+      tauriUtils.createScreenShareWindow(callTokens.videoToken, false);
     } else if (screenshareTrackFound) {
       if (!trackFound && callTokens?.role === ParticipantRole.CONTROLLER) {
         tauriUtils.closeScreenShareWindow();
