@@ -21,6 +21,8 @@ smappservice-rs = "0.1.2"
 accessibility-sys = "0.2.0"
 av-foundation = "0.5.2"
 core-graphics = "0.24.0"
+cocoa = "0.26.1"
+objc = "0.2.7"
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "2.0.0", features = ["deep-link"] }
@@ -57,6 +59,7 @@ sentry_utils = { path = "../../core/sentry_utils" }
 thiserror = "2.0.12"
 sysinfo = "0.35.2"
 tauri-plugin-opener = "2"
+window-vibrancy = "0.6.0"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

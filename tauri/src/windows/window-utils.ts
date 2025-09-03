@@ -66,24 +66,14 @@ const createContentPickerWindow = async (videoToken: string) => {
 };
 
 const createCameraWindow = async (cameraToken: string) => {
-  const URL = `camera.html?cameraToken=${cameraToken}`;
-
   if (isTauri) {
-    const newWindow = new WebviewWindow("camera", {
-      width: 400,
-      height: 400,
-      url: URL,
-      hiddenTitle: true,
-      titleBarStyle: "overlay",
-      resizable: true,
-      alwaysOnTop: false,
-      visible: true,
-      title: "Camera",
-    });
-    newWindow.once("tauri://window-created", () => {
-      newWindow.setFocus();
-    });
+    try {
+      await invoke("create_camera_window", { cameraToken });
+    } catch (error) {
+      console.error("Failed to create camera window:", error);
+    }
   } else {
+    const URL = `camera.html?cameraToken=${cameraToken}`;
     window.open(URL);
   }
 };
@@ -212,7 +202,6 @@ const getScreenSharePermission = async () => {
 const getCameraPermission = async () => {
   return await invoke<boolean>("get_camera_permission");
 };
-
 
 const hideTrayIconInstruction = async () => {
   await invoke("skip_tray_notification_selection_window");

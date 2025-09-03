@@ -8,9 +8,10 @@ use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
-    Emitter,
+    Emitter, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use window_vibrancy::{apply_blur, apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -478,6 +479,66 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
     data.livekit_server_url.clone()
 }
 
+#[tauri::command]
+async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
+    log::info!("create_camera_window with token: {}", camera_token);
+
+    let url = format!("camera.html?cameraToken={}", camera_token);
+
+    let camera_window = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
+        .title("Camera")
+        .inner_size(160.0, 365.0)
+        .resizable(false)
+        .always_on_top(false)
+        .visible(false) // Start hidden to apply effects before showing
+        .transparent(true)
+        .hidden_title(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .decorations(false)
+        .shadow(true)
+        .build()
+        .map_err(|e| format!("Failed to create camera window: {}", e))?;
+
+    // Clone the window for the main thread closure
+    let window_clone = camera_window.clone();
+
+    // Apply vibrancy effects on the main thread
+    camera_window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "macos")]
+            {
+                if let Err(e) = apply_vibrancy(
+                    &window_clone,
+                    NSVisualEffectMaterial::HudWindow,
+                    Some(NSVisualEffectState::Active),
+                    Some(16.0),
+                ) {
+                    log::warn!("Failed to apply vibrancy to camera window: {}", e);
+                }
+
+                set_window_corner_radius(&window_clone, 16.0);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
+                    log::warn!("Failed to apply blur to camera window: {}", e);
+                }
+            }
+
+            // Show and focus the window after applying effects
+            if let Err(e) = window_clone.show() {
+                log::error!("Failed to show camera window: {}", e);
+            }
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus camera window: {}", e);
+            }
+        })
+        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
+}
+
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -813,6 +874,7 @@ fn main() {
             get_livekit_url,
             get_camera_permission,
             open_camera_settings,
+            create_camera_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -890,4 +952,28 @@ fn main() {
         }
         _ => {}
     });
+}
+
+// Custom implementation to add border radius to the camera window
+#[cfg(target_os = "macos")]
+use cocoa::{appkit::NSView, base::id};
+
+#[cfg(target_os = "macos")]
+use objc::{msg_send, sel, sel_impl};
+
+#[cfg(target_os = "macos")]
+fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
+    window
+        .with_webview(move |webview| {
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let ns_window = webview.ns_window() as id;
+                let content_view: id = msg_send![ns_window, contentView];
+                let _: () = msg_send![content_view, setWantsLayer: true];
+                let layer: id = msg_send![content_view, layer];
+                let _: () = msg_send![layer, setCornerRadius: radius];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+            }
+        })
+        .unwrap();
 }

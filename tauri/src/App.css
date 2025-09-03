@@ -399,5 +399,8 @@ button {
 
 .camera-body {
   overflow: hidden;
-  background-color: theme("colors.slate.900");
+  /* filter: blur(5px); */
+  /* background-color: theme("colors.slate.900" / 50%); */
+  /* backdrop-filter: saturate(180%) blur(50px); */
+  /* background-color: rgba(255, 255, 255, 0.2); */
 }
