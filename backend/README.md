@@ -21,7 +21,7 @@ task compose-up
 The to run a local server, which compiles the code and starts the server:
 
 ```
-task start-dev
+task dev
 ```
 
 ## Type-safe code generation
