@@ -62,7 +62,6 @@ function Window() {
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getVideoTokenParam();
-  const { callTokens, setCallTokens } = useStore();
 
   useEffect(() => {
     if (!hasFetched) {

@@ -4,12 +4,10 @@ import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
-import { URLS } from "@/constants";
 import { sounds } from "@/constants/sounds";
 import { socketService } from "@/services/socket";
 import {
   AudioTrack,
-  LiveKitRoom,
   ParticipantTile,
   StartAudio,
   useLocalParticipant,
@@ -431,21 +429,26 @@ function ScreensharingEventListener({
       }
     }
 
+    let newRole: ParticipantRole;
     if (trackFound) {
-      updateRole(ParticipantRole.CONTROLLER);
-      tauriUtils.createScreenShareWindow(callTokens.videoToken, false);
+      newRole = ParticipantRole.CONTROLLER;
     } else if (screenshareTrackFound) {
-      if (!trackFound && callTokens?.role === ParticipantRole.CONTROLLER) {
-        tauriUtils.closeScreenShareWindow();
-        tauriUtils.setDockIconVisible(false);
-      }
-      updateRole(ParticipantRole.SHARER);
+      newRole = ParticipantRole.SHARER;
     } else {
-      if (!trackFound && callTokens?.role === ParticipantRole.CONTROLLER) {
+      newRole = ParticipantRole.NONE;
+    }
+
+    if (callTokens?.role !== newRole) {
+      if (callTokens?.role === ParticipantRole.CONTROLLER && !trackFound) {
         tauriUtils.closeScreenShareWindow();
         tauriUtils.setDockIconVisible(false);
       }
-      updateRole(ParticipantRole.NONE);
+
+      if (newRole === ParticipantRole.CONTROLLER) {
+        tauriUtils.createScreenShareWindow(callTokens.videoToken, false);
+      }
+
+      updateRole(newRole);
     }
   }, [tracks]);
   return <div />;
