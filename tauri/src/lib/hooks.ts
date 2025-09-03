@@ -44,7 +44,7 @@ export const useDisableNativeContextMenu = () => {
 
     document.addEventListener("contextmenu", (event) => {
       if (import.meta.env.MODE === "development") return;
-      if (!isDevToolsEnabled) return;
+      if (isDevToolsEnabled) return;
       event.preventDefault();
     });
   }, []);
