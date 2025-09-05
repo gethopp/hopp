@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import clsx from "clsx";
 import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export function CallCenter() {
   const { callTokens } = useStore();
@@ -99,13 +100,16 @@ export function ConnectedActions({ token }: { token: string }) {
     });
   }, [callTokens, setCallTokens]);
 
-  const handleRoleChange = useCallback((value: ParticipantRole) => {
-    if (!callTokens) return;
-    setCallTokens({
-      ...callTokens,
-      role: value,
-    });
-  }, [callTokens]);
+  const handleRoleChange = useCallback(
+    (value: ParticipantRole) => {
+      if (!callTokens) return;
+      setCallTokens({
+        ...callTokens,
+        role: value,
+      });
+    },
+    [callTokens],
+  );
 
   // Stop call when teammate disconnects
   useEffect(() => {
@@ -118,10 +122,7 @@ export function ConnectedActions({ token }: { token: string }) {
 
   return (
     <>
-      <ScreensharingEventListener
-        callTokens={callTokens}
-        updateRole={handleRoleChange}
-      />
+      <ScreensharingEventListener callTokens={callTokens} updateRole={handleRoleChange} />
       {/* <ConnectionsHealthDebug /> */}
       <div
         className={clsx("gap-2 px-4 flex-nowrap grid mb-4", {
@@ -157,7 +158,7 @@ export function ConnectedActions({ token }: { token: string }) {
                 className="w-full border-gray-500 text-gray-600 flex flex-row gap-2"
                 variant="gradient-white"
                 onClick={() => {
-                  tauriUtils.createScreenShareWindow(callTokens.videoToken)
+                  tauriUtils.createScreenShareWindow(callTokens.videoToken);
                 }}
               >
                 <HiOutlineEye className="size-4" />
@@ -338,12 +339,28 @@ function MicrophoneIcon() {
   );
 }
 
-function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState | null, setCallTokens: (callTokens: CallState | null) => void }) {
-  const toggleScreenShare = useCallback(() => {
+function ScreenShareIcon({
+  callTokens,
+  setCallTokens,
+}: {
+  callTokens: CallState | null;
+  setCallTokens: (callTokens: CallState | null) => void;
+}) {
+  const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
+      // Check if sharing window is already open, and if so, focus on it
+      const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
+      if (isWindowOpen) {
+        // There might be a case that all old window with a call token was open:
+        // https://github.com/tauri-apps/tauri/issues/6539
+        // We cannot get the URL for the time being to know if we need to invalidate that window or not
+        // But should be no-op as when a call changes (or tokens change) we close all windows
+        await isWindowOpen.setFocus();
+        return;
+      }
       tauriUtils.createContentPickerWindow(callTokens.videoToken);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
@@ -378,7 +395,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
     >
       {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
     </ToggleIconButton>
-  )
+  );
 }
 
 const ListenToRemoteAudio = () => {
