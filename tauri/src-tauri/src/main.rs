@@ -485,18 +485,26 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 
     let url = format!("camera.html?cameraToken={}", camera_token);
 
-    let camera_window = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
+    let mut window_builder = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
         .title("Camera")
         .inner_size(160.0, 365.0)
         .resizable(false)
         .always_on_top(false)
         .visible(false) // Start hidden to apply effects before showing
         .transparent(true)
-        .hidden_title(true)
         .always_on_top(true)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .decorations(false)
-        .shadow(true)
+        .shadow(true);
+
+    // Apply macOS-specific configurations
+    #[cfg(target_os = "macos")]
+    {
+        window_builder = window_builder
+            .hidden_title(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay);
+    }
+
+    let camera_window = window_builder
         .build()
         .map_err(|e| format!("Failed to create camera window: {}", e))?;
 

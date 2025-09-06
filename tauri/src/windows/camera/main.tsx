@@ -73,9 +73,10 @@ function ConsumerComponent() {
         )}
         {tracks.map((track) => {
           return (
+            <div className="overflow-hidden rounded-lg" key={track.sid}>           
             <VideoTrack
               trackRef={track}
-              className="rounded-lg object-cover"
+              className="rounded-lg object-cover overflow-hidden"
               style={{
                 aspectRatio: "1/1",
                 width: "140px",
@@ -88,6 +89,7 @@ function ConsumerComponent() {
                   track?.participant?.isSpeaking ? "1px solid rgba(157, 253, 49, 0.8)" : "1px solid rgba(0, 0, 0, 0.1)",
               }}
             />
+             </div>
           );
         })}
       </div>
