@@ -489,12 +489,11 @@ function CameraIcon() {
   const { localParticipant } = useLocalParticipant();
 
   const pubUnpubTrack = useCallback(
-    async (hasCameraEnabled: boolean) => {
+    async (hasCameraEnabled: boolean, devicesLength: number) => {
       if (!localParticipant) return;
 
-      if (hasCameraEnabled) {
+      if (hasCameraEnabled && devicesLength > 0) {
         try {
-
           await localParticipant.setCameraEnabled(
             true,
             {
@@ -519,25 +518,17 @@ function CameraIcon() {
           localParticipant.unpublishTrack(cameraTrack.track);
         }
       }
+
+      if (hasCameraEnabled && devicesLength === 0) {
+        toast.error("Your camera stopped working, and is not being shared anymore.", {
+          duration: 2500,
+        });
+
+        handleCameraToggle();
+      }
     },
     [localParticipant],
   );
-
-  useEffect(() => {
-    if (roomConnected) {
-      pubUnpubTrack(hasCameraEnabled);
-    }
-  }, [hasCameraEnabled, localParticipant, roomConnected]);
-
-  const handleCameraToggle = () => {
-    updateCallTokens({
-      hasCameraEnabled: !hasCameraEnabled,
-    });
-
-    if (!hasCameraEnabled) {
-      tauriUtils.createCameraWindow(callTokens?.cameraToken || "");
-    }
-  };
 
   const errorCallback = useCallback(
     (error: Error) => {
@@ -559,6 +550,22 @@ function CameraIcon() {
     onError: errorCallback,
   });
 
+  useEffect(() => {
+    if (roomConnected) {
+      pubUnpubTrack(hasCameraEnabled, cameraDevices.length);
+    }
+  }, [hasCameraEnabled, localParticipant, roomConnected, cameraDevices]);
+
+  const handleCameraToggle = () => {
+    updateCallTokens({
+      hasCameraEnabled: !hasCameraEnabled,
+    });
+
+    if (!hasCameraEnabled) {
+      tauriUtils.createCameraWindow(callTokens?.cameraToken || "");
+    }
+  };
+
   const handleCameraChange = (value: string) => {
     console.debug("Selected camera: ", value);
     setActiveCameraDevice(value);
@@ -571,6 +578,7 @@ function CameraIcon() {
   };
 
   useEffect(() => {
+    console.log("tracks", tracks);
     if (tracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
     } else {

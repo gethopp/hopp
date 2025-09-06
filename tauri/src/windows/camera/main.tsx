@@ -47,6 +47,7 @@ function ConsumerComponent() {
   });
 
   useEffect(() => {
+    console.log("tracks ", tracks);
     // Set window size appropriately
     CameraWindowSize({ numOfTracks: tracks.length });
   }, [tracks]);
