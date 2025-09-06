@@ -28,7 +28,7 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className }: Hopp
       </Avatar>
       {status && (
         <div
-          className={clsx("absolute bottom-0 right-0 size-2 outline outline-3 outline-white rounded-full", {
+          className={clsx("absolute bottom-0 right-0 size-2 outline-solid outline-3 outline-white rounded-full", {
             "bg-emerald-500": status === "online",
             "bg-red-400": status === "offline",
           })}
