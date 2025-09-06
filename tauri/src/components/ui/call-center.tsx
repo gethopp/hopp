@@ -471,7 +471,6 @@ function ScreensharingEventListener({
 }
 
 function CameraIcon() {
-  // TODO: If there are no available cameras
   const { updateCallTokens, callTokens } = useStore();
   const hasCameraEnabled = callTokens?.hasCameraEnabled || false;
   const [retry, setRetry] = useState(0);
@@ -568,12 +567,14 @@ function CameraIcon() {
     }
   }, [tracks]);
 
+  const isDisabled = cameraDevices.length === 0;
   return (
     <ToggleIconButton
       onClick={handleCameraToggle}
       icon={hasCameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
-      state={hasCameraEnabled ? "active" : "neutral"}
+      state={hasCameraEnabled ? "active" : isDisabled ? "deactivated" : "neutral"}
       size="unsized"
+      disabled={isDisabled}
       className="flex-1 min-w-0 text-slate-600"
       cornerIcon={
         <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
