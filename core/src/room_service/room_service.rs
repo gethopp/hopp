@@ -3,6 +3,7 @@ mod livekit_client;
 
 use std::sync::Arc;
 
+use livekit::id::TrackSid;
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::track::{LocalTrack, LocalVideoTrack, RemoteTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
@@ -47,6 +48,7 @@ enum RoomServiceCommand {
         width: u32,
         height: u32,
     },
+    UnpublishTrack,
     PublishSharerLocation(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
@@ -78,7 +80,8 @@ struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
-    video_client: Mutex<Option<VideoClient>>,
+    screen_share_sid: Mutex<Option<TrackSid>>,
+    video_client: std::sync::Mutex<Option<VideoClient>>,
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -128,7 +131,8 @@ impl RoomService {
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
-            video_client: Mutex::new(None),
+            screen_share_sid: Mutex::new(None),
+            video_client: std::sync::Mutex::new(None),
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -221,6 +225,17 @@ impl RoomService {
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
+        }
+    }
+
+    /// Unpublishes a track from the room, this will block until the track is unpublished.
+    pub fn unpublish_track(&self) {
+        log::info!("unpublish_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnpublishTrack);
+        if let Err(e) = res {
+            log::error!("unpublish_track: Failed to send command: {e:?}");
         }
     }
 
@@ -324,6 +339,17 @@ impl RoomService {
         if let Err(e) = res {
             log::error!("publish_participant_in_control: Failed to send command: {e:?}");
         }
+    }
+
+    /// Returns the port of the video client.
+    pub fn get_video_client_port(&self) -> u16 {
+        log::info!("get_video_client_port");
+        let video_client = self.inner.video_client.lock().unwrap();
+        if video_client.is_none() {
+            log::warn!("get_video_client_port: Video client not found");
+            return 0;
+        }
+        video_client.as_ref().unwrap().port()
     }
 }
 
@@ -432,6 +458,8 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
+                log::info!("room {room:?}");
+
                 let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
                 let track = LocalVideoTrack::create_video_track(
                     VIDEO_TRACK_NAME,
@@ -476,6 +504,28 @@ async fn room_service_commands(
                 let res = tx.send(RoomServiceCommandResult::Success);
                 if let Err(e) = res {
                     log::error!("room_service_commands: Failed to send result: {e:?}");
+                }
+            }
+            RoomServiceCommand::UnpublishTrack => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: unpublish track Room doesn't exist");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let mut screen_share_sid = inner.screen_share_sid.lock().await;
+                if screen_share_sid.is_none() {
+                    log::warn!(
+                        "room_service_commands: unpublish track screen share sid doesn't exist"
+                    );
+                    continue;
+                }
+                let screen_share_sid = screen_share_sid.take().unwrap();
+
+                let local_participant = room.local_participant();
+                let res = local_participant.unpublish_track(&screen_share_sid).await;
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to unpublish track: {e:?}");
                 }
             }
             RoomServiceCommand::DestroyRoom => {
@@ -854,6 +904,9 @@ async fn handle_room_events(
 
                 let name = participant.name();
                 let participant_id = participant.identity().as_str().to_string();
+                log::info!(
+                    "handle_room_events: Participant connected: {name:?}, {participant_id:?}"
+                );
                 if participant_id.contains("audio") || name.is_empty() {
                     log::debug!("handle_room_events: Skipping participant: {participant:?}");
                     continue;
@@ -884,28 +937,10 @@ async fn handle_room_events(
                     );
                 }
             }
-            RoomEvent::TrackPublished {
-                publication,
-                participant,
-            } => {
-                log::info!("handle_room_events: Track published: {publication:?}, {participant:?}");
-                let name = participant.name();
-                let participant_id = participant.identity().as_str().to_string();
-                if participant_id.contains("video") {
-                    log::info!("handle_room_events: {name} takes screen share");
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ScreenShareTrackPublished)
-                    {
-                        log::error!(
-                            "handle_room_events: Failed to send screen share track published event: {e:?}"
-                        );
-                    }
-                }
-            }
             RoomEvent::TrackSubscribed {
                 track,
                 publication: _,
-                participant: _,
+                participant,
             } => {
                 log::info!("handle_room_events: Track subscribed: {track:?}");
                 if let RemoteTrack::Video(video_track) = track {
@@ -914,9 +949,74 @@ async fn handle_room_events(
                         continue;
                     }
 
-                    let video_client = VideoClient::new(video_track.rtc_track());
-                    let mut inner_video_client = inner.video_client.lock().await;
-                    *inner_video_client = Some(video_client);
+                    let name = participant.name();
+                    log::info!("handle_room_events: {name} takes screen share");
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ScreenShareTrackPublished)
+                    {
+                        log::error!(
+                            "handle_room_events: Failed to send screen share track published event: {e:?}"
+                        );
+                    }
+
+                    log::info!("handle_room_events: get inner room");
+                    let room = inner.room.lock().await;
+                    let room = room.as_ref().unwrap();
+
+                    log::info!("handle_room_events: create video client");
+                    let video_client = VideoClient::new(
+                        video_track.rtc_track(),
+                        video_track.name(),
+                        room.local_participant(),
+                    )
+                    .await;
+                    if let Err(e) = video_client {
+                        log::error!("handle_room_events: Failed to create video client: {e:?}");
+                        continue;
+                    }
+                    let mut inner_video_client = inner.video_client.lock().unwrap();
+                    *inner_video_client = Some(video_client.unwrap());
+                }
+            }
+            RoomEvent::TrackUnsubscribed {
+                track,
+                publication: _,
+                participant: _,
+            } => {
+                log::info!("handle_room_events: Track unsubscribed: {track:?}");
+                if let RemoteTrack::Video(video_track) = track {
+                    if video_track.source() != TrackSource::Screenshare {
+                        log::info!("handle_room_events: Track source is not screenshare, video client not destroyed");
+                        continue;
+                    }
+
+                    let mut inner_video_client = inner.video_client.lock().unwrap();
+                    if inner_video_client.is_some()
+                        && inner_video_client.as_ref().unwrap().track() == video_track.name()
+                    {
+                        log::info!("handle_room_events: Destroying video client");
+                        let _ = inner_video_client.take();
+                    }
+                }
+            }
+            RoomEvent::Disconnected { reason } => {
+                log::info!("handle_room_events: Disconnected: {reason:?}");
+            }
+            RoomEvent::LocalTrackPublished {
+                track,
+                publication: _,
+                participant: _,
+            } => {
+                log::info!("handle_room_events: Local track published: {track:?}");
+                if let LocalTrack::Video(video_track) = track {
+                    if video_track.source() != TrackSource::Screenshare {
+                        log::info!(
+                            "handle_room_events: Track source is not screenshare, sid not set"
+                        );
+                        continue;
+                    }
+                    let mut inner_screen_share_sid = inner.screen_share_sid.lock().await;
+                    *inner_screen_share_sid = Some(video_track.sid());
                 }
             }
             _ => {}

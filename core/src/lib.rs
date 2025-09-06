@@ -342,6 +342,7 @@ impl<'a> Application<'a> {
 
     fn stop_screenshare(&mut self) {
         log::info!("stop_screenshare");
+        self.room_service.as_ref().unwrap().unpublish_track();
         let screen_capturer = self.screen_capturer.lock();
         if let Err(e) = screen_capturer {
             log::error!("stop_screenshare: Error locking screen capturer: {e:?}");
@@ -511,6 +512,7 @@ impl<'a> Application<'a> {
     /// - May create new threads for screen capture polling
     /// - Resets all session-specific state to initial values
     fn end_call(&mut self) {
+        log::info!("end_call");
         let capturer_valid = {
             let screen_capturer = self.screen_capturer.lock();
             screen_capturer.is_ok()
@@ -574,7 +576,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CursorPosition(x, y, sid) => {
                 debug!("user_event: cursor position: {x} {y} {sid}");
                 if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor position");
+                    // TODO: Improve this
+                    //log::warn!("user_event: remote control is none cursor position");
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
@@ -723,7 +726,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantConnected(participant) => {
                 log::info!("user_event: Participant connected: {participant:?}");
                 if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant connected");
+                    log::warn!("user_event: ParticipantConnected remote control is none");
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
@@ -740,7 +743,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantDisconnected(participant) => {
                 log::info!("user_event: Participant disconnected: {participant:?}");
                 if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant disconnected");
+                    log::warn!("user_event: ParticipantDisconnected remote control is none");
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
@@ -802,6 +805,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CallEnded => {
                 debug!("user_event: Ending call");
                 self.end_call();
+            }
+            UserEvent::VideoClientPort => {
+                log::info!("user_event: Video client port");
+                let mut port = 0;
+                if let Some(room_service) = self.room_service.as_ref() {
+                    port = room_service.get_video_client_port();
+                } else {
+                    log::warn!("user_event: room service is none video client port");
+                }
+
+                if let Err(e) = self
+                    .socket
+                    .send_message(Message::VideoClientPortResult(port))
+                {
+                    log::error!(
+                        "user_event: Error sending video client port result: {:?}",
+                        e
+                    );
+                }
             }
         }
     }
@@ -888,6 +910,7 @@ pub enum UserEvent {
     ParticipantInControl(String),
     CallStarted(String),
     CallEnded,
+    VideoClientPort,
 }
 
 pub struct RenderEventLoop {
@@ -994,6 +1017,7 @@ impl RenderEventLoop {
                 Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
                 Message::CallStarted { token } => UserEvent::CallStarted(token),
                 Message::CallEnded => UserEvent::CallEnded,
+                Message::VideoClientPort => UserEvent::VideoClientPort,
                 _ => {
                     log::error!("RenderEventLoop::run Unknown message: {message:?}");
                     continue;

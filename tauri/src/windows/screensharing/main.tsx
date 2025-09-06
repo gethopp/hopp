@@ -24,6 +24,7 @@ function Window() {
   useDisableNativeContextMenu();
   const { setParentKeyTrap, setVideoToken, videoToken } = useSharingContext();
   const [livekitUrl, setLivekitUrl] = useState<string>("");
+  const [port, setPort] = useState<number>(0);
 
   useEffect(() => {
     const videoTokenFromUrl = tauriUtils.getVideoTokenParam();
@@ -42,6 +43,12 @@ function Window() {
       await tauriUtils.setDockIconVisible(true);
     }
 
+    async function getPort() {
+      const port = await tauriUtils.getStreamWsPort();
+      setPort(port);
+    }
+    getPort();
+
     enableDock();
   }, []);
 
@@ -56,7 +63,7 @@ function Window() {
         <ScreenSharingControls />
       </div>
       <div className="content px-1 pb-0.5 pt-[10px] overflow-hidden">
-        {videoToken && <SharingScreen serverURL={livekitUrl} token={videoToken} />}
+        <SharingScreen serverURL={""} token={""} port={port}/>
       </div>
     </div>
   );

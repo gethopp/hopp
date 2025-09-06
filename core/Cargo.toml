@@ -60,6 +60,7 @@ log = "0.4.22"
 base64 = "0.22.1"
 livekit = { git = "https://github.com/gethopp/rust-sdks", branch = "patches", features = ["native-tls"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1.17"
 dirs = "5.0.1"
 socket_lib = { path = "socket_lib" }
 sentry_utils = { path = "sentry_utils" }
@@ -67,3 +68,5 @@ thiserror = "2.0.12"
 sysinfo = "0.35.2"
 resvg = "0.45.1"
 fontdb = "0.23.0"
+tokio-tungstenite = "0.27"
+futures-util = "0.3.31"

@@ -487,6 +487,25 @@ fn call_ended(app: tauri::AppHandle) {
     }
 }
 
+#[tauri::command]
+fn stream_ws_port(app: tauri::AppHandle) -> u16 {
+    log::info!("stream_ws_port");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.socket.send_message(Message::VideoClientPort) {
+        log::error!("stream_ws_port: failed to send message: {e:?}");
+        return 0;
+    }
+
+    let res = data
+        .socket
+        .receive_message_with_timeout(std::time::Duration::from_secs(10));
+    match res.unwrap() {
+        Message::VideoClientPortResult(port) => port,
+        _ => 0,
+    }
+}
+
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -821,6 +840,7 @@ fn main() {
             get_livekit_url,
             call_started,
             call_ended,
+            stream_ws_port,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

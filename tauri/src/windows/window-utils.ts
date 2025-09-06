@@ -21,7 +21,9 @@ export interface CaptureContent {
 export type ResolutionKey = "1080p" | "2K" | "1440p" | "2160p" | "4K";
 
 const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
-  const URL = `screenshare.html?videoToken=${videoToken}`;
+  const streamWsPort = await getStreamWsPort();
+
+  const URL = `screenshare.html?streamWsPort=${streamWsPort}`;
 
   // Check if there is already a window open,
   // then focus on it and bring it to the front
@@ -232,6 +234,10 @@ const getLivekitUrl = async () => {
   return url;
 };
 
+const getStreamWsPort = async () => {
+  return await invoke<number>("stream_ws_port");
+};
+
 export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
@@ -261,4 +267,5 @@ export const tauriUtils = {
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,
+  getStreamWsPort,
 };

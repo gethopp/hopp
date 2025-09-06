@@ -113,6 +113,8 @@ pub enum Message {
     CallStarted { token: String },
     CallStartedResult(bool),
     CallEnded,
+    VideoClientPort,
+    VideoClientPortResult(u16),
 }
 
 #[derive(Debug)]
