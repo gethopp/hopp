@@ -77,6 +77,7 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 	// Create an access token (make sure these are loaded from your config)
 	videoID := fmt.Sprintf("room:%s:%s:video", roomName, participant.ID)
 	audioID := fmt.Sprintf("room:%s:%s:audio", roomName, participant.ID)
+	cameraID := fmt.Sprintf("room:%s:%s:camera", roomName, participant.ID)
 
 	video := auth.
 		NewAccessToken(s.Config.Livekit.APIKey, s.Config.Livekit.Secret).
@@ -98,6 +99,16 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 			Room:     roomName,
 		})
 
+	camera := auth.
+		NewAccessToken(s.Config.Livekit.APIKey, s.Config.Livekit.Secret).
+		SetIdentity(cameraID).
+		SetValidFor(24 * time.Hour).
+		SetName(participant.GetDisplayName() + " " + "camera").
+		SetVideoGrant(&auth.VideoGrant{
+			RoomJoin: true,
+			Room:     roomName,
+		})
+
 	videoToken, err := video.ToJWT()
 	if err != nil {
 		return common.LivekitTokenSet{}, fmt.Errorf("creating video token: %w", err)
@@ -108,10 +119,16 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 		return common.LivekitTokenSet{}, fmt.Errorf("creating audio token: %w", err)
 	}
 
+	cameraToken, err := camera.ToJWT()
+	if err != nil {
+		return common.LivekitTokenSet{}, fmt.Errorf("creating camera token: %w", err)
+	}
+
 	// Return the tokens
 	return common.LivekitTokenSet{
-		VideoToken: videoToken,
-		AudioToken: audioToken,
+		VideoToken:  videoToken,
+		AudioToken:  audioToken,
+		CameraToken: cameraToken,
 	}, nil
 }
 

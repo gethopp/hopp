@@ -65,6 +65,38 @@ const createContentPickerWindow = async (videoToken: string) => {
   }
 };
 
+const createCameraWindow = async (cameraToken: string) => {
+  const URL = `camera.html?cameraToken=${cameraToken}`;
+
+  if (isTauri) {
+    const newWindow = new WebviewWindow("camera", {
+      width: 400,
+      height: 400,
+      url: URL,
+      hiddenTitle: true,
+      titleBarStyle: "overlay",
+      resizable: true,
+      alwaysOnTop: false,
+      visible: true,
+      title: "Camera",
+    });
+    newWindow.once("tauri://window-created", () => {
+      newWindow.setFocus();
+    });
+  } else {
+    window.open(URL);
+  }
+};
+
+const closeCameraWindow = async () => {
+  if (isTauri) {
+    const cameraWindow = await WebviewWindow.getByLabel("camera");
+    if (cameraWindow) {
+      await cameraWindow.close();
+    }
+  }
+};
+
 const storeTokenBackend = async (token: string) => {
   if (isTauri) {
     try {
@@ -129,9 +161,9 @@ const closeContentPickerWindow = async () => {
   }
 };
 
-const getVideoTokenParam = () => {
+const getTokenParam = (param: string) => {
   const urlParams = new URLSearchParams(window.location.search);
-  return urlParams.get("videoToken");
+  return urlParams.get(param);
 };
 
 const endCallCleanup = async () => {
@@ -206,6 +238,8 @@ export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
   createContentPickerWindow,
+  createCameraWindow,
+  closeCameraWindow,
   showMainWindow,
   storeTokenBackend,
   getStoredToken,
@@ -214,7 +248,7 @@ export const tauriUtils = {
   endCallCleanup,
   hideTrayIconInstruction,
   setControllerCursor,
-  getVideoTokenParam,
+  getTokenParam,
   openAccessibilitySettings,
   openMicrophoneSettings,
   openScreenShareSettings,

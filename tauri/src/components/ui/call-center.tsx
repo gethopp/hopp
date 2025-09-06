@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { HiMiniComputerDesktop, HiOutlineMicrophone, HiOutlinePhoneXMark } from "react-icons/hi2";
+import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
@@ -15,7 +15,7 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { Track, RemoteParticipant, LocalTrack, ConnectionState, RoomEvent } from "livekit-client";
+import { Track, RemoteParticipant, LocalTrack, ConnectionState, RoomEvent, VideoPresets } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import clsx from "clsx";
 import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
+import { HiOutlinePhoneXMark } from "react-icons/hi2";
 
 export function CallCenter() {
   const { callTokens } = useStore();
@@ -50,7 +51,7 @@ export function CallCenter() {
         )}
       </div>
 
-      <ConnectedActions token={callTokens.audioToken} />
+      <ConnectedActions />
 
       {/* Horizontal line */}
       <Separator className="w-full" />
@@ -58,7 +59,7 @@ export function CallCenter() {
   );
 }
 
-export function ConnectedActions({ token }: { token: string }) {
+export function ConnectedActions() {
   const { callTokens, teammates, setCallTokens } = useStore();
   const posthog = usePostHog();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
@@ -147,8 +148,9 @@ export function ConnectedActions({ token }: { token: string }) {
           </div>
         )}
         <div className="flex flex-col gap-2 items-center col-span-8">
-          <div className="flex flex-row gap-2 w-full">
+          <div className="flex flex-row gap-4 w-full">
             <MicrophoneIcon />
+            <CameraIcon />
             <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
           </div>
           <div className="flex flex-col gap-2 w-full">
@@ -308,8 +310,10 @@ function MicrophoneIcon() {
           hasAudioEnabled: !hasAudioEnabled,
         });
       }}
-      icon={<HiOutlineMicrophone className="size-5" />}
+      icon={hasAudioEnabled ? <LuMic className="size-5" /> : <LuMicOff className="size-5" />}
       state={hasAudioEnabled ? "active" : "neutral"}
+      size="unsized"
+      className="flex-1 min-w-0"
       cornerIcon={
         <Select
           value={activeMicrophoneDeviceId}
@@ -333,7 +337,7 @@ function MicrophoneIcon() {
         </Select>
       }
     >
-      {hasAudioEnabled ? "Mute me" : "Unmute me"}
+      Mic
     </ToggleIconButton>
   );
 }
@@ -363,8 +367,10 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
   return (
     <ToggleIconButton
       onClick={toggleScreenShare}
-      icon={<HiMiniComputerDesktop className="size-5" />}
+      icon={callTokens?.role === ParticipantRole.SHARER ? <LuScreenShare className="size-5" /> : <LuScreenShareOff className="size-5" />}
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
+      size="unsized"
+      className="flex-1 min-w-0"
       cornerIcon={
         callTokens?.role === ParticipantRole.SHARER && (
           <button
@@ -376,7 +382,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
         )
       }
     >
-      {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
+      Screen
     </ToggleIconButton>
   )
 }
@@ -452,4 +458,109 @@ function ScreensharingEventListener({
     }
   }, [tracks]);
   return <div />;
+}
+
+function CameraIcon() {
+  // TODO: If there are no available cameras
+  const { updateCallTokens, callTokens } = useStore();
+  const hasCameraEnabled = callTokens?.hasCameraEnabled || false;
+  const [retry, setRetry] = useState(0);
+
+  const [roomConnected, setRoomConnected] = useState(false);
+  const room = useRoomContext();
+  useEffect(() => {
+    room.on(RoomEvent.Connected, () => {
+      setRoomConnected(true);
+    });
+  }, [room]);
+
+  const { localParticipant } = useLocalParticipant();
+  useEffect(() => {
+    if (roomConnected) {
+      localParticipant.setEnabledPublishCodecs
+      void localParticipant.setCameraEnabled(hasCameraEnabled,
+        {
+          deviceId: activeCameraDeviceId,
+          resolution: VideoPresets.h720.resolution,
+        },
+        {
+          videoCodec: 'h264'
+        }
+      );
+    }
+  }, [hasCameraEnabled, localParticipant, roomConnected]);
+
+
+
+  const handleCameraToggle = () => {
+    updateCallTokens({
+      hasCameraEnabled: !hasCameraEnabled,
+    });
+
+    if (!hasCameraEnabled) {
+      tauriUtils.createCameraWindow(callTokens?.cameraToken || "");
+    }
+  };
+
+  const errorCallback = useCallback(
+    (error: Error) => {
+      console.error("Error selecting camera: ", error);
+    },
+    [retry],
+  );
+
+  const {
+    devices: cameraDevices,
+    activeDeviceId: activeCameraDeviceId,
+    setActiveMediaDevice: setActiveCameraDevice,
+  } = useMediaDeviceSelect({
+    kind: "videoinput",
+    requestPermissions: true,
+    onError: errorCallback,
+  });
+
+  const handleCameraChange = (value: string) => {
+    console.debug("Selected camera: ", value);
+    setActiveCameraDevice(value);
+  };
+
+  const handleDropdownOpenChange = (open: boolean) => {
+    if (open) {
+      setRetry((prev) => prev + 1);
+    }
+  };
+
+  return (
+    <ToggleIconButton
+      onClick={handleCameraToggle}
+      icon={hasCameraEnabled ? <LuVideo className="size-5" /> : <LuVideoOff className="size-5" />}
+      state={hasCameraEnabled ? "active" : "neutral"}
+      size="unsized"
+      className="flex-1 min-w-0"
+      cornerIcon={
+        <Select
+          value={activeCameraDeviceId}
+          onValueChange={handleCameraChange}
+          onOpenChange={handleDropdownOpenChange}
+        >
+          <SelectTrigger className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-sm" />
+          <SelectPortal container={document.getElementsByClassName("container")[0]}>
+            <SelectContent align="center">
+              {cameraDevices.map((device) => {
+                return (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    <span className="text-xs truncate">
+                      {device.label || `Camera ${device.label.slice(0, 8)}...`}
+                    </span>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </SelectPortal>
+        </Select>
+      }
+    >
+      Cam
+    </ToggleIconButton>
+  );
 }

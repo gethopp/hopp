@@ -32,6 +32,7 @@ export default defineConfig(async (config) => {
           contentPicker: resolve(__dirname, "contentPicker.html"),
           permissions: resolve(__dirname, "permissions.html"),
           trayNotification: resolve(__dirname, "trayNotification.html"),
+          camera: resolve(__dirname, "camera.html"),
         },
       },
     },

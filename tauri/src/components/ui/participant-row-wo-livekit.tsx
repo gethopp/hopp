@@ -97,6 +97,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             ...data.payload,
             timeStarted: new Date(),
             hasAudioEnabled: true,
+            hasCameraEnabled: false,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
           });
