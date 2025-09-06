@@ -17,4 +17,9 @@ impl PermissionsTrait for PlatformPermissions {
         log::info!("Default microphone permission check");
         true
     }
+
+    fn camera() -> bool {
+        log::info!("Default camera permission check");
+        true
+    }
 }

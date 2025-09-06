@@ -119,6 +119,7 @@ export const PCallTokensMessage = z.object({
   payload: z.object({
     audioToken: z.string(),
     videoToken: z.string(),
+    cameraToken: z.string(),
     participant: z.string(),
   }),
 });

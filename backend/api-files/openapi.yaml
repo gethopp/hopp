@@ -471,11 +471,14 @@ paths:
                     type: string
                   videoToken:
                     type: string
+                  cameraToken:
+                    type: string
                   participant:
                     type: string
                 required:
                   - audioToken
                   - videoToken
+                  - cameraToken
                   - participant
 
   /api/auth/watercooler/anonymous:

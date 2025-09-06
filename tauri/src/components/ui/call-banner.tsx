@@ -60,6 +60,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           ...data.payload,
           timeStarted: new Date(),
           hasAudioEnabled: true,
+          hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
         });

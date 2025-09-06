@@ -777,6 +777,7 @@ export interface paths {
                         "application/json": {
                             audioToken: string;
                             videoToken: string;
+                            cameraToken: string;
                             participant: string;
                         };
                     };
