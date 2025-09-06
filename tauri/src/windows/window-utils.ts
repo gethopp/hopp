@@ -92,6 +92,7 @@ const closeCameraWindow = async () => {
     const cameraWindow = await WebviewWindow.getByLabel("camera");
     if (cameraWindow) {
       await cameraWindow.close();
+      await setDockIconVisible(false);
     }
   }
 };

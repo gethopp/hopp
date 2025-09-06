@@ -73,7 +73,7 @@ function ConsumerComponent() {
         )}
         {tracks.map((track) => {
           return (
-            <div className="overflow-hidden rounded-lg" key={track.sid}>           
+            <div className="overflow-hidden rounded-lg" key={track.sid}>
             <VideoTrack
               trackRef={track}
               className="rounded-lg object-cover overflow-hidden"

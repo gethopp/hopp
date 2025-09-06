@@ -419,7 +419,15 @@ fn set_dock_icon_visible(app: tauri::AppHandle, visible: bool) {
         if visible {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         } else {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let camera_window = app.get_webview_window("camera");
+            let screenshare_window = app.get_webview_window("screenshare");
+            let content_picker_window = app.get_webview_window("contentPicker");
+            if camera_window.is_none()
+                && screenshare_window.is_none()
+                && content_picker_window.is_none()
+            {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
         }
 
         {

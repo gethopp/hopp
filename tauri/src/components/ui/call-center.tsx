@@ -28,6 +28,7 @@ import clsx from "clsx";
 import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
+import toast from "react-hot-toast";
 
 export function CallCenter() {
   const { callTokens } = useStore();
@@ -376,7 +377,7 @@ function ScreenShareIcon({
       icon={
         callTokens?.role === ParticipantRole.SHARER ?
           <LuScreenShare className="size-4" />
-        : <LuScreenShareOff className="size-4" />
+          : <LuScreenShareOff className="size-4" />
       }
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       size="unsized"
@@ -492,16 +493,24 @@ function CameraIcon() {
       if (!localParticipant) return;
 
       if (hasCameraEnabled) {
-        localParticipant.setCameraEnabled(
-          true,
-          {
-            deviceId: activeCameraDeviceId,
-            resolution: VideoPresets.h720.resolution,
-          },
-          {
-            videoCodec: "h264",
-          },
-        );
+        try {
+
+          await localParticipant.setCameraEnabled(
+            true,
+            {
+              deviceId: activeCameraDeviceId,
+              resolution: VideoPresets.h720.resolution,
+            },
+            {
+              videoCodec: "h264",
+            },
+          );
+        } catch (error) {
+          console.error("Error selecting camera: ", error);
+          toast.error("Failed to select camera", {
+            duration: 2500,
+          });
+        }
       } else {
         const cameraTrack = localParticipant
           .getTrackPublications()
@@ -532,7 +541,10 @@ function CameraIcon() {
 
   const errorCallback = useCallback(
     (error: Error) => {
-      console.error("Error selecting camera: ", error);
+      console.error("Error initializing camera: ", error);
+      toast.error("Failed to initialize camera", {
+        duration: 2500,
+      });
     },
     [retry],
   );
