@@ -495,6 +495,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 
     let url = format!("camera.html?cameraToken={}", camera_token);
 
+    #[allow(unused_mut)]
     let mut window_builder = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
         .title("Camera")
         .inner_size(160.0, 365.0)
