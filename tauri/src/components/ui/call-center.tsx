@@ -15,7 +15,7 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { Track, RemoteParticipant, ConnectionState, RoomEvent, VideoPresets } from "livekit-client";
+import { Track, RemoteParticipant, ConnectionState, RoomEvent, VideoPresets, LocalTrack } from "livekit-client";
 import { useCallback, useEffect, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -476,6 +476,8 @@ function CameraIcon() {
   const hasCameraEnabled = callTokens?.hasCameraEnabled || false;
   const [retry, setRetry] = useState(0);
 
+  const tracks = useTracks([Track.Source.Camera], {});
+
   const [roomConnected, setRoomConnected] = useState(false);
   const room = useRoomContext();
   useEffect(() => {
@@ -485,19 +487,37 @@ function CameraIcon() {
   }, [room]);
 
   const { localParticipant } = useLocalParticipant();
+
+  const pubUnpubTrack = useCallback(
+    async (hasCameraEnabled: boolean) => {
+      if (!localParticipant) return;
+
+      if (hasCameraEnabled) {
+        localParticipant.setCameraEnabled(
+          true,
+          {
+            deviceId: activeCameraDeviceId,
+            resolution: VideoPresets.h720.resolution,
+          },
+          {
+            videoCodec: "h264",
+          },
+        );
+      } else {
+        const cameraTrack = localParticipant
+          .getTrackPublications()
+          .filter((track) => track.source === Track.Source.Camera)[0];
+        if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
+          localParticipant.unpublishTrack(cameraTrack.track);
+        }
+      }
+    },
+    [localParticipant],
+  );
+
   useEffect(() => {
     if (roomConnected) {
-      localParticipant.setEnabledPublishCodecs;
-      void localParticipant.setCameraEnabled(
-        hasCameraEnabled,
-        {
-          deviceId: activeCameraDeviceId,
-          resolution: VideoPresets.h720.resolution,
-        },
-        {
-          videoCodec: "h264",
-        },
-      );
+      pubUnpubTrack(hasCameraEnabled);
     }
   }, [hasCameraEnabled, localParticipant, roomConnected]);
 
@@ -538,6 +558,15 @@ function CameraIcon() {
       setRetry((prev) => prev + 1);
     }
   };
+
+  useEffect(() => {
+    if (tracks.length > 0) {
+      tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
+    } else {
+      // If there are 0 then close the window
+      tauriUtils.closeCameraWindow();
+    }
+  }, [tracks]);
 
   return (
     <ToggleIconButton

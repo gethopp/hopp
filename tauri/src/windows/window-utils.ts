@@ -78,6 +78,15 @@ const createCameraWindow = async (cameraToken: string) => {
   }
 };
 
+const ensureCameraWindowIsVisible = async (token: string) => {
+  if (isTauri) {
+    const cameraWindow = await WebviewWindow.getByLabel("camera");
+    if (!cameraWindow) {
+      await createCameraWindow(token);
+    }
+  }
+};
+
 const closeCameraWindow = async () => {
   if (isTauri) {
     const cameraWindow = await WebviewWindow.getByLabel("camera");
@@ -161,6 +170,7 @@ const endCallCleanup = async () => {
   await closeScreenShareWindow();
   await closeContentPickerWindow();
   await setDockIconVisible(false);
+  await closeCameraWindow();
 };
 
 const setControllerCursor = async (enabled: boolean) => {
@@ -237,6 +247,7 @@ export const tauriUtils = {
   closeScreenShareWindow,
   createContentPickerWindow,
   createCameraWindow,
+  ensureCameraWindowIsVisible,
   closeCameraWindow,
   showMainWindow,
   storeTokenBackend,

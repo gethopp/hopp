@@ -89,9 +89,8 @@ const WatercoolerRoom = () => {
 
   // Parse participant identities and match with teammates
   const participantList = useMemo(() => {
-    console.log(participants);
     return participants
-      .filter((participant) => !participant.identity.includes("video"))
+      .filter((participant) => !participant.identity.includes("video") && !participant.identity.includes("camera"))
       .map((participant) => {
         // Parse identity: format is "room:roomname:participantId:tracktype"
         // Extract participantId by splitting on ":" and taking the second-to-last part

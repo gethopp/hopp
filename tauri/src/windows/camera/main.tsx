@@ -7,10 +7,11 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { LiveKitRoom, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
-import { IoClose } from "react-icons/io5";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { PhysicalSize } from "@tauri-apps/api/window";
+import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
+import { WindowActions } from "@/components/ui/window-buttons";
+import { CustomIcons } from "@/components/ui/iconts";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -25,7 +26,7 @@ async function CameraWindowSize({ numOfTracks }: { numOfTracks: number }) {
   const FlexGap = 4; // 0.25rem
   const VideoCardHeight = 140;
   const HeaderHeight = 36;
-  const VideoCardPadding = 16; // 1rem
+  const VideoCardPadding = 14; // 0.875rem
 
   if (trackLength === 0) {
     // Give initial size of one only card
@@ -37,8 +38,6 @@ async function CameraWindowSize({ numOfTracks }: { numOfTracks: number }) {
 
   const appWindow = getCurrentWebviewWindow();
   const factor = await appWindow.scaleFactor();
-  console.log("Scale factor: ", factor);
-  console.log("CameraWindowSize: ", totalHeight * factor);
   appWindow.setSize(new PhysicalSize(160 * factor, totalHeight * factor));
 }
 
@@ -96,6 +95,42 @@ function ConsumerComponent() {
   );
 }
 
+const putWindowCorner = async () => {
+  const appWindow = getCurrentWebviewWindow();
+
+  try {
+    // Get the current monitor information
+    const monitor = await currentMonitor();
+    if (!monitor) {
+      console.error("Could not get current monitor information");
+      return;
+    }
+
+    // Get the current window size in logical units
+    const windowSize = await appWindow.outerSize();
+    const scaleFactor = await appWindow.scaleFactor();
+
+    const logicalMonitorWidth = monitor.size.width / scaleFactor;
+    const logicalMonitorHeight = monitor.size.height / scaleFactor;
+    const logicalAppWindowWidth = windowSize.width / scaleFactor;
+    const rightGap = Math.floor(logicalMonitorWidth * 0.01);
+    const topGap = Math.floor(logicalMonitorHeight * 0.08);
+
+    // Calculate position for top-right corner with gap (in logical coordinates)
+    const logicalMonitorX = monitor.position.x / scaleFactor;
+    const logicalMonitorY = monitor.position.y / scaleFactor;
+
+    const x = logicalMonitorX + logicalMonitorWidth - logicalAppWindowWidth - rightGap;
+    const y = logicalMonitorY + topGap;
+
+    // Set the window position
+    await appWindow.setPosition(new LogicalPosition(x, y));
+    console.log(`Positioned window at (${x}, ${y}) with ${rightGap}px gap from right edge`);
+  } catch (error) {
+    console.error("Failed to position window at corner:", error);
+  }
+};
+
 function CameraWindow() {
   useDisableNativeContextMenu();
   const [cameraToken, setCameraToken] = useState<string | null>(null);
@@ -129,12 +164,13 @@ function CameraWindow() {
     <div className="h-full min-h-full overflow-hidden bg-transparent text-white">
       <div
         data-tauri-drag-region
-        className="h-[36px] min-w-full bg-gray-500/40 rounded-none titlebar w-full flex flex-row flex-between items-center px-3"
+        className="h-[36px] min-w-full bg-gray-500/40 rounded-none titlebar w-full flex flex-row items-center justify-start px-3 relative"
       >
-        <div className="pointer-events-none size-[14px] rounded-full bg-white/50 text-gray-600 flex items-center justify-center">
-          <IoClose />
-        </div>
-        <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div>
+        <WindowActions.Empty onClick={() => putWindowCorner()} className=" justify-self-start">
+          <CustomIcons.Corner />
+        </WindowActions.Empty>
+        <CustomIcons.Drag className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
+        {/* <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div> */}
       </div>
       <Toaster position="bottom-center" />
       <LiveKitRoom token={cameraToken ?? undefined} serverUrl={livekitUrl}>

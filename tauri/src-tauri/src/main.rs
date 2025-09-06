@@ -493,6 +493,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .visible(false) // Start hidden to apply effects before showing
         .transparent(true)
         .hidden_title(true)
+        .always_on_top(true)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .decorations(false)
         .shadow(true)
