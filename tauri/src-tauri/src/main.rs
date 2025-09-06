@@ -11,7 +11,7 @@ use tauri::{
     Emitter, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use window_vibrancy::{apply_blur, apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -25,6 +25,9 @@ use std::{env, sync::Arc};
 
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+use hopp::set_window_corner_radius;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
@@ -489,14 +492,12 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .title("Camera")
         .inner_size(160.0, 365.0)
         .resizable(false)
-        .always_on_top(false)
-        .visible(false) // Start hidden to apply effects before showing
+        .visible(false)
         .transparent(true)
         .always_on_top(true)
         .decorations(false)
         .shadow(true);
 
-    // Apply macOS-specific configurations
     #[cfg(target_os = "macos")]
     {
         window_builder = window_builder
@@ -508,10 +509,8 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .build()
         .map_err(|e| format!("Failed to create camera window: {}", e))?;
 
-    // Clone the window for the main thread closure
     let window_clone = camera_window.clone();
 
-    // Apply vibrancy effects on the main thread
     camera_window
         .run_on_main_thread(move || {
             #[cfg(target_os = "macos")]
@@ -535,7 +534,6 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
                 }
             }
 
-            // Show and focus the window after applying effects
             if let Err(e) = window_clone.show() {
                 log::error!("Failed to show camera window: {}", e);
             }
@@ -961,28 +959,4 @@ fn main() {
         }
         _ => {}
     });
-}
-
-// Custom implementation to add border radius to the camera window
-#[cfg(target_os = "macos")]
-use cocoa::{appkit::NSView, base::id};
-
-#[cfg(target_os = "macos")]
-use objc::{msg_send, sel, sel_impl};
-
-#[cfg(target_os = "macos")]
-fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
-    window
-        .with_webview(move |webview| {
-            #[cfg(target_os = "macos")]
-            unsafe {
-                let ns_window = webview.ns_window() as id;
-                let content_view: id = msg_send![ns_window, contentView];
-                let _: () = msg_send![content_view, setWantsLayer: true];
-                let layer: id = msg_send![content_view, layer];
-                let _: () = msg_send![layer, setCornerRadius: radius];
-                let _: () = msg_send![layer, setMasksToBounds: true];
-            }
-        })
-        .unwrap();
 }

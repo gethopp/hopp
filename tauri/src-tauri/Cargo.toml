@@ -21,8 +21,9 @@ smappservice-rs = "0.1.2"
 accessibility-sys = "0.2.0"
 av-foundation = "0.5.2"
 core-graphics = "0.24.0"
-cocoa = "0.26.1"
-objc = "0.2.7"
+objc2-app-kit = "0.3.1"
+objc2-quartz-core = { version = "0.3.1", features = ["objc2-core-foundation"] }
+objc2 = "0.6.1"
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "2.0.0", features = ["deep-link"] }
