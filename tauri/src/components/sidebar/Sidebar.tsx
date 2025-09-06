@@ -33,7 +33,7 @@ const SidebarButton = ({
           className={clsx(
             "p-1.5 rounded-md flex items-center justify-center size-8",
             !active && "hover:bg-gray-200",
-            active && "bg-white shadow-sm outline outline-1 outline-slate-200",
+            active && "bg-white shadow-xs outline-solid outline-1 outline-slate-200",
           )}
           {...rest}
         >
@@ -127,14 +127,14 @@ export const Sidebar = () => {
           <DropdownMenu>
             <DropdownMenuTrigger>
               {!user && (
-                <div className="size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline outline-1 outline-gray-300 shadow-sm cursor-pointer">
+                <div className="size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 shadow-xs cursor-pointer">
                   <HiOutlineDotsHorizontal />
                 </div>
               )}
               {user && (
                 <div
                   className={clsx(
-                    "size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline outline-1 outline-gray-300 shadow-sm cursor-pointer",
+                    "size-9 shrink-0 rounded-md flex justify-center items-center text-gray-600 outline-solid outline-1 outline-gray-300 shadow-xs cursor-pointer",
                     !user.avatar_url && "bg-gray-200",
                   )}
                   style={{
