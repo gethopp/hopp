@@ -11,7 +11,6 @@ use tauri::{
     Emitter, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -523,6 +522,10 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .run_on_main_thread(move || {
             #[cfg(target_os = "macos")]
             {
+                use window_vibrancy::{
+                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                };
+
                 if let Err(e) = apply_vibrancy(
                     &window_clone,
                     NSVisualEffectMaterial::HudWindow,
@@ -537,6 +540,8 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 
             #[cfg(target_os = "windows")]
             {
+                use window_vibrancy::apply_blur;
+
                 if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
                     log::warn!("Failed to apply blur to camera window: {}", e);
                 }
