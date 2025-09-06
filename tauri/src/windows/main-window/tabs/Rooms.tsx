@@ -51,7 +51,7 @@ export const Rooms = () => {
           </div>
           <div className="flex flex-row gap-2 justify-between w-full min-w-full">
             <div
-              className="group w-1/2 h-16 flex flex-col gap-5 p-4 border border-gray-200 rounded-md overflow-hidden shadow-sm relative"
+              className="group w-1/2 h-16 flex flex-col gap-5 p-4 border border-gray-200 rounded-md overflow-hidden shadow-xs relative"
               onClick={handleJoinWatercooler}
             >
               <span className="small text-nowrap text-ellipsis overflow-hidden">Watercooler 🚰</span>

@@ -34,8 +34,8 @@ function InstructionalWindow() {
           <h4 className="h4 text-left text-white">Hopp lives in your menubar</h4>
 
         <div className="flex flex-row gap-3 items-center bg-slate-800 rounded-md">
-          <div className="w-40 h-32 bg-slate-700 bg-opacity-60 rounded flex items-center justify-center flex-shrink-0">
-            <img src={trayGif} alt="Click tray icon" className="w-full h-full object-contain rounded" />
+          <div className="w-40 h-32 bg-slate-700 bg-opacity-60 rounded-sm flex items-center justify-center shrink-0">
+            <img src={trayGif} alt="Click tray icon" className="w-full h-full object-contain rounded-sm" />
           </div>
 
           <div className="flex-1 text-center">

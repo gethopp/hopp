@@ -32,7 +32,7 @@ export const Login = () => {
           <img
             src={dotsBackground}
             alt="dotted-background"
-            className="absolute w-[110%] object-cover h-auto z-[1]"
+            className="absolute w-[110%] object-cover h-auto z-1"
             style={{
               transform: "scale(1.3) translate(0px, -5px)",
             }}

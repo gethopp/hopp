@@ -346,7 +346,7 @@ function MicrophoneIcon() {
           onValueChange={handleMicrophoneChange}
           onOpenChange={handleDropdownOpenChange}
         >
-          <SelectTrigger className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-sm" />
+          <SelectTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs" />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
               {microphoneDevices.map((device) => {
@@ -411,7 +411,7 @@ function ScreenShareIcon({
         callTokens?.role === ParticipantRole.SHARER && (
           <button
             onClick={changeScreenShare}
-            className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-sm"
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
           >
             <ChevronDownIcon className="size-3" />
           </button>

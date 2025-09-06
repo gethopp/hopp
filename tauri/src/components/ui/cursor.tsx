@@ -47,7 +47,7 @@ const Cursor = (props: CursorProps) => {
       <div className="relative flex flex-col justify-start max-w-[120px]">
         <SvgComponent {...props} />
         <div
-          className="outline outline-[1px] outline-slate-200/50 outline-offset-[-1px] shadow-sm font-mono text-ellipsis overflow-hidden text-[10px] max-w-min text-white whitespace-nowrap px-2 py-[0px] leading-[22px] rounded-xl"
+          className="outline outline-[1px] outline-slate-200/50 -outline-offset-1 shadow-xs font-mono text-ellipsis overflow-hidden text-[10px] max-w-min text-white whitespace-nowrap px-2 py-[0px] leading-[22px] rounded-xl"
           style={{
             background: props.color,
             marginLeft: "12px",
