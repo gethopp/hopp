@@ -11,7 +11,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
 import { WindowActions } from "@/components/ui/window-buttons";
-import { CustomIcons } from "@/components/ui/iconts";
+import { CustomIcons } from "@/components/ui/icons";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -75,22 +75,24 @@ function ConsumerComponent() {
         {tracks.map((track) => {
           return (
             <div className="overflow-hidden rounded-lg" key={track.sid}>
-            <VideoTrack
-              trackRef={track}
-              className="rounded-lg object-cover overflow-hidden"
-              style={{
-                aspectRatio: "1/1",
-                width: "140px",
-                height: "140px",
-                minHeight: "140px",
-                minWidth: "140px",
-                maxHeight: "140px",
-                maxWidth: "140px",
-                border:
-                  track?.participant?.isSpeaking ? "1px solid rgba(157, 253, 49, 0.8)" : "1px solid rgba(0, 0, 0, 0.1)",
-              }}
-            />
-             </div>
+              <VideoTrack
+                trackRef={track}
+                className="rounded-lg object-cover overflow-hidden"
+                style={{
+                  aspectRatio: "1/1",
+                  width: "140px",
+                  height: "140px",
+                  minHeight: "140px",
+                  minWidth: "140px",
+                  maxHeight: "140px",
+                  maxWidth: "140px",
+                  border:
+                    track?.participant?.isSpeaking ?
+                      "1px solid rgba(157, 253, 49, 0.8)"
+                    : "1px solid rgba(0, 0, 0, 0.1)",
+                }}
+              />
+            </div>
           );
         })}
       </div>
