@@ -65,6 +65,38 @@ const createContentPickerWindow = async (videoToken: string) => {
   }
 };
 
+const createCameraWindow = async (cameraToken: string) => {
+  if (isTauri) {
+    try {
+      await invoke("create_camera_window", { cameraToken });
+    } catch (error) {
+      console.error("Failed to create camera window:", error);
+    }
+  } else {
+    const URL = `camera.html?cameraToken=${cameraToken}`;
+    window.open(URL);
+  }
+};
+
+const ensureCameraWindowIsVisible = async (token: string) => {
+  if (isTauri) {
+    const cameraWindow = await WebviewWindow.getByLabel("camera");
+    if (!cameraWindow) {
+      await createCameraWindow(token);
+    }
+  }
+};
+
+const closeCameraWindow = async () => {
+  if (isTauri) {
+    const cameraWindow = await WebviewWindow.getByLabel("camera");
+    if (cameraWindow) {
+      await cameraWindow.close();
+      await setDockIconVisible(false);
+    }
+  }
+};
+
 const storeTokenBackend = async (token: string) => {
   if (isTauri) {
     try {
@@ -129,9 +161,9 @@ const closeContentPickerWindow = async () => {
   }
 };
 
-const getVideoTokenParam = () => {
+const getTokenParam = (param: string) => {
   const urlParams = new URLSearchParams(window.location.search);
-  return urlParams.get("videoToken");
+  return urlParams.get(param);
 };
 
 const endCallCleanup = async () => {
@@ -139,6 +171,7 @@ const endCallCleanup = async () => {
   await closeScreenShareWindow();
   await closeContentPickerWindow();
   await setDockIconVisible(false);
+  await closeCameraWindow();
 };
 
 const setControllerCursor = async (enabled: boolean) => {
@@ -151,6 +184,10 @@ const openAccessibilitySettings = async () => {
 
 const openMicrophoneSettings = async () => {
   return await invoke("open_microphone_settings");
+};
+
+const openCameraSettings = async () => {
+  return await invoke("open_camera_settings");
 };
 
 const openScreenShareSettings = async () => {
@@ -171,6 +208,10 @@ const getMicPermission = async () => {
 
 const getScreenSharePermission = async () => {
   return await invoke<boolean>("get_screenshare_permission");
+};
+
+const getCameraPermission = async () => {
+  return await invoke<boolean>("get_camera_permission");
 };
 
 const hideTrayIconInstruction = async () => {
@@ -207,6 +248,9 @@ export const tauriUtils = {
   closeScreenShareWindow,
   createContentPickerWindow,
   showWindow,
+  createCameraWindow,
+  ensureCameraWindowIsVisible,
+  closeCameraWindow,
   storeTokenBackend,
   getStoredToken,
   deleteStoredToken,
@@ -214,14 +258,16 @@ export const tauriUtils = {
   endCallCleanup,
   hideTrayIconInstruction,
   setControllerCursor,
-  getVideoTokenParam,
+  getTokenParam,
   openAccessibilitySettings,
   openMicrophoneSettings,
   openScreenShareSettings,
+  openCameraSettings,
   triggerScreenSharePermission,
   getControlPermission,
   getMicPermission,
   getScreenSharePermission,
+  getCameraPermission,
   setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,

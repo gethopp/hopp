@@ -396,3 +396,7 @@ button {
 .main-app.windows {
   height: 500px;
 }
+
+.camera-body {
+  overflow: hidden;
+}

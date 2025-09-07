@@ -8,7 +8,7 @@ use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
-    Emitter,
+    Emitter, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
@@ -23,6 +23,9 @@ use std::sync::Mutex;
 use std::{env, sync::Arc};
 
 use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+use hopp::set_window_corner_radius;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
@@ -339,6 +342,16 @@ fn open_microphone_settings(_app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn open_camera_settings(_app: tauri::AppHandle) {
+    log::info!("open_camera_settings");
+    let mut process = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
+        .spawn()
+        .expect("Failed to open System Preferences for Camera permissions");
+    let _ = process.wait();
+}
+
+#[tauri::command]
 fn open_screenshare_settings(_app: tauri::AppHandle) {
     log::info!("open_screenshare_settings");
     let mut process = std::process::Command::new("open")
@@ -384,6 +397,13 @@ fn get_screenshare_permission(_app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
+fn get_camera_permission(_app: tauri::AppHandle) -> bool {
+    let res = permissions::camera();
+    log::info!("get_camera_permission: {res}");
+    res
+}
+
+#[tauri::command]
 fn skip_tray_notification_selection_window(app: tauri::AppHandle) {
     log::info!("executing skip_tray_notification_selection_window");
     let data = app.state::<Mutex<AppData>>();
@@ -400,7 +420,15 @@ fn set_dock_icon_visible(app: tauri::AppHandle, visible: bool) {
         if visible {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         } else {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let camera_window = app.get_webview_window("camera");
+            let screenshare_window = app.get_webview_window("screenshare");
+            let content_picker_window = app.get_webview_window("contentPicker");
+            if camera_window.is_none()
+                && screenshare_window.is_none()
+                && content_picker_window.is_none()
+            {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
         }
 
         {
@@ -461,6 +489,77 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
     data.livekit_server_url.clone()
+}
+
+#[tauri::command]
+async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
+    log::info!("create_camera_window with token: {}", camera_token);
+
+    let url = format!("camera.html?cameraToken={}", camera_token);
+
+    #[allow(unused_mut)]
+    let mut window_builder = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
+        .title("Camera")
+        .inner_size(160.0, 365.0)
+        .resizable(false)
+        .visible(false)
+        .transparent(true)
+        .always_on_top(true)
+        .decorations(false)
+        .shadow(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        window_builder = window_builder
+            .hidden_title(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay);
+    }
+
+    let camera_window = window_builder
+        .build()
+        .map_err(|e| format!("Failed to create camera window: {}", e))?;
+
+    let window_clone = camera_window.clone();
+
+    camera_window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "macos")]
+            {
+                use window_vibrancy::{
+                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                };
+
+                if let Err(e) = apply_vibrancy(
+                    &window_clone,
+                    NSVisualEffectMaterial::HudWindow,
+                    Some(NSVisualEffectState::Active),
+                    Some(16.0),
+                ) {
+                    log::warn!("Failed to apply vibrancy to camera window: {}", e);
+                }
+
+                set_window_corner_radius(&window_clone, 16.0);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use window_vibrancy::apply_blur;
+
+                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
+                    log::warn!("Failed to apply blur to camera window: {}", e);
+                }
+            }
+
+            if let Err(e) = window_clone.show() {
+                log::error!("Failed to show camera window: {}", e);
+            }
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus camera window: {}", e);
+            }
+        })
+        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
 }
 
 fn main() {
@@ -706,7 +805,7 @@ fn main() {
                     .always_on_top(false)
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .title("Permissions Configuration")
-                    .inner_size(900., 620.)
+                    .inner_size(900., 730.)
                     .build();
                     if let Err(e) = permissions_window {
                         log::error!("Failed to create permissions window: {e:?}");
@@ -796,6 +895,9 @@ fn main() {
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,
+            get_camera_permission,
+            open_camera_settings,
+            create_camera_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

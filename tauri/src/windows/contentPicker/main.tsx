@@ -67,7 +67,8 @@ function Window() {
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
-  const videoToken = tauriUtils.getVideoTokenParam();
+  const { callTokens, setCallTokens } = useStore();
+  const videoToken = tauriUtils.getTokenParam("videoToken");
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
