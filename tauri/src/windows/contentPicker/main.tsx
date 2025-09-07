@@ -48,12 +48,12 @@ async function screenshare(content: CaptureContent["content"], resolution: Resol
     "4K": { width: 4096, height: 2160 },
   };
 
-  const message: boolean = await invoke("screenshare", {
+  await invoke("screenshare", {
     content: content,
     token: videoToken,
     resolution: resolutionMap[resolution],
   });
-  return message;
+  return true;
 }
 
 function Window() {
@@ -83,23 +83,22 @@ function Window() {
       const success = await screenshare(content, resolution, videoToken);
       if (success) {
         await appWindow.close();
-      } else {
-        toast.error(
-          (t) => (
-            <div className="flex flex-row items-center gap-2">
-              Screenshare failed
-              <Button variant="default" className="ml-4" size="sm" onClick={() => toast.dismiss(t.id)}>
-                Dismiss
-              </Button>
-            </div>
-          ),
-          { duration: 5000 },
-        );
-        return;
       }
     } catch (error) {
       console.error(error);
-      toast.error("Failed to screenshare");
+      tauriUtils.showWindow("contentPicker");
+      const errorMessage = typeof error === 'string' ? error : 'Failed to screenshare';
+      toast.error(
+        (t) => (
+          <div className="flex flex-row items-center gap-2">
+            <div className="text-sm">{errorMessage}</div>
+            <Button size="sm" onClick={() => toast.dismiss(t.id)}>
+              Dismiss
+            </Button>
+          </div>
+        ),
+        { duration: 10000 },
+      );
     }
   };
 
@@ -142,7 +141,7 @@ function Window() {
               </AlertDescription>
             </Alert>
           </div>
-        : content.map((item) => (
+          : content.map((item) => (
             <div
               key={item.content.id}
               className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-500 p-2 rounded-md"

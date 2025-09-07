@@ -105,7 +105,7 @@ pub enum Message {
     GetAvailableContent,
     AvailableContent(AvailableContentMessage),
     StartScreenShare(ScreenShareMessage),
-    StartScreenShareResult(bool),
+    StartScreenShareResult(Result<(), String>),
     StopScreenshare,
     Reset,
     Ping,

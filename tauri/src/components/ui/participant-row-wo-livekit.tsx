@@ -92,7 +92,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           setCalling(null);
           sounds.ringing.stop();
           sounds.callAccepted.play();
-          tauriUtils.showMainWindow();
+          tauriUtils.showWindow("main");
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
