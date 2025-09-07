@@ -29,6 +29,7 @@ import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export function CallCenter() {
   const { callTokens } = useStore();
@@ -350,11 +351,21 @@ function ScreenShareIcon({
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
 }) {
-  const toggleScreenShare = useCallback(() => {
+  const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
+      // Check if sharing window is already open, and if so, focus on it
+      const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
+      if (isWindowOpen) {
+        // There might be a case that all old window with a call token was open:
+        // https://github.com/tauri-apps/tauri/issues/6539
+        // We cannot get the URL for the time being to know if we need to invalidate that window or not
+        // But should be no-op as when a call changes (or tokens change) we close all windows
+        await isWindowOpen.setFocus();
+        return;
+      }
       tauriUtils.createContentPickerWindow(callTokens.videoToken);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
@@ -377,7 +388,7 @@ function ScreenShareIcon({
       icon={
         callTokens?.role === ParticipantRole.SHARER ?
           <LuScreenShare className="size-4" />
-          : <LuScreenShareOff className="size-4" />
+        : <LuScreenShareOff className="size-4" />
       }
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       size="unsized"
@@ -592,7 +603,12 @@ function CameraIcon() {
     <ToggleIconButton
       onClick={handleCameraToggle}
       icon={hasCameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
-      state={hasCameraEnabled ? "active" : isDisabled ? "deactivated" : "neutral"}
+      state={
+        hasCameraEnabled ? "active"
+        : isDisabled ?
+          "deactivated"
+        : "neutral"
+      }
       size="unsized"
       disabled={isDisabled}
       className="flex-1 min-w-0 text-slate-600"
