@@ -650,6 +650,8 @@ pub struct CursorController {
     sharer_cursor: Arc<Mutex<SharerCursor>>,
     /// Cursors for the remote controllers
     controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
+    /// Controllers' cursors enabled by the shared
+    controllers_cursors_enabled: bool,
     /// Object that is used to simulate mouse events
     cursor_simulator: Arc<Mutex<CursorSimulator>>,
     /// Object that is used to translate coordinates between local and global
@@ -725,6 +727,7 @@ impl CursorController {
         Ok(Self {
             sharer_cursor,
             controllers_cursors,
+            controllers_cursors_enabled: true,
             cursor_simulator,
             overlay_window,
             _mouse_observer: mouse_observer,
@@ -1019,6 +1022,7 @@ impl CursorController {
     pub fn set_controllers_enabled(&mut self, enabled: bool) {
         log::info!("set_controllers_enabled: {enabled}");
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        self.controllers_cursors_enabled = enabled;
         for controller in controllers_cursors.iter_mut() {
             controller.set_enabled(enabled);
         }
@@ -1034,6 +1038,14 @@ impl CursorController {
     /// * `sid` - Session ID identifying which controller to modify
     pub fn set_controller_visible(&mut self, visible: bool, sid: &str) {
         log::info!("set_controller_visible: {visible}");
+
+        if !self.controllers_cursors_enabled {
+            log::info!(
+                "set_controller_visible: sharer has disabled controllers' cursors this is a noop."
+            );
+            return;
+        }
+
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             if controller.sid != sid {
