@@ -285,6 +285,7 @@ impl<'a> Application<'a> {
                 width: screenshare_input.resolution.width,
                 height: screenshare_input.resolution.height,
             },
+            !screenshare_input.accessibility_permission,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");

@@ -279,7 +279,7 @@ impl Capturer {
     pub fn get_available_content(&mut self) -> Result<Vec<CaptureContent>, CapturerError> {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            let first_capturer = DesktopCapturer::new(|_, _| {}, false);
+            let first_capturer = DesktopCapturer::new(|_, _| {}, false, false);
             if first_capturer.is_none() {
                 return Err(CapturerError::DesktopCapturerCreationError);
             }
@@ -302,7 +302,7 @@ impl Capturer {
                     display.title(),
                     result.clone(),
                 );
-                let capturer = DesktopCapturer::new(callback, false);
+                let capturer = DesktopCapturer::new(callback, false, false);
                 if capturer.is_none() {
                     log::error!(
                         "Failed to create DesktopCapturer for display: {}",
@@ -348,7 +348,7 @@ impl Capturer {
          */
         #[cfg(target_os = "linux")]
         {
-            let capturer = DesktopCapturer::new(|_, _| {}, false);
+            let capturer = DesktopCapturer::new(|_, _| {}, false, false);
             if capturer.is_none() {
                 return Err(CapturerError::DesktopCapturerCreationError);
             }
@@ -375,6 +375,7 @@ impl Capturer {
     /// # Parameters
     /// - `content`: The content source to capture (display or window with display_id)
     /// - `stream_resolution`: The resolution of the stream buffer
+    /// - `include_cursor`: Whether to include the cursor in the capture
     ///
     /// # Returns
     /// - `Ok(())`: Successfully started the capture stream
@@ -394,6 +395,7 @@ impl Capturer {
         &mut self,
         content: Content,
         stream_resolution: Extent,
+        include_cursor: bool,
     ) -> Result<(), CapturerError> {
         log::info!("start_capture: content {content:?}");
         if self.active_stream.is_some() {
@@ -403,7 +405,7 @@ impl Capturer {
         }
 
         let scale = 1.0;
-        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone())?;
+        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), include_cursor)?;
 
         stream.start_capture(content.id);
         self.active_stream = Some(stream);
