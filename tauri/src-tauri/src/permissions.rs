@@ -32,6 +32,9 @@ trait PermissionsTrait {
 
     /// Checks if microphone access permission is granted.
     fn microphone() -> bool;
+
+    /// Checks if camera access permission is granted.
+    fn camera() -> bool;
 }
 
 /// Checks if any of the required permissions are not granted.
@@ -47,6 +50,7 @@ pub fn has_ungranted_permissions() -> bool {
     !PlatformPermissions::screenshare()
         || !PlatformPermissions::accessibility()
         || !PlatformPermissions::microphone()
+        || !PlatformPermissions::camera()
 }
 
 /// Checks if screen sharing/recording permission is granted.
@@ -84,4 +88,16 @@ pub fn accessibility() -> bool {
 /// - **Others**: Returns `true` (no restriction)
 pub fn microphone() -> bool {
     PlatformPermissions::microphone()
+}
+
+/// Checks if camera access permission is granted.
+///
+/// Required for video communication during calls.
+///
+/// # Platform Implementation
+///
+/// - **macOS**: Uses AVFoundation `AVCaptureDevice::authorization_status_for_media_type()`
+/// - **Others**: Returns `true` (no restriction)
+pub fn camera() -> bool {
+    PlatformPermissions::camera()
 }

@@ -7,7 +7,7 @@ import { toast, Toaster } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
-import { PiMicrophoneDuotone, PiMouseDuotone, PiMonitorArrowUpDuotone, PiCheckCircleDuotone } from "react-icons/pi";
+import { PiMicrophoneDuotone, PiMouseDuotone, PiMonitorArrowUpDuotone, PiCheckCircleDuotone, PiCameraDuotone } from "react-icons/pi";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -19,6 +19,7 @@ interface PermissionStatus {
   mic: boolean;
   screenShare: boolean;
   accessibility: boolean;
+  camera: boolean;
 }
 
 function Window() {
@@ -27,6 +28,7 @@ function Window() {
     mic: false,
     screenShare: false,
     accessibility: false,
+    camera: false,
   });
   const [loading, setLoading] = useState<string | null>(null);
 
@@ -36,11 +38,13 @@ function Window() {
       const micPermission = await getMicPermission();
       const screenSharePermission = await getScreenSharePermission();
       const accessibilityPermission = await getAccessibilityPermission();
+      const cameraPermission = await getCameraPermission();
 
       setPermissions({
         mic: micPermission,
         screenShare: screenSharePermission,
         accessibility: accessibilityPermission,
+        camera: cameraPermission,
       });
     };
 
@@ -59,6 +63,10 @@ function Window() {
     return tauriUtils.getControlPermission();
   };
 
+  const getCameraPermission = async (): Promise<boolean> => {
+    return tauriUtils.getCameraPermission();
+  };
+
   const requestMicrophonePermission = async (): Promise<boolean> => {
     try {
       // Request microphone access using browser API
@@ -73,6 +81,24 @@ function Window() {
       return true;
     } catch (error) {
       console.error("Browser microphone permission denied:", error);
+      return false;
+    }
+  };
+
+  const requestCameraPermission = async (): Promise<boolean> => {
+    try {
+      // Request camera access using browser API
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+      });
+
+      // Stop the camera stream immediately after getting permission
+      stream.getTracks().forEach((track) => {
+        track.stop();
+      });
+      return true;
+    } catch (error) {
+      console.error("Browser camera permission denied:", error);
       return false;
     }
   };
@@ -132,6 +158,20 @@ function Window() {
             accessibilityCheckCount++;
           }
           break;
+        case "camera":
+          success = await requestCameraPermission();
+          if (!success) {
+            await tauriUtils.openCameraSettings();
+          }
+
+          // Keep polling until permission is granted
+          let cameraCheckCount = 0;
+          while (!success && cameraCheckCount < 15) {
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
+            success = await getCameraPermission();
+            cameraCheckCount++;
+          }
+          break;
       }
 
       if (success) {
@@ -154,6 +194,7 @@ function Window() {
   const getPermissionIcon = (permission: keyof PermissionStatus) => {
     const icons = {
       mic: <PiMicrophoneDuotone className="size-6" />,
+      camera: <PiCameraDuotone className="size-6" />,
       screenShare: <PiMonitorArrowUpDuotone className="size-6" />,
       accessibility: <PiMouseDuotone className="size-6" />,
     };
@@ -163,6 +204,7 @@ function Window() {
   const getPermissionTitle = (permission: keyof PermissionStatus) => {
     const titles = {
       mic: "Microphone Access",
+      camera: "Camera Access",
       screenShare: "Screen Sharing Access",
       accessibility: "Remote Control Access",
     };
@@ -172,6 +214,7 @@ function Window() {
   const getPermissionDescription = (permission: keyof PermissionStatus) => {
     const descriptions = {
       mic: "Allow access to your microphone for your teammates to hear you. If for any reason the system settings open automatically, please go to Privacy & Security, Microphone and allow Hopp to access your microphone.",
+      camera: "Allow access to your camera for your teammates to see you. If for any reason the system settings open automatically, please go to Privacy & Security, Camera and allow Hopp to access your camera. If you don't have a camera, you can ignore this permission.",
       screenShare:
         "Allow screen sharing. If for any reason the system settings open automatically, please go to Privacy & Security, Screen & System Audio Recording and allow Hopp to share your screen.",
       accessibility:
@@ -226,7 +269,7 @@ function Window() {
       </div>
 
       <div className="content px-4 pb-4 overflow-auto flex flex-col gap-4">
-        {(["mic", "accessibility", "screenShare"] as Array<keyof PermissionStatus>).map((permission) => (
+        {(["mic", "camera", "accessibility", "screenShare"] as Array<keyof PermissionStatus>).map((permission) => (
           <div
             key={permission}
             className="flex items-center justify-between group p-4 rounded-md transition-all duration-300 hover:bg-slate-800 border border-slate-700"
@@ -247,7 +290,7 @@ function Window() {
                   <PiCheckCircleDuotone className="size-4" />
                   <span>Granted</span>
                 </div>
-              : <Button
+                : <Button
                   onClick={() => handlePermissionRequest(permission)}
                   disabled={loading === permission}
                   variant="default"

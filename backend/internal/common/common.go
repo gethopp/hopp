@@ -37,6 +37,7 @@ type AuthHandler interface {
 type LivekitTokenSet struct {
 	AudioToken  string `json:"audioToken"`
 	VideoToken  string `json:"videoToken"`
+	CameraToken string `json:"cameraToken"`
 	Participant string `json:"participant"`
 }
 
