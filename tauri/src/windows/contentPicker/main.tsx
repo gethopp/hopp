@@ -39,7 +39,12 @@ async function getContent(setContent: React.Dispatch<React.SetStateAction<Captur
   setContent(message);
 }
 
-async function screenshare(content: CaptureContent["content"], resolution: ResolutionKey, videoToken: string) {
+async function screenshare(
+  content: CaptureContent["content"],
+  resolution: ResolutionKey,
+  videoToken: string,
+  accessibilityPermission: boolean,
+) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
     "2K": { width: 2048, height: 1080 },
@@ -52,6 +57,7 @@ async function screenshare(content: CaptureContent["content"], resolution: Resol
     content: content,
     token: videoToken,
     resolution: resolutionMap[resolution],
+    accessibility_permission: accessibilityPermission,
   });
   return true;
 }
@@ -62,6 +68,12 @@ function Window() {
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getVideoTokenParam();
+  const [accessibilityPermission, setAccessibilityPermission] = useState(false);
+
+  const fetchAccessibilityPermission = async () => {
+    const permission = await tauriUtils.getControlPermission();
+    setAccessibilityPermission(permission);
+  };
 
   useEffect(() => {
     if (!hasFetched) {
@@ -71,6 +83,8 @@ function Window() {
       });
       setHasFetched(true);
     }
+
+    fetchAccessibilityPermission();
   }, [hasFetched]);
 
   const handleItemClick = async (content: CaptureContent["content"]) => {
@@ -80,14 +94,14 @@ function Window() {
         toast.error("No video token found");
         return;
       }
-      const success = await screenshare(content, resolution, videoToken);
+      const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
       }
     } catch (error) {
       console.error(error);
       tauriUtils.showWindow("contentPicker");
-      const errorMessage = typeof error === 'string' ? error : 'Failed to screenshare';
+      const errorMessage = typeof error === "string" ? error : "Failed to screenshare";
       toast.error(
         (t) => (
           <div className="flex flex-row items-center gap-2">
@@ -107,6 +121,23 @@ function Window() {
     setResolution(value as ResolutionKey);
   };
 
+  const grantAccessibilityPermission = () => {
+    tauriUtils.openAccessibilitySettings();
+
+    // Refetch permission status for 5 seconds
+    const interval = setInterval(async () => {
+      fetchAccessibilityPermission();
+      if (accessibilityPermission) {
+        clearInterval(interval);
+      }
+    }, 500); // Check every 500ms
+
+    // Stop checking after 5 seconds regardless
+    setTimeout(() => {
+      clearInterval(interval);
+    }, 10000);
+  };
+
   return (
     <div className="h-full overflow-hidden dark" tabIndex={0}>
       <Toaster position="top-center" />
@@ -114,6 +145,16 @@ function Window() {
         data-tauri-drag-region
         className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
       ></div>
+      {!accessibilityPermission && (
+        <div className="flex flex-row items-center justify-center gap-2 px-4 py-2 mt-2">
+          <span className="text-center text-base font-medium text-yellow-400">
+            ⚠️ Accessibility permission is not granted, remote control will not work
+          </span>
+          <Button size="sm" onClick={grantAccessibilityPermission}>
+            Grant permission
+          </Button>
+        </div>
+      )}
       <div className="flex flex-col items-start gap-2 px-4 py-2 mt-2">
         <span className="mr-2 small">Choose resolution:</span>
         <Select onValueChange={updateResolution} value={resolution}>
@@ -141,7 +182,7 @@ function Window() {
               </AlertDescription>
             </Alert>
           </div>
-          : content.map((item) => (
+        : content.map((item) => (
             <div
               key={item.content.id}
               className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-500 p-2 rounded-md"

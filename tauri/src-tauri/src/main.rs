@@ -34,6 +34,7 @@ async fn screenshare(
     content: Content,
     token: String,
     resolution: Extent,
+    accessibility_permission: bool,
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
     /*
