@@ -22,7 +22,6 @@ use hopp::{
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
-#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
