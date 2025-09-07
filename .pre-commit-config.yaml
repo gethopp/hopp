@@ -22,8 +22,6 @@ repos:
         name: prettier
         language: system
         entry: bash -c "yarn pretty-quick --staged"
-        types: [ts, tsx]
-        files: \.(ts|tsx)$
       - id: check_localhost_in_webapp
         name: Check for localhost in web-app.html
         language: system
