@@ -7,7 +7,13 @@ import { toast, Toaster } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
-import { PiMicrophoneDuotone, PiMouseDuotone, PiMonitorArrowUpDuotone, PiCheckCircleDuotone, PiCameraDuotone } from "react-icons/pi";
+import {
+  PiMicrophoneDuotone,
+  PiMouseDuotone,
+  PiMonitorArrowUpDuotone,
+  PiCheckCircleDuotone,
+  PiCameraDuotone,
+} from "react-icons/pi";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -67,42 +73,6 @@ function Window() {
     return tauriUtils.getCameraPermission();
   };
 
-  const requestMicrophonePermission = async (): Promise<boolean> => {
-    try {
-      // Request microphone access using browser API
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-
-      // Stop the microphone stream immediately after getting permission
-      stream.getTracks().forEach((track) => {
-        track.stop();
-      });
-      return true;
-    } catch (error) {
-      console.error("Browser microphone permission denied:", error);
-      return false;
-    }
-  };
-
-  const requestCameraPermission = async (): Promise<boolean> => {
-    try {
-      // Request camera access using browser API
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-      });
-
-      // Stop the camera stream immediately after getting permission
-      stream.getTracks().forEach((track) => {
-        track.stop();
-      });
-      return true;
-    } catch (error) {
-      console.error("Browser camera permission denied:", error);
-      return false;
-    }
-  };
-
   const handlePermissionRequest = async (permission: keyof PermissionStatus) => {
     setLoading(permission);
 
@@ -113,10 +83,7 @@ function Window() {
 
       switch (permission) {
         case "mic":
-          success = await requestMicrophonePermission();
-          if (!success) {
-            await tauriUtils.openMicrophoneSettings();
-          }
+          await tauriUtils.openMicrophoneSettings();
 
           // Keep polling until permission is granted
           let micCheckCount = 0;
@@ -159,10 +126,7 @@ function Window() {
           }
           break;
         case "camera":
-          success = await requestCameraPermission();
-          if (!success) {
-            await tauriUtils.openCameraSettings();
-          }
+          await tauriUtils.openCameraSettings();
 
           // Keep polling until permission is granted
           let cameraCheckCount = 0;
@@ -214,7 +178,8 @@ function Window() {
   const getPermissionDescription = (permission: keyof PermissionStatus) => {
     const descriptions = {
       mic: "Allow access to your microphone for your teammates to hear you. If for any reason the system settings open automatically, please go to Privacy & Security, Microphone and allow Hopp to access your microphone.",
-      camera: "Allow access to your camera for your teammates to see you. If for any reason the system settings open automatically, please go to Privacy & Security, Camera and allow Hopp to access your camera. If you don't have a camera, you can ignore this permission.",
+      camera:
+        "Allow access to your camera for your teammates to see you. If for any reason the system settings open automatically, please go to Privacy & Security, Camera and allow Hopp to access your camera. If you don't have a camera, you can ignore this permission.",
       screenShare:
         "Allow screen sharing. If for any reason the system settings open automatically, please go to Privacy & Security, Screen & System Audio Recording and allow Hopp to share your screen.",
       accessibility:
@@ -290,7 +255,7 @@ function Window() {
                   <PiCheckCircleDuotone className="size-4" />
                   <span>Granted</span>
                 </div>
-                : <Button
+              : <Button
                   onClick={() => handlePermissionRequest(permission)}
                   disabled={loading === permission}
                   variant="default"

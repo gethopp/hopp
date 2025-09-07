@@ -39,4 +39,22 @@ impl PermissionsTrait for PlatformPermissions {
                 == AVAuthorizationStatusAuthorized
         }
     }
+
+    fn request_camera() {
+        log::info!("macOS camera permission request");
+        unsafe {
+            AVCaptureDevice::request_access_for_media_type(AVMediaTypeVideo, |granted| {
+                log::info!("macOS camera permission request granted: {granted:?}");
+            })
+        }
+    }
+
+    fn request_microphone() {
+        log::info!("macOS microphone permission request");
+        unsafe {
+            AVCaptureDevice::request_access_for_media_type(AVMediaTypeAudio, |granted| {
+                log::info!("macOS microphone permission request granted: {granted:?}");
+            })
+        }
+    }
 }

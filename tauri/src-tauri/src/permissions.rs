@@ -35,6 +35,12 @@ trait PermissionsTrait {
 
     /// Checks if camera access permission is granted.
     fn camera() -> bool;
+
+    /// Requests camera access permission.
+    fn request_camera();
+
+    /// Requests microphone access permission.
+    fn request_microphone();
 }
 
 /// Checks if any of the required permissions are not granted.
@@ -100,4 +106,24 @@ pub fn microphone() -> bool {
 /// - **Others**: Returns `true` (no restriction)
 pub fn camera() -> bool {
     PlatformPermissions::camera()
+}
+
+/// Requests camera access permission.
+///
+/// # Platform Implementation
+///
+/// - **macOS**: Uses AVFoundation `AVCaptureDevice::request_access_for_media_type()`
+/// - **Others**: Returns `true` (no restriction)
+pub fn request_camera() {
+    PlatformPermissions::request_camera()
+}
+
+/// Requests microphone access permission.
+///
+/// # Platform Implementation
+///
+/// - **macOS**: Uses AVFoundation `AVCaptureDevice::request_access_for_media_type()`
+/// - **Others**: Returns `true` (no restriction)
+pub fn request_microphone() {
+    PlatformPermissions::request_microphone()
 }

@@ -22,4 +22,12 @@ impl PermissionsTrait for PlatformPermissions {
         log::info!("Default camera permission check");
         true
     }
+
+    fn request_camera() {
+        log::info!("Default camera permission request");
+    }
+
+    fn request_microphone() {
+        log::info!("Default microphone permission request");
+    }
 }

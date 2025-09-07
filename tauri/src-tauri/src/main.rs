@@ -334,21 +334,13 @@ fn open_accessibility_settings(_app: tauri::AppHandle) {
 #[tauri::command]
 fn open_microphone_settings(_app: tauri::AppHandle) {
     log::info!("open_microphone_settings");
-    let mut process = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
-        .spawn()
-        .expect("Failed to open System Preferences for Microphone permissions");
-    let _ = process.wait();
+    permissions::request_microphone();
 }
 
 #[tauri::command]
 fn open_camera_settings(_app: tauri::AppHandle) {
     log::info!("open_camera_settings");
-    let mut process = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
-        .spawn()
-        .expect("Failed to open System Preferences for Camera permissions");
-    let _ = process.wait();
+    permissions::request_camera();
 }
 
 #[tauri::command]
