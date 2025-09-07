@@ -43,6 +43,17 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
 };
 
 const createContentPickerWindow = async (videoToken: string) => {
+  // Check if sharing window is already open, and if so, focus on it
+  const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
+  if (isWindowOpen) {
+    // There might be a case that all old window with a call token was open:
+    // https://github.com/tauri-apps/tauri/issues/6539
+    // We cannot get the URL for the time being to know if we need to invalidate that window or not
+    // But should be no-op as when a call changes (or tokens change) we close all windows
+    await isWindowOpen.setFocus();
+    return;
+  }
+
   const URL = `contentPicker.html?videoToken=${videoToken}`;
 
   if (isTauri) {

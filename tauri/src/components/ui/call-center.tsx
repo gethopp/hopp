@@ -375,7 +375,7 @@ function ScreenShareIcon({
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
 }) {
-  const toggleScreenShare = useCallback(() => {
+  const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
@@ -402,7 +402,7 @@ function ScreenShareIcon({
       icon={
         callTokens?.role === ParticipantRole.SHARER ?
           <LuScreenShare className="size-4" />
-          : <LuScreenShareOff className="size-4" />
+        : <LuScreenShareOff className="size-4" />
       }
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       size="unsized"
@@ -617,7 +617,12 @@ function CameraIcon() {
     <ToggleIconButton
       onClick={handleCameraToggle}
       icon={hasCameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
-      state={hasCameraEnabled ? "active" : isDisabled ? "deactivated" : "neutral"}
+      state={
+        hasCameraEnabled ? "active"
+        : isDisabled ?
+          "deactivated"
+        : "neutral"
+      }
       size="unsized"
       disabled={isDisabled}
       className="flex-1 min-w-0 text-slate-600"
