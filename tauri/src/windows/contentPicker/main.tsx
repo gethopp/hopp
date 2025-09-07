@@ -39,7 +39,12 @@ async function getContent(setContent: React.Dispatch<React.SetStateAction<Captur
   setContent(message);
 }
 
-async function screenshare(content: CaptureContent["content"], resolution: ResolutionKey, videoToken: string) {
+async function screenshare(
+  content: CaptureContent["content"],
+  resolution: ResolutionKey,
+  videoToken: string,
+  accessibilityPermission: boolean,
+) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
     "2K": { width: 2048, height: 1080 },
@@ -48,12 +53,13 @@ async function screenshare(content: CaptureContent["content"], resolution: Resol
     "4K": { width: 4096, height: 2160 },
   };
 
-  const message: boolean = await invoke("screenshare", {
+  await invoke("screenshare", {
     content: content,
     token: videoToken,
     resolution: resolutionMap[resolution],
+    accessibilityPermission: accessibilityPermission,
   });
-  return message;
+  return true;
 }
 
 function Window() {
@@ -61,8 +67,14 @@ function Window() {
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
-  const videoToken = tauriUtils.getTokenParam("videoToken");
   const { callTokens, setCallTokens } = useStore();
+  const videoToken = tauriUtils.getTokenParam("videoToken");
+  const [accessibilityPermission, setAccessibilityPermission] = useState(false);
+
+  const fetchAccessibilityPermission = async () => {
+    const permission = await tauriUtils.getControlPermission();
+    setAccessibilityPermission(permission);
+  };
 
   useEffect(() => {
     if (!hasFetched) {
@@ -72,6 +84,8 @@ function Window() {
       });
       setHasFetched(true);
     }
+
+    fetchAccessibilityPermission();
   }, [hasFetched]);
 
   const handleItemClick = async (content: CaptureContent["content"]) => {
@@ -81,32 +95,45 @@ function Window() {
         toast.error("No video token found");
         return;
       }
-      const success = await screenshare(content, resolution, videoToken);
+      const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
-      } else {
-        toast.error(
-          (t) => (
-            <div className="flex flex-row items-center gap-2">
-              Screenshare failed
-              <Button variant="default" className="ml-4" size="sm" onClick={() => toast.dismiss(t.id)}>
-                Dismiss
-              </Button>
-            </div>
-          ),
-          { duration: 5000 },
-        );
-        return;
       }
     } catch (error) {
       console.error(error);
-      toast.error("Failed to screenshare");
+      tauriUtils.showWindow("contentPicker");
+      const errorMessage = typeof error === "string" ? error : "Failed to screenshare";
+      toast.error(
+        (t) => (
+          <div className="flex flex-row items-center gap-2">
+            <div className="text-sm">{errorMessage}</div>
+            <Button size="sm" onClick={() => toast.dismiss(t.id)}>
+              Dismiss
+            </Button>
+          </div>
+        ),
+        { duration: 10000 },
+      );
     }
   };
 
   const [resolution, setResolution] = useState<ResolutionKey>("1440p");
   const updateResolution = (value: string) => {
     setResolution(value as ResolutionKey);
+  };
+
+  const grantAccessibilityPermission = () => {
+    tauriUtils.openAccessibilitySettings();
+
+    // Refetch permission status for 5 seconds
+    const interval = setInterval(async () => {
+      fetchAccessibilityPermission();
+    }, 500); // Check every 500ms
+
+    // Stop checking after 5 seconds regardless
+    setTimeout(() => {
+      clearInterval(interval);
+    }, 10000);
   };
 
   return (
@@ -116,6 +143,16 @@ function Window() {
         data-tauri-drag-region
         className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
       ></div>
+      {!accessibilityPermission && (
+        <div className="flex flex-row items-center justify-center gap-2 px-4 py-2 mt-2">
+          <span className="text-center text-base font-medium text-yellow-400">
+            ⚠️ Accessibility permission is not granted, remote control will not work
+          </span>
+          <Button size="sm" onClick={grantAccessibilityPermission}>
+            Grant permission
+          </Button>
+        </div>
+      )}
       <div className="flex flex-col items-start gap-2 px-4 py-2 mt-2">
         <span className="mr-2 small">Choose resolution:</span>
         <Select onValueChange={updateResolution} value={resolution}>

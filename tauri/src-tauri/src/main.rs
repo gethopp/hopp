@@ -22,7 +22,6 @@ use hopp::{
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
-#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
@@ -37,7 +36,8 @@ async fn screenshare(
     content: Content,
     token: String,
     resolution: Extent,
-) -> bool {
+    accessibility_permission: bool,
+) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
     /*
      * If the user was previously a controller, we need to hide the viewing
@@ -58,31 +58,33 @@ async fn screenshare(
             content,
             token: token.clone(),
             resolution,
+            accessibility_permission,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");
-        return false;
+        return Err("Failed to send message to hopp_core".to_string());
     }
 
-    // TODO: Add a timeout
-    let res = data.socket.receive_message();
+    let res = data
+        .socket
+        .receive_message_with_timeout(Duration::from_secs(10));
     if let Err(e) = res {
         log::error!("screenshare: failed to receive message: {e:?}");
-        return false;
+        return Err("Failed to receive message from hopp_core".to_string());
     }
     match res.unwrap() {
-        Message::StartScreenShareResult(result) => {
-            if !result {
+        Message::StartScreenShareResult(result) => match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
                 log::error!("screenshare: failed to start screenshare");
-                return false;
+                Err(e)
             }
-        }
+        },
         _ => {
             log::error!("screenshare: unexpected message");
+            Err("Unexpected screenshare result message".to_string())
         }
     }
-
-    true
 }
 
 #[tauri::command]

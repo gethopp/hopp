@@ -65,6 +65,25 @@ export function ConnectedActions() {
   const posthog = usePostHog();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
+  const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+
+  const fetchAccessibilityPermission = async () => {
+    const permission = await tauriUtils.getControlPermission();
+    setAccessibilityPermission(permission);
+    setControllerCursorState(permission);
+
+    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
+      console.log("Accessibility permission is false, setting controller cursor to false");
+      // We need to make sure the viewing window has opened
+      setTimeout(() => {
+        tauriUtils.setControllerCursor(permission);
+      }, 2000);
+    }
+  };
+
+  useEffect(() => {
+    fetchAccessibilityPermission();
+  }, [callTokens?.role]);
 
   const handleEndCall = useCallback(() => {
     if (!callTokens) return;
@@ -178,9 +197,15 @@ export function ConnectedActions() {
                           tauriUtils.setControllerCursor(controllerCursorTmp);
                           setControllerCursorState(controllerCursorTmp);
                         }}
-                        state={controllerCursorState ? "active" : "neutral"}
+                        state={
+                          controllerCursorState ? "active"
+                          : !accessibilityPermission ?
+                            "deactivated"
+                          : "neutral"
+                        }
                         size="unsized"
                         className="size-9"
+                        disabled={!accessibilityPermission}
                       >
                         {controllerCursorState && (
                           <HiOutlineCursorClick

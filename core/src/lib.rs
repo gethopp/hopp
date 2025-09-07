@@ -67,33 +67,23 @@ const PROCESS_EXIT_CODE_ERROR: i32 = 1;
 
 #[derive(Error, Debug)]
 pub enum ServerError {
-    #[error("Room service not found")]
+    #[error("Livekit room service not found")]
     RoomServiceNotFound,
-    #[error("Failed to create room")]
+    #[error("Failed to create Livekit room")]
     RoomCreationError,
-    #[error("Display not found")]
-    DisplayNotFound,
-    #[error("Window not found")]
-    WindowNotFound,
-    #[error("Failed to create content filter")]
-    ContentFilterCreationError,
-    #[error("Failed to set fullscreen")]
+    #[error("Failed to set overlay window fullscreen")]
     FullscreenError,
-    #[error("Active stream not found")]
-    ActiveStreamNotFound,
-    #[error("Failed to create stream")]
+    #[error("Failed to create stream for screen share")]
     StreamCreationError,
-    #[error("Failed to get stream extent")]
+    #[error("Failed to get stream extent for screen share")]
     StreamExtentError,
-    #[error("Failed to create window")]
+    #[error("Failed to create overlay window")]
     WindowCreationError,
-    #[error("Failed to get window position")]
-    WindowPositionError,
-    #[error("Failed to set cursor hittest")]
+    #[error("Failed to set cursor hittest for overlay window")]
     CursorHittestError,
     #[error("Failed to create graphics context")]
     GfxCreationError,
-    #[error("Failed to create cursor controller")]
+    #[error("Failed to create cursor controller, accessibility permissions needed")]
     CursorControllerCreationError,
 }
 
@@ -295,6 +285,7 @@ impl<'a> Application<'a> {
                 width: screenshare_input.resolution.width,
                 height: screenshare_input.resolution.height,
             },
+            !screenshare_input.accessibility_permission,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -303,10 +294,14 @@ impl<'a> Application<'a> {
 
         let extent = screen_capturer.get_stream_extent();
         if extent.width == 0. || extent.height == 0. {
+            drop(screen_capturer);
+            self.stop_screenshare();
             return Err(ServerError::StreamExtentError);
         }
 
         if self.room_service.is_none() {
+            drop(screen_capturer);
+            self.stop_screenshare();
             return Err(ServerError::RoomServiceNotFound);
         }
 
@@ -319,6 +314,8 @@ impl<'a> Application<'a> {
         );
         if let Err(error) = res {
             log::error!("screenshare: error creating room: {error:?}");
+            drop(screen_capturer);
+            self.stop_screenshare();
             return Err(ServerError::RoomCreationError);
         }
         log::info!("screenshare: room created");
@@ -329,7 +326,11 @@ impl<'a> Application<'a> {
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, event_loop);
+        let res = self.create_overlay_window(
+            monitor,
+            event_loop,
+            screenshare_input.accessibility_permission,
+        );
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -362,8 +363,9 @@ impl<'a> Application<'a> {
         &mut self,
         selected_monitor: MonitorHandle,
         event_loop: &ActiveEventLoop,
+        accessibility_permission: bool,
     ) -> Result<(), ServerError> {
-        log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} ",);
+        log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} {accessibility_permission}",);
         let attributes = get_window_attributes();
         let window = match event_loop.create_window(attributes) {
             Ok(window) => window,
@@ -461,6 +463,7 @@ impl<'a> Application<'a> {
             &mut graphics_context,
             overlay_window.clone(),
             self.event_loop_proxy.clone(),
+            accessibility_permission,
         );
         if let Err(error) = cursor_controller {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");
@@ -676,19 +679,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let monitors = event_loop
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
-                let res = self.screenshare(data, monitors, event_loop);
-                let res = res.is_ok();
-                if !res {
-                    sentry_utils::upload_logs_event("Screen share failed".to_string());
-                }
-                let res = self
+
+                let result_message = match self.screenshare(data, monitors, event_loop) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        sentry_utils::upload_logs_event("Screen share failed".to_string());
+                        Err(e.to_string())
+                    }
+                };
+
+                if let Err(e) = self
                     .socket
-                    .send_message(Message::StartScreenShareResult(res));
-                if res.is_err() {
-                    error!(
-                        "user_event: Error sending start screen share result: {:?}",
-                        res.err()
-                    );
+                    .send_message(Message::StartScreenShareResult(result_message))
+                {
+                    error!("user_event: Error sending start screen share result: {e:?}");
                 }
             }
             UserEvent::StopScreenShare => {

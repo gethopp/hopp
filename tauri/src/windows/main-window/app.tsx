@@ -130,7 +130,7 @@ function App() {
               if (token) {
                 if (token) {
                   await validateAndSetAuthToken(token);
-                  await tauriUtils.showMainWindow();
+                  await tauriUtils.showWindow("main");
                 }
               }
             }
@@ -210,7 +210,7 @@ function App() {
             padding: "2px",
           },
         });
-        tauriUtils.showMainWindow();
+        tauriUtils.showWindow("main");
       }
     });
 
@@ -243,7 +243,7 @@ function App() {
         console.debug("Core process crashed");
         coreProcessCrashedRef.current = true;
 
-        tauriUtils.showMainWindow();
+        tauriUtils.showWindow("main");
         toast.error("Oops something went wrong, please restart.", {
           duration: 20_000,
           position: "top-center",

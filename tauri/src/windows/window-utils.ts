@@ -126,13 +126,13 @@ const stopSharing = async () => {
   await invoke("stop_sharing");
 };
 
-const showMainWindow = async () => {
+const showWindow = async (windowLabel: string) => {
   if (isTauri) {
-    const mainWindow = await WebviewWindow.getByLabel("main");
-    if (mainWindow) {
-      await mainWindow.show();
-      await mainWindow.unminimize();
-      await mainWindow.setFocus();
+    const window = await WebviewWindow.getByLabel(windowLabel);
+    if (window) {
+      await window.show();
+      await window.unminimize();
+      await window.setFocus();
     }
   }
 };
@@ -247,10 +247,10 @@ export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
   createContentPickerWindow,
+  showWindow,
   createCameraWindow,
   ensureCameraWindowIsVisible,
   closeCameraWindow,
-  showMainWindow,
   storeTokenBackend,
   getStoredToken,
   deleteStoredToken,
