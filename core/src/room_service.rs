@@ -527,7 +527,10 @@ async fn room_service_commands(
                     log::info!("room_service_commands: Participant: {participant:?}");
 
                     let name = participant.1.name();
-                    if participant.0.as_str().contains("audio") || name.is_empty() {
+                    if participant.0.as_str().contains("audio")
+                        || participant.0.as_str().contains("camera")
+                        || name.is_empty()
+                    {
                         continue;
                     }
 
@@ -799,7 +802,10 @@ async fn handle_room_events(
 
                 let name = participant.name();
                 let participant_id = participant.identity().as_str().to_string();
-                if participant_id.contains("audio") || name.is_empty() {
+                if participant_id.contains("audio")
+                    || participant_id.contains("camera")
+                    || name.is_empty()
+                {
                     log::debug!("handle_room_events: Skipping participant: {participant:?}");
                     continue;
                 }

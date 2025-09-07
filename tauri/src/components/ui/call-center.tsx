@@ -514,10 +514,10 @@ function CameraIcon() {
   const { localParticipant } = useLocalParticipant();
 
   const pubUnpubTrack = useCallback(
-    async (hasCameraEnabled: boolean, devicesLength: number) => {
+    async (hasCameraEnabled: boolean) => {
       if (!localParticipant) return;
 
-      if (hasCameraEnabled && devicesLength > 0) {
+      if (hasCameraEnabled) {
         try {
           await localParticipant.setCameraEnabled(
             true,
@@ -542,14 +542,6 @@ function CameraIcon() {
         if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
           localParticipant.unpublishTrack(cameraTrack.track);
         }
-      }
-
-      if (hasCameraEnabled && devicesLength === 0) {
-        toast.error("Your camera stopped working, and is not being shared anymore.", {
-          duration: 2500,
-        });
-
-        handleCameraToggle();
       }
     },
     [localParticipant],
@@ -577,9 +569,9 @@ function CameraIcon() {
 
   useEffect(() => {
     if (roomConnected) {
-      pubUnpubTrack(hasCameraEnabled, cameraDevices.length);
+      pubUnpubTrack(hasCameraEnabled);
     }
-  }, [hasCameraEnabled, localParticipant, roomConnected, cameraDevices]);
+  }, [hasCameraEnabled, localParticipant, roomConnected]);
 
   const handleCameraToggle = () => {
     updateCallTokens({
