@@ -127,9 +127,6 @@ function Window() {
     // Refetch permission status for 5 seconds
     const interval = setInterval(async () => {
       fetchAccessibilityPermission();
-      if (accessibilityPermission) {
-        clearInterval(interval);
-      }
     }, 500); // Check every 500ms
 
     // Stop checking after 5 seconds regardless
