@@ -57,7 +57,7 @@ async function screenshare(
     content: content,
     token: videoToken,
     resolution: resolutionMap[resolution],
-    accessibility_permission: accessibilityPermission,
+    accessibilityPermission: accessibilityPermission,
   });
   return true;
 }

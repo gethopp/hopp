@@ -63,6 +63,25 @@ export function ConnectedActions({ token }: { token: string }) {
   const posthog = usePostHog();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
+  const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+
+  const fetchAccessibilityPermission = async () => {
+    const permission = await tauriUtils.getControlPermission();
+    setAccessibilityPermission(permission);
+    setControllerCursorState(permission);
+
+    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
+      console.log("Accessibility permission is false, setting controller cursor to false");
+      // We need to make sure the viewing window has opened
+      setTimeout(() => {
+        tauriUtils.setControllerCursor(permission);
+      }, 2000);
+    }
+  };
+
+  useEffect(() => {
+    fetchAccessibilityPermission();
+  }, [callTokens?.role]);
 
   const handleEndCall = useCallback(() => {
     if (!callTokens) return;
@@ -99,13 +118,16 @@ export function ConnectedActions({ token }: { token: string }) {
     });
   }, [callTokens, setCallTokens]);
 
-  const handleRoleChange = useCallback((value: ParticipantRole) => {
-    if (!callTokens) return;
-    setCallTokens({
-      ...callTokens,
-      role: value,
-    });
-  }, [callTokens]);
+  const handleRoleChange = useCallback(
+    (value: ParticipantRole) => {
+      if (!callTokens) return;
+      setCallTokens({
+        ...callTokens,
+        role: value,
+      });
+    },
+    [callTokens],
+  );
 
   // Stop call when teammate disconnects
   useEffect(() => {
@@ -118,10 +140,7 @@ export function ConnectedActions({ token }: { token: string }) {
 
   return (
     <>
-      <ScreensharingEventListener
-        callTokens={callTokens}
-        updateRole={handleRoleChange}
-      />
+      <ScreensharingEventListener callTokens={callTokens} updateRole={handleRoleChange} />
       {/* <ConnectionsHealthDebug /> */}
       <div
         className={clsx("gap-2 px-4 flex-nowrap grid mb-4", {
@@ -157,7 +176,7 @@ export function ConnectedActions({ token }: { token: string }) {
                 className="w-full border-gray-500 text-gray-600 flex flex-row gap-2"
                 variant="gradient-white"
                 onClick={() => {
-                  tauriUtils.createScreenShareWindow(callTokens.videoToken)
+                  tauriUtils.createScreenShareWindow(callTokens.videoToken);
                 }}
               >
                 <HiOutlineEye className="size-4" />
@@ -175,9 +194,15 @@ export function ConnectedActions({ token }: { token: string }) {
                           tauriUtils.setControllerCursor(controllerCursorTmp);
                           setControllerCursorState(controllerCursorTmp);
                         }}
-                        state={controllerCursorState ? "active" : "neutral"}
+                        state={
+                          controllerCursorState ? "active"
+                          : !accessibilityPermission ?
+                            "deactivated"
+                          : "neutral"
+                        }
                         size="unsized"
                         className="size-9"
+                        disabled={!accessibilityPermission}
                       >
                         {controllerCursorState && (
                           <HiOutlineCursorClick
@@ -338,7 +363,13 @@ function MicrophoneIcon() {
   );
 }
 
-function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState | null, setCallTokens: (callTokens: CallState | null) => void }) {
+function ScreenShareIcon({
+  callTokens,
+  setCallTokens,
+}: {
+  callTokens: CallState | null;
+  setCallTokens: (callTokens: CallState | null) => void;
+}) {
   const toggleScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
 
@@ -378,7 +409,7 @@ function ScreenShareIcon({ callTokens, setCallTokens }: { callTokens: CallState 
     >
       {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
     </ToggleIconButton>
-  )
+  );
 }
 
 const ListenToRemoteAudio = () => {

@@ -98,6 +98,7 @@ pub struct ScreenShareMessage {
     pub content: Content,
     pub token: String,
     pub resolution: Extent,
+    pub accessibility_permission: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

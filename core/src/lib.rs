@@ -325,7 +325,11 @@ impl<'a> Application<'a> {
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, event_loop);
+        let res = self.create_overlay_window(
+            monitor,
+            event_loop,
+            screenshare_input.accessibility_permission,
+        );
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -358,8 +362,9 @@ impl<'a> Application<'a> {
         &mut self,
         selected_monitor: MonitorHandle,
         event_loop: &ActiveEventLoop,
+        accessibility_permission: bool,
     ) -> Result<(), ServerError> {
-        log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} ",);
+        log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} {accessibility_permission}",);
         let attributes = get_window_attributes();
         let window = match event_loop.create_window(attributes) {
             Ok(window) => window,
@@ -457,6 +462,7 @@ impl<'a> Application<'a> {
             &mut graphics_context,
             overlay_window.clone(),
             self.event_loop_proxy.clone(),
+            accessibility_permission,
         );
         if let Err(error) = cursor_controller {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");

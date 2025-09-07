@@ -56,6 +56,7 @@ async fn screenshare(
             content,
             token: token.clone(),
             resolution,
+            accessibility_permission,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");
