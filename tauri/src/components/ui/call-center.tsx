@@ -523,7 +523,7 @@ function CameraIcon() {
             true,
             {
               deviceId: activeCameraDeviceId,
-              resolution: VideoPresets.h720.resolution,
+              resolution: VideoPresets.h216.resolution,
             },
             {
               videoCodec: "h264",
