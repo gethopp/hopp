@@ -259,7 +259,6 @@ export const tauriUtils = {
   closeScreenShareWindow,
   createContentPickerWindow,
   showWindow,
-  createCameraWindow,
   ensureCameraWindowIsVisible,
   closeCameraWindow,
   storeTokenBackend,

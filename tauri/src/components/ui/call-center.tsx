@@ -577,10 +577,6 @@ function CameraIcon() {
     updateCallTokens({
       hasCameraEnabled: !hasCameraEnabled,
     });
-
-    if (!hasCameraEnabled) {
-      tauriUtils.createCameraWindow(callTokens?.cameraToken || "");
-    }
   };
 
   const handleCameraChange = (value: string) => {

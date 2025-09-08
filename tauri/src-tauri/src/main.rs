@@ -545,9 +545,6 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
             if let Err(e) = window_clone.show() {
                 log::error!("Failed to show camera window: {}", e);
             }
-            if let Err(e) = window_clone.set_focus() {
-                log::error!("Failed to focus camera window: {}", e);
-            }
         })
         .map_err(|e| format!("Failed to run on main thread: {}", e))?;
 
