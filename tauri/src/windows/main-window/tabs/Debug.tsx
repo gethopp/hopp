@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import useStore from "@/store/store";
 import { socketService } from "@/services/socket";
 import { Button } from "@/components/ui/button";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { soundUtils } from "@/lib/sound_utils";
 import { tauriUtils } from "@/windows/window-utils.ts";
@@ -13,6 +13,16 @@ export const Debug = () => {
   const { callTokens, setCallTokens, authToken } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
+
+  useEffect(() => {
+    return () => {
+      try {
+        soundRef.current.stop?.();
+      } catch (error) {
+        console.error("Error stopping sound:", error);
+      }
+    };
+  }, []);
 
   const toggleSound = async () => {
     console.log("Toggling sound");
