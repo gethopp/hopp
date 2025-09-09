@@ -3,6 +3,7 @@ package models
 import (
 	"errors"
 	"fmt"
+	"hopp-backend/internal/utils"
 	"time"
 
 	"github.com/google/uuid"

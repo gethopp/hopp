@@ -49,6 +49,10 @@ type Config struct {
 	Sentry struct {
 		DSN string
 	}
+	EmailValidation struct {
+		BlockDisposableEmails bool
+		StrictMode           bool // If true, only allows business domains
+	}
 }
 
 func Load() (*Config, error) {
@@ -121,6 +125,10 @@ func Load() (*Config, error) {
 	}
 
 	c.Sentry.DSN = os.Getenv("SENTRY_DSN")
+
+	// Email Validation Configuration
+	c.EmailValidation.BlockDisposableEmails = os.Getenv("BLOCK_DISPOSABLE_EMAILS") != "false"
+	c.EmailValidation.StrictMode = os.Getenv("EMAIL_STRICT_MODE") == "true"
 
 	return c, nil
 }
