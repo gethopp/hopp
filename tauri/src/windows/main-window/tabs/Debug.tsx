@@ -77,6 +77,7 @@ export const Debug = () => {
                 hasAudioEnabled: false,
                 hasVideoEnabled: false,
                 isRemoteControlEnabled: true,
+                cameraTrackId: null,
               });
             }}
           />

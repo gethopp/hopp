@@ -10,8 +10,11 @@ import { Track } from "livekit-client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
+import { HiOutlineEye, HiOutlineEyeSlash } from "react-icons/hi2";
 import { WindowActions } from "@/components/ui/window-buttons";
 import { CustomIcons } from "@/components/ui/icons";
+import { Button } from "@/components/ui/button";
+import useStore from "@/store/store";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -41,16 +44,23 @@ async function CameraWindowSize({ numOfTracks }: { numOfTracks: number }) {
   appWindow.setSize(new PhysicalSize(160 * factor, totalHeight * factor));
 }
 
-function ConsumerComponent() {
+function ConsumerComponent({ hideSelf, setHideSelf }: { hideSelf: boolean; setHideSelf: (value: boolean) => void }) {
+  const { callTokens } = useStore();
+
   const tracks = useTracks([Track.Source.Camera], {
     onlySubscribed: true,
+  });
+
+  const visibleTracks = tracks.filter((track) => {
+    const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
+    return !(hideSelf && isSelfTrack);
   });
 
   useEffect(() => {
     console.log("tracks ", tracks);
     // Set window size appropriately
-    CameraWindowSize({ numOfTracks: tracks.length });
-  }, [tracks]);
+    CameraWindowSize({ numOfTracks: visibleTracks.length });
+  }, [visibleTracks]);
 
   return (
     <div className="content px-2 py-4">
@@ -72,9 +82,9 @@ function ConsumerComponent() {
             <span className="text-sm text-white/80">Loading</span>
           </div>
         )}
-        {tracks.map((track) => {
+        {visibleTracks.map((track) => {
           return (
-            <div className="overflow-hidden rounded-lg" key={track.sid}>
+            <div className="relative overflow-hidden rounded-lg group" key={track.sid}>
               <VideoTrack
                 trackRef={track}
                 className="rounded-lg object-cover overflow-hidden"
@@ -92,6 +102,19 @@ function ConsumerComponent() {
                     : "1px solid rgba(0, 0, 0, 0.1)",
                 }}
               />
+              {callTokens?.cameraTrackId === track?.publication?.trackSid && (
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center rounded-lg">
+                  <Button
+                    variant="secondary"
+                    size="icon-sm"
+                    className="bg-white/20 hover:bg-white/30 text-white border-white/20"
+                    title="Hide participant"
+                    onClick={() => setHideSelf(true)}
+                  >
+                    <HiOutlineEyeSlash className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -139,7 +162,7 @@ const putWindowCorner = async () => {
 function CameraWindow() {
   useDisableNativeContextMenu();
   const [cameraToken, setCameraToken] = useState<string | null>(null);
-
+  const [hideSelf, setHideSelf] = useState(false);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
 
   useEffect(() => {
@@ -176,10 +199,21 @@ function CameraWindow() {
         </WindowActions.Empty>
         <CustomIcons.Drag className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
         {/* <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div> */}
+        {hideSelf && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto text-white/80 hover:text-white hover:bg-white/10"
+            onClick={() => setHideSelf(false)}
+            title="Show self"
+          >
+            <HiOutlineEye className="w-4 h-4" />
+          </Button>
+        )}
       </div>
       <Toaster position="bottom-center" />
       <LiveKitRoom token={cameraToken ?? undefined} serverUrl={livekitUrl}>
-        <ConsumerComponent />
+        <ConsumerComponent hideSelf={hideSelf} setHideSelf={setHideSelf} />
       </LiveKitRoom>
     </div>
   );
