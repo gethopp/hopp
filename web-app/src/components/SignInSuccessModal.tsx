@@ -30,6 +30,8 @@ export function SignInSuccessModal() {
   const hasFilledForm = user?.metadata?.hasFilledOnboardingForm || false;
 
   useEffect(() => {
+    if (import.meta.env.MODE === "development") return;
+
     if (user && !hasFilledForm) {
       // Load Tally script if not already loaded
       if (!document.querySelector('script[src="https://tally.so/widgets/embed.js"]')) {

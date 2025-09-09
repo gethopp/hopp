@@ -549,6 +549,8 @@ paths:
                     type: integer
                     format: uint
                     description: ID of the new team
+        "204":
+          description: User was already in this team - noop
         "401":
           description: Unauthorized
           content:

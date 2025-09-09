@@ -807,6 +807,10 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to retrieve invitation details")
 	}
 
+	if invitation.TeamID == int(*user.TeamID) {
+		return c.NoContent(http.StatusNoContent)
+	}
+
 	teammates, err := user.GetTeammates(h.DB)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get user teammates")
