@@ -11,10 +11,12 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
 import { HiOutlineEye, HiOutlineEyeSlash } from "react-icons/hi2";
+import { RiExpandDiagonalLine, RiCollapseDiagonalLine } from "react-icons/ri";
 import { WindowActions } from "@/components/ui/window-buttons";
 import { CustomIcons } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import useStore from "@/store/store";
+import clsx from "clsx";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -22,12 +24,20 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-async function CameraWindowSize({ numOfTracks }: { numOfTracks: number }) {
+const EXPANSION_FACTOR = 1.3;
+
+async function CameraWindowSize({
+  numOfTracks,
+  expansionFactor = 1,
+}: {
+  numOfTracks: number;
+  expansionFactor?: number;
+}) {
   let trackLength = numOfTracks;
 
   // All values are in pixels
   const FlexGap = 4; // 0.25rem
-  const VideoCardHeight = 140;
+  const VideoCardHeight = 140 * expansionFactor;
   const HeaderHeight = 36;
   const VideoCardPadding = 14; // 0.875rem
 
@@ -41,10 +51,24 @@ async function CameraWindowSize({ numOfTracks }: { numOfTracks: number }) {
 
   const appWindow = getCurrentWebviewWindow();
   const factor = await appWindow.scaleFactor();
-  appWindow.setSize(new PhysicalSize(160 * factor, totalHeight * factor));
+  console.log(
+    `Tracks ${trackLength}`,
+    `Expansion factor ${expansionFactor}`,
+    `Factor ${factor}`,
+    `Total height ${totalHeight}`,
+  );
+  appWindow.setSize(new PhysicalSize(Math.floor(160 * expansionFactor * factor), Math.floor(totalHeight * factor)));
 }
 
-function ConsumerComponent({ hideSelf, setHideSelf }: { hideSelf: boolean; setHideSelf: (value: boolean) => void }) {
+function ConsumerComponent({
+  hideSelf,
+  setHideSelf,
+  isExpanded,
+}: {
+  hideSelf: boolean;
+  setHideSelf: (value: boolean) => void;
+  isExpanded: boolean;
+}) {
   const { callTokens } = useStore();
 
   const tracks = useTracks([Track.Source.Camera], {
@@ -59,8 +83,10 @@ function ConsumerComponent({ hideSelf, setHideSelf }: { hideSelf: boolean; setHi
   useEffect(() => {
     console.log("tracks ", tracks);
     // Set window size appropriately
-    CameraWindowSize({ numOfTracks: visibleTracks.length });
-  }, [visibleTracks]);
+    CameraWindowSize({ numOfTracks: visibleTracks.length, expansionFactor: isExpanded ? EXPANSION_FACTOR : 1 });
+  }, [visibleTracks, isExpanded]);
+
+  const factor = isExpanded ? EXPANSION_FACTOR : 1;
 
   return (
     <div className="content px-2 py-4">
@@ -90,12 +116,12 @@ function ConsumerComponent({ hideSelf, setHideSelf }: { hideSelf: boolean; setHi
                 className="rounded-lg object-cover overflow-hidden"
                 style={{
                   aspectRatio: "1/1",
-                  width: "140px",
-                  height: "140px",
-                  minHeight: "140px",
-                  minWidth: "140px",
-                  maxHeight: "140px",
-                  maxWidth: "140px",
+                  width: `${Math.floor(140 * factor)}px`,
+                  height: `${Math.floor(140 * factor)}px`,
+                  minHeight: `${Math.floor(140 * factor)}px`,
+                  minWidth: `${Math.floor(140 * factor)}px`,
+                  maxHeight: `${Math.floor(140 * factor)}px`,
+                  maxWidth: `${Math.floor(140 * factor)}px`,
                   border:
                     track?.participant?.isSpeaking ?
                       "1px solid rgba(157, 253, 49, 0.8)"
@@ -162,12 +188,13 @@ const putWindowCorner = async () => {
 function CameraWindow() {
   useDisableNativeContextMenu();
   const [cameraToken, setCameraToken] = useState<string | null>(null);
-  const [hideSelf, setHideSelf] = useState(false);
+  const [isSelfHidden, setIsSelfHidden] = useState(false);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
+  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     // Set correct window size
-    CameraWindowSize({ numOfTracks: 0 });
+    CameraWindowSize({ numOfTracks: 0, expansionFactor: isExpanded ? EXPANSION_FACTOR : 1 });
 
     const cameraTokenFromUrl = tauriUtils.getTokenParam("cameraToken");
 
@@ -197,23 +224,41 @@ function CameraWindow() {
         <WindowActions.Empty onClick={() => putWindowCorner()} className=" justify-self-start">
           <CustomIcons.Corner />
         </WindowActions.Empty>
-        <CustomIcons.Drag className="absolute left-1/2 -translate-x-1/2 pointer-events-none" />
+        <CustomIcons.Drag
+          className={clsx(
+            "absolute left-1/2 -translate-x-1/2 pointer-events-none",
+            isSelfHidden ? "left-[33%] -translate-x-[33%]" : "left-1/2 -translate-x-1/2",
+          )}
+        />
         {/* <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div> */}
-        {hideSelf && (
+        <div className="ml-auto flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon-sm"
-            className="ml-auto text-white/80 hover:text-white hover:bg-white/10"
-            onClick={() => setHideSelf(false)}
-            title="Show self"
+            className="text-white/80 hover:text-white hover:bg-white/10"
+            onClick={() => setIsExpanded(!isExpanded)}
+            title={isExpanded ? "Collapse window" : "Expand window"}
           >
-            <HiOutlineEye className="w-4 h-4" />
+            {isExpanded ?
+              <RiCollapseDiagonalLine className="size-4" />
+            : <RiExpandDiagonalLine className="size-4" />}
           </Button>
-        )}
+          {isSelfHidden && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-white/80 hover:text-white hover:bg-white/10"
+              onClick={() => setIsSelfHidden(false)}
+              title="Show self"
+            >
+              <HiOutlineEye className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
       <Toaster position="bottom-center" />
       <LiveKitRoom token={cameraToken ?? undefined} serverUrl={livekitUrl}>
-        <ConsumerComponent hideSelf={hideSelf} setHideSelf={setHideSelf} />
+        <ConsumerComponent hideSelf={isSelfHidden} setHideSelf={setIsSelfHidden} isExpanded={isExpanded} />
       </LiveKitRoom>
     </div>
   );
