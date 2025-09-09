@@ -498,11 +498,11 @@ function ScreensharingEventListener({
 
 function CameraIcon() {
   const { updateCallTokens, callTokens } = useStore();
-  const hasCameraEnabled = callTokens?.hasCameraEnabled || false;
   const [retry, setRetry] = useState(0);
 
-  const tracks = useTracks([Track.Source.Camera], {});
+  const [cameraEnabled, setCameraEnabled] = useState(callTokens?.cameraTrackId !== null);
 
+  const tracks = useTracks([Track.Source.Camera], {});
   const [roomConnected, setRoomConnected] = useState(false);
   const room = useRoomContext();
   useEffect(() => {
@@ -569,14 +569,12 @@ function CameraIcon() {
 
   useEffect(() => {
     if (roomConnected) {
-      pubUnpubTrack(hasCameraEnabled);
+      pubUnpubTrack(cameraEnabled);
     }
-  }, [hasCameraEnabled, localParticipant, roomConnected]);
+  }, [cameraEnabled, localParticipant, roomConnected]);
 
   const handleCameraToggle = () => {
-    updateCallTokens({
-      hasCameraEnabled: !hasCameraEnabled,
-    });
+    setCameraEnabled(!cameraEnabled);
   };
 
   const handleCameraChange = (value: string) => {
@@ -591,12 +589,21 @@ function CameraIcon() {
   };
 
   useEffect(() => {
-    console.log("tracks", tracks);
     if (tracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
     } else {
       // If there are 0 then close the window
       tauriUtils.closeCameraWindow();
+    }
+
+    if (localParticipant) {
+      for (const track of localParticipant.getTrackPublications()) {
+        if (track.source === Track.Source.Camera) {
+          updateCallTokens({
+            cameraTrackId: track.trackSid,
+          });
+        }
+      }
     }
   }, [tracks]);
 
@@ -604,9 +611,9 @@ function CameraIcon() {
   return (
     <ToggleIconButton
       onClick={handleCameraToggle}
-      icon={hasCameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
+      icon={cameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
       state={
-        hasCameraEnabled ? "active"
+        cameraEnabled ? "active"
         : isDisabled ?
           "deactivated"
         : "neutral"

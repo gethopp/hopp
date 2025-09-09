@@ -33,6 +33,7 @@ export const Rooms = () => {
         hasAudioEnabled: true,
         role: ParticipantRole.NONE,
         isRemoteControlEnabled: true,
+        cameraTrackId: null,
       });
     } catch (error) {
       toast.error("Error joining watercooler room");

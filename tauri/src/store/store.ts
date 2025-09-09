@@ -16,16 +16,16 @@ export enum ParticipantRole {
   SHARER = "sharer",
   CONTROLLER = "controller",
   NONE = "none",
-};
+}
 
 export type CallState = {
   timeStarted: Date;
   hasAudioEnabled: boolean;
-  hasCameraEnabled?: boolean;
   // Managing buttons for starting/joining/terminating screenshare streams
   role: ParticipantRole;
   isRemoteControlEnabled: boolean;
   isRoomCall?: boolean;
+  cameraTrackId?: string | null;
 } & TCallTokensMessage["payload"];
 
 type State = {
