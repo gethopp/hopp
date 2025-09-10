@@ -209,6 +209,7 @@ async fn send_ping(mut socket: CursorSocket) {
         let res = socket.send_message(Message::Ping);
         if let Err(e) = res {
             log::error!("Failed to send ping: {e:?}");
+            sentry_utils::upload_logs_event("Failed to send ping".to_string());
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(
