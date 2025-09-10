@@ -17,7 +17,7 @@ type Props = {
   triggerClassName?: string;
 };
 // allows download and modal popup at same time
-export function WindowsDownloadDialog({ onDownload, disabled, triggerClassName }: Props) {
+export function WindowsDownloadModal({ onDownload, disabled, triggerClassName }: Props) {
   return (
     <Dialog>
       <DialogTrigger asChild>

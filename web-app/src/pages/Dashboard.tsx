@@ -18,6 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SignInSuccessModal } from "@/components/SignInSuccessModal";
 import { usePostHog } from "posthog-js/react";
 import { queryClient } from "@/App";
+import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
 
 // Create email validation schema using zod
 const emailSchema = z.string().email("Invalid email format");
@@ -509,14 +510,12 @@ export function Dashboard() {
                 <span className="font-normal">Windows</span>
                 <span className="muted">Windows 7 or later</span>
               </div>
-              <Button
-                variant="outline"
-                className="ml-auto"
-                onClick={() => downloadFile("WINDOWS")}
+
+              <WindowsDownloadModal
+                onDownload={() => downloadFile("WINDOWS")}
                 disabled={!latestRelease}
-              >
-                Download for Windows
-              </Button>
+                triggerClassName="ml-auto"
+              />
             </div>
             <div className="flex flex-row items-center justify-center gap-6">
               <VscTerminalLinux className="size-4 text-slate-600" />
