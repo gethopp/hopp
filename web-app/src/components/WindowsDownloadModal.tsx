@@ -9,7 +9,6 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import windowsSmartVideo from "../assets/wmv3.mp4";
 
 type Props = {
   onDownload: () => void;
@@ -41,7 +40,7 @@ export function WindowsDownloadModal({ onDownload, disabled, triggerClassName }:
         <div className="grid gap-4 py-4">
           <div className="flex justify-center">
             <video
-              src={windowsSmartVideo}
+              src="https://dlh49gjxx49i3.cloudfront.net/web-app/wmv3.mp4"
               className="w-[80%] rounded-lg border border-gray-400 shadow-sm object-contain"
               autoPlay
               loop
