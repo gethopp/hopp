@@ -8,6 +8,22 @@ body:
       value: |
         Thanks for taking the time to report a bug! Please provide the details below.
 
+  - type: input
+    id: ver
+    attributes:
+      label: App Version
+      description: The version of the app you are using.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Which OS are you using?
+    validations:
+      required: true
+
   - type: textarea
     id: description
     attributes:
@@ -36,19 +52,18 @@ body:
       description: What did you expect to happen instead?
       placeholder: Tell us what you expected.
 
-  - type: input
-    id: os
+  - type: textarea
+    id: logs
     attributes:
-      label: Operating system
-      description: Which OS are you using?
-      placeholder: e.g. Windows 11, macOS 14, Ubuntu 22.04
-    validations:
-      required: true
+      label: Relevant log output
+      description: Click the clipboard button in the app to copy your logs.
+      placeholder: "Paste your logs here."
+      render: shell
+
 
   - type: textarea
     id: attachments
     attributes:
       label: Attachments
-      description: Paste any relevant screenshots, error messages, or logs here.
-      placeholder: Drag & drop or paste text/images/logs.
-      
+      description: Paste any relevant screenshots here
+      placeholder: Drag & drop or paste images.
