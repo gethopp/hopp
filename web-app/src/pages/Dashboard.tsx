@@ -9,13 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "react-hot-toast";
 import { BACKEND_URLS } from "@/constants";
-import { useEffect, useState, useRef } from "react";
-import { BsApple, BsWindows, BsShieldLockFill } from "react-icons/bs";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { BsApple, BsWindows } from "react-icons/bs";
 import { VscTerminalLinux } from "react-icons/vsc";
 import { z } from "zod";
 import CreatableSelect from "react-select/creatable";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SignInSuccessModal } from "@/components/SignInSuccessModal";
+import { AuthenticationDialog } from "@/components/AuthenticationDialog";
 import { usePostHog } from "posthog-js/react";
 import { queryClient } from "@/App";
 import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
@@ -65,7 +65,7 @@ const ReleaseLinkNotFound = ({ toastId }: { toastId: string }) => (
 export function Dashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [hasAppAuthBanner, setHasAppAuthBanner] = useState(searchParams.get("show_app_token_banner") === "true");
+  const [showAuthDialog, setShowAuthDialog] = useState(searchParams.get("show_app_token_banner") === "true");
   const inviteParam = searchParams.get("invite");
 
   const [latestRelease, setLatestRelease] = useState<GitHubRelease | null>(null);
@@ -73,7 +73,6 @@ export function Dashboard() {
   const [emailOptions, setEmailOptions] = useState<EmailOption[]>([]);
   const [emailError, setEmailError] = useState<string | null>(null);
   const posthog = usePostHog();
-  const [showFallbackAppAuthAlert, setShowFallbackAppAuthAlert] = useState(false);
 
   // Function to handle file downloads
   const downloadFile = (system: DownloadSystem) => {
@@ -321,96 +320,25 @@ export function Dashboard() {
     }
   };
 
+  const onAuthenticationDialogOpenChange = useCallback(() => {
+    setShowAuthDialog(false);
+    // Remove `show_app_token_banner=true` from the URL
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.delete("show_app_token_banner");
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+  }, [searchParams, navigate]);
+
   return (
     <div className="flex flex-col w-full">
       <SignInSuccessModal />
+      <AuthenticationDialog
+        open={showAuthDialog}
+        onOpenChange={onAuthenticationDialogOpenChange}
+        appAuthToken={appAuthToken}
+      />
 
       <h2 className="h2-section min-w-full">Dashboard</h2>
       <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4">
-        {hasAppAuthBanner &&
-          (showFallbackAppAuthAlert ?
-            <Alert className="mt-8 max-w-2xl mx-auto py-6 px-6 border border-border bg-muted/30 rounded-lg">
-              <div className="flex flex-col items-center text-center gap-4">
-                <div className="bg-primary/10 p-3 rounded-full">
-                  <BsShieldLockFill className="size-6 text-primary" />
-                </div>
-                <AlertTitle className="text-xl font-semibold text-foreground">Authenticate application</AlertTitle>
-                <AlertDescription className="text-muted-foreground">
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="text-sm space-y-2">
-                      <p>
-                        Sometimes app redirect (deep link) is blocked by the browser. You can manually copy the token
-                        and paste it inside the app or allow this from the browser, check also{" "}
-                        <a
-                          className="font-medium text-primary hover:text-primary/80 underline"
-                          href="https://translucent-science-2ca.notion.site/How-to-authenticate-application-1f05bf4b0b4d809d8dacf9ee2ebb42f7?pvs=4"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          our docs
-                        </a>{" "}
-                        how to do this.
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => {
-                        if (appAuthToken) {
-                          toast.success("Authentication token copied");
-                          window.open(`hopp:///authenticate?token=${appAuthToken}`, "_blank");
-                          navigator.clipboard.writeText(appAuthToken);
-                        } else {
-                          toast.error("Token could not be copied, go to Settings page and copy manually ");
-                        }
-                      }}
-                    >
-                      Copy token
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </div>
-            </Alert>
-          : <Alert className="mt-8 max-w-2xl mx-auto py-8 px-6 border border-border bg-muted/50 rounded-lg">
-              <div className="flex flex-col items-center text-center gap-6">
-                <div className="bg-primary/10 p-4 rounded-full">
-                  <BsShieldLockFill className="size-8 text-primary" />
-                </div>
-                <div className="space-y-2">
-                  <AlertTitle className="text-2xl font-semibold text-foreground">
-                    Open Hopp to finish sign-in
-                  </AlertTitle>
-                  <p className="text-muted-foreground">Almost there! Click below to complete your authentication</p>
-                </div>
-                <AlertDescription className="text-muted-foreground">
-                  <div className="flex flex-col items-center gap-4">
-                    <Button
-                      size="lg"
-                      onClick={() => {
-                        if (!appAuthToken) {
-                          toast.error("Token not ready yet. Please wait or copy manually.");
-                          setShowFallbackAppAuthAlert(true);
-                          return;
-                        }
-                        try {
-                          const popupRef = window.open(`hopp:///authenticate?token=${appAuthToken}`, "_blank");
-                          if (!popupRef) {
-                            setShowFallbackAppAuthAlert(true);
-                            toast.error("Could not open the app. Showing manual steps.");
-                          } else {
-                            toast.success("Opening Hopp app...", { duration: 1000 });
-                            setHasAppAuthBanner(false);
-                          }
-                        } catch {
-                          setShowFallbackAppAuthAlert(true);
-                        }
-                      }}
-                    >
-                      Open Hopp
-                    </Button>
-                    <p className="text-sm text-gray-500">This will launch the Hopp application on your device</p>
-                  </div>
-                </AlertDescription>
-              </div>
-            </Alert>)}
         <div className="flex flex-col lg:w-1/2 gap-4">
           <section aria-labelledby="teammates">
             <div className="flex flex-col gap-4">
