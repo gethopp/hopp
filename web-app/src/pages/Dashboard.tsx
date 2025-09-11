@@ -9,13 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "react-hot-toast";
 import { BACKEND_URLS } from "@/constants";
-import { useEffect, useState, useRef } from "react";
-import { BsApple, BsWindows, BsShieldLockFill } from "react-icons/bs";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { BsApple, BsWindows } from "react-icons/bs";
 import { VscTerminalLinux } from "react-icons/vsc";
 import { z } from "zod";
 import CreatableSelect from "react-select/creatable";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SignInSuccessModal } from "@/components/SignInSuccessModal";
+import { AuthenticationDialog } from "@/components/AuthenticationDialog";
 import { usePostHog } from "posthog-js/react";
 import { queryClient } from "@/App";
 import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
@@ -65,7 +65,7 @@ const ReleaseLinkNotFound = ({ toastId }: { toastId: string }) => (
 export function Dashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const hasAppAuthBanner = searchParams.get("show_app_token_banner");
+  const [showAuthDialog, setShowAuthDialog] = useState(searchParams.get("show_app_token_banner") === "true");
   const inviteParam = searchParams.get("invite");
 
   const [latestRelease, setLatestRelease] = useState<GitHubRelease | null>(null);
@@ -320,49 +320,25 @@ export function Dashboard() {
     }
   };
 
+  const onAuthenticationDialogOpenChange = useCallback(() => {
+    setShowAuthDialog(false);
+    // Remove `show_app_token_banner=true` from the URL
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.delete("show_app_token_banner");
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+  }, [searchParams, navigate]);
+
   return (
     <div className="flex flex-col w-full">
       <SignInSuccessModal />
+      <AuthenticationDialog
+        open={showAuthDialog}
+        onOpenChange={onAuthenticationDialogOpenChange}
+        appAuthToken={appAuthToken}
+      />
 
       <h2 className="h2-section min-w-full">Dashboard</h2>
       <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4">
-        {hasAppAuthBanner && (
-          <Alert className="mt-8">
-            <BsShieldLockFill className="size-4" />
-            <AlertTitle>Authenticate application</AlertTitle>
-            <AlertDescription>
-              <div className="flex flex-col gap-2">
-                <span>
-                  Sometimes app redirect (deep link) is blocked by the browser 🥲 You can manually copy the token and
-                  paste it inside the app or allow this from the browser, check also{" "}
-                  <a
-                    className="font-bold"
-                    href="https://translucent-science-2ca.notion.site/How-to-authenticate-application-1f05bf4b0b4d809d8dacf9ee2ebb42f7?pvs=4"
-                    target="_blank"
-                  >
-                    our docs
-                  </a>{" "}
-                  how to do this.
-                </span>
-                <Button
-                  className="max-w-min"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    if (appAuthToken) {
-                      toast.success("Authentication token copied");
-                      navigator.clipboard.writeText(appAuthToken);
-                    } else {
-                      toast.error("Token could not be copied, go to Settings page and copy manually ");
-                    }
-                  }}
-                >
-                  Copy token
-                </Button>
-              </div>
-            </AlertDescription>
-          </Alert>
-        )}
         <div className="flex flex-col lg:w-1/2 gap-4">
           <section aria-labelledby="teammates">
             <div className="flex flex-col gap-4">
