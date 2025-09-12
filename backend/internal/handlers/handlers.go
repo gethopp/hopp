@@ -633,6 +633,143 @@ func (h *AuthHandler) UpdateOnboardingFormStatus(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
+// Get all rooms for the user
+func (h *AuthHandler) GetRooms(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	var rooms []models.Room
+	// First, check if the room exists
+	result := h.DB.Where("user_id = ?", user.ID).Find(&rooms)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Rooms not found")
+	}
+
+	return c.JSON(http.StatusOK, rooms)
+}
+
+// CreateRoom creates a new room for the user.
+func (h *AuthHandler) CreateRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	type Room struct {
+		Name string `gorm:"not null" json:"name" validate:"required"`
+	}
+
+	req := &Room{}
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	var room models.Room
+
+	room = models.Room{
+		Name:   req.Name,
+		UserID: user.ID,
+	}
+
+	if err := h.DB.Create(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
+	}
+
+	return c.JSON(http.StatusOK, room)
+}
+
+// UpdateRoom updates an existing room for the user.
+func (h *AuthHandler) UpdateRoom(c echo.Context) error {
+	_, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+
+	type Room struct {
+		Name string `gorm:"not null" json:"name" validate:"required"`
+	}
+
+	req := &Room{}
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	var room models.Room
+
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+	room.Name = req.Name
+
+	if err := h.DB.Save(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
+	}
+
+	return c.JSON(http.StatusOK, room)
+}
+
+func (h *AuthHandler) DeleteRoom(c echo.Context) error {
+	_, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+
+	var room models.Room
+
+	// First, check if the room exists
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+
+	// Delete the room
+	if err := h.DB.Delete(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete room")
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *AuthHandler) GetRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+	var room models.Room
+
+	// First, check if the room exists
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+
+	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
+	if err != nil {
+		c.Logger().Error("Failed to generate watercooler tokens:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
+	}
+	tokens.Participant = user.ID
+
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the watercooler room", user.ID), h.Config)
+
+	return c.JSON(http.StatusOK, tokens)
+}
+
 // Watercooler generates LiveKit tokens for joining the team's watercooler room
 // The team's watercooler room will be a room that will have a room name:
 // `team-<team-id>-watercooler`

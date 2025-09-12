@@ -181,6 +181,7 @@ func (s *Server) runMigrations() {
 	err := s.DB.AutoMigrate(
 		&models.User{},
 		&models.Team{},
+		&models.Room{},
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
 	)
@@ -286,6 +287,13 @@ func (s *Server) setupRoutes() {
 	protectedAPI.POST("/change-team/:uuid", auth.ChangeTeam)
 	protectedAPI.POST("/send-team-invites", auth.SendTeamInvites)
 	protectedAPI.POST("/metadata/onboarding-form", auth.UpdateOnboardingFormStatus)
+
+	protectedAPI.POST("/room", auth.CreateRoom)
+	protectedAPI.PUT("/room/:id", auth.UpdateRoom)
+	protectedAPI.DELETE("/room/:id", auth.DeleteRoom)
+	protectedAPI.GET("/room/:id", auth.GetRoom)
+	protectedAPI.GET("/rooms", auth.GetRooms)
+
 	// Temporary room functionality for alpha
 	// on-boarding of >2 people calls
 	protectedAPI.GET("/watercooler", auth.Watercooler)
