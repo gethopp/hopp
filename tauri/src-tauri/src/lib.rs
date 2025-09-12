@@ -3,6 +3,7 @@ pub mod permissions;
 pub mod sounds;
 
 use log::LevelFilter;
+use rand::{distributions::Alphanumeric, Rng};
 use sounds::SoundEntry;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -139,6 +140,7 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
 fn start_sidecar(
     app: &tauri::AppHandle,
     textures_path: &Path,
+    socket_path: &str,
 ) -> (Receiver<CommandEvent>, CommandChild) {
     log::info!("start_sidecar: Creating core process texture_path: {textures_path:?}");
 
@@ -155,7 +157,12 @@ fn start_sidecar(
         }
     }
 
-    let mut args = vec!["--textures-path", textures_path.to_str().unwrap()];
+    let mut args = vec![
+        "--socket-path",
+        socket_path,
+        "--textures-path",
+        textures_path.to_str().unwrap(),
+    ];
 
     let sentry_dsn = get_sentry_dsn();
     if !cfg!(debug_assertions) {
@@ -173,15 +180,11 @@ fn start_sidecar(
 }
 
 /// Creates a socket connection to communicate with the core process.
-fn create_core_process_socket() -> Result<CursorSocket, CoreProcessCreationError> {
+fn create_core_process_socket(socket_path: &str) -> Result<CursorSocket, CoreProcessCreationError> {
     let max_tries = 10;
     let mut tries = 0;
     loop {
-        let temp_dir = std::env::temp_dir();
-
-        let socket_name = std::env::var("CORE_SOCKET_NAME").unwrap_or("core-socket".to_string());
-        let socket_path = format!("{}/{socket_name}", temp_dir.display());
-        match CursorSocket::new(&socket_path) {
+        match CursorSocket::new(socket_path) {
             Ok(socket) => return Ok(socket),
             Err(_) => {
                 log::debug!(
@@ -243,9 +246,13 @@ pub fn create_core_process(
     }
     log::info!("create_core_process: resources_dir: {resources_dir:?}");
 
-    let (rx, core_process) = start_sidecar(app, &resources_dir);
+    let tmp_dir = std::env::temp_dir();
+    let socket_name = format!("core-socket-{}", create_random_suffix());
+    let socket_path = format!("{}/{socket_name}", tmp_dir.display());
+
+    let (rx, core_process) = start_sidecar(app, &resources_dir, &socket_path);
     tauri::async_runtime::spawn(show_stdout(rx, app.clone()));
-    let socket = create_core_process_socket()?;
+    let socket = create_core_process_socket(&socket_path)?;
     let socket_clone = socket.duplicate().unwrap();
     tauri::async_runtime::spawn(send_ping(socket_clone));
     Ok((
@@ -529,4 +536,12 @@ pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
             }
         })
         .unwrap();
+}
+
+fn create_random_suffix() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(10)
+        .map(char::from)
+        .collect()
 }

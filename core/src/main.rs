@@ -15,6 +15,10 @@ struct Args {
     /// Sentry DSN
     #[arg(short, long)]
     sentry_dsn: Option<String>,
+
+    /// Socket name
+    #[arg(long)]
+    socket_path: Option<String>,
 }
 
 fn main() -> Result<(), impl std::error::Error> {
@@ -43,8 +47,16 @@ fn main() -> Result<(), impl std::error::Error> {
         }
     };
 
+    let socket_path = match args.socket_path {
+        Some(path) => path,
+        None => std::env::temp_dir()
+            .join("core-socket")
+            .to_string_lossy()
+            .to_string(),
+    };
+
     let input_args = RenderLoopRunArgs { textures_path };
 
     let render_event_loop = RenderEventLoop::new();
-    render_event_loop.run(input_args)
+    render_event_loop.run(input_args, socket_path)
 }
