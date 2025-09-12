@@ -1,6 +1,8 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,6 +11,26 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// EmailSubscriptions tracks user's email subscription preferences
+type EmailSubscriptions struct {
+	MarketingEmails bool       `gorm:"default:false" json:"marketing_emails"`
+	UnsubscribedAt  *time.Time `json:"unsubscribed_at,omitempty"`
+}
+
+// If we get more JSON values fields, we can use a Generic
+// to avoid copy-paste
+func (es EmailSubscriptions) Value() (driver.Value, error) {
+	return json.Marshal(es)
+}
+
+func (es *EmailSubscriptions) Scan(value interface{}) error {
+	b, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+	return json.Unmarshal(b, &es)
+}
 
 type User struct {
 	ID             string    `json:"id" gorm:"unique;not null"` // Standard field for the primary key
@@ -27,6 +49,10 @@ type User struct {
 	SocialMetadata map[string]interface{} `gorm:"serializer:json" json:"social_metadata,omitempty"`
 	// General user metadata for onboarding, preferences, etc.
 	Metadata map[string]interface{} `gorm:"serializer:json" json:"metadata"`
+	// Email subscription preferences
+	EmailSubscriptions EmailSubscriptions `gorm:"type:json" json:"email_subscriptions"`
+	// Email unsubscribe token - Different from user ID to avoid bad actors unsubscribing others by their public ID
+	UnsubscribeID string `json:"unsubscribe_id" gorm:"unique;not null"`
 }
 
 func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
@@ -37,6 +63,16 @@ func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
 		return err
 	}
 	u.ID = uuidV7.String()
+
+	// Generate a unique unsubscribe ID
+	unsubUUID, err := uuid.NewRandom()
+	if err != nil {
+		return err
+	}
+	u.UnsubscribeID = unsubUUID.String()
+
+	u.EmailSubscriptions.MarketingEmails = true
+	u.EmailSubscriptions.UnsubscribedAt = nil
 
 	// Hash password if it's set
 	if u.Password != "" {
@@ -127,4 +163,13 @@ func (u *User) GetDisplayName() string {
 		return u.FirstName
 	}
 	return fmt.Sprintf("%s %s", u.FirstName, u.LastName)
+}
+
+// UnsubscribeFromAllEmails unsubscribes user from all emails
+func (u *User) UnsubscribeFromAllEmails(db *gorm.DB) error {
+	now := time.Now()
+	u.EmailSubscriptions.UnsubscribedAt = &now
+	u.EmailSubscriptions.MarketingEmails = false
+
+	return db.Save(u).Error
 }
