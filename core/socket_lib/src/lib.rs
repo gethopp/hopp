@@ -166,10 +166,7 @@ impl CursorSocket {
                 }
             }
             let stream = stream.ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Client did not connect after multiple attempts",
-                )
+                std::io::Error::other("Client did not connect after multiple attempts")
             })?;
             stream.set_nonblocking(false)?;
             log::info!("Client connected");
@@ -229,10 +226,7 @@ impl CursorSocket {
                 }
             }
             let stream = stream.ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Client did not connect after multiple attempts",
-                )
+                std::io::Error::other("Client did not connect after multiple attempts")
             })?;
             stream.set_nonblocking(false)?;
             log::info!("Client connected");
