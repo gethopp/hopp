@@ -1,0 +1,69 @@
+name: Bug report
+description: File a bug report.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please provide the details below.
+
+  - type: input
+    id: ver
+    attributes:
+      label: App Version
+      description: The version of the app you are using.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Which OS are you using?
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: What happened?
+      placeholder: Tell us what you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: List the minimal steps to trigger the issue.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+      placeholder: Tell us what you expected.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Click the clipboard button in the app to copy your logs.
+      placeholder: "Paste your logs here."
+      render: shell
+
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Attachments
+      description: Paste any relevant screenshots here
+      placeholder: Drag & drop or paste images.
