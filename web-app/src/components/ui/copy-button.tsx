@@ -25,7 +25,9 @@ function CopyButton({ onCopy }: { onCopy: () => void }) {
         setIsCopied(true);
       }}
     >
-      {isCopied ? <HiMiniCheck className="size-5" /> : <HiOutlineClipboard className="size-5" />}
+      {isCopied ?
+        <HiMiniCheck className="size-5" />
+      : <HiOutlineClipboard className="size-5" />}
     </Button>
   );
 }
