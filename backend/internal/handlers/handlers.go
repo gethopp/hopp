@@ -846,3 +846,50 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 		"team_id":   invitation.TeamID,
 	})
 }
+
+// UnsubscribeUser handles both GET and POST requests for unsubscribing users.
+// Follows instructions from:
+// https://resend.com/docs/dashboard/emails/add-unsubscribe-to-transactional-emails
+func (h *AuthHandler) UnsubscribeUser(c echo.Context) error {
+	token := c.Param("token")
+	if token == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Token is required")
+	}
+
+	// Find user by "unsubscribe" token
+	var user models.User
+	result := h.DB.Where("unsubscribe_id = ?", token).First(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "User not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to retrieve user details, cannot unsubscribe")
+	}
+
+	// Handle POST request (one-click unsubscribe)
+	if c.Request().Method == http.MethodPost {
+		// Unsubscribe user from all emails
+		if err := user.UnsubscribeFromAllEmails(h.DB); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to unsubscribe")
+		}
+
+		return c.String(http.StatusOK, "You are now unsubscribed from all emails marketing 🥲")
+	}
+
+	// Handle GET request (show unsubscribe page)
+	if c.Request().Method == http.MethodGet {
+		// Check if already unsubscribed
+		if user.EmailSubscriptions.UnsubscribedAt != nil {
+			return c.Render(http.StatusOK, "unsubscribe-success.html", nil)
+		}
+
+		// Show unsubscribe form
+		data := map[string]interface{}{
+			"Email": user.Email,
+			"Token": token,
+		}
+		return c.Render(http.StatusOK, "unsubscribe-form.html", data)
+	}
+
+	return echo.NewHTTPError(http.StatusMethodNotAllowed, "Method not allowed")
+}

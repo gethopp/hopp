@@ -263,6 +263,10 @@ func (s *Server) setupRoutes() {
 	// Add invitation details endpoint
 	api.GET("/invitation-details/:uuid", auth.GetInvitationDetails)
 
+	// Unsubscribe endpoints
+	api.GET("/unsubscribe/:token", auth.UnsubscribeUser)
+	api.POST("/unsubscribe/:token", auth.UnsubscribeUser)
+
 	// Authentication endpoints
 	api.GET("/auth/social/:provider", auth.SocialLogin)
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
