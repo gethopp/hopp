@@ -50,7 +50,7 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
       </div>
 
       <div className="">
-        <h3 className="muted text-xs font-medium mb-2">Online ({onlineTeammates.length})</h3>
+        <h3 className="muted text-xs text-slate-500 font-medium mb-2">Online ({onlineTeammates.length})</h3>
         <div className="flex flex-col gap-2">
           {onlineTeammates.map((teammate) => (
             <ParticipantRow key={teammate.id} user={teammate} />
@@ -59,7 +59,7 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
       </div>
 
       <div>
-        <h3 className="muted text-xs font-medium my-2">Offline ({offlineTeammates.length})</h3>
+        <h3 className="muted text-xs text-slate-500 font-medium my-2">Offline ({offlineTeammates.length})</h3>
         <ScrollArea className="max-h-full overflow-y-auto mb-4">
           <div className="flex flex-col gap-2">
             {offlineTeammates.map((teammate) => (

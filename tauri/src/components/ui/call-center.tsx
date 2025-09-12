@@ -623,7 +623,7 @@ function CameraIcon() {
       className="flex-1 min-w-0 text-slate-600"
       cornerIcon={
         <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
-          <SelectTrigger className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-sm" />
+          <SelectTrigger className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs" />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
               {cameraDevices.map((device) => {

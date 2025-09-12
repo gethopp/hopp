@@ -158,7 +158,7 @@ export const Sidebar = () => {
                 Sign-out
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <div className="muted px-2 py-0.5">App version: {appVersion}</div>
+              <div className="muted text-slate-500 px-2 py-0.5">App version: {appVersion}</div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
