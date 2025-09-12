@@ -873,7 +873,7 @@ func (h *AuthHandler) UnsubscribeUser(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to unsubscribe")
 		}
 
-		return c.String(http.StatusOK, "You are now unsubscribed from all emails marketing 🥲")
+		return c.String(http.StatusOK, "You are now unsubscribed from all marketing emails 🥲")
 	}
 
 	// Handle GET request (show unsubscribe page)
