@@ -33,7 +33,12 @@ export const create = (<T extends object>() => {
     Object.keys(initialState).forEach((key) => {
       const entry = initialState[key as keyof T];
 
-      if (typeof entry !== "object" || entry === null || !("resetSlice" in entry)) return;
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        !("resetSlice" in entry)
+      )
+        return;
 
       const resetFn = entry["resetSlice"];
       if (resetFn && typeof resetFn === "function") {
@@ -57,9 +62,10 @@ export const useHoppStore = create<StateSlice>()(
     {
       name: "hopp-store",
       // https://github.com/pmndrs/zustand/blob/main/docs/integrations/persisting-store-data.md#merge
-      merge: (persistedState, currentState) => merge(currentState, persistedState),
-    },
-  ),
+      merge: (persistedState, currentState) =>
+        merge(currentState, persistedState),
+    }
+  )
 );
 
 /**
@@ -71,7 +77,9 @@ export const useHydration = () => {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const unsubFinishHydration = useHoppStore.persist.onFinishHydration(() => setHydrated(true));
+    const unsubFinishHydration = useHoppStore.persist.onFinishHydration(() =>
+      setHydrated(true)
+    );
 
     setHydrated(useHoppStore.persist.hasHydrated());
 
