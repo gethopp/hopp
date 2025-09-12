@@ -151,8 +151,27 @@ impl CursorSocket {
             }
 
             let listener = UnixListener::bind(socket_path)?;
-            log::info!("Wait for client");
-            let (stream, _) = listener.accept()?;
+            listener.set_nonblocking(true)?;
+            let mut stream = None;
+            for i in 0..10 {
+                log::info!("Waiting for client {i}/10");
+                match listener.accept() {
+                    Ok((s, _)) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+            }
+            let stream = stream.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Client did not connect after multiple attempts",
+                )
+            })?;
+            stream.set_nonblocking(false)?;
             log::info!("Client connected");
             stream.set_read_timeout(None)?;
 
@@ -195,7 +214,28 @@ impl CursorSocket {
             fs::write(socket_path, port.to_string())?;
 
             log::info!("Listening on port {port}, waiting for client");
-            let (stream, _) = listener.accept()?;
+            listener.set_nonblocking(true)?;
+            let mut stream = None;
+            for i in 0..10 {
+                log::info!("Waiting for client {i}/10");
+                match listener.accept() {
+                    Ok((s, _)) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+            }
+            let stream = stream.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Client did not connect after multiple attempts",
+                )
+            })?;
+            stream.set_nonblocking(false)?;
+            log::info!("Client connected");
             stream.set_read_timeout(None)?;
 
             Ok(Self { stream })
