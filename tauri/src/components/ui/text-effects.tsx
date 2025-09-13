@@ -35,7 +35,7 @@ export function LetterPullUp({
           initial="initial"
           animate="animate"
           custom={i}
-          className="text-left tracking-[-0.02em] drop-shadow-sm md:text-7xl md:leading-[5rem]"
+          className="text-left tracking-[-0.02em] drop-shadow-xs md:text-7xl md:leading-20"
         >
           {letter === " " ? <span>&nbsp;</span> : letter}
         </Component>
@@ -69,7 +69,7 @@ export function BlurIn({
       transition={{ duration: 0.8 }}
       variants={variants1}
       className={clsx(
-        "text-left tracking-[-0.02em] drop-shadow-sm md:text-7xl md:leading-[5rem]",
+        "text-left tracking-[-0.02em] drop-shadow-xs md:text-7xl md:leading-20",
         asProps?.className
       )}
     >

@@ -91,20 +91,20 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                         aria-selected={isActive}
                         disabled={disabled}
                         className={cn(
-                          "relative m-0 px-3 py-1 text-white text-xs leading-none bg-transparent border-none outline-none h-6 flex items-center",
+                          "relative m-0 px-3 py-1 text-white text-xs leading-none bg-transparent border-none outline-hidden h-6 flex items-center",
                           "disabled:cursor-not-allowed",
                         )}
                       >
                         {isActive && (
                           <motion.div
                             layoutId="SegmentedControlActive"
-                            className="absolute inset-0 z-[1] bg-slate-300/50 rounded-md"
+                            className="absolute inset-0 z-1 bg-slate-300/50 rounded-md"
                             style={{
                               boxShadow: "0 1px 2px rgba(0,0,0,.1)",
                             }}
                           />
                         )}
-                        <span className="relative z-[2]">{item.content}</span>
+                        <span className="relative z-2">{item.content}</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>{item.tooltipContent}</TooltipContent>
@@ -116,20 +116,20 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                     aria-selected={isActive}
                     disabled={disabled}
                     className={cn(
-                      "relative m-0 px-3 py-1 text-white text-xs leading-none bg-transparent border-none outline-none h-6 flex items-center",
+                      "relative m-0 px-3 py-1 text-white text-xs leading-none bg-transparent border-none outline-hidden h-6 flex items-center",
                       "disabled:cursor-not-allowed",
                     )}
                   >
                     {isActive && (
                       <motion.div
                         layoutId="SegmentedControlActive"
-                        className="absolute inset-0 z-[1] bg-slate-300/50 rounded-md"
+                        className="absolute inset-0 z-1 bg-slate-300/50 rounded-md"
                         style={{
                           boxShadow: "0 1px 2px rgba(0,0,0,.1)",
                         }}
                       />
                     )}
-                    <span className="relative z-[2]">{item.content}</span>
+                    <span className="relative z-2">{item.content}</span>
                   </button>
                 }
               </motion.li>
