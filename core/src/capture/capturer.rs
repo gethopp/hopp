@@ -56,6 +56,17 @@ pub enum CapturerError {
     /// Common causes include:
     #[error("Failed to capture frames")]
     FailedToCaptureFrames,
+
+    /// Capture source list is empty.
+    ///
+    /// This error could occur when the screen sharing engine fails from the os and
+    /// then we try to restart the stream.
+    #[error("Capture source list is empty")]
+    CaptureSourceListEmpty,
+
+    /// Couldn't find selected source.
+    #[error("Couldn't find selected source")]
+    SelectedSourceNotFound,
 }
 
 /// Platform-specific extensions for screen sharing and monitor management.
@@ -407,7 +418,7 @@ impl Capturer {
         let scale = 1.0;
         let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), include_cursor)?;
 
-        stream.start_capture(content.id);
+        stream.start_capture(content.id)?;
         self.active_stream = Some(stream);
         Ok(())
     }
@@ -453,6 +464,8 @@ impl Capturer {
     /// permanent capture errors are detected. Manual calls should be rare.
     pub fn restart_stream(&mut self) {
         log::info!("restart_stream");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
         self.active_stream = match self.active_stream.take() {
             Some(mut stream) => {
                 stream.stop_capture();
@@ -476,7 +489,38 @@ impl Capturer {
                         std::process::exit(STREAM_FAILURE_EXIT_CODE);
                     }
                 };
-                new_stream.start_capture(new_stream.source_id());
+
+                // Sometimes the capturer fails with a permanent error from the os.
+                // We can't really do much about it, as we are relying on the os
+                // and DesktopCapturer from libwebrtc for capturing the screen.
+                // So we just sleep and retry a few times in case it's a temporary error.
+                // If we can't restart the stream after 10 retries, we exit the process
+                // and inform the user to restart the application.
+                let mut res = new_stream.start_capture(new_stream.source_id());
+                for i in 0..10 {
+                    if res.is_ok() {
+                        break;
+                    }
+
+                    log::info!("restart_stream: Failed to start capture, retrying {i}/10 {res:?}");
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+
+                    new_stream = match new_stream.copy() {
+                        Ok(new_stream) => new_stream,
+                        Err(_) => {
+                            log::error!("restart_stream: Failed to copy stream");
+                            sentry_utils::upload_logs_event("Stream copy failed".to_string());
+                            std::process::exit(STREAM_FAILURE_EXIT_CODE);
+                        }
+                    };
+                    res = new_stream.start_capture(new_stream.source_id());
+                }
+
+                if res.is_err() {
+                    log::error!("restart_stream: Failed to start capture after 10 retries {res:?}");
+                    sentry_utils::upload_logs_event("Stream start capture failed".to_string());
+                    std::process::exit(STREAM_FAILURE_EXIT_CODE);
+                }
 
                 log::info!("restart_stream: new stream created");
                 Some(new_stream)
