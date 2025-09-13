@@ -956,7 +956,6 @@ impl RenderEventLoop {
                     std::process::exit(PROCESS_EXIT_CODE_ERROR);
                 }
             };
-            log::info!("RenderEventLoop::run Received message: {message:?}");
             let user_event = match message {
                 Message::GetAvailableContent => UserEvent::GetAvailableContent,
                 Message::StartScreenShare(screen_share_message) => {
