@@ -110,7 +110,8 @@ type CallTokensMessage struct {
 type RejectCallMessage struct {
 	Type    MessageType `json:"type"`
 	Payload struct {
-		CallerID string `json:"caller_id" validate:"required"`
+		CallerID     string `json:"caller_id" validate:"required"`
+		RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected"`
 	} `json:"payload"`
 }
 
