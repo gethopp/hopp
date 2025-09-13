@@ -142,7 +142,7 @@ fn start_sidecar(
     textures_path: &Path,
     socket_path: &str,
 ) -> (Receiver<CommandEvent>, CommandChild) {
-    log::info!("start_sidecar: Creating core process texture_path: {textures_path:?}");
+    log::info!("start_sidecar:");
 
     /* First we check if the process is already running and kill it. */
     if !cfg!(debug_assertions) {
@@ -226,6 +226,7 @@ async fn send_ping(mut socket: CursorSocket) {
 pub fn create_core_process(
     app: &tauri::AppHandle,
 ) -> Result<(CoreProcess, CursorSocket), CoreProcessCreationError> {
+    log::info!("create_core_process: Creating core process");
     let mut resources_dir = app
         .path()
         .resolve("resources", BaseDirectory::Resource)
@@ -244,7 +245,6 @@ pub fn create_core_process(
             .map(PathBuf::from)
             .unwrap_or(resources_dir);
     }
-    log::info!("create_core_process: resources_dir: {resources_dir:?}");
 
     let tmp_dir = std::env::temp_dir();
     let socket_name = format!("core-socket-{}", create_random_suffix());

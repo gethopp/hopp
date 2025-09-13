@@ -115,7 +115,6 @@ pub fn play_sound(
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(SOUND_COMMAND_TIMEOUT_MS)) {
             Ok(SoundCommand::Stop) => {
-                log::info!("Stopping sound: {sound_path}");
                 sink.stop();
                 sink.clear();
                 break;

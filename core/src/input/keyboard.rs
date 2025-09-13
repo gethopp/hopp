@@ -380,6 +380,7 @@ impl<T: KeyboardLayoutTrait> KeyboardController<T> {
     ///
     /// * `enabled` - `true` to enable simulation, `false` to disable
     pub fn set_enabled(&mut self, enabled: bool) {
+        log::info!("set_enabled: {enabled}");
         self.enabled = enabled;
     }
 

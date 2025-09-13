@@ -790,7 +790,7 @@ impl CursorController {
         name: String,
     ) -> Result<(), CursorControllerError> {
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        log::debug!(
+        log::info!(
             "add_controller: sid: {} controllers_cursors: {}",
             sid,
             controllers_cursors.len()
@@ -854,6 +854,7 @@ impl CursorController {
     /// * Visual cursor resources are automatically cleaned up
     /// * Control state is preserved until next input event
     pub fn remove_controller(&mut self, sid: &str) {
+        log::info!("remove_controller: {sid}");
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         controllers_cursors.retain(|controller| controller.sid != sid);
     }
@@ -1100,7 +1101,7 @@ impl CursorController {
     /// * `visible` - Whether to show full cursor (true) or minimal pointer (false)
     /// * `sid` - Session ID identifying which controller to modify
     pub fn set_controller_visible(&mut self, visible: bool, sid: &str) {
-        log::info!("set_controller_visible: {visible}");
+        log::info!("set_controller_visible: {visible} {sid}");
 
         if !self.controllers_cursors_enabled {
             log::info!(

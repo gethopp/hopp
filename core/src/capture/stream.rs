@@ -89,7 +89,6 @@ fn get_excluded_application_pids() -> Vec<u64> {
             }
         }
     }
-    log::info!("get_excluded_application_pids: {pids:?}");
     pids
 }
 
@@ -344,6 +343,7 @@ impl Stream {
         }
         let capturer = capturer.unwrap();
         let apps_to_exclude = get_excluded_application_pids();
+        log::info!("Stream::new: apps_to_exclude: {apps_to_exclude:?}");
         capturer.set_excluded_applications(apps_to_exclude);
         Ok(Stream {
             capturer: Arc::new(Mutex::new(capturer)),

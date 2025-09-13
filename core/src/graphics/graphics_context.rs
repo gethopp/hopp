@@ -160,7 +160,7 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
     pub fn new(window: Window, texture_path: String, scale: f64) -> OverlayResult<Self> {
-        log::info!("GraphicsContext::new: path: {texture_path:?} scale: {scale:?}");
+        log::info!("GraphicsContext::new");
         let size = window.inner_size();
         let window_arc = Arc::new(window);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {

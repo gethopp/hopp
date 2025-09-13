@@ -270,6 +270,12 @@ impl<'a> Application<'a> {
         monitors: Vec<MonitorHandle>,
         event_loop: &ActiveEventLoop,
     ) -> Result<(), ServerError> {
+        log::info!(
+            "screenshare: resolution: {:?} content: {} accessibility_permission: {}",
+            screenshare_input.resolution,
+            screenshare_input.content,
+            screenshare_input.accessibility_permission
+        );
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
         /*
          * In order to not rely on the buffer source to exist before starting the room
@@ -578,7 +584,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::CursorPosition(x, y, sid) => {
-                debug!("user_event: cursor position: {x} {y} {sid}");
+                log::debug!("user_event: cursor position: {x} {y} {sid}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none cursor position");
                     return;
@@ -591,7 +597,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 );
             }
             UserEvent::MouseClick(data, sid) => {
-                debug!("user_event: mouse click: {data:?} {sid}");
+                log::debug!("user_event: mouse click: {data:?} {sid}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none mouse click");
                     return;
@@ -602,7 +608,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .mouse_click_controller(data, sid.as_str());
             }
             UserEvent::ControllerCursorEnabled(enabled) => {
-                debug!("user_event: cursor enabled: {enabled:?}");
+                log::debug!("user_event: cursor enabled: {enabled:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none cursor enabled ");
                     return;
@@ -622,7 +628,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .publish_controller_cursor_enabled(enabled);
             }
             UserEvent::ControllerCursorVisible(visible, sid) => {
-                debug!("user_event: cursor visible: {visible:?} {sid}");
+                log::debug!("user_event: cursor visible: {visible:?} {sid}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none cursor visible");
                     return;
@@ -632,7 +638,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 cursor_controller.set_controller_visible(visible, sid.as_str());
             }
             UserEvent::Keystroke(keystroke_data) => {
-                debug!("user_event: keystroke: {keystroke_data:?}");
+                log::debug!("user_event: keystroke: {keystroke_data:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none keystroke");
                     return;
@@ -642,7 +648,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 keyboard_controller.simulate_keystrokes(keystroke_data);
             }
             UserEvent::Scroll(delta, sid) => {
-                debug!("user_event: scroll: {delta:?} {sid}");
+                log::debug!("user_event: scroll: {delta:?} {sid}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none scroll");
                     return;
@@ -656,7 +662,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 event_loop.exit();
             }
             UserEvent::GetAvailableContent => {
-                log::info!("user_event: Get available content");
+                log::debug!("user_event: Get available content");
                 let content = self.get_available_content();
                 if content.is_empty() {
                     log::error!("user_event: No available content");
@@ -675,7 +681,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::ScreenShare(data) => {
-                log::info!("user_event: Screen share: {data:?}");
+                log::debug!("user_event: Screen share: {data:?}");
                 let monitors = event_loop
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
@@ -732,7 +738,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.room_service.as_ref().unwrap().tick_response(time);
             }
             UserEvent::ParticipantConnected(participant) => {
-                log::info!("user_event: Participant connected: {participant:?}");
+                log::debug!("user_event: Participant connected: {participant:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none participant connected");
                     return;
@@ -749,7 +755,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
-                log::info!("user_event: Participant disconnected: {participant:?}");
+                log::debug!("user_event: Participant disconnected: {participant:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none participant disconnected");
                     return;
@@ -760,7 +766,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .remove_controller(participant.sid.as_str());
             }
             UserEvent::LivekitServerUrl(url) => {
-                log::info!("user_event: Livekit server url: {url}");
+                log::debug!("user_event: Livekit server url: {url}");
                 let room_service = RoomService::new(url, self.event_loop_proxy.clone());
                 if room_service.is_err() {
                     log::error!(
@@ -769,7 +775,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                     return;
                 }
-                log::info!("user_event: Room service created: {room_service:?}");
+                log::debug!("user_event: Room service created: {room_service:?}");
                 self.room_service = Some(room_service.unwrap());
             }
             UserEvent::ControllerTakesScreenShare => {
@@ -919,7 +925,7 @@ impl RenderEventLoop {
     }
 
     pub fn run(self, input: RenderLoopRunArgs, socket_path: String) -> Result<(), RenderLoopError> {
-        log::info!("Starting RenderEventLoop with input: {input}");
+        log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
         let mut socket = CursorSocket::new_create(&socket_path).map_err(|e| {
