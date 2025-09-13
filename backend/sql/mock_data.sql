@@ -44,7 +44,7 @@ VALUES
         NOW(),
         NOW(),
         null,
-        0
+        9969ac04-24a0-4fd4-9f22-2302406b1706
     ),
     (
         '0195013f-bf8a-706f-a4f0-11d87ef40fce',
@@ -58,6 +58,6 @@ VALUES
         NOW(),
         NOW(),
         null,
-        1
+        9a5fc5f7-63a5-46ec-b50a-e4808d79e69f
     ) ON CONFLICT (id) DO NOTHING;
 

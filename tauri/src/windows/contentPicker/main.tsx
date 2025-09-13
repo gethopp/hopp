@@ -14,6 +14,8 @@ import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
+import { sleep } from "@/lib/utils";
+import clsx from "clsx";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -102,6 +104,7 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
+      await sleep(5000);
       const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
@@ -147,7 +150,7 @@ function Window() {
   };
 
   return (
-    <div className="h-full overflow-hidden dark" tabIndex={0}>
+    <div className="h-screen overflow-hidden dark flex flex-col gap-0" tabIndex={0}>
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
@@ -178,7 +181,12 @@ function Window() {
           </SelectContent>
         </Select>
       </div>
-      <div className="content px-4 pb-4 pt-[10px] overflow-auto grid grid-cols-2 gap-4">
+      <div
+        className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
+          "h-full flex flex-col justify-center": hasClicked,
+          "grid grid-cols-2 h-full": !hasClicked,
+        })}
+      >
         {hasEmptyContentFromBackend ?
           <div className="col-span-2 flex justify-center">
             <Alert variant="destructive" className="w-full max-w-md">
@@ -191,9 +199,11 @@ function Window() {
             </Alert>
           </div>
         : hasClicked ?
-          <div className="col-span-2 flex flex-row items-center justify-center gap-3">
-            <span className="text-base text-white/80">Starting screenshare...</span>
-            <CgSpinner className="animate-spin text-white/80 h-6 w-6" />
+          <div className="h-full w-full flex flex-col justify-center col-span-2">
+            <div className="col-span-2 flex flex-row items-center justify-center gap-3">
+              <span className="text-base text-white/80">Starting screenshare...</span>
+              <CgSpinner className="animate-spin text-white/80 h-6 w-6" />
+            </div>
           </div>
         : content.map((item) => (
             <div
