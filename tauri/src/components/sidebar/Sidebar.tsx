@@ -78,7 +78,7 @@ const getAvailableTabs = (
           key: "invite",
         } as const,
         {
-          label: "Report issue",
+          label: "Broken again?",
           icon: <HiOutlineAnnotation className="size-4 stroke-[1.5]" />,
           key: "report-issue",
         } as const,

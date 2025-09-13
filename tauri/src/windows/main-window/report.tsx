@@ -8,6 +8,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "react-hot-toast";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { Clipboard } from "lucide-react";
+import failGif from "@/assets/fail.gif";
 
 const OWNER = "gethopp";
 const REPO = "hopp";
@@ -87,7 +88,10 @@ export function Report() {
   return (
     <div className="flex flex-col p-6 max-w-2xl mx-auto">
       <h1 className="text-2xl font-semibold mb-2">Report an Issue</h1>
-      <p className="text-sm text-muted-foreground mb-6">
+      <div className="mt-2 mb-4 flex justify-center">
+        <img src={failGif} alt="Funny fail GIF" className="max-w-full h-auto rounded-lg" />
+      </div>
+      <p className="text-sm text-muted-foreground mb-4">
         This opens a GitHub bug report form in your browser. Use the clipboard icon to copy logs.
       </p>
 
