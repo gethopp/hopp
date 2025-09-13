@@ -374,10 +374,13 @@ impl Stream {
     /// # Notes
     /// This method should only be called when the stream is not already capturing.
     /// The capture thread will run until `stop_capture()` is called.
-    pub fn start_capture(&mut self, id: u32) {
+    pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
         log::info!("stream::start_capture: Starting capture for id: {id}");
         let mut capturer = self.capturer.lock().unwrap();
         let sources = capturer.get_source_list();
+        if sources.is_empty() {
+            return Err(CapturerError::CaptureSourceListEmpty);
+        }
         let mut source = sources[0].clone();
         for s in sources {
             if s.id() == (id as u64) {
@@ -386,7 +389,7 @@ impl Stream {
             }
         }
         if source.id() != (id as u64) {
-            log::warn!("start_capture: Source not found, capturing first source");
+            return Err(CapturerError::SelectedSourceNotFound);
         }
         self.source_id = id;
         capturer.start_capture(source);
@@ -396,6 +399,7 @@ impl Stream {
             run_capture_frame(rx, capturer_clone);
         }));
         self.tx = Some(tx);
+        Ok(())
     }
 
     /// Stops the capture process and terminates the worker thread.

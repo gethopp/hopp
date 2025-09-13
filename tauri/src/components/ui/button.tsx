@@ -19,12 +19,10 @@ const buttonVariants = cva(
           "border border-slate-200 bg-white shadow-xs hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-800 dark:hover:text-slate-50",
         secondary:
           "bg-slate-100 text-slate-900 shadow-xs hover:bg-slate-100/80 dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-800/80",
-        ghost:
-          "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-50",
+        ghost: "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-50",
         link: "text-slate-900 underline-offset-4 hover:underline dark:text-slate-50",
         hidden: "hidden",
-        loading:
-          "bg-slate-900 text-slate-50 shadow dark:bg-slate-50 dark:text-slate-900",
+        loading: "bg-slate-900 text-slate-50 shadow dark:bg-slate-50 dark:text-slate-900",
         "gradient-white":
           "btn-gradient-white text-black font-semibold text-xs shadow-[0px_2px_10px_rgba(0,0,0,0.07)] rounded-lg px-6 py-1.5 h-[29px] w-[75px] flex items-center justify-center border border-slate-300 border-opacity-50 hover:scale-[1.025] transition-all duration-300",
       },
@@ -40,7 +38,7 @@ const buttonVariants = cva(
       variant: "default",
       size: "default",
     },
-  }
+  },
 );
 
 export interface ButtonProps
@@ -51,17 +49,10 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  (
-    { className, variant, size, asChild = false, isLoading = false, ...props },
-    ref
-  ) => {
+  ({ className, variant, size, asChild = false, isLoading = false, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
     return (
-      <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
-      >
+      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props}>
         {isLoading && (
           <svg
             className="animate-spin mr-2 h-5 w-5 text-white"
@@ -69,25 +60,14 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             fill="none"
             viewBox="0 0 24 24"
           >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            ></circle>
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            ></path>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
         )}
         {props.children}
       </Comp>
     );
-  }
+  },
 );
 Button.displayName = "Button";
 

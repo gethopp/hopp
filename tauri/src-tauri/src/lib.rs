@@ -107,6 +107,7 @@ impl AppData {
 
 /// Monitors core process output and emits crash events.
 async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle) {
+    let mut crash_msg = String::new();
     while let Some(event) = receiver.recv().await {
         match event {
             CommandEvent::Stdout(line) => {
@@ -118,6 +119,38 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
             }
             CommandEvent::Terminated(payload) => {
                 log::error!("show_stdout: Terminated {payload:?}");
+                match payload.code {
+                    Some(code) => {
+                        if code == 1 {
+                            crash_msg = "Core process terminated because it failed to receive messages from tauri, please restart the app".to_string();
+                        } else if code == 2 {
+                            // When hopp_core is terminated because capturing failed from the OS
+                            // and couldn't be recovered, we restart it and say to the user to select
+                            // a screen again.
+                            let core_processes_restarted = create_core_process(&app_handle);
+                            if core_processes_restarted.is_err() {
+                                crash_msg = "Core process terminated because capturing failed from the OS and couldn't be recovered, please restart the app".to_string();
+                            } else {
+                                crash_msg = "Core process restarted because capturing failed from the OS and couldn't be recovered, please select screen again".to_string();
+                                let (_core_process, mut socket) = core_processes_restarted.unwrap();
+
+                                let data = app_handle.state::<Mutex<AppData>>();
+                                let mut data = data.lock().unwrap();
+                                if let Err(e) = socket.send_message(Message::LivekitServerUrl(
+                                    data.livekit_server_url.clone(),
+                                )) {
+                                    log::error!(
+                                        "show_stdout: Failed to send livekit server url: {e:?}"
+                                    );
+                                }
+                                data.socket = socket;
+                            }
+                        }
+                    }
+                    None => {
+                        crash_msg = "Core process terminated because of an unknown error. Please restart the app, please submit a bug report".to_string();
+                    }
+                }
                 break;
             }
             CommandEvent::Error(e) => {
@@ -130,7 +163,7 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
     log::info!("show_stdout: Finished");
 
     // Communicate to the frontend that the core process has crashed.
-    let res = app_handle.emit("core_process_crashed", ());
+    let res = app_handle.emit("core_process_crashed", crash_msg);
     if let Err(e) = res {
         log::error!("Failed to emit core_process_crashed: {e:?}");
     }
@@ -212,7 +245,6 @@ async fn send_ping(mut socket: CursorSocket) {
         let res = socket.send_message(Message::Ping);
         if let Err(e) = res {
             log::error!("Failed to send ping: {e:?}");
-            sentry_utils::upload_logs_event("Failed to send ping".to_string());
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(

@@ -64,6 +64,7 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
+const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -683,6 +684,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let result_message = match self.screenshare(data, monitors, event_loop) {
                     Ok(_) => Ok(()),
                     Err(e) => {
+                        log::error!("user_event: Screen share failed: {e:?}");
                         sentry_utils::upload_logs_event("Screen share failed".to_string());
                         Err(e.to_string())
                     }
