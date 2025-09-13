@@ -71,6 +71,7 @@ function Window() {
   const videoToken = tauriUtils.getTokenParam("videoToken");
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
+  const [hasClicked, setHasClicked] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -100,6 +101,7 @@ function Window() {
         return;
       }
       hasClickedRef.current = true;
+      setHasClicked(true);
       const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
@@ -121,6 +123,7 @@ function Window() {
       );
     } finally {
       hasClickedRef.current = false;
+      setHasClicked(false);
     }
   };
 
@@ -187,7 +190,7 @@ function Window() {
               </AlertDescription>
             </Alert>
           </div>
-        : hasClickedRef.current ?
+        : hasClicked ?
           <div className="col-span-2 flex flex-row items-center justify-center gap-3">
             <span className="text-base text-white/80">Starting screenshare...</span>
             <CgSpinner className="animate-spin text-white/80 h-6 w-6" />
