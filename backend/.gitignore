@@ -33,3 +33,6 @@ dev.db
 docker-files/docker_data/
 bin/
 tmp/
+
+web/web-app.html
+web/web-app-debug.html
