@@ -16,7 +16,7 @@ import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { CallBanner } from "@/components/ui/call-banner";
 import { socketService } from "@/services/socket";
-import { TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage } from "@/payloads";
 import { Participants } from "@/components/ui/participants";
 import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
@@ -88,7 +88,7 @@ function App() {
   useEffect(() => {
     const sendLivekitUrlToBackend = async () => {
       if (livekitUrlData?.url) {
-      console.log("livekitUrlData", livekitUrlData);
+        console.log("livekitUrlData", livekitUrlData);
         try {
           await tauriUtils.setLivekitUrl(livekitUrlData.url);
           setLivekitUrl(livekitUrlData.url);
@@ -173,15 +173,28 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleReject = () => {
-    if (!incomingCallerId) return;
-    sounds.incomingCall.stop();
+  const handleReject = (isInCall?: boolean) => {
+    if (!incomingCallerId && !isInCall) return;
+    if (!isInCall) {
+      sounds.incomingCall.stop();
+    }
     socketService.send({
       type: "call_reject",
       payload: {
         caller_id: incomingCallerId,
+        reject_reason: "rejected",
       },
-    });
+    } as TRejectCallMessage);
+  };
+
+  const handleInCallRejection = (callerID: string) => {
+    socketService.send({
+      type: "call_reject",
+      payload: {
+        caller_id: callerID,
+        reject_reason: "in-call",
+      },
+    } as TRejectCallMessage);
   };
 
   // Generic socket event listeners
@@ -189,6 +202,14 @@ function App() {
   // to be cleaner and easier to manage
   useEffect(() => {
     socketService.on("incoming_call", (data: TWebSocketMessage) => {
+      // Check that there is no on-going call
+      // If there is, reject the call
+      const { callTokens } = useStore.getState();
+      if (callTokens) {
+        handleInCallRejection((data as TIncomingCallMessage).payload.caller_id);
+        return;
+      }
+
       if (data.type === "incoming_call") {
         setIncomingCallerId(data.payload.caller_id);
 
