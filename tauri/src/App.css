@@ -1,4 +1,4 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
 @plugin 'tailwindcss-animate';
 
@@ -52,6 +52,8 @@
   --color-colors-chart-4: var(--chart-4);
   --color-colors-chart-5: var(--chart-5);
 
+  --color-muted-foreground: var(--color-gray-500);
+
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
 
@@ -92,100 +94,108 @@
 }
 
 @layer utilities {
+  .input-focus {
+    transition: box-shadow 0.15s ease-in-out;
+  }
+
+  .input-focus:focus {
+    box-shadow: none;
+  }
+
   /* Include Geist font */
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Black.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Black.woff2") format("woff2");
     font-weight: 900;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Bold.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Bold.woff2") format("woff2");
     font-weight: 700;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-ExtraBold.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-ExtraBold.woff2") format("woff2");
     font-weight: 800;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Light.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Light.woff2") format("woff2");
     font-weight: 300;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Medium.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Medium.woff2") format("woff2");
     font-weight: 500;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Regular.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Regular.woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-SemiBold.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-SemiBold.woff2") format("woff2");
     font-weight: 600;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist-Thin.woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Thin.woff2") format("woff2");
     font-weight: 100;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist';
-    src: url('/src/assets/fonts/Geist[wght].woff2') format('woff2');
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist[wght].woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist-Mono';
-    src: url('/src/assets/fonts/GeistMono[wght].woff2') format('woff2');
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono[wght].woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist-Mono';
-    src: url('/src/assets/fonts/GeistMono-Regular.woff2') format('woff2');
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-Regular.woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist-Mono';
-    src: url('/src/assets/fonts/GeistMono-SemiBold.woff2') format('woff2');
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
     font-weight: 600;
     font-style: normal;
   }
 
   @font-face {
-    font-family: 'Geist-Mono';
-    src: url('/src/assets/fonts/GeistMono-SemiBold.woff2') format('woff2');
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
     font-weight: 500;
     font-style: normal;
   }
 
   body {
-    font-family: 'Geist', sans-serif;
+    font-family: "Geist", sans-serif;
   }
 
   /* Typography based on: https://github.com/shadcn-ui/ui/discussions/1527#discussioncomment-9396350 */
@@ -317,7 +327,7 @@
     --card-foreground: hsl(0 0% 98%);
     --popover: hsl(240 10% 3.9%);
     --popover-foreground: hsl(0 0% 98%);
-    --primary:hsl(0 0% 98%);
+    --primary: hsl(0 0% 98%);
     --primary-foreground: hsl(240 5.9% 10%);
     --secondary: hsl(240 3.7% 15.9%);
     --secondary-foreground: hsl(0 0% 98%);
