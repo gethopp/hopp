@@ -118,13 +118,9 @@ pub enum Message {
 pub struct CursorSocket {
     #[cfg(unix)]
     stream: UnixStream,
-    #[cfg(unix)]
-    _listener: Option<UnixListener>,
 
     #[cfg(windows)]
     stream: TcpStream,
-    #[cfg(windows)]
-    _listener: Option<TcpListener>,
 }
 
 impl CursorSocket {
@@ -133,10 +129,7 @@ impl CursorSocket {
         {
             let stream = UnixStream::connect(socket_path)?;
             stream.set_read_timeout(None)?;
-            Ok(Self {
-                stream,
-                _listener: None,
-            })
+            Ok(Self { stream })
         }
 
         #[cfg(windows)]
@@ -145,10 +138,7 @@ impl CursorSocket {
             let addr = format!("127.0.0.1:{port}");
             let stream = TcpStream::connect(addr)?;
             stream.set_read_timeout(None)?;
-            Ok(Self {
-                stream,
-                _listener: None,
-            })
+            Ok(Self { stream })
         }
     }
 
@@ -161,14 +151,28 @@ impl CursorSocket {
             }
 
             let listener = UnixListener::bind(socket_path)?;
-            log::info!("Wait for client");
-            let (stream, _) = listener.accept()?;
+            listener.set_nonblocking(true)?;
+            let mut stream = None;
+            for i in 0..10 {
+                log::info!("Waiting for client {i}/10");
+                match listener.accept() {
+                    Ok((s, _)) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+            }
+            let stream = stream.ok_or_else(|| {
+                std::io::Error::other("Client did not connect after multiple attempts")
+            })?;
+            stream.set_nonblocking(false)?;
+            log::info!("Client connected");
             stream.set_read_timeout(None)?;
 
-            Ok(Self {
-                stream,
-                _listener: Some(listener),
-            })
+            Ok(Self { stream })
         }
 
         #[cfg(windows)]
@@ -207,13 +211,28 @@ impl CursorSocket {
             fs::write(socket_path, port.to_string())?;
 
             log::info!("Listening on port {port}, waiting for client");
-            let (stream, _) = listener.accept()?;
+            listener.set_nonblocking(true)?;
+            let mut stream = None;
+            for i in 0..10 {
+                log::info!("Waiting for client {i}/10");
+                match listener.accept() {
+                    Ok((s, _)) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+            }
+            let stream = stream.ok_or_else(|| {
+                std::io::Error::other("Client did not connect after multiple attempts")
+            })?;
+            stream.set_nonblocking(false)?;
+            log::info!("Client connected");
             stream.set_read_timeout(None)?;
 
-            Ok(Self {
-                stream,
-                _listener: Some(listener),
-            })
+            Ok(Self { stream })
         }
     }
 
@@ -267,10 +286,7 @@ impl CursorSocket {
 
     pub fn duplicate(&self) -> Result<Self, std::io::Error> {
         let new_stream = self.stream.try_clone()?;
-        Ok(Self {
-            stream: new_stream,
-            _listener: None,
-        })
+        Ok(Self { stream: new_stream })
     }
 }
 

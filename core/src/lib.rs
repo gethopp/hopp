@@ -918,12 +918,8 @@ impl RenderEventLoop {
         Self { event_loop }
     }
 
-    pub fn run(self, input: RenderLoopRunArgs) -> Result<(), RenderLoopError> {
+    pub fn run(self, input: RenderLoopRunArgs, socket_path: String) -> Result<(), RenderLoopError> {
         log::info!("Starting RenderEventLoop with input: {input}");
-
-        let temp_dir = std::env::temp_dir();
-        let socket_name = std::env::var("CORE_SOCKET_NAME").unwrap_or("core-socket".to_string());
-        let socket_path = format!("{}/{socket_name}", temp_dir.display());
 
         log::info!("Creating socket at path: {socket_path}");
         let mut socket = CursorSocket::new_create(&socket_path).map_err(|e| {

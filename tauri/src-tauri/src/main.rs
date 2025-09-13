@@ -608,6 +608,11 @@ fn main() {
             },
         ));
     }
+    let log_file_name = if cfg!(debug_assertions) {
+        Some("debug".to_string())
+    } else {
+        None
+    };
     let app = app
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -628,7 +633,9 @@ fn main() {
         .plugin(
             tauri_plugin_log::Builder::default()
                 .targets([
-                    Target::new(TargetKind::LogDir { file_name: None }),
+                    Target::new(TargetKind::LogDir {
+                        file_name: log_file_name,
+                    }),
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::Webview),
                 ])

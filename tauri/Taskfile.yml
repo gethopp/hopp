@@ -49,7 +49,6 @@ tasks:
     env:
       HOPP_SUFFIX: "_repl"
       VITE_PORT: 1421
-      CORE_SOCKET_NAME: "core-socket-replica"
     cmds:
       - |
         # Create repl hopp_core binary
