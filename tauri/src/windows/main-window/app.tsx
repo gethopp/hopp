@@ -244,10 +244,26 @@ function App() {
         coreProcessCrashedRef.current = true;
 
         tauriUtils.showWindow("main");
-        toast.error(`${data.payload as string}, please restart and submit a bug report`, {
-          duration: 30_000,
-          position: "top-center",
-        });
+        toast.error(
+          (t) => (
+            <div className="flex flex-row items-center gap-2">
+              <div className="text-sm">{`${data.payload as string}`}</div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  coreProcessCrashedRef.current = false;
+                }}
+              >
+                Dismiss
+              </Button>
+            </div>
+          ),
+          {
+            duration: 60_000,
+            position: "top-center",
+          },
+        );
       });
 
       return unlistenFn;

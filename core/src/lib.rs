@@ -684,6 +684,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let result_message = match self.screenshare(data, monitors, event_loop) {
                     Ok(_) => Ok(()),
                     Err(e) => {
+                        log::error!("user_event: Screen share failed: {e:?}");
                         sentry_utils::upload_logs_event("Screen share failed".to_string());
                         Err(e.to_string())
                     }

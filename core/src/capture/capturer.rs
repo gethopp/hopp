@@ -309,7 +309,11 @@ impl Capturer {
                 let callback = screenshot_capture_callback(
                     target_dims,
                     display.id() as u32,
-                    display.title(),
+                    if display.title() != "" {
+                        display.title()
+                    } else {
+                        format!("Display {}", display.id())
+                    },
                     result.clone(),
                 );
                 let capturer = DesktopCapturer::new(callback, false, false);
