@@ -1,104 +1,205 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-/* Include Geist font */
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Black.woff2") format("woff2");
-  font-weight: 900;
-  font-style: normal;
+@plugin 'tailwindcss-animate';
+
+@custom-variant dark (&:is(.dark *));
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+  @media (width >= --theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+  @media (width >= 1400px) {
+    max-width: 1400px;
+  }
 }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
+@theme {
+  --color-muted-foreground: 215.4 16.3% 46.9%;
+
+  --color-colors-background: var(--background);
+  --color-colors-foreground: var(--foreground);
+
+  --color-colors-card: var(--card);
+  --color-colors-card-foreground: var(--card-foreground);
+
+  --color-colors-popover: var(--popover);
+  --color-colors-popover-foreground: var(--popover-foreground);
+
+  --color-colors-primary: var(--primary);
+  --color-colors-primary-foreground: var(--primary-foreground);
+
+  --color-colors-secondary: var(--secondary);
+  --color-colors-secondary-foreground: var(--secondary-foreground);
+
+  --color-colors-muted: var(--muted);
+  --color-colors-muted-foreground: var(--muted-foreground);
+
+  --color-colors-accent: var(--accent);
+  --color-colors-accent-foreground: var(--accent-foreground);
+
+  --color-colors-destructive: var(--destructive);
+  --color-colors-destructive-foreground: var(--destructive-foreground);
+
+  --color-colors-border: var(--border);
+  --color-colors-input: var(--input);
+  --color-colors-ring: var(--ring);
+
+  --color-colors-chart-1: var(--chart-1);
+  --color-colors-chart-2: var(--chart-2);
+  --color-colors-chart-3: var(--chart-3);
+  --color-colors-chart-4: var(--chart-4);
+  --color-colors-chart-5: var(--chart-5);
+
+  --color-muted-foreground: var(--color-gray-500);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
 }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-ExtraBold.woff2") format("woff2");
-  font-weight: 800;
-  font-style: normal;
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Light.woff2") format("woff2");
-  font-weight: 300;
-  font-style: normal;
-}
+@layer utilities {
+  .input-focus {
+    transition: box-shadow 0.15s ease-in-out;
+  }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-}
+  .input-focus:focus {
+    box-shadow: none;
+  }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-}
+  /* Include Geist font */
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Black.woff2") format("woff2");
+    font-weight: 900;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-SemiBold.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist-Thin.woff2") format("woff2");
-  font-weight: 100;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-ExtraBold.woff2") format("woff2");
+    font-weight: 800;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist";
-  src: url("/src/assets/fonts/Geist[wght].woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Light.woff2") format("woff2");
+    font-weight: 300;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist-Mono";
-  src: url("/src/assets/fonts/GeistMono[wght].woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Medium.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist-Mono";
-  src: url("/src/assets/fonts/GeistMono-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist-Mono";
-  src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-style: normal;
+  }
 
-@font-face {
-  font-family: "Geist-Mono";
-  src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist-Thin.woff2") format("woff2");
+    font-weight: 100;
+    font-style: normal;
+  }
 
-body {
-  font-family: "Geist", sans-serif;
-}
+  @font-face {
+    font-family: "Geist";
+    src: url("/src/assets/fonts/Geist[wght].woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+  }
 
-/* Typography based on: https://github.com/shadcn-ui/ui/discussions/1527#discussioncomment-9396350 */
+  @font-face {
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono[wght].woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  @font-face {
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  @font-face {
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-style: normal;
+  }
+
+  @font-face {
+    font-family: "Geist-Mono";
+    src: url("/src/assets/fonts/GeistMono-SemiBold.woff2") format("woff2");
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  body {
+    font-family: "Geist", sans-serif;
+  }
+
+  /* Typography based on: https://github.com/shadcn-ui/ui/discussions/1527#discussioncomment-9396350 */
+}
 @layer base {
   h1,
   .h1 {
@@ -153,7 +254,7 @@ body {
   }
 
   .inline-code {
-    @apply relative rounded bg-slate-400 px-[0.3rem] py-[0.2rem] font-mono text-sm font-semibold;
+    @apply relative rounded-sm bg-slate-400 px-[0.3rem] py-[0.2rem] font-mono text-sm font-semibold;
   }
 
   .table-container {
@@ -183,75 +284,75 @@ body {
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --background: hsl(0 0% 100%);
+    --foreground: hsl(240 10% 3.9%);
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(240 10% 3.9%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(240 10% 3.9%);
+    --primary: hsl(240 5.9% 10%);
+    --primary-foreground: hsl(0 0% 98%);
+    --secondary: hsl(240 4.8% 95.9%);
+    --secondary-foreground: hsl(240 5.9% 10%);
+    --muted: hsl(240 4.8% 95.9%);
+    --muted-foreground: hsl(240 3.8% 46.1%);
+    --accent: hsl(240 4.8% 95.9%);
+    --accent-foreground: hsl(240 5.9% 10%);
+    --destructive: hsl(0 84.2% 60.2%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(240 5.9% 90%);
+    --input: hsl(240 5.9% 90%);
+    --ring: hsl(240 5.9% 10%);
     --radius: 0.5rem;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --chart-1: hsl(12 76% 61%);
+    --chart-2: hsl(173 58% 39%);
+    --chart-3: hsl(197 37% 24%);
+    --chart-4: hsl(43 74% 66%);
+    --chart-5: hsl(27 87% 67%);
+    --sidebar-background: hsl(0 0% 98%);
+    --sidebar-foreground: hsl(240 5.3% 26.1%);
+    --sidebar-primary: hsl(240 5.9% 10%);
+    --sidebar-primary-foreground: hsl(0 0% 98%);
+    --sidebar-accent: hsl(240 4.8% 95.9%);
+    --sidebar-accent-foreground: hsl(240 5.9% 10%);
+    --sidebar-border: hsl(220 13% 91%);
+    --sidebar-ring: hsl(217.2 91.2% 59.8%);
   }
 
   .dark {
     color: white; /* Default text color */
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --background: hsl(240 10% 3.9%);
+    --foreground: hsl(0 0% 98%);
+    --card: hsl(240 10% 3.9%);
+    --card-foreground: hsl(0 0% 98%);
+    --popover: hsl(240 10% 3.9%);
+    --popover-foreground: hsl(0 0% 98%);
+    --primary: hsl(0 0% 98%);
+    --primary-foreground: hsl(240 5.9% 10%);
+    --secondary: hsl(240 3.7% 15.9%);
+    --secondary-foreground: hsl(0 0% 98%);
+    --muted: hsl(240 3.7% 15.9%);
+    --muted-foreground: hsl(240 5% 64.9%);
+    --accent: hsl(240 3.7% 15.9%);
+    --accent-foreground: hsl(0 0% 98%);
+    --destructive: hsl(0 62.8% 30.6%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(240 3.7% 15.9%);
+    --input: hsl(240 3.7% 15.9%);
+    --ring: hsl(240 4.9% 83.9%);
+    --chart-1: hsl(220 70% 50%);
+    --chart-2: hsl(160 60% 45%);
+    --chart-3: hsl(30 80% 55%);
+    --chart-4: hsl(280 65% 60%);
+    --chart-5: hsl(340 75% 55%);
+    --sidebar-background: hsl(240 5.9% 10%);
+    --sidebar-foreground: hsl(240 4.8% 95.9%);
+    --sidebar-primary: hsl(224.3 76.3% 48%);
+    --sidebar-primary-foreground: hsl(0 0% 100%);
+    --sidebar-accent: hsl(240 3.7% 15.9%);
+    --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
+    --sidebar-border: hsl(240 3.7% 15.9%);
+    --sidebar-ring: hsl(217.2 91.2% 59.8%);
   }
 }
 
@@ -306,12 +407,12 @@ body {
 
 .screenshare-body {
   overflow: hidden;
-  background-color: theme("colors.slate.900");
+  background-color: var(--color-slate-900);
 }
 
 .screenshare-video-focus,
 .screenshare-video:focus {
-  outline: 3px solid theme("colors.yellow.300");
+  outline: 3px solid var(--color-yellow-300);
   outline-offset: -2px;
 }
 
@@ -382,7 +483,7 @@ button {
 /* Windows Customisations */
 .windows {
   &#root {
-    border: 2px solid theme("colors.slate.200");
+    border: 2px solid var(--color-slate-200);
     /* Hack to make border visible on the right side */
     width: calc(100% - 1px);
   }

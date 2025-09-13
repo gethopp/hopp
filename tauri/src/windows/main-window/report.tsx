@@ -99,8 +99,8 @@ export function Report() {
         <Button onClick={handleOpenTemplate} className="w-full" disabled={isSubmitting}>
           {isSubmitting ? "Opening GitHub…" : "Open Bug Report Form"}
         </Button>
-        <Button onClick={handleCopyLogs} variant="outline" size="icon" disabled={isCopying}>
-          <Clipboard className="h-4 w-4" />
+        <Button className="shrink-0" onClick={handleCopyLogs} variant="outline" size="icon" disabled={isCopying}>
+          <Clipboard className="size-4" />
         </Button>
       </div>
 

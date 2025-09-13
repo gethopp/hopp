@@ -4,13 +4,7 @@ import { motion } from "framer-motion";
 /**
  * Inspired: https://variantvault.chrisabdo.dev/text-variants
  */
-export function LetterPullUp({
-  sentence,
-  as = "h1",
-}: {
-  sentence: string;
-  as?: React.ElementType;
-}) {
+export function LetterPullUp({ sentence, as = "h1" }: { sentence: string; as?: React.ElementType }) {
   const letters = sentence.split("");
 
   const pullupVariant = {
@@ -35,9 +29,11 @@ export function LetterPullUp({
           initial="initial"
           animate="animate"
           custom={i}
-          className="text-left tracking-[-0.02em] drop-shadow-sm md:text-7xl md:leading-[5rem]"
+          className="text-left tracking-[-0.02em] drop-shadow-xs md:text-7xl md:leading-20"
         >
-          {letter === " " ? <span>&nbsp;</span> : letter}
+          {letter === " " ?
+            <span>&nbsp;</span>
+          : letter}
         </Component>
       ))}
     </div>
@@ -68,10 +64,7 @@ export function BlurIn({
       animate="visible"
       transition={{ duration: 0.8 }}
       variants={variants1}
-      className={clsx(
-        "text-left tracking-[-0.02em] drop-shadow-sm md:text-7xl md:leading-[5rem]",
-        asProps?.className
-      )}
+      className={clsx("text-left tracking-[-0.02em] drop-shadow-xs md:text-7xl md:leading-20", asProps?.className)}
     >
       {sentence}
     </Component>
