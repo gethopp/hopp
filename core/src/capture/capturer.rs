@@ -10,7 +10,7 @@ use winit::{event_loop::EventLoopProxy, monitor::MonitorHandle};
 
 use crate::{
     utils::geometry::{aspect_fit, Extent},
-    UserEvent,
+    UserEvent, STREAM_FAILURE_EXIT_CODE,
 };
 use std::sync::{mpsc, Arc, Mutex};
 use std::vec;
@@ -27,7 +27,6 @@ const SCREENSHOT_CAPTURE_SLEEP_MS: u64 = 33;
 const MAX_SCREENSHOT_RETRY_ATTEMPTS: u32 = 100;
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 5;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
-const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
 
 #[cfg_attr(target_os = "windows", path = "windows.rs")]

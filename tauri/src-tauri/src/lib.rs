@@ -107,6 +107,7 @@ impl AppData {
 
 /// Monitors core process output and emits crash events.
 async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle) {
+    let mut crash_msg = String::new();
     while let Some(event) = receiver.recv().await {
         match event {
             CommandEvent::Stdout(line) => {
@@ -118,6 +119,18 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
             }
             CommandEvent::Terminated(payload) => {
                 log::error!("show_stdout: Terminated {payload:?}");
+                match payload.code {
+                    Some(code) => {
+                        if code == 1 {
+                            crash_msg = "Core process terminated because it failed to receive messages from tauri".to_string();
+                        } else if code == 2 {
+                            crash_msg = "Core process terminated because capturing failed from the OS and couldn't be recovered".to_string();
+                        }
+                    }
+                    None => {
+                        crash_msg = "Core process terminated because of an unknown error. Please restart the app".to_string();
+                    }
+                }
                 break;
             }
             CommandEvent::Error(e) => {
@@ -130,7 +143,7 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
     log::info!("show_stdout: Finished");
 
     // Communicate to the frontend that the core process has crashed.
-    let res = app_handle.emit("core_process_crashed", ());
+    let res = app_handle.emit("core_process_crashed", crash_msg);
     if let Err(e) = res {
         log::error!("Failed to emit core_process_crashed: {e:?}");
     }

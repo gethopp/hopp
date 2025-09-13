@@ -64,6 +64,7 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
+const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 
 #[derive(Error, Debug)]
 pub enum ServerError {

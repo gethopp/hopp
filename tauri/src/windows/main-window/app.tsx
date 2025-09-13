@@ -88,7 +88,7 @@ function App() {
   useEffect(() => {
     const sendLivekitUrlToBackend = async () => {
       if (livekitUrlData?.url) {
-      console.log("livekitUrlData", livekitUrlData);
+        console.log("livekitUrlData", livekitUrlData);
         try {
           await tauriUtils.setLivekitUrl(livekitUrlData.url);
           setLivekitUrl(livekitUrlData.url);
@@ -237,15 +237,15 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("core_process_crashed", () => {
+      const unlistenFn = await listen("core_process_crashed", (data) => {
         if (coreProcessCrashedRef.current) return;
 
         console.debug("Core process crashed");
         coreProcessCrashedRef.current = true;
 
         tauriUtils.showWindow("main");
-        toast.error("Oops something went wrong, please restart.", {
-          duration: 20_000,
+        toast.error(`${data.payload as string}, please restart and submit a bug report`, {
+          duration: 30_000,
           position: "top-center",
         });
       });
