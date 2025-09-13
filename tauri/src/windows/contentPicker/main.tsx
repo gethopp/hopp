@@ -1,20 +1,18 @@
 import "@/services/sentry";
 import "../../App.css";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast, Toaster } from "react-hot-toast";
-import useStore, { ParticipantRole } from "@/store/store";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
-import { sleep } from "@/lib/utils";
 import clsx from "clsx";
 
 const appWindow = getCurrentWebviewWindow();
@@ -104,7 +102,6 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      await sleep(5000);
       const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
