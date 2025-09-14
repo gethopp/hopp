@@ -311,7 +311,7 @@ pub fn get_log_level() -> LevelFilter {
         "info" => LevelFilter::Info,
         "warn" => LevelFilter::Warn,
         "error" => LevelFilter::Error,
-        _ => LevelFilter::Warn,
+        _ => LevelFilter::Info,
     };
     let level_value = env::var("LOG_LEVEL").unwrap_or_else(|_| level.to_string());
     env::set_var(
