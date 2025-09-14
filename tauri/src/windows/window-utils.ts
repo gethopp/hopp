@@ -254,6 +254,15 @@ const getLivekitUrl = async () => {
   return url;
 };
 
+const setSentryMetadata = async (userEmail: string) => {
+  const appVersion = await getVersion();
+  return await invoke("set_sentry_metadata", { userEmail, appVersion });
+};
+
+const callStarted = async (callerId: string) => {
+  return await invoke("call_started", { callerId });
+};
+
 export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
@@ -284,4 +293,6 @@ export const tauriUtils = {
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,
+  setSentryMetadata,
+  callStarted,
 };

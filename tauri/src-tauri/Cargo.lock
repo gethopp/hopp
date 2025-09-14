@@ -4953,6 +4953,7 @@ dependencies = [
  "dirs 5.0.1",
  "log",
  "sentry",
+ "sysinfo",
 ]
 
 [[package]]

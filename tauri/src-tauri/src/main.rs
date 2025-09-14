@@ -3,7 +3,7 @@
 
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
-use socket_lib::{CaptureContent, Content, Extent, Message, ScreenShareMessage};
+use socket_lib::{CaptureContent, Content, Extent, Message, ScreenShareMessage, SentryMetadata};
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -560,6 +560,28 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
     Ok(())
 }
 
+#[tauri::command]
+fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: String) {
+    log::info!("set_sentry_metadata");
+    sentry_utils::init_metadata(user_email.clone(), app_version.clone());
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .socket
+        .send_message(Message::SentryMetadata(SentryMetadata {
+            user_email,
+            app_version,
+        }))
+    {
+        log::error!("set_sentry_metadata: failed to send message: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn call_started(app: tauri::AppHandle, caller_id: String) {
+    log::info!("call_started: {caller_id}");
+}
+
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -904,6 +926,8 @@ fn main() {
             get_camera_permission,
             open_camera_settings,
             create_camera_window,
+            set_sentry_metadata,
+            call_started,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

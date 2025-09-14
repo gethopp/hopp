@@ -32,6 +32,7 @@ use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
     AvailableContentMessage, CaptureContent, CursorSocket, Message, ScreenShareMessage,
+    SentryMetadata,
 };
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -793,6 +794,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_participant_in_control(participant);
             }
+            UserEvent::SentryMetadata(sentry_metadata) => {
+                log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
+                sentry_utils::init_metadata(
+                    sentry_metadata.user_email,
+                    sentry_metadata.app_version,
+                );
+            }
         }
     }
 
@@ -877,6 +885,7 @@ pub enum UserEvent {
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
+    SentryMetadata(SentryMetadata),
 }
 
 pub struct RenderEventLoop {
@@ -977,6 +986,9 @@ impl RenderEventLoop {
                     continue;
                 }
                 Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
+                Message::SentryMetadata(sentry_metadata) => {
+                    UserEvent::SentryMetadata(sentry_metadata)
+                }
                 _ => {
                     log::error!("RenderEventLoop::run Unknown message: {message:?}");
                     continue;

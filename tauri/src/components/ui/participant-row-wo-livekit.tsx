@@ -87,6 +87,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.success(`${props.user.first_name} accepted your call`, {
             duration: 1500,
           });
+          tauriUtils.callStarted(props.user.id);
           break;
         case "call_tokens":
           setCalling(null);
