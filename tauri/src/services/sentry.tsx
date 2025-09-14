@@ -31,11 +31,13 @@ Sentry.init({
     Sentry.captureConsoleIntegration({
       levels: ["error"],
     }),
+    Sentry.browserTracingIntegration(),
   ],
   // Learn more at
   // https://docs.sentry.io/platforms/javascript/session-replay/configuration/#general-integration-configuration
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
+  tracesSampleRate: 1.0,
 });
 
 // Set initial window context
