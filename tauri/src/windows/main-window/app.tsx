@@ -52,6 +52,7 @@ function App() {
 
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
+  const sentryMetadataRef = useRef<boolean>(false);
 
   const { error: userError } = useQuery("get", "/api/auth/user", undefined, {
     enabled: !!authToken,
@@ -60,6 +61,10 @@ function App() {
     queryHash: `user-${authToken}`,
     select: (data) => {
       setUser(data);
+      if (!sentryMetadataRef.current) {
+        tauriUtils.setSentryMetadata(data.email);
+        sentryMetadataRef.current = true;
+      }
       return data;
     },
   });

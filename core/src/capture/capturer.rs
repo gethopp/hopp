@@ -411,7 +411,7 @@ impl Capturer {
         stream_resolution: Extent,
         include_cursor: bool,
     ) -> Result<(), CapturerError> {
-        log::info!("start_capture: content {content:?}");
+        log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor}");
         if self.active_stream.is_some() {
             log::warn!("start_capture: active stream, stopping it");
             self.active_stream.as_mut().unwrap().stop_capture();

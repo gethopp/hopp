@@ -101,6 +101,12 @@ pub struct ScreenShareMessage {
     pub accessibility_permission: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SentryMetadata {
+    pub user_email: String,
+    pub app_version: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
@@ -112,6 +118,7 @@ pub enum Message {
     Ping,
     ControllerCursorEnabled(bool),
     LivekitServerUrl(String),
+    SentryMetadata(SentryMetadata),
 }
 
 #[derive(Debug)]

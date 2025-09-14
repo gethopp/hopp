@@ -160,7 +160,7 @@ impl RoomService {
         height: u32,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<(), RoomServiceError> {
-        log::info!("create_room: {token:?}, {width:?}, {height:?}");
+        log::info!("create_room: {width:?}, {height:?}");
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::CreateRoom {
@@ -516,7 +516,6 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::IterateParticipants => {
-                log::info!("room_service_commands: Iterating participants");
                 let room = inner.room.lock().await;
                 if room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -524,7 +523,10 @@ async fn room_service_commands(
                 }
                 let room = room.as_ref().unwrap();
                 for participant in room.remote_participants() {
-                    log::info!("room_service_commands: Participant: {participant:?}");
+                    log::info!(
+                        "room_service_commands: Participant: {}",
+                        participant.1.sid()
+                    );
 
                     let name = participant.1.name();
                     if participant.0.as_str().contains("audio")
@@ -547,9 +549,6 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::PublishParticipantInControl(participant) => {
-                log::info!(
-                    "room_service_commands: Publishing participant in control: {participant:?}"
-                );
                 let room = inner.room.lock().await;
                 if room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -798,7 +797,10 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantConnected(participant) => {
-                log::info!("handle_room_events: Participant connected: {participant:?}");
+                log::info!(
+                    "handle_room_events: Participant connected: {}",
+                    participant.sid()
+                );
 
                 let name = participant.name();
                 let participant_id = participant.identity().as_str().to_string();
@@ -822,7 +824,10 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantDisconnected(participant) => {
-                log::info!("handle_room_events: Participant disconnected: {participant:?}");
+                log::info!(
+                    "handle_room_events: Participant disconnected: {}",
+                    participant.sid()
+                );
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
                     ParticipantData {
@@ -836,14 +841,19 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::TrackPublished {
-                publication,
+                publication: _,
                 participant,
             } => {
-                log::info!("handle_room_events: Track published: {publication:?}, {participant:?}");
-                let name = participant.name();
+                log::info!(
+                    "handle_room_events: Track published: from {}",
+                    participant.sid()
+                );
                 let participant_id = participant.identity().as_str().to_string();
                 if participant_id.contains("video") {
-                    log::info!("handle_room_events: Controller {name} takes screen share");
+                    log::info!(
+                        "handle_room_events: Controller {} takes screen share",
+                        participant.sid()
+                    );
                     if let Err(e) =
                         event_loop_proxy.send_event(UserEvent::ControllerTakesScreenShare)
                     {
