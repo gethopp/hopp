@@ -19,7 +19,7 @@ export const ToggleIconButton: React.FC<
         "flex flex-col p-4 small items-center justify-center gap-1 px-4 py-1.5 rounded-md ring-1 ring-inset shadow-xs transition-colors duration-100 relative font-medium",
         {
           "bg-gray-300 text-gray-600": state === "deactivated",
-          "ring-emerald-600": state === "active",
+          // "ring-emerald-600": state === "active",
           "bg-white text-gray-500 hover:bg-gray-100 ring-slate-200": state === "neutral",
           "h-[65px] w-[110px]": size === "default",
         },
