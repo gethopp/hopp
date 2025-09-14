@@ -578,7 +578,7 @@ fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: S
 }
 
 #[tauri::command]
-fn call_started(app: tauri::AppHandle, caller_id: String) {
+fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
 }
 
