@@ -242,17 +242,33 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("core_process_crashed", () => {
+      const unlistenFn = await listen("core_process_crashed", (data) => {
         if (coreProcessCrashedRef.current) return;
 
         console.debug("Core process crashed");
         coreProcessCrashedRef.current = true;
 
         tauriUtils.showWindow("main");
-        toast.error("Oops something went wrong, please restart.", {
-          duration: 20_000,
-          position: "top-center",
-        });
+        toast.error(
+          (t) => (
+            <div className="flex flex-row items-center gap-2">
+              <div className="text-sm">{`${data.payload as string}`}</div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  coreProcessCrashedRef.current = false;
+                }}
+              >
+                Dismiss
+              </Button>
+            </div>
+          ),
+          {
+            duration: 60_000,
+            position: "top-center",
+          },
+        );
       });
 
       return unlistenFn;

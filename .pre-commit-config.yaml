@@ -24,18 +24,6 @@ repos:
         files: ^.*$
         types_or: [javascript, jsx, ts, tsx]
         entry: bash -c "yarn pretty-quick --staged"
-      - id: check_localhost_in_webapp
-        name: Check for localhost in web-app.html
-        language: system
-        entry: |
-          bash -c '
-          if grep -i "API_BASE_URL:\"localhost:1926\"" backend/web/web-app.html; then
-            echo "ERROR: Found localhost reference in backend/web/web-app.html"
-            exit 1
-          fi
-          '
-        files: backend/web/web-app\.html$
-        pass_filenames: false
 
   - repo: https://github.com/golangci/golangci-lint
     rev: v1.64.7

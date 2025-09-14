@@ -21,23 +21,14 @@ const selectVariants = cva(
       variant: "default",
       size: "default",
     },
-  }
+  },
 );
 
-export interface SelectProps
-  extends React.InputHTMLAttributes<HTMLSelectElement> {}
+export interface SelectProps extends React.InputHTMLAttributes<HTMLSelectElement> {}
 
-const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, type, ...props }, ref) => {
-    return (
-      <select
-        className={cn(selectVariants(), className)}
-        ref={ref}
-        {...props}
-      />
-    );
-  }
-);
+const Select = React.forwardRef<HTMLSelectElement, SelectProps>(({ className, type, ...props }, ref) => {
+  return <select className={cn(selectVariants(), className)} ref={ref} {...props} />;
+});
 Select.displayName = "Select";
 
 export { Select };

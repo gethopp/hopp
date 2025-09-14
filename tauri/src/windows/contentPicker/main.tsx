@@ -1,18 +1,19 @@
 import "@/services/sentry";
 import "../../App.css";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast, Toaster } from "react-hot-toast";
-import useStore, { ParticipantRole } from "@/store/store";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
+import { CgSpinner } from "react-icons/cg";
+import clsx from "clsx";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -69,6 +70,8 @@ function Window() {
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getTokenParam("videoToken");
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
+  const hasClickedRef = useRef(false);
+  const [hasClicked, setHasClicked] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -94,6 +97,11 @@ function Window() {
         toast.error("No video token found");
         return;
       }
+      if (hasClickedRef.current) {
+        return;
+      }
+      hasClickedRef.current = true;
+      setHasClicked(true);
       const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
       if (success) {
         await appWindow.close();
@@ -113,6 +121,9 @@ function Window() {
         ),
         { duration: 10000 },
       );
+    } finally {
+      hasClickedRef.current = false;
+      setHasClicked(false);
     }
   };
 
@@ -136,7 +147,7 @@ function Window() {
   };
 
   return (
-    <div className="h-full overflow-hidden dark" tabIndex={0}>
+    <div className="h-screen overflow-hidden dark flex flex-col gap-0" tabIndex={0}>
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
@@ -167,7 +178,12 @@ function Window() {
           </SelectContent>
         </Select>
       </div>
-      <div className="content px-4 pb-4 pt-[10px] overflow-auto grid grid-cols-2 gap-4">
+      <div
+        className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
+          "h-full flex flex-col justify-center": hasClicked,
+          "grid grid-cols-2 h-full": !hasClicked,
+        })}
+      >
         {hasEmptyContentFromBackend ?
           <div className="col-span-2 flex justify-center">
             <Alert variant="destructive" className="w-full max-w-md">
@@ -178,6 +194,13 @@ function Window() {
                 permissions and have content open to share.
               </AlertDescription>
             </Alert>
+          </div>
+        : hasClicked ?
+          <div className="h-full w-full flex flex-col justify-center col-span-2">
+            <div className="col-span-2 flex flex-row items-center justify-center gap-3">
+              <span className="text-base text-white/80">Starting screenshare...</span>
+              <CgSpinner className="animate-spin text-white/80 h-6 w-6" />
+            </div>
           </div>
         : content.map((item) => (
             <div
