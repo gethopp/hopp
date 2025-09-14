@@ -650,6 +650,7 @@ fn main() {
                 ])
                 .level(LevelFilter::Warn)
                 .level_for("hopp", log_level)
+                .max_file_size(50 * 1024 * 1024) // We are emptying them on startup
                 .build(),
         )
         .setup(move |app| {
