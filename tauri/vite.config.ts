@@ -2,11 +2,23 @@ import path, { resolve } from "path";
 import { defineConfig, loadEnv } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 // https://vitejs.dev/config/
 export default defineConfig(async (config) => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      // Enable only if Sentry is enabled
+      process.env.SENTRY_AUTH_TOKEN ?
+        sentryVitePlugin({
+          org: "renkey",
+          project: "tauri-app",
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+        })
+      : undefined,
+    ],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
@@ -26,6 +38,7 @@ export default defineConfig(async (config) => {
       },
     },
     build: {
+      sourcemap: true,
       rollupOptions: {
         input: {
           main: resolve(__dirname, "index.html"),
