@@ -5,6 +5,7 @@ use livekit::{
         prelude::{RtcVideoTrack, VideoBuffer},
         video_stream::native::NativeVideoStream,
     },
+    DataPacket,
 };
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -12,8 +13,9 @@ use tokio::{
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
+use crate::room_service::room_service::{ClientPoint, ParticipantInControl, RemoteControlEnabled};
+
 const MAX_TRIES: u32 = 100;
-const DEFAULT_CHUNKS_TOTAL: u32 = 8; // Default to 2 chunks as requested
 
 #[derive(Debug, Clone)]
 enum SendFramesMessage {
@@ -25,7 +27,7 @@ pub struct VideoClient {
     sender: tokio::sync::broadcast::Sender<SendFramesMessage>,
     track: String,
     port: u16,
-    local_participant: LocalParticipant,
+    controller_event_sender: std::sync::mpsc::Sender<ControllerEvent>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +44,13 @@ pub enum VideoClientError {
     FailedToAcceptWebSocket,
 }
 
+#[derive(Debug)]
+pub enum ControllerEvent {
+    RemoteControlEnabled(RemoteControlEnabled),
+    ShowCustomCursor(bool),
+    ParticipantLocation(ClientPoint, String),
+}
+
 impl VideoClient {
     pub async fn new(
         track: RtcVideoTrack,
@@ -51,13 +60,21 @@ impl VideoClient {
         let (sender, receiver) = tokio::sync::broadcast::channel(2);
         let (listener, port) = create_listener().await?;
         let receiver_clone = sender.subscribe();
-        tokio::spawn(send_frames(receiver, receiver_clone, track, listener));
+        let (controller_event_sender, controller_event_receiver) = std::sync::mpsc::channel();
+        tokio::spawn(send_frames(
+            receiver,
+            receiver_clone,
+            track,
+            listener,
+            controller_event_receiver,
+            local_participant,
+        ));
         log::info!("VideoClient created: {name}, port: {port}");
         Ok(Self {
             sender,
             track: name,
             port,
-            local_participant,
+            controller_event_sender,
         })
     }
 
@@ -67,6 +84,12 @@ impl VideoClient {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn forward_controller_event(&self, event: ControllerEvent) {
+        if let Err(e) = self.controller_event_sender.send(event) {
+            log::error!("VideoClient::forward_controller_event: Failed to send event: {e:?}");
+        }
     }
 }
 
@@ -84,6 +107,8 @@ async fn send_frames(
     receiver_clone: tokio::sync::broadcast::Receiver<SendFramesMessage>,
     track: RtcVideoTrack,
     listener: TcpListener,
+    controller_event_receiver: std::sync::mpsc::Receiver<ControllerEvent>,
+    local_participant: LocalParticipant,
 ) {
     let ws_socket = match setup_websocket(listener).await {
         Ok(ws_socket) => ws_socket,
@@ -93,7 +118,11 @@ async fn send_frames(
         }
     };
     let (mut ws_sender, ws_receiver) = ws_socket.split();
-    tokio::spawn(receive_controller_events(receiver_clone, ws_receiver));
+    tokio::spawn(receive_controller_events(
+        receiver_clone,
+        ws_receiver,
+        local_participant,
+    ));
 
     let mut video_sink = NativeVideoStream::new(track);
     let start_time = std::time::SystemTime::now();
@@ -120,6 +149,25 @@ async fn send_frames(
                 }
             }
         }
+
+        // Check if there is a controller event
+        let mut participant_location = None;
+        let mut remote_control_enabled = None;
+        let mut show_custom_cursor = None;
+        while let Ok(event) = controller_event_receiver.try_recv() {
+            match event {
+                ControllerEvent::ParticipantLocation(location, participant) => {
+                    participant_location = Some((location, participant));
+                }
+                ControllerEvent::RemoteControlEnabled(enabled) => {
+                    remote_control_enabled = Some(enabled);
+                }
+                ControllerEvent::ShowCustomCursor(enabled) => {
+                    show_custom_cursor = Some(enabled);
+                }
+            }
+        }
+
         let capture_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -145,6 +193,15 @@ async fn send_frames(
          *   - capture_ts:8
          *   - frame_id:4
          *   - chunks_total:1
+         *   - remote_control_enabled: 1 // if there is a remote control enabled
+         *   - remote_control_enabled_value: 1 // if remote control is enabled
+         *   - show_custom_cursor: 1 // show custom cursor
+         *   - show_custom_cursor_value: 1 // show custom cursor
+         *   - participant_location: 1 // if there is a participant location
+         *   - x: 8 // float64
+         *   - y: 8 // float64
+         *   - sid_length: 4
+         *   - sid: sid_length // sid string
          *
          * Data:
          *   - type:1 ('D')
@@ -156,13 +213,50 @@ async fn send_frames(
 
         let total_chunks: u8 = 4;
 
-        let mut header = Vec::with_capacity(22);
+        let mut location_sid = String::new();
+        let mut location_x = 0.0;
+        let mut location_y = 0.0;
+        if let Some((location, participant)) = participant_location {
+            location_x = location.x;
+            location_y = location.y;
+            location_sid = participant;
+        }
+
+        let base_capacity = 48;
+        let mut header = Vec::with_capacity(base_capacity + location_sid.len());
+
         header.extend_from_slice(&[b'H']);
         header.extend_from_slice(&(stream_width as u16).to_le_bytes());
         header.extend_from_slice(&(stream_height as u16).to_le_bytes());
         header.extend_from_slice(&capture_ts.to_le_bytes());
         header.extend_from_slice(&frame_id.to_le_bytes());
         header.extend_from_slice(&total_chunks.to_le_bytes());
+        if let Some(enabled) = remote_control_enabled {
+            header.extend_from_slice(&1u8.to_le_bytes());
+            header.extend_from_slice(&(enabled.enabled as u8).to_le_bytes());
+        } else {
+            header.extend_from_slice(&0u8.to_le_bytes());
+            header.extend_from_slice(&0u8.to_le_bytes());
+        }
+        if let Some(show_custom_cursor) = show_custom_cursor {
+            header.extend_from_slice(&1u8.to_le_bytes());
+            header.extend_from_slice(&(show_custom_cursor as u8).to_le_bytes());
+        } else {
+            header.extend_from_slice(&0u8.to_le_bytes());
+            header.extend_from_slice(&0u8.to_le_bytes());
+        }
+        if location_sid != "" {
+            header.extend_from_slice(&1u8.to_le_bytes());
+            header.extend_from_slice(&(location_x as f64).to_le_bytes());
+            header.extend_from_slice(&(location_y as f64).to_le_bytes());
+            header.extend_from_slice(&(location_sid.len() as u32).to_le_bytes());
+            header.extend_from_slice(&location_sid.as_bytes());
+        } else {
+            header.extend_from_slice(&0u8.to_le_bytes());
+            header.extend_from_slice(&0u8.to_le_bytes());
+            header.extend_from_slice(&0u8.to_le_bytes());
+            header.extend_from_slice(&0u32.to_le_bytes());
+        }
 
         if let Err(e) = ws_sender.send(Message::Binary(header.into())).await {
             log::error!("Failed to send header: {e:?}");
@@ -171,7 +265,7 @@ async fn send_frames(
 
         let total_size = y_data.len() + u_data.len() + v_data.len();
         let chunk_size = total_size / (total_chunks as usize);
-        let mut buffers = [y_data, u_data, v_data];
+        let buffers = [y_data, u_data, v_data];
         let buffers_limits = [
             (0 as usize, y_data.len()),
             (y_data.len(), y_data.len() + u_data.len()),
@@ -226,6 +320,7 @@ async fn send_frames(
 async fn receive_controller_events(
     mut receiver: tokio::sync::broadcast::Receiver<SendFramesMessage>,
     mut ws_receiver: SplitStream<WebSocketStream<TcpStream>>,
+    local_participant: LocalParticipant,
 ) {
     loop {
         let res = receiver.try_recv();
@@ -242,9 +337,7 @@ async fn receive_controller_events(
                     log::info!("receive_controller_events: receiver disconnected");
                     break;
                 }
-                _ => {
-                    log::error!("receive_controller_events: Failed to receive message: {e:?}");
-                }
+                _ => {}
             }
         }
 
@@ -257,6 +350,18 @@ async fn receive_controller_events(
                     Ok(Message::Close(_)) => {
                         log::info!("receive_controller_events: received close message");
                         break;
+                    }
+                    Ok(Message::Binary(data)) => {
+                        if let Err(e) = local_participant
+                            .publish_data(DataPacket {
+                                payload: data.to_vec(),
+                                reliable: true,
+                                ..Default::default()
+                            })
+                            .await
+                        {
+                            log::error!("receive_controller_events: Failed to publish data: {e:?}");
+                        }
                     }
                     _ => {
                         log::error!("receive_controller_events: Received unknown message: {msg:?}");

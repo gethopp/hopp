@@ -105,6 +105,30 @@ class WSClientService {
   getLastError() {
     return this.lastError;
   }
+
+  send(data: ArrayBuffer) {
+    if (this.status !== "open") {
+      console.warn("WSClient: Cannot send message, connection not open. Status:", this.status);
+      return false;
+    }
+
+    try {
+      if (this.worker) {
+        // Send via worker - transfer the buffer to avoid copying
+        this.worker.postMessage({ type: "SEND", data }, [data]);
+        return true;
+      } else if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        // Send via direct WebSocket
+        this.socket.send(data);
+        return true;
+      }
+    } catch (e) {
+      console.error("WSClient: Failed to send message:", e);
+      return false;
+    }
+
+    return false;
+  }
 }
 
 export const wsClient = new WSClientService();

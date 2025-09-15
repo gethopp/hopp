@@ -26,7 +26,7 @@ const appWindow = getCurrentWebviewWindow();
  *     and don't allow the window to have a height greater than the
  *     calculated one.
  */
-export async function resizeWindow(streamWidth: number, streamHeight: number, ref: React.RefObject<HTMLVideoElement>) {
+export async function resizeWindow(streamWidth: number, streamHeight: number, ref: React.RefObject<HTMLVideoElement | HTMLCanvasElement>) {
   if (streamWidth === 16 && streamHeight === 9) {
     return;
   }

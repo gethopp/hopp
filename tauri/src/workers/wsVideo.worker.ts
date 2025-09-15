@@ -3,6 +3,7 @@
 // Message protocol from main:
 // - { type: "INIT", url: string }
 // - { type: "CLOSE" }
+// - { type: "SEND", data: ArrayBuffer }
 // Messages to main:
 // - { type: "STATUS", status: "connecting" | "open" | "closed" | "error" }
 // - { type: "DATA", data: ArrayBuffer, receivedAtMs: number }
@@ -66,6 +67,15 @@ function connect(url: string) {
       }
       cleanup();
       postStatus("closed");
+      break;
+    case "SEND":
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(msg.data);
+        } catch (e) {
+          console.error("Worker: Failed to send message:", e);
+        }
+      }
       break;
   }
 };

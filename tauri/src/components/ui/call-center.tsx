@@ -440,7 +440,7 @@ function ScreensharingEventListener({
 
     if (callTokens?.role !== newRole) {
       if (callTokens?.role === ParticipantRole.CONTROLLER && !trackFound) {
-        //tauriUtils.closeScreenShareWindow();
+        tauriUtils.closeScreenShareWindow();
         tauriUtils.setDockIconVisible(false);
       }
 

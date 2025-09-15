@@ -17,6 +17,7 @@ use winit::event_loop::EventLoopProxy;
 
 use livekit_client::VideoClient;
 
+use crate::room_service::room_service::livekit_client::ControllerEvent;
 use crate::{ParticipantData, UserEvent};
 
 // Constants for magic values
@@ -660,7 +661,10 @@ async fn room_service_commands(
                 let local_participant = room.local_participant();
                 let res = local_participant
                     .publish_data(DataPacket {
-                        payload: participant.to_string().as_bytes().to_vec(),
+                        payload: serde_json::to_vec(&ClientEvent::ParticipantInControl(
+                            ParticipantInControl { participant },
+                        ))
+                        .unwrap(),
                         reliable: true,
                         topic: Some(TOPIC_PARTICIPANT_IN_CONTROL.to_string()),
                         ..Default::default()
@@ -777,6 +781,12 @@ pub struct RemoteControlEnabled {
     pub enabled: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ParticipantInControl {
+    /// The participant sid that is in control
+    pub participant: String,
+}
+
 /// Represents all possible client events that can be sent between room participants.
 ///
 /// This enum defines the different types of events that can be transmitted through
@@ -802,6 +812,8 @@ pub enum ClientEvent {
     TickResponse(TickData),
     /// Remote control enabled/disabled status change
     RemoteControlEnabled(RemoteControlEnabled),
+    /// Participant in control event
+    ParticipantInControl(ParticipantInControl),
 }
 
 async fn handle_room_events(
@@ -814,7 +826,7 @@ async fn handle_room_events(
         match msg {
             RoomEvent::DataReceived {
                 payload,
-                topic: _,
+                topic,
                 kind: _,
                 participant,
             } => {
@@ -839,16 +851,34 @@ async fn handle_room_events(
                     continue;
                 }
 
+                let is_controller = { inner.video_client.lock().unwrap().is_some() };
+
                 let res = match client_event {
                     ClientEvent::MouseMove(point) => {
                         /* let point = translate_mouse_position(point, menu_perc); */
-                        event_loop_proxy.send_event(UserEvent::CursorPosition(
-                            point.x as f32,
-                            point.y as f32,
-                            sid,
-                        ))
+                        if is_controller {
+                            let video_client = inner.video_client.lock().unwrap();
+                            if video_client.is_none() {
+                                continue;
+                            }
+                            let video_client = video_client.as_ref().unwrap();
+                            video_client.forward_controller_event(
+                                ControllerEvent::ParticipantLocation(point, sid),
+                            );
+                            Ok(())
+                        } else {
+                            event_loop_proxy.send_event(UserEvent::CursorPosition(
+                                point.x as f32,
+                                point.y as f32,
+                                sid,
+                            ))
+                        }
                     }
                     ClientEvent::MouseClick(click) => {
+                        if is_controller {
+                            continue;
+                        }
+
                         event_loop_proxy.send_event(UserEvent::MouseClick(
                             crate::MouseClickData {
                                 x: click.x as f32,
@@ -864,10 +894,19 @@ async fn handle_room_events(
                             sid,
                         ))
                     }
-                    ClientEvent::MouseVisible(visible_data) => event_loop_proxy.send_event(
-                        UserEvent::ControllerCursorVisible(visible_data.visible, sid),
-                    ),
+                    ClientEvent::MouseVisible(visible_data) => {
+                        if is_controller {
+                            continue;
+                        }
+                        event_loop_proxy.send_event(UserEvent::ControllerCursorVisible(
+                            visible_data.visible,
+                            sid,
+                        ))
+                    }
                     ClientEvent::Keystroke(key) => {
+                        if is_controller {
+                            continue;
+                        }
                         event_loop_proxy.send_event(UserEvent::Keystroke(crate::KeystrokeData {
                             key: key.key[0].clone(),
                             meta: key.meta,
@@ -878,6 +917,9 @@ async fn handle_room_events(
                         }))
                     }
                     ClientEvent::WheelEvent(wheel_data) => {
+                        if is_controller {
+                            continue;
+                        }
                         event_loop_proxy.send_event(UserEvent::Scroll(
                             crate::ScrollDelta {
                                 x: wheel_data.deltaX,
@@ -892,6 +934,34 @@ async fn handle_room_events(
                         } else {
                             Ok(())
                         }
+                    }
+                    ClientEvent::RemoteControlEnabled(remote_control_enabled) => {
+                        if !is_controller {
+                            continue;
+                        }
+                        let video_client = inner.video_client.lock().unwrap();
+                        if video_client.is_none() {
+                            continue;
+                        }
+                        let video_client = video_client.as_ref().unwrap();
+                        video_client.forward_controller_event(
+                            ControllerEvent::RemoteControlEnabled(remote_control_enabled),
+                        );
+                        Ok(())
+                    }
+                    ClientEvent::ParticipantInControl(participant_in_control) => {
+                        if !is_controller {
+                            continue;
+                        }
+                        let video_client = inner.video_client.lock().unwrap();
+                        if video_client.is_none() {
+                            continue;
+                        }
+                        let video_client = video_client.as_ref().unwrap();
+                        video_client.forward_controller_event(ControllerEvent::ShowCustomCursor(
+                            participant_in_control.participant == sid,
+                        ));
+                        Ok(())
                     }
                     _ => Ok(()),
                 };

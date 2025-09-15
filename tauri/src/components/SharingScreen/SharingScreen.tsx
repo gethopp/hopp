@@ -27,6 +27,7 @@ import { WebCodecsCanvas, drawI420FrameToCanvas } from "./WebCodecsCanvas";
 
 const CURSORS_TOPIC = "participant_location";
 const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
+const REMOTE_CONTROL_ENABLED_TOPIC = "remote_control_enabled";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -90,6 +91,8 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
   const [showCustomCursor, setShowCustomCursor] = useState(true);
 
   const videoRef = useRef<HTMLCanvasElement>(null);
+  const heightRef = useRef(0);
+  const widthRef = useRef(0);
 
   // Simple sliding window metrics (reset every 30 frames)
   const metrics = React.useRef({
@@ -98,6 +101,64 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
     sumReceiveToBeforeDraw: 0,
   }).current;
 
+  // Callback handlers for extended header data
+  const handleRemoteControlChange = React.useCallback((enabled: boolean) => {
+    updateCallTokens({
+      isRemoteControlEnabled: enabled,
+    });
+
+    if (enabled) {
+      toast("Sharer enabled remote control", {
+        icon: "🔓",
+        duration: 1500,
+      });
+    } else {
+      toast("Sharer disabled remote control", {
+        icon: "🔒",
+        duration: 1500,
+      });
+    }
+  }, [updateCallTokens]);
+
+  const handleParticipantLocation = React.useCallback((x: number, y: number, sid: string) => {
+    console.log("Participant location:", x, y, sid);
+    if (!videoRef.current) return;
+
+    const canvas = videoRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const absoluteX = (x * rect.width) + rect.left;
+    const absoluteY = (y * rect.height) + rect.top;
+
+    setCursorSlots((prev) => {
+      const updated = [...prev];
+
+      // Find existing slot for this participant
+      let slotIndex = updated.findIndex((slot) => slot.participantId === sid);
+
+      // If not found, find first available slot
+      if (slotIndex === -1) {
+        slotIndex = updated.findIndex((slot) => slot.participantId === null);
+      }
+
+      // Update the slot if available
+      if (slotIndex !== -1) {
+        updated[slotIndex] = {
+          participantId: sid,
+          participantName: sid.split("-")[0] || "Unknown",
+          x: absoluteX,
+          y: absoluteY,
+          lastActivity: Date.now(),
+        };
+      }
+
+      return updated;
+    });
+  }, []);
+
+  const handleShowCustomCursor = React.useCallback((showCustomCursor: boolean) => {
+    setShowCustomCursor(showCustomCursor);
+  }, []);
+
   // Frame reconstruction state
   const frameBuffers = React.useRef<Map<number, {
     width: number;
@@ -105,127 +166,190 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
     captureTs: number;
     chunksTotal: number;
     chunks: Map<number, Uint8Array>;
+    frameData: Uint8Array | null;
+    totalSize: number;
     receivedAt: number;
   }>>(new Map()).current;
 
   const onMessage = (data: ArrayBuffer, receivedAtMs?: number) => {
     const canvas = videoRef.current;
-    if ((!(data instanceof ArrayBuffer)) || (!canvas)) return;
+    if (!canvas) return;
 
-    const buf = data;
-    const dv = new DataView(buf);
+    const dv = new DataView(data);
     const receivedAt = receivedAtMs ?? Date.now();
 
-    if (buf.byteLength < 1) return;
+    if (data.byteLength < 1) return;
 
-    // Read packet type (first byte as ASCII character)
-    const packetType = String.fromCharCode(dv.getUint8(0));
+    // Read packet type (avoid string allocation)
+    const packetTypeCode = dv.getUint8(0);
 
-    if (packetType === 'H') {
-      // Header packet
-      if (buf.byteLength < 18) return;
+    if (packetTypeCode === 0x48) { // 'H' = 72 = 0x48
+      // Header packet - minimum size is base header (18 bytes)
+      if (data.byteLength < 18) return;
 
-      const width = dv.getUint16(1, true); // little endian
+      const width = dv.getUint16(1, true);
       const height = dv.getUint16(3, true);
-      const captureTs = dv.getBigUint64(5, true);
+      const captureTs = Number(dv.getBigUint64(5, true));
       const frameId = dv.getUint32(13, true);
       const chunksTotal = dv.getUint8(17);
 
-      // Initialize frame buffer
+      if ((height !== heightRef.current) || (width !== widthRef.current)) {
+        heightRef.current = height;
+        widthRef.current = width;
+      }
+
+      // Parse extended header fields
+      let offset = 18;
+
+      // Remote control enabled flag and value
+      if (offset < data.byteLength) {
+        const hasRemoteControlEnabled = dv.getUint8(offset) === 1;
+        offset++;
+        if (hasRemoteControlEnabled && offset < data.byteLength) {
+          const remoteControlEnabled = dv.getUint8(offset) === 1;
+          handleRemoteControlChange(remoteControlEnabled);
+        }
+        offset++;
+      }
+
+      if (offset < data.byteLength) {
+        const hasShowCustomCursor = dv.getUint8(offset) === 1;
+        offset++;
+        if (hasShowCustomCursor && offset <= data.byteLength) {
+          const showCustomCursor = dv.getUint8(offset) === 1;
+          handleShowCustomCursor(showCustomCursor);
+        }
+        offset++;
+      }
+
+      // Participant location
+      let participantX: number | null = null;
+      let participantY: number | null = null;
+      let participantLocationSid: string | null = null;
+      if (offset < data.byteLength) {
+        const hasParticipantLocation = dv.getUint8(offset) === 1;
+        offset++;
+        console.log("hasParticipantLocation:", hasParticipantLocation);
+        if (hasParticipantLocation && offset + 16 <= data.byteLength) {
+          participantX = dv.getFloat64(offset, true);
+          offset += 8;
+          participantY = dv.getFloat64(offset, true);
+          offset += 8;
+
+          const sidLength = dv.getUint32(offset, true);
+          offset += 4;
+          if (sidLength > 0 && offset + sidLength <= data.byteLength) {
+            const sidBytes = new Uint8Array(data, offset, sidLength);
+            participantLocationSid = new TextDecoder().decode(sidBytes);
+            offset += sidLength;
+          }
+        }
+      }
+
+      console.log("Participant location sid:", participantLocationSid);
+
+
+      // Handle parsed extended data with callbacks
+      if (participantX !== null && participantY !== null && participantLocationSid) {
+        handleParticipantLocation(participantX, participantY, participantLocationSid);
+      }
+
+      // Pre-calculate frame size and pre-allocate buffer
+      const ySize = width * height;
+      const uvPlaneSize = ySize >> 2;
+      const totalSize = ySize + uvPlaneSize + uvPlaneSize;
+
+      // Initialize frame buffer with pre-allocated data
       frameBuffers.set(frameId, {
         width,
         height,
-        captureTs: Number(captureTs),
+        captureTs,
         chunksTotal,
         chunks: new Map(),
+        frameData: new Uint8Array(totalSize),
+        totalSize,
         receivedAt,
       });
 
-    } else if (packetType === 'D') {
+
+
+    } else if (packetTypeCode === 0x44) { // 'D' = 68 = 0x44
       // Data packet
-      if (buf.byteLength < 11) return;
+      if (data.byteLength < 11) return;
 
       const frameId = dv.getUint32(1, true);
       const chunkIndex = dv.getUint16(5, true);
       const chunkSize = dv.getUint32(7, true);
 
-      if (buf.byteLength < 11 + chunkSize) return;
-
-      const chunkData = new Uint8Array(buf, 11, chunkSize);
+      if (data.byteLength < 11 + chunkSize) return;
 
       // Get frame buffer
       const frameBuffer = frameBuffers.get(frameId);
-      if (!frameBuffer) return;
+      if (!frameBuffer || !frameBuffer.frameData) return;
 
-      // Store chunk
+      // Copy chunk data directly into pre-allocated buffer
+      const chunkData = new Uint8Array(data, 11, chunkSize);
       frameBuffer.chunks.set(chunkIndex, chunkData);
 
       // Check if frame is complete
       if (frameBuffer.chunks.size === frameBuffer.chunksTotal) {
-        // Reconstruct complete frame data
-        let totalSize = 0;
-        for (const chunk of frameBuffer.chunks.values()) {
-          totalSize += chunk.length;
-        }
-
-        const frameData = new Uint8Array(totalSize);
         let offset = 0;
 
-        // Combine chunks in order
+        // Combine chunks directly into pre-allocated buffer
         for (let i = 0; i < frameBuffer.chunksTotal; i++) {
           const chunk = frameBuffer.chunks.get(i);
           if (chunk) {
-            frameData.set(chunk, offset);
+            frameBuffer.frameData.set(chunk, offset);
             offset += chunk.length;
           }
         }
 
-        // Parse I420 data from reconstructed frame
-        const { width, height, captureTs } = frameBuffer;
+        // Use cached values (avoid destructuring and recalculation)
+        const width = frameBuffer.width;
+        const height = frameBuffer.height;
+        const captureTs = frameBuffer.captureTs;
         const ySize = width * height;
-        const uvPlaneSize = (width * height) >> 2; // 4:2:0
-        const expectedSize = ySize + uvPlaneSize + uvPlaneSize;
+        const uvPlaneSize = ySize >> 2;
 
-        if (frameData.length >= expectedSize) {
-          const yData = frameData.subarray(0, ySize);
-          const uData = frameData.subarray(ySize, ySize + uvPlaneSize);
-          const vData = frameData.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
+        // Create subarrays directly from pre-allocated buffer
+        const yData = frameBuffer.frameData.subarray(0, ySize);
+        const uData = frameBuffer.frameData.subarray(ySize, ySize + uvPlaneSize);
+        const vData = frameBuffer.frameData.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
 
-          // Update metrics
-          const nowMs = receivedAt;
-          const captureToReceiveMs = nowMs - captureTs;
+        // Update metrics
+        const captureToReceiveMs = receivedAt - captureTs;
+        metrics.count++;
+        metrics.sumCaptureToReceive += captureToReceiveMs;
 
-          metrics.count++;
-          metrics.sumCaptureToReceive += captureToReceiveMs;
+        // Draw frame
+        drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
+          metrics.sumReceiveToBeforeDraw += beforeDrawMs - receivedAt;
 
-          // Draw frame
-          drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
-            metrics.sumReceiveToBeforeDraw += beforeDrawMs - nowMs;
-
-            if (metrics.count % 30 === 0) {
-              const n = metrics.count;
-              console.log(
-                "avg[30] capture->recv=%dms, receive->beforeDraw=%dms",
-                Math.round(metrics.sumCaptureToReceive / n),
-                Math.round(metrics.sumReceiveToBeforeDraw / n),
-              );
-              metrics.count = 0;
-              metrics.sumCaptureToReceive = 0;
-              metrics.sumReceiveToBeforeDraw = 0;
-            }
-          });
-        }
+          if (metrics.count % 30 === 0) {
+            const n = metrics.count;
+            /* console.log(
+              "avg[30] capture->recv=%dms, receive->beforeDraw=%dms",
+              Math.round(metrics.sumCaptureToReceive / n),
+              Math.round(metrics.sumReceiveToBeforeDraw / n),
+            ); */
+            metrics.count = 0;
+            metrics.sumCaptureToReceive = 0;
+            metrics.sumReceiveToBeforeDraw = 0;
+          }
+        });
 
         // Clean up completed frame
         frameBuffers.delete(frameId);
       }
     }
 
-    // Clean up old incomplete frames (older than 5 seconds)
-    const cutoffTime = receivedAt - 5000;
-    for (const [frameId, frameBuffer] of frameBuffers.entries()) {
-      if (frameBuffer.receivedAt < cutoffTime) {
-        frameBuffers.delete(frameId);
+    // Clean up old incomplete frames less frequently (every 100th packet)
+    if (metrics.count % 100 === 0) {
+      const cutoffTime = receivedAt - 5000;
+      for (const [frameId, frameBuffer] of frameBuffers.entries()) {
+        if (frameBuffer.receivedAt < cutoffTime) {
+          frameBuffers.delete(frameId);
+        }
       }
     }
   };
@@ -238,6 +362,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
       };
     }
   }, [port]);
+
 
   // Data channel hooks - must be called unconditionally
   //const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -312,90 +437,41 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
   //  });
   //});
 
-  //useDataChannel("remote_control_enabled", (msg) => {
-  //  const decoder = new TextDecoder();
-  //  const payload: TPRemoteControlEnabled = JSON.parse(decoder.decode(msg.payload));
-  //  if (payload.payload.enabled == false) {
-  //    updateCallTokens({
-  //      isRemoteControlEnabled: false,
-  //    });
-  //    toast("Sharer disabled remote control", {
-  //      icon: "🔒",
-  //      duration: 1500,
-  //    });
-  //  } else {
-  //    updateCallTokens({
-  //      isRemoteControlEnabled: true,
-  //    });
-  //    toast("Sharer enabled remote control", {
-  //      icon: "🔓",
-  //      duration: 1500,
-  //    });
-  //  }
-  //});
+  // Hide cursors after 5 seconds of inactivity
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setCursorSlots((prev) =>
+        prev.map((slot) => {
+          if (slot.participantId && now - slot.lastActivity > 5000) {
+            return { ...slot, x: -1000, y: -1000 };
+          }
+          return slot;
+        }),
+      );
+    }, 1000);
 
-  //useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
-  //  const decoder = new TextDecoder();
-  //  const payload = decoder.decode(msg.payload);
-  //  if (payload === localParticipant.localParticipant?.sid) {
-  //    setShowCustomCursor(false);
-  //  } else {
-  //    setShowCustomCursor(true);
-  //  }
-  //});
-
-  //// Hide cursors after 5 seconds of inactivity
-  //useEffect(() => {
-  //  const interval = setInterval(() => {
-  //    const now = Date.now();
-  //    setCursorSlots((prev) =>
-  //      prev.map((slot) => {
-  //        if (slot.participantId && now - slot.lastActivity > 5000) {
-  //          return { ...slot, x: -1000, y: -1000 };
-  //        }
-  //        return slot;
-  //      }),
-  //    );
-  //  }, 1000);
-
-  //  return () => clearInterval(interval);
-  //}, []);
-
-  ///**
-  // * Currently returning the last screen share track
-  // * If there are multiple screen share tracks, and some are "white"
-  // * but out of order we need to use stats about the last updated ones.
-  // *
-  // * The `prevStats` includes the stats of the last updated screen share track
-  // * but they are private data.
-  // *
-  // * Also the track's playback delay is set to 0 to have lower latency.
-  // */
-  //const track = useMemo(() => {
-  //  if (tracks.length === 0) return null;
-  //  console.info(`Tracks: `, tracks);
-
-  //  return tracks[tracks.length - 1];
-  //}, [tracks]);
+    return () => clearInterval(interval);
+  }, []);
 
   //const streamWidth = track?.publication.dimensions?.width || 16;
   //const streamHeight = track?.publication.dimensions?.height || 9;
-  //const aspectRatio = streamWidth / streamHeight;
+  const aspectRatio = widthRef.current / heightRef.current;
 
-  //const throttledResize = useMemo(
-  //  () =>
-  //    throttle(() => {
-  //      resizeWindow(streamWidth, streamHeight, videoRef);
-  //    }, 250),
-  //  [streamWidth, streamHeight, videoRef],
-  //);
-  //useResizeListener(throttledResize);
+  const throttledResize = useMemo(
+    () =>
+      throttle(() => {
+        resizeWindow(widthRef.current, heightRef.current, videoRef);
+      }, 250),
+    [widthRef.current, heightRef.current, videoRef],
+  );
+  useResizeListener(throttledResize);
 
-  //useEffect(() => {
-  //  if (videoRef.current && track) {
-  //    resizeWindow(streamWidth, streamHeight, videoRef);
-  //  }
-  //}, [track, streamWidth, streamHeight]);
+  useEffect(() => {
+    if (videoRef.current) {
+      resizeWindow(widthRef.current, heightRef.current, videoRef);
+    }
+  }, [widthRef.current, heightRef.current, videoRef]);
 
   /*
    * We do this because we need a way to retrigger the useEffect below,
@@ -404,234 +480,231 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
    * see https://www.epicreact.dev/why-you-shouldnt-put-refs-in-a-dependency-array.
    */
 
-  //useMemo(() => {
-  //  setUpdateMouseControls(!updateMouseControls);
-  //}, [videoRef.current]);
+  useMemo(() => {
+    setUpdateMouseControls(!updateMouseControls);
+  }, [videoRef.current]);
 
   /**
    * Mouse sharing logic
    */
-  //useEffect(() => {
-  //  const videoElement = videoRef.current;
+  useEffect(() => {
+    const videoElement = videoRef.current;
 
-  //  const handleMouseMove = (e: MouseEvent) => {
-  //    if (videoElement) {
-  //      const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-  //      // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (videoElement) {
+        const { relativeX, relativeY } = getRelativePosition(videoElement, e);
+        // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
 
-  //      const payload: TPMouseMove = {
-  //        type: "MouseMove",
-  //        payload: { x: relativeX, y: relativeY, pointer: true },
-  //      };
+        const payload: TPMouseMove = {
+          type: "MouseMove",
+          payload: { x: relativeX, y: relativeY, pointer: true },
+        };
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-  //        reliable: true,
-  //        topic: CURSORS_TOPIC,
-  //      });
-  //    }
-  //  };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
 
-  //  const handleMouseDown = (e: MouseEvent) => {
-  //    if (videoElement) {
-  //      const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-  //      // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
+    const handleMouseDown = (e: MouseEvent) => {
+      if (videoElement) {
+        const { relativeX, relativeY } = getRelativePosition(videoElement, e);
+        // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
-  //      const payload: TPMouseClick = {
-  //        type: "MouseClick",
-  //        payload: {
-  //          x: relativeX,
-  //          y: relativeY,
-  //          button: e.button,
-  //          clicks: e.detail,
-  //          down: true,
-  //          shift: e.shiftKey,
-  //          alt: e.altKey,
-  //          ctrl: e.ctrlKey,
-  //          meta: e.metaKey,
-  //        },
-  //      };
+        const payload: TPMouseClick = {
+          type: "MouseClick",
+          payload: {
+            x: relativeX,
+            y: relativeY,
+            button: e.button,
+            clicks: e.detail,
+            down: true,
+            shift: e.shiftKey,
+            alt: e.altKey,
+            ctrl: e.ctrlKey,
+            meta: e.metaKey,
+          },
+        };
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //    }
-  //  };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
 
-  //  const handleMouseUp = (e: MouseEvent) => {
-  //    if (videoElement) {
-  //      const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-  //      // console.debug(`Clicking up 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
+    const handleMouseUp = (e: MouseEvent) => {
+      if (videoElement) {
+        const { relativeX, relativeY } = getRelativePosition(videoElement, e);
+        // console.debug(`Clicking up 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
-  //      const payload: TPMouseClick = {
-  //        type: "MouseClick",
-  //        payload: {
-  //          x: relativeX,
-  //          y: relativeY,
-  //          button: e.button,
-  //          clicks: e.detail,
-  //          down: false,
-  //          shift: e.shiftKey,
-  //          alt: e.altKey,
-  //          ctrl: e.ctrlKey,
-  //          meta: e.metaKey,
-  //        },
-  //      };
+        const payload: TPMouseClick = {
+          type: "MouseClick",
+          payload: {
+            x: relativeX,
+            y: relativeY,
+            button: e.button,
+            clicks: e.detail,
+            down: false,
+            shift: e.shiftKey,
+            alt: e.altKey,
+            ctrl: e.ctrlKey,
+            meta: e.metaKey,
+          },
+        };
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //    }
-  //  };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
 
-  //  const handleContextMenu = (e: MouseEvent) => {
-  //    e.preventDefault();
-  //  };
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
 
-  //  const handleWheel = (e: WheelEvent) => {
-  //    if (videoElement) {
-  //      // Solve natural flow of the wheel
-  //      // Source: https://stackoverflow.com/a/23668035
-  //      var deltaY = e.deltaY;
-  //      var deltaX = e.deltaX;
-  //      //@ts-ignore
-  //      if (e.webkitDirectionInvertedFromDevice) {
-  //        deltaY = -deltaY;
-  //        deltaX = -deltaX;
-  //      }
+    const handleWheel = (e: WheelEvent) => {
+      if (videoElement) {
+        // Solve natural flow of the wheel
+        // Source: https://stackoverflow.com/a/23668035
+        var deltaY = e.deltaY;
+        var deltaX = e.deltaX;
+        //@ts-ignore
+        if (e.webkitDirectionInvertedFromDevice) {
+          deltaY = -deltaY;
+          deltaX = -deltaX;
+        }
 
-  //      const payload: TPWheelEvent = {
-  //        type: "WheelEvent",
-  //        payload: { deltaX: deltaX, deltaY: deltaY },
-  //      };
+        const payload: TPWheelEvent = {
+          type: "WheelEvent",
+          payload: { deltaX: deltaX, deltaY: deltaY },
+        };
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //    }
-  //  };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
 
-  //  // Send mouse visible data
-  //  if (videoElement) {
-  //    const payload: TPMouseVisible = {
-  //      type: "MouseVisible",
-  //      payload: { visible: isSharingMouse },
-  //    };
-  //    localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //  }
+    // Send mouse visible data
+    if (videoElement) {
+      const payload: TPMouseVisible = {
+        type: "MouseVisible",
+        payload: { visible: isSharingMouse },
+      };
+      wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+    }
 
-  //  if (videoElement) {
-  //    videoElement.addEventListener("mousemove", handleMouseMove);
-  //  }
+    if (videoElement) {
+      videoElement.addEventListener("mousemove", handleMouseMove);
+    }
 
-  //  if (videoElement && isSharingMouse) {
-  //    videoElement.addEventListener("wheel", handleWheel);
-  //    videoElement.addEventListener("mousedown", handleMouseDown);
-  //    videoElement.addEventListener("mouseup", handleMouseUp);
-  //    videoElement.addEventListener("contextmenu", handleContextMenu);
-  //  }
+    if (videoElement && isSharingMouse) {
+      videoElement.addEventListener("wheel", handleWheel);
+      videoElement.addEventListener("mousedown", handleMouseDown);
+      videoElement.addEventListener("mouseup", handleMouseUp);
+      videoElement.addEventListener("contextmenu", handleContextMenu);
+    }
 
-  //  return () => {
-  //    if (videoElement) {
-  //      videoElement.removeEventListener("mousemove", handleMouseMove);
-  //      videoElement.removeEventListener("wheel", handleWheel);
-  //      videoElement.removeEventListener("mousedown", handleMouseDown);
-  //      videoElement.removeEventListener("mouseup", handleMouseUp);
-  //      videoElement.removeEventListener("contextmenu", handleContextMenu);
-  //    }
-  //  };
-  //}, [isSharingMouse, updateMouseControls]);
+    return () => {
+      if (videoElement) {
+        videoElement.removeEventListener("mousemove", handleMouseMove);
+        videoElement.removeEventListener("wheel", handleWheel);
+        videoElement.removeEventListener("mousedown", handleMouseDown);
+        videoElement.removeEventListener("mouseup", handleMouseUp);
+        videoElement.removeEventListener("contextmenu", handleContextMenu);
+      }
+    };
+  }, [isSharingMouse, updateMouseControls]);
 
-  ///**
-  // * Keyboard sharing logic
-  // *
-  // * On the first render, set the keyParentTrap
-  // * to listen to the keyboard events and if the keyboard event is triggered
-  // * while the mouse is inside the video element, and the sharing key events is enabled
-  // * then we will send the keystroke to the server
-  // */
-  //useEffect(() => {
-  //  if (!parentKeyTrap) return;
-  //  // console.debug(`isMouseInside: ${isMouseInside}, isSharingKeyEvents: ${isSharingKeyEvents}`);
+  /**
+   * Keyboard sharing logic
+   *
+   * On the first render, set the keyParentTrap
+   * to listen to the keyboard events and if the keyboard event is triggered
+   * while the mouse is inside the video element, and the sharing key events is enabled
+   * then we will send the keystroke to the server
+   */
+  useEffect(() => {
+    if (!parentKeyTrap) return;
+    // console.debug(`isMouseInside: ${isMouseInside}, isSharingKeyEvents: ${isSharingKeyEvents}`);
 
-  //  const handleKeyDown = (e: KeyboardEvent) => {
-  //    e.preventDefault();
-  //    if (isMouseInside && isSharingKeyEvents) {
-  //      e.preventDefault();
-  //      /*
-  //       * Hack to handle dead quote key, this
-  //       * list should be updated with other dead keys as they are
-  //       * reported to us.
-  //       */
-  //      let key = e.key as string;
-  //      if (key === "Dead") {
-  //        if (e.code === "Quote") {
-  //          key = e.shiftKey ? '"' : "'";
-  //        } else if (e.code === "Backquote") {
-  //          key = e.shiftKey ? "~" : "`";
-  //        } else if (e.code === "Digit6" && e.shiftKey) {
-  //          key = "^";
-  //        } else if (e.code === "KeyU" && e.altKey) {
-  //          key = "¨";
-  //        }
-  //      }
-  //      const payload: TPKeystroke = {
-  //        type: "Keystroke",
-  //        payload: {
-  //          key: [key],
-  //          meta: e.metaKey,
-  //          alt: e.altKey,
-  //          ctrl: e.ctrlKey,
-  //          shift: e.shiftKey,
-  //          down: true,
-  //        },
-  //      };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (isMouseInside && isSharingKeyEvents) {
+        e.preventDefault();
+        /*
+         * Hack to handle dead quote key, this
+         * list should be updated with other dead keys as they are
+         * reported to us.
+         */
+        let key = e.key as string;
+        if (key === "Dead") {
+          if (e.code === "Quote") {
+            key = e.shiftKey ? '"' : "'";
+          } else if (e.code === "Backquote") {
+            key = e.shiftKey ? "~" : "`";
+          } else if (e.code === "Digit6" && e.shiftKey) {
+            key = "^";
+          } else if (e.code === "KeyU" && e.altKey) {
+            key = "¨";
+          }
+        }
+        const payload: TPKeystroke = {
+          type: "Keystroke",
+          payload: {
+            key: [key],
+            meta: e.metaKey,
+            alt: e.altKey,
+            ctrl: e.ctrlKey,
+            shift: e.shiftKey,
+            down: true,
+          },
+        };
 
-  //      // console.debug("Sending keystroke", payload);
+        // console.debug("Sending keystroke", payload);
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //    }
-  //  };
-  //  const handleKeyUp = (e: KeyboardEvent) => {
-  //    e.preventDefault();
-  //    if (isMouseInside && isSharingKeyEvents) {
-  //      e.preventDefault();
-  //      /*
-  //       * Hack to handle dead quote key, this
-  //       * list should be updated with other dead keys as they are
-  //       * reported to us.
-  //       */
-  //      let key = e.key as string;
-  //      if (key === "Dead") {
-  //        if (e.code === "Quote") {
-  //          key = e.shiftKey ? '"' : "'";
-  //        } else if (e.code === "Backquote") {
-  //          key = e.shiftKey ? "~" : "`";
-  //        } else if (e.code === "Digit6" && e.shiftKey) {
-  //          key = "^";
-  //        } else if (e.code === "KeyU" && e.altKey) {
-  //          key = "¨";
-  //        }
-  //      }
-  //      const payload: TPKeystroke = {
-  //        type: "Keystroke",
-  //        payload: {
-  //          key: [key],
-  //          meta: e.metaKey,
-  //          alt: e.altKey,
-  //          ctrl: e.ctrlKey,
-  //          shift: e.shiftKey,
-  //          down: false,
-  //        },
-  //      };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (isMouseInside && isSharingKeyEvents) {
+        e.preventDefault();
+        /*
+         * Hack to handle dead quote key, this
+         * list should be updated with other dead keys as they are
+         * reported to us.
+         */
+        let key = e.key as string;
+        if (key === "Dead") {
+          if (e.code === "Quote") {
+            key = e.shiftKey ? '"' : "'";
+          } else if (e.code === "Backquote") {
+            key = e.shiftKey ? "~" : "`";
+          } else if (e.code === "Digit6" && e.shiftKey) {
+            key = "^";
+          } else if (e.code === "KeyU" && e.altKey) {
+            key = "¨";
+          }
+        }
+        const payload: TPKeystroke = {
+          type: "Keystroke",
+          payload: {
+            key: [key],
+            meta: e.metaKey,
+            alt: e.altKey,
+            ctrl: e.ctrlKey,
+            shift: e.shiftKey,
+            down: false,
+          },
+        };
 
-  //      // console.debug("Sending keystroke", payload);
+        // console.debug("Sending keystroke", payload);
 
-  //      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-  //    }
-  //  };
+        wsClient.send(encoder.encode(JSON.stringify(payload)).buffer);
+      }
+    };
 
-  //  parentKeyTrap.addEventListener("keydown", handleKeyDown);
-  //  parentKeyTrap.addEventListener("keyup", handleKeyUp);
+    parentKeyTrap.addEventListener("keydown", handleKeyDown);
+    parentKeyTrap.addEventListener("keyup", handleKeyUp);
 
-  //  return () => {
-  //    parentKeyTrap?.removeEventListener("keydown", handleKeyDown);
-  //    parentKeyTrap?.removeEventListener("keyup", handleKeyUp);
-  //  };
-  //}, [isMouseInside, isSharingKeyEvents, parentKeyTrap]);
+    return () => {
+      parentKeyTrap?.removeEventListener("keydown", handleKeyDown);
+      parentKeyTrap?.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [isMouseInside, isSharingKeyEvents, parentKeyTrap]);
 
   //useEffect(() => {
   //  // TODO: remove and make this enabled only on debug mode
@@ -668,19 +741,12 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
             </div>
           </Draggable>
         </div>
-      )}
-      <VideoTrack
-        {...track}
-        className={"personal-cursor"}
-        trackRef={track}
+      )} */}
+      <WebCodecsCanvas
         ref={videoRef}
-        style={{
-          aspectRatio: `${aspectRatio}`,
-          width: "100%",
-          cursor: showCustomCursor ? "none" : "default",
-        }}
+        className="w-full h-full"
+        style={{ display: 'block' }}
       />
-
       {cursorSlots.map((slot, index) => {
         const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
 
@@ -695,8 +761,8 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
             }}
           />
         );
-      })} */}
-      <WebCodecsCanvas ref={videoRef} />
+      })}
+
 
       {/* Custom cursor rendered at mouse position */}
       {/* {showCustomCursor && mouse.x !== null && mouse.y !== null && (
