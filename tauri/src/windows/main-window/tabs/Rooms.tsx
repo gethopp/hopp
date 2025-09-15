@@ -4,13 +4,14 @@ import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
 import { Input } from "@/components/ui/input";
 import Fuse from "fuse.js";
-import { Plus,MoreHorizontal } from "lucide-react"
+import { Plus, MoreHorizontal } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";import { SelectPortal } from "@radix-ui/react-select";
+} from "@/components/ui/dropdown-menu";
+import { SelectPortal } from "@radix-ui/react-select";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useMemo } from "react";
@@ -33,7 +34,7 @@ interface RoomsProps {
   rooms: components["schemas"]["Room"][];
 }
 
-const fuseSearch = ({rooms}: RoomsProps, searchQuery: string) => {
+const fuseSearch = ({ rooms }: RoomsProps, searchQuery: string) => {
   const fuse = new Fuse(rooms, {
     keys: ["name"],
     threshold: 0.3,
@@ -42,107 +43,101 @@ const fuseSearch = ({rooms}: RoomsProps, searchQuery: string) => {
   return fuse.search(searchQuery).map((result) => result.item);
 };
 
-
-
 export const Rooms = () => {
-  const {authToken, callTokens, setCallTokens} = useStore()
+  const { authToken, callTokens, setCallTokens } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedRoom, setSelectedRoom] = useState<RoomProps>({id: "", name: ""})
+  const [selectedRoom, setSelectedRoom] = useState<RoomProps>({ id: "", name: "" });
 
   const { useQuery } = useAPI();
 
   // Get current user's rooms
-const { error: roomsError, data: rooms } = useQuery(
-    "get", 
-    "/api/auth/rooms", 
-    undefined,
-    {
-      enabled: !!authToken,
-      refetchIntervalInBackground: true,
-      retry: true,
-      queryHash: `rooms-${authToken}`,
-    }
-  );
-
+  const { error: roomsError, data: rooms } = useQuery("get", "/api/auth/rooms", undefined, {
+    enabled: !!authToken,
+    refetchInterval: 30_000,
+    retry: true,
+    queryHash: `rooms-${authToken}`,
+  });
 
   const { useMutation } = useAPI();
   const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
-  const handleJoinRoom = useCallback(async (room: RoomProps) => {
-    try {
-      const tokens = await getRoomTokens({
-        params: {
-          path: {
-            id: room.id
-          }
+
+  const handleJoinRoom = useCallback(
+    async (id: string) => {
+      try {
+        const tokens = await getRoomTokens({
+          params: {
+            path: {
+              id: room.id,
+            },
+          },
+        });
+        if (!tokens) {
+          toast.error("Error joining room");
+          return;
         }
-      });
-      if (!tokens) {
+        sounds.callAccepted.play();
+        setSelectedRoom(room);
+        setCallTokens({
+          ...tokens,
+          isRoomCall: true,
+          timeStarted: new Date(),
+          hasAudioEnabled: true,
+          role: ParticipantRole.NONE,
+          isRemoteControlEnabled: true,
+          cameraTrackId: null,
+        });
+      } catch (error) {
         toast.error("Error joining room");
-        return;
       }
-      sounds.callAccepted.play();
-      setSelectedRoom(room)
-      setCallTokens({
-        ...tokens,
-        isRoomCall: true,
-        timeStarted: new Date(),
-        hasAudioEnabled: true,
-        role: ParticipantRole.NONE,
-        isRemoteControlEnabled: true,
-        cameraTrackId: null,
-      });
-    } catch (error) {
-      toast.error("Error joining room");
-    }
-  }, [getRoomTokens]);
+    },
+    [getRoomTokens],
+  );
 
   return (
     <div className="flex flex-col items-start gap-1.5 p-2">
-  <div className="flex flex-col gap-2 w-full">
-    <div className="flex items-center gap-2 w-full">
-      <div className="relative flex-1">
-        <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
-        <Input
-          type="text"
-          placeholder="Search rooms..."
-          className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
-        />
+      <div className="flex flex-col gap-2 w-full">
+        <div className="flex items-center gap-2 w-full">
+          <div className="relative flex-1">
+            <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+            <Input
+              type="text"
+              placeholder="Search rooms..."
+              className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
+            />
+          </div>
+          <Button variant="outline" size="icon">
+            <Plus className="size-4 text-slate-500" />
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 w-full">
+          {rooms &&
+            [...rooms, ...rooms]?.map((room) => (
+              <RoomButton
+                size="unsized"
+                title={room.name}
+                className="flex-1 min-w-0 text-slate-600"
+                cornerIcon={
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
+                      <MoreHorizontal className="size-3 m-0" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="muted">
+                      <DropdownMenuItem onClick={() => console.log("Copy room link clicked")}>
+                        Copy room link
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => console.log("Favorite room clicked")}>
+                        Favorite room
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => console.log("Subscribe clicked")}>Subscribe</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => console.log("More clicked")}>More</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                }
+              />
+            ))}
+        </div>
       </div>
-      <Button variant="secondary" size="icon" className="size-8">
-        <Plus />
-      </Button>
     </div>
-    <div className="grid grid-cols-2 gap-2 w-full">
-      <RoomButton
-        size="unsized"
-        className="flex-1 min-w-0 text-slate-600"
-        cornerIcon={
-          <DropdownMenu>
-          <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs">
-            {/* Add your trigger icon here, e.g., three dots */}
-            <MoreHorizontal className="size-3" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={() => console.log("Copy room link clicked")}>
-              Copy room link
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() =>  console.log("Favorite room clicked")}>
-              Favorite room
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() =>  console.log("Subscribe clicked")}>
-              Subscribe
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() =>  console.log("More clicked")}>
-              More
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        }
-      >
-      </RoomButton>
-    </div>
-  </div>
-</div>
   );
 };
 
@@ -156,7 +151,7 @@ const SelectedRoom = (room: RoomProps) => {
     "/api/auth/room/anonymous",
     undefined,
   );
-  console.log("Here?",room.id)
+  console.log("Here?", room.id);
   const handleInviteAnonymousUser = useCallback(async () => {
     const redirectURL = await getRoomAnonymous({});
     if (!redirectURL || !redirectURL.redirect_url) {

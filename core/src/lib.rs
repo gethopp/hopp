@@ -98,7 +98,7 @@ pub fn get_window_attributes() -> WindowAttributes {
             OVERLAY_WINDOW_INITIAL_SIZE,
             OVERLAY_WINDOW_INITIAL_SIZE,
         ))
-        .with_content_protected(true)
+        .with_content_protected(false)
 }
 
 /// Encapsulates the active remote control session components.

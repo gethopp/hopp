@@ -67,16 +67,19 @@ components:
               additionalProperties: true
               nullable: true
 
-    Room:
       type: object
+    Room:
       required:
         - id
         - name
+        - user_id
       properties:
         id:
           type: string
           format: uuid
         name:
+          type: string
+        user_id:
           type: string
 
     Error:
@@ -479,8 +482,8 @@ paths:
               type: object
               properties:
                 name:
-                    type: string
-                    description: Name of the room
+                  type: string
+                  description: Name of the room
       responses:
         "200":
           description: LiveKit tokens retrieved successfully
@@ -514,7 +517,7 @@ paths:
           description: Rooms for user retrieved successfully
           content:
             application/json:
-              schema: 
+              schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/Room"
@@ -555,7 +558,7 @@ paths:
                   - participant
 
     patch:
-      summary: Get LiveKit tokens for joining the team's selected room
+      summary: Modify room details
       security:
         - BearerAuth: []
       parameters:
@@ -574,8 +577,8 @@ paths:
               type: object
               properties:
                 name:
-                    type: string
-                    description: Name of the room
+                  type: string
+                  description: Name of the room
       responses:
         "200":
           description: Room name updated retrieved successfully
@@ -612,7 +615,7 @@ paths:
             type: string
             format: uuid
       responses:
-        '204':
+        "204":
           description: User successfully deleted (no content)
 
   /api/auth/room/anonymous:

@@ -10,7 +10,7 @@ import (
 type Room struct {
 	ID        string    `json:"id" gorm:"unique;not null"` // Standard field for the primary key
 	Name      string    `gorm:"not null" json:"name" validate:"required"`
-	UserID    string    `gorm:"not null" validate:"required"`
+	UserID    string    `gorm:"not null" json:"user_id" validate:"required"`
 	CreatedAt time.Time `json:"created_at"` // Automatically managed by GORM for creation time
 	UpdatedAt time.Time `json:"updated_at"` // Automatically managed by GORM for update time
 }
