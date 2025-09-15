@@ -109,6 +109,8 @@ function ConsumerComponent({
           </div>
         )}
         {visibleTracks.map((track) => {
+          const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
+
           return (
             <div className="relative overflow-hidden rounded-lg group" key={track.sid}>
               <VideoTrack
@@ -126,6 +128,7 @@ function ConsumerComponent({
                     track?.participant?.isSpeaking ?
                       "1px solid rgba(157, 253, 49, 0.8)"
                     : "1px solid rgba(0, 0, 0, 0.1)",
+                  transform: isSelfTrack ? "scaleX(-1)" : undefined,
                 }}
               />
               {callTokens?.cameraTrackId === track?.publication?.trackSid && (
