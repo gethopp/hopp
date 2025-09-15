@@ -25,7 +25,7 @@ const THUMBNAIL_WIDTH: f64 = 480.0;
 const THUMBNAIL_HEIGHT: f64 = 360.0;
 const SCREENSHOT_CAPTURE_SLEEP_MS: u64 = 33;
 const MAX_SCREENSHOT_RETRY_ATTEMPTS: u32 = 100;
-const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 5;
+const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
 
@@ -500,7 +500,7 @@ impl Capturer {
                 // If we can't restart the stream after 10 retries, we exit the process
                 // and inform the user to restart the application.
                 let mut res = new_stream.start_capture(new_stream.source_id());
-                for i in 0..10 {
+                for i in 0..MAX_STREAM_FAILURES_BEFORE_EXIT {
                     if res.is_ok() {
                         break;
                     }
