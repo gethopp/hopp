@@ -48,26 +48,11 @@ impl VideoClient {
         name: String,
         local_participant: LocalParticipant,
     ) -> Result<Self, VideoClientError> {
-        Self::new_with_chunks(track, name, local_participant, DEFAULT_CHUNKS_TOTAL).await
-    }
-
-    pub async fn new_with_chunks(
-        track: RtcVideoTrack,
-        name: String,
-        local_participant: LocalParticipant,
-        chunks_total: u32,
-    ) -> Result<Self, VideoClientError> {
         let (sender, receiver) = tokio::sync::broadcast::channel(2);
         let (listener, port) = create_listener().await?;
         let receiver_clone = sender.subscribe();
-        tokio::spawn(send_frames(
-            receiver,
-            receiver_clone,
-            track,
-            listener,
-            chunks_total,
-        ));
-        log::info!("VideoClient created: {name}, port: {port}, chunks_total: {chunks_total}");
+        tokio::spawn(send_frames(receiver, receiver_clone, track, listener));
+        log::info!("VideoClient created: {name}, port: {port}");
         Ok(Self {
             sender,
             track: name,
@@ -82,17 +67,6 @@ impl VideoClient {
 
     pub fn port(&self) -> u16 {
         self.port
-    }
-
-    /// Configure the number of chunks to send per frame for experimentation
-    pub fn set_chunks_total(&mut self, chunks_total: u32) {
-        // Note: This will only affect new VideoClient instances
-        // The current implementation doesn't support dynamic reconfiguration
-        // during runtime due to the spawned task architecture
-        log::info!(
-            "VideoClient: chunks_total configuration noted for future instances: {}",
-            chunks_total
-        );
     }
 }
 
@@ -110,7 +84,6 @@ async fn send_frames(
     receiver_clone: tokio::sync::broadcast::Receiver<SendFramesMessage>,
     track: RtcVideoTrack,
     listener: TcpListener,
-    chunks_total: u32,
 ) {
     let ws_socket = match setup_websocket(listener).await {
         Ok(ws_socket) => ws_socket,
@@ -123,9 +96,8 @@ async fn send_frames(
     tokio::spawn(receive_controller_events(receiver_clone, ws_receiver));
 
     let mut video_sink = NativeVideoStream::new(track);
-    let mut frame_count = 0;
     let start_time = std::time::SystemTime::now();
-    let mut frame_id: u64 = 0;
+    let mut frame_id: u32 = 0;
     while let Ok(Some(frame)) =
         tokio::time::timeout(std::time::Duration::from_millis(5000), video_sink.next()).await
     {
@@ -152,85 +124,100 @@ async fn send_frames(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
+        frame_id += 1;
 
         let buffer = frame.buffer.to_i420();
         let stream_width = buffer.width();
         let stream_height = buffer.height();
         let (y_data, u_data, v_data) = buffer.data();
 
-        // Create the complete payload (y_data + u_data + v_data)
-        let mut payload = Vec::with_capacity(y_data.len() + u_data.len() + v_data.len());
-        payload.extend_from_slice(y_data);
-        payload.extend_from_slice(u_data);
-        payload.extend_from_slice(v_data);
+        /* We send each frame in chunks.
+         * For this reason we can have two different types of payloads:
+         *   - The first which will describe the frame and the number of chunks
+         *   - The second which will contain the actual frame data
+         *
+         * The type could be either 'H' for header or 'D' for data.
+         *
+         * Header:
+         *   - type:1 ('H')
+         *   - width:2
+         *   - height:2
+         *   - capture_ts:8
+         *   - frame_id:4
+         *   - chunks_total:1
+         *
+         * Data:
+         *   - type:1 ('D')
+         *   - frame_id:4
+         *   - chunk_index:2
+         *   - chunk_size:4
+         *   - data: variable
+         */
 
-        let total_len = payload.len();
-        frame_id += 1;
+        let total_chunks: u8 = 4;
 
-        // Calculate chunk distribution
-        let base_chunk = total_len as u32 / chunks_total;
-        let remainder = total_len as u32 % chunks_total;
+        let mut header = Vec::with_capacity(22);
+        header.extend_from_slice(&[b'H']);
+        header.extend_from_slice(&(stream_width as u16).to_le_bytes());
+        header.extend_from_slice(&(stream_height as u16).to_le_bytes());
+        header.extend_from_slice(&capture_ts.to_le_bytes());
+        header.extend_from_slice(&frame_id.to_le_bytes());
+        header.extend_from_slice(&total_chunks.to_le_bytes());
 
-        // Send frame in chunks
-        for chunk_index in 0..chunks_total {
-            let extra = if chunk_index < remainder { 1 } else { 0 };
-            let start_offset =
-                (chunk_index * base_chunk + u32::min(chunk_index, remainder)) as usize;
-            let length = (base_chunk + extra) as usize;
-            let end_offset = start_offset + length;
+        if let Err(e) = ws_sender.send(Message::Binary(header.into())).await {
+            log::error!("Failed to send header: {e:?}");
+            break;
+        }
 
-            // Chunk header (little-endian):
-            // magic:4 ('CHNK'), width:4, height:4, capture_ts:8, send_ts:8, frame_id:8,
-            // chunk_index:4, chunks_total:4, total_length:4, chunk_offset:4, chunk_length:4
-            let mut chunk = Vec::with_capacity(56 + length);
-            // magic 'CHNK'
-            chunk.extend_from_slice(&[b'C', b'H', b'N', b'K']);
-            // dims
-            chunk.extend_from_slice(&(stream_width as u32).to_le_bytes());
-            chunk.extend_from_slice(&(stream_height as u32).to_le_bytes());
-            // capture_ts
-            chunk.extend_from_slice(&capture_ts.to_le_bytes());
-            // send_ts placeholder
-            chunk.extend_from_slice(&0u64.to_le_bytes());
-            // frame_id
+        let total_size = y_data.len() + u_data.len() + v_data.len();
+        let chunk_size = total_size / (total_chunks as usize);
+        let mut buffers = [y_data, u_data, v_data];
+        let buffers_limits = [
+            (0 as usize, y_data.len()),
+            (y_data.len(), y_data.len() + u_data.len()),
+            (y_data.len() + u_data.len(), total_size),
+        ];
+        let mut global_index = 0;
+        for chunk_index in 0..total_chunks {
+            let mut chunk = Vec::with_capacity(11 + chunk_size);
+            chunk.extend_from_slice(&[b'D']);
             chunk.extend_from_slice(&frame_id.to_le_bytes());
-            // chunk_index, chunks_total
-            chunk.extend_from_slice(&(chunk_index as u32).to_le_bytes());
-            chunk.extend_from_slice(&chunks_total.to_le_bytes());
-            // total_length, chunk_offset, chunk_length
-            chunk.extend_from_slice(&(total_len as u32).to_le_bytes());
-            chunk.extend_from_slice(&(start_offset as u32).to_le_bytes());
-            chunk.extend_from_slice(&(length as u32).to_le_bytes());
-            // payload slice
-            chunk.extend_from_slice(&payload[start_offset..end_offset]);
+            chunk.extend_from_slice(&(chunk_index as u16).to_le_bytes());
+            chunk.extend_from_slice(&(0u32).to_le_bytes());
 
-            // Stamp send_ts immediately before send
-            let send_ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            let send_ts_bytes = send_ts.to_le_bytes();
-            let send_ts_offset = 4 + 4 + 4 + 8; // magic(4)+w(4)+h(4)+capture(8)
-            for i in 0..8 {
-                chunk[send_ts_offset + i] = send_ts_bytes[i];
+            let mut i = 0;
+            let mut bytes_copied = 0;
+            for (start, end) in buffers_limits {
+                if global_index >= start && global_index < end {
+                    let remaining_bytes = chunk_size - bytes_copied;
+                    if remaining_bytes == 0 {
+                        break;
+                    }
+                    let buffer_start = global_index - start;
+                    let buffer_end = if global_index + remaining_bytes > end {
+                        end - start
+                    } else {
+                        (global_index + remaining_bytes) - start
+                    };
+                    chunk.extend_from_slice(&buffers[i][buffer_start..buffer_end]);
+                    let copied_size = buffer_end - buffer_start;
+                    bytes_copied += copied_size;
+                    global_index += copied_size;
+                }
+                i += 1;
             }
 
-            // Send chunk
+            chunk[7..11].copy_from_slice(&(bytes_copied as u32).to_le_bytes());
+
             if let Err(e) = ws_sender.send(Message::Binary(chunk.into())).await {
-                log::error!(
-                    "Failed to send frame chunk {} / {}: {}",
-                    chunk_index + 1,
-                    chunks_total,
-                    e
-                );
+                log::error!("Failed to send chunk: {e:?}");
                 break;
             }
         }
 
-        frame_count += 1;
-        if frame_count % 30 == 0 {
-            let fps = frame_count as f64 / start_time.elapsed().unwrap().as_secs_f64();
-            log::info!("send_frames: fps: {fps}, chunks_total: {chunks_total}");
+        if frame_id % 30 == 0 {
+            let fps = frame_id as f64 / start_time.elapsed().unwrap().as_secs_f64();
+            log::info!("send_frames: fps: {fps}");
         }
     }
     log::info!("send_frames: stopped");

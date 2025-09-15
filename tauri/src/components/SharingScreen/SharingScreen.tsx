@@ -41,11 +41,8 @@ export function SharingScreen(props: SharingScreenProps) {
   const { serverURL, token, port } = props;
   console.log("sharing screen port", port);
 
-  /* return (
-    <ConsumerComponent port={port} />
-  ); */
   return (
-    <div>test</div>
+    <ConsumerComponent port={port} />
   );
 }
 
@@ -97,12 +94,19 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
   // Simple sliding window metrics (reset every 30 frames)
   const metrics = React.useRef({
     count: 0,
-    sumCaptureToSend: 0,
-    sumSendToReceive: 0,
+    sumCaptureToReceive: 0,
     sumReceiveToBeforeDraw: 0,
-    sumBeforeDrawToAfterDraw: 0,
-    sumTick: 0,
   }).current;
+
+  // Frame reconstruction state
+  const frameBuffers = React.useRef<Map<number, {
+    width: number;
+    height: number;
+    captureTs: number;
+    chunksTotal: number;
+    chunks: Map<number, Uint8Array>;
+    receivedAt: number;
+  }>>(new Map()).current;
 
   const onMessage = (data: ArrayBuffer, receivedAtMs?: number) => {
     const canvas = videoRef.current;
@@ -110,89 +114,128 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
 
     const buf = data;
     const dv = new DataView(buf);
+    const receivedAt = receivedAtMs ?? Date.now();
 
-    // New protocol:
-    // [kind:4]
-    //   kind == 0 -> frame packet with header [width:4][height:4][capture_ts:8][send_ts:8] then I420 planes
-    //   kind == 1 -> ping packet with [send_ts:8] (ms since epoch)
-    const littleEndian = true; // change to false if your producer uses big-endian
-    const kind = dv.getUint32(0, littleEndian);
+    if (buf.byteLength < 1) return;
 
-    // Ping packet: compute and log send->receive latency
-    if (kind === 1) {
-      const recvMs = receivedAtMs ?? Date.now();
-      let sendMs: number | null = null;
-      if (buf.byteLength >= 12) {
-        // [kind:4][send_ts:8]
-        const ts64 = dv.getBigUint64(4, littleEndian);
-        sendMs = Number(ts64);
-      } else if (buf.byteLength >= 8) {
-        // Legacy [kind:4][send_ts:4]
-        sendMs = dv.getUint32(4, littleEndian);
+    // Read packet type (first byte as ASCII character)
+    const packetType = String.fromCharCode(dv.getUint8(0));
+
+    if (packetType === 'H') {
+      // Header packet
+      if (buf.byteLength < 18) return;
+
+      const width = dv.getUint16(1, true); // little endian
+      const height = dv.getUint16(3, true);
+      const captureTs = dv.getBigUint64(5, true);
+      const frameId = dv.getUint32(13, true);
+      const chunksTotal = dv.getUint8(17);
+
+      // Initialize frame buffer
+      frameBuffers.set(frameId, {
+        width,
+        height,
+        captureTs: Number(captureTs),
+        chunksTotal,
+        chunks: new Map(),
+        receivedAt,
+      });
+
+    } else if (packetType === 'D') {
+      // Data packet
+      if (buf.byteLength < 11) return;
+
+      const frameId = dv.getUint32(1, true);
+      const chunkIndex = dv.getUint16(5, true);
+      const chunkSize = dv.getUint32(7, true);
+
+      if (buf.byteLength < 11 + chunkSize) return;
+
+      const chunkData = new Uint8Array(buf, 11, chunkSize);
+
+      // Get frame buffer
+      const frameBuffer = frameBuffers.get(frameId);
+      if (!frameBuffer) return;
+
+      // Store chunk
+      frameBuffer.chunks.set(chunkIndex, chunkData);
+
+      // Check if frame is complete
+      if (frameBuffer.chunks.size === frameBuffer.chunksTotal) {
+        // Reconstruct complete frame data
+        let totalSize = 0;
+        for (const chunk of frameBuffer.chunks.values()) {
+          totalSize += chunk.length;
+        }
+
+        const frameData = new Uint8Array(totalSize);
+        let offset = 0;
+
+        // Combine chunks in order
+        for (let i = 0; i < frameBuffer.chunksTotal; i++) {
+          const chunk = frameBuffer.chunks.get(i);
+          if (chunk) {
+            frameData.set(chunk, offset);
+            offset += chunk.length;
+          }
+        }
+
+        // Parse I420 data from reconstructed frame
+        const { width, height, captureTs } = frameBuffer;
+        const ySize = width * height;
+        const uvPlaneSize = (width * height) >> 2; // 4:2:0
+        const expectedSize = ySize + uvPlaneSize + uvPlaneSize;
+
+        if (frameData.length >= expectedSize) {
+          const yData = frameData.subarray(0, ySize);
+          const uData = frameData.subarray(ySize, ySize + uvPlaneSize);
+          const vData = frameData.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
+
+          // Update metrics
+          const nowMs = receivedAt;
+          const captureToReceiveMs = nowMs - captureTs;
+
+          metrics.count++;
+          metrics.sumCaptureToReceive += captureToReceiveMs;
+
+          // Draw frame
+          drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
+            metrics.sumReceiveToBeforeDraw += beforeDrawMs - nowMs;
+
+            if (metrics.count % 30 === 0) {
+              const n = metrics.count;
+              console.log(
+                "avg[30] capture->recv=%dms, receive->beforeDraw=%dms",
+                Math.round(metrics.sumCaptureToReceive / n),
+                Math.round(metrics.sumReceiveToBeforeDraw / n),
+              );
+              metrics.count = 0;
+              metrics.sumCaptureToReceive = 0;
+              metrics.sumReceiveToBeforeDraw = 0;
+            }
+          });
+        }
+
+        // Clean up completed frame
+        frameBuffers.delete(frameId);
       }
-      if (sendMs != null) {
-        metrics.sumTick += recvMs - sendMs;
-      }
-      return;
     }
 
-    // Frame packet
-    let base = 4; // skip kind by default
-    let width = dv.getUint32(base + 0, littleEndian);
-    let height = dv.getUint32(base + 4, littleEndian);
-    let captureTs = dv.getBigUint64(base + 8, littleEndian);
-    let sendTs = dv.getBigUint64(base + 16, littleEndian);
-
-    // Validate header; if impl doesn't prefix kind for frames, fallback to base=0
-    const headerSize = base + 4 + 4 + 8 + 8; // kind + 24 bytes
-    const ySize = width * height;
-    const uvPlaneSize = (width * height) >> 2; // 4:2:0, each U and V plane size
-
-    const yData = new Uint8Array(buf, headerSize, ySize);
-    const uOffset = headerSize + ySize;
-    const vOffset = uOffset + uvPlaneSize;
-    const uData = new Uint8Array(buf, uOffset, uvPlaneSize);
-    const vData = new Uint8Array(buf, vOffset, uvPlaneSize);
-
-    // Latency metrics before rendering
-    const nowMs = receivedAtMs ?? Date.now();
-    let captureMs = Number(captureTs);
-    let sendMs = Number(sendTs);
-    const captureToSendMs = Number(sendMs - captureMs);
-    const sendToReceiveMs = nowMs - sendMs;
-
-    metrics.count++;
-    metrics.sumCaptureToSend += captureToSendMs;
-    metrics.sumSendToReceive += sendToReceiveMs;
-
-    drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureMs, (beforeDrawMs, afterDrawMs) => {
-      metrics.sumReceiveToBeforeDraw += beforeDrawMs - nowMs;
-      metrics.sumBeforeDrawToAfterDraw += afterDrawMs - beforeDrawMs;
-
-      if (metrics.count % 30 === 0) {
-        const n = metrics.count;
-        console.log(
-          "avg[30] capture->send=%dms, send->recv=%dms, receive->beforeDraw=%dms, beforeDraw->afterDraw=%dms, tick=%dms",
-          Math.round(metrics.sumCaptureToSend / n),
-          Math.round(metrics.sumSendToReceive / n),
-          Math.round(metrics.sumReceiveToBeforeDraw / n),
-          Math.round(metrics.sumBeforeDrawToAfterDraw / n),
-          Math.round(metrics.sumTick / n),
-        );
-        metrics.count = 0;
-        metrics.sumCaptureToSend = 0;
-        metrics.sumSendToReceive = 0;
-        metrics.sumReceiveToBeforeDraw = 0;
-        metrics.sumBeforeDrawToAfterDraw = 0;
-        metrics.sumTick = 0;
+    // Clean up old incomplete frames (older than 5 seconds)
+    const cutoffTime = receivedAt - 5000;
+    for (const [frameId, frameBuffer] of frameBuffers.entries()) {
+      if (frameBuffer.receivedAt < cutoffTime) {
+        frameBuffers.delete(frameId);
       }
-    });
+    }
   };
 
   useEffect(() => {
-    console.log("port", port);
     if (port !== 0) {
       wsClient.connect(`ws://localhost:${port}`, onMessage);
+      return () => {
+        wsClient.disconnect();
+      };
     }
   }, [port]);
 
