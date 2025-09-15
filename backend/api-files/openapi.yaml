@@ -67,6 +67,18 @@ components:
               additionalProperties: true
               nullable: true
 
+    Room:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+
     Error:
       type: object
       properties:
@@ -454,11 +466,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /api/auth/watercooler:
-    get:
-      summary: Get LiveKit tokens for joining the team's watercooler room
+  /api/auth/room:
+    post:
+      summary: Create a new room
       security:
         - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                    type: string
+                    description: Name of the room
+      responses:
+        "200":
+          description: LiveKit tokens retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+                required:
+                  - id
+                  - name
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/rooms:
+    get:
+      summary: Get all rooms for the user
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Rooms for user retrieved successfully
+          content:
+            application/json:
+              schema: 
+                type: array
+                items:
+                  $ref: "#/components/schemas/Room"
+
+  /api/auth/room/{id}:
+    get:
+      summary: Get LiveKit tokens for joining the team's selected room
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The ID of the room to retrieve
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: LiveKit tokens retrieved successfully
@@ -481,7 +554,68 @@ paths:
                   - cameraToken
                   - participant
 
-  /api/auth/watercooler/anonymous:
+    patch:
+      summary: Get LiveKit tokens for joining the team's selected room
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The ID of the room to update
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                    type: string
+                    description: Name of the room
+      responses:
+        "200":
+          description: Room name updated retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+                required:
+                  - id
+                  - name
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Get LiveKit tokens for joining the team's selected room
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The ID of the room to delete
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: User successfully deleted (no content)
+
+  /api/auth/room/anonymous:
     get:
       summary: Get a link that will have an encoded token that will be used
       description: Get a link that will have an encoded token that will be used

@@ -760,48 +760,24 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 
 	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
 	if err != nil {
-		c.Logger().Error("Failed to generate watercooler tokens:", err)
+		c.Logger().Error("Failed to generate room tokens:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 	tokens.Participant = user.ID
 
-	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the watercooler room", user.ID), h.Config)
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
 }
 
-// Watercooler generates LiveKit tokens for joining the team's watercooler room
-// The team's watercooler room will be a room that will have a room name:
-// `team-<team-id>-watercooler`
-func (h *AuthHandler) Watercooler(c echo.Context) error {
-	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
-	if !isAuthenticated {
-		return c.String(http.StatusUnauthorized, "Unauthorized request")
-	}
 
-	// Generate a room name for the watercooler room
-	roomName := fmt.Sprintf("team-%d-watercooler", *user.TeamID)
-
-	// Generate LiveKit tokens
-	tokens, err := generateLiveKitTokens(&h.ServerState, roomName, user)
-	if err != nil {
-		c.Logger().Error("Failed to generate watercooler tokens:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
-	}
-	tokens.Participant = user.ID
-
-	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the watercooler room", user.ID), h.Config)
-
-	return c.JSON(http.StatusOK, tokens)
-}
-
-// WatercoolerAnonymous generates a link that will have an encoded token that will be used
-// in `WatercoolerMeetRedirect` to see if an anonymous user can join the watercooler room.
+// RoomAnonymous generates a link that will have an encoded token that will be used
+// in `RoomMeetRedirect` to see if an anonymous user can join the room.
 // The generated token should be in the format:
-// /api/watercooler/meet-redirect?token=<GENERATED_TOKEN>
+// /api/room/meet-redirect?token=<GENERATED_TOKEN>
 // The generated token will be a JWT token valid for 10 minutes with payload
 // the team id.
-func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
+func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
@@ -812,12 +788,12 @@ func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
 	}
 
-	// Create custom claims for anonymous watercooler access
+	// Create custom claims for anonymous room access
 	claims := jwt.MapClaims{
 		"team_id": *user.TeamID,
 		"exp":     jwt.NewNumericDate(time.Now().Add(10 * time.Minute)), // 10-minute expiration
 		"iat":     jwt.NewNumericDate(time.Now()),                       // Issued at
-		"purpose": "anonymous_watercooler",                              // Purpose of the token
+		"purpose": "anonymous_room",                              // Purpose of the token
 	}
 
 	// Create token with claims
@@ -832,24 +808,24 @@ func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
 	// Generate encoded token
 	tokenString, err := token.SignedString([]byte(jwtAuth.Secret))
 	if err != nil {
-		c.Logger().Error("Failed to generate anonymous watercooler token:", err)
+		c.Logger().Error("Failed to generate anonymous room token:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate token")
 	}
 
 	// Return the redirect URL
-	redirectURL := fmt.Sprintf("/api/watercooler/meet-redirect?token=%s", tokenString)
+	redirectURL := fmt.Sprintf("/api/room/meet-redirect?token=%s", tokenString)
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"redirect_url": redirectURL,
 	})
 }
 
-// WatercoolerMeetRedirect generates LiveKit tokens
-// for joining the team's watercooler room via the meet.livekit.io/custom URL.
+// RoomMeetRedirect generates LiveKit tokens
+// for joining the team's room via the meet.livekit.io/custom URL.
 // The token will be valid for 3 hours maximum, and the format of the generated URL
 // that we will redirect user to will be:
-// The encoded token will come from the `WatercoolerAnonymous` generated link.
-func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
+// The encoded token will come from the `RoomAnonymous` generated link.
+func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
 	// Get the token from query parameters
 	tokenString := c.QueryParam("token")
 	if tokenString == "" {
@@ -868,7 +844,7 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 	})
 
 	if err != nil {
-		c.Logger().Error("Failed to parse anonymous watercooler token:", err)
+		c.Logger().Error("Failed to parse anonymous room token:", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
 	}
 
@@ -880,7 +856,7 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 
 	// Check token purpose
 	purpose, ok := claims["purpose"].(string)
-	if !ok || purpose != "anonymous_watercooler" {
+	if !ok || purpose != "anonymous_room" {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token purpose")
 	}
 
@@ -891,8 +867,8 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 	}
 	teamID := uint(teamIDFloat)
 
-	// Generate a room name for the watercooler room
-	roomName := fmt.Sprintf("team-%d-watercooler", teamID)
+	// Generate a room name for the room
+	roomName := fmt.Sprintf("team-%d-room", teamID)
 
 	// Generate 4 random characters for anonymous user
 	randomChars := rand.Text()[:4]
@@ -904,10 +880,10 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 		TeamID: &teamID,
 	}
 
-	// Generate a token for the anonymous user to join the watercooler room
+	// Generate a token for the anonymous user to join the room
 	livekitToken, err := generateMeetRedirectToken(&h.ServerState, roomName, anonymousUser)
 	if err != nil {
-		c.Logger().Error("Failed to generate watercooler tokens:", err)
+		c.Logger().Error("Failed to generate room tokens:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 

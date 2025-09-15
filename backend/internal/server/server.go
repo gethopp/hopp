@@ -273,7 +273,7 @@ func (s *Server) setupRoutes() {
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
 	api.POST("/sign-up", auth.ManualSignUp)
 	api.POST("/sign-in", auth.ManualSignIn)
-	api.GET("/watercooler/meet-redirect", auth.WatercoolerMeetRedirect)
+	api.GET("/room/meet-redirect", auth.RoomMeetRedirect)
 
 	// Protected API routes group
 	protectedAPI := api.Group("/auth", s.JwtIssuer.Middleware())
@@ -293,11 +293,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.DELETE("/room/:id", auth.DeleteRoom)
 	protectedAPI.GET("/room/:id", auth.GetRoom)
 	protectedAPI.GET("/rooms", auth.GetRooms)
-
-	// Temporary room functionality for alpha
-	// on-boarding of >2 people calls
-	protectedAPI.GET("/watercooler", auth.Watercooler)
-	protectedAPI.GET("/watercooler/anonymous", auth.WatercoolerAnonymous)
+	protectedAPI.GET("/room/anonymous", auth.RoomAnonymous)
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)

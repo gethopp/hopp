@@ -1,6 +1,17 @@
 import { BACKEND_URLS } from "@/constants";
+import { components } from "@/openapi";
 import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
+import { Input } from "@/components/ui/input";
+import Fuse from "fuse.js";
+import { Plus,MoreHorizontal } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";import { SelectPortal } from "@radix-ui/react-select";
+import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useMemo } from "react";
 import toast from "react-hot-toast";
@@ -10,22 +21,67 @@ import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
 import { HiMiniLink } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Badge } from "@/components/ui/badge";
+import { HiMagnifyingGlass } from "react-icons/hi2";
+import { useState } from "react";
+
+interface RoomProps {
+  id: components["schemas"]["Room"]["id"];
+  name: components["schemas"]["Room"]["name"];
+}
+
+interface RoomsProps {
+  rooms: components["schemas"]["Room"][];
+}
+
+const fuseSearch = ({rooms}: RoomsProps, searchQuery: string) => {
+  const fuse = new Fuse(rooms, {
+    keys: ["name"],
+    threshold: 0.3,
+    shouldSort: true,
+  });
+  return fuse.search(searchQuery).map((result) => result.item);
+};
+
+
 
 export const Rooms = () => {
+  const {authToken, callTokens, setCallTokens} = useStore()
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedRoom, setSelectedRoom] = useState<RoomProps>({id: "", name: ""})
+
+  const { useQuery } = useAPI();
+
+  // Get current user's rooms
+const { error: roomsError, data: rooms } = useQuery(
+    "get", 
+    "/api/auth/rooms", 
+    undefined,
+    {
+      enabled: !!authToken,
+      refetchIntervalInBackground: true,
+      retry: true,
+      queryHash: `rooms-${authToken}`,
+    }
+  );
+
+
   const { useMutation } = useAPI();
-  const { callTokens, setCallTokens } = useStore();
-
-  const { mutateAsync: getWatercoolerTokens, error } = useMutation("get", "/api/auth/watercooler", undefined);
-
-  const handleJoinWatercooler = useCallback(async () => {
+  const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
+  const handleJoinRoom = useCallback(async (room: RoomProps) => {
     try {
-      const tokens = await getWatercoolerTokens({});
+      const tokens = await getRoomTokens({
+        params: {
+          path: {
+            id: room.id
+          }
+        }
+      });
       if (!tokens) {
-        toast.error("Error joining watercooler room");
+        toast.error("Error joining room");
         return;
       }
       sounds.callAccepted.play();
+      setSelectedRoom(room)
       setCallTokens({
         ...tokens,
         isRoomCall: true,
@@ -36,49 +92,73 @@ export const Rooms = () => {
         cameraTrackId: null,
       });
     } catch (error) {
-      toast.error("Error joining watercooler room");
+      toast.error("Error joining room");
     }
-  }, [getWatercoolerTokens]);
+  }, [getRoomTokens]);
 
   return (
-    <div className="flex flex-col p-6 pt-3 w-full">
-      {callTokens?.isRoomCall && <WatercoolerRoom />}
-      {!callTokens?.isRoomCall && (
-        <>
-          <div className="flex flex-row gap-2 items-center mb-3">
-            <h3 className="large">Rooms</h3>
-            <Badge variant="outline">Beta</Badge>
-          </div>
-          <div className="flex flex-row gap-2 justify-between w-full min-w-full">
-            <div
-              className="group w-1/2 h-16 flex flex-col gap-5 p-4 border border-gray-200 rounded-md overflow-hidden shadow-xs relative"
-              onClick={handleJoinWatercooler}
-            >
-              <span className="small text-nowrap text-ellipsis overflow-hidden">Watercooler 🚰</span>
-              <div className="text-[10px] font-semibold absolute bottom-0.5 right-3 opacity-0 group-hover:opacity-100 transition-all duration-100">
-                Join room →
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+    <div className="flex flex-col items-start gap-1.5 p-2">
+  <div className="flex flex-col gap-2 w-full">
+    <div className="flex items-center gap-2 w-full">
+      <div className="relative flex-1">
+        <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+        <Input
+          type="text"
+          placeholder="Search rooms..."
+          className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
+        />
+      </div>
+      <Button variant="secondary" size="icon" className="size-8">
+        <Plus />
+      </Button>
     </div>
+    <div className="grid grid-cols-2 gap-2 w-full">
+      <RoomButton
+        size="unsized"
+        className="flex-1 min-w-0 text-slate-600"
+        cornerIcon={
+          <DropdownMenu>
+          <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs">
+            {/* Add your trigger icon here, e.g., three dots */}
+            <MoreHorizontal className="size-3" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => console.log("Copy room link clicked")}>
+              Copy room link
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() =>  console.log("Favorite room clicked")}>
+              Favorite room
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() =>  console.log("Subscribe clicked")}>
+              Subscribe
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() =>  console.log("More clicked")}>
+              More
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        }
+      >
+      </RoomButton>
+    </div>
+  </div>
+</div>
   );
 };
 
-const WatercoolerRoom = () => {
+const SelectedRoom = (room: RoomProps) => {
   const { useMutation } = useAPI();
   const participants = useParticipants();
   const { teammates, user } = useStore();
 
-  const { mutateAsync: getWatercoolerAnonymous, error: errorAnonymous } = useMutation(
+  const { mutateAsync: getRoomAnonymous, error: errorAnonymous } = useMutation(
     "get",
-    "/api/auth/watercooler/anonymous",
+    "/api/auth/room/anonymous",
     undefined,
   );
-
+  console.log("Here?",room.id)
   const handleInviteAnonymousUser = useCallback(async () => {
-    const redirectURL = await getWatercoolerAnonymous({});
+    const redirectURL = await getRoomAnonymous({});
     if (!redirectURL || !redirectURL.redirect_url) {
       toast.error("Error generating link");
       return;
@@ -86,7 +166,7 @@ const WatercoolerRoom = () => {
     const link = `${BACKEND_URLS.BASE}${redirectURL.redirect_url}`;
     await writeText(link);
     toast.success("Link copied to clipboard");
-  }, [getWatercoolerAnonymous]);
+  }, [getRoomAnonymous]);
 
   // Parse participant identities and match with teammates
   const participantList = useMemo(() => {
