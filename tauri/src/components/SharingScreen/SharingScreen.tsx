@@ -24,6 +24,7 @@ import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { wsClient } from "./WSClient";
 import { WebCodecsCanvas, drawI420FrameToCanvas } from "./WebCodecsCanvas";
+import { drawI420FrameToCanvasWebGL, WebGLCanvas } from "./WebGLCanvas";
 
 const CURSORS_TOPIC = "participant_location";
 const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
@@ -322,7 +323,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
         metrics.sumCaptureToReceive += captureToReceiveMs;
 
         // Draw frame
-        drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
+        drawI420FrameToCanvasWebGL(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
           metrics.sumReceiveToBeforeDraw += beforeDrawMs - receivedAt;
 
           if (metrics.count % 30 === 0) {
@@ -336,7 +337,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
             metrics.sumCaptureToReceive = 0;
             metrics.sumReceiveToBeforeDraw = 0;
           }
-        });
+        }, false);
 
         // Clean up completed frame
         frameBuffers.delete(frameId);
@@ -742,7 +743,12 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
           </Draggable>
         </div>
       )} */}
-      <WebCodecsCanvas
+      {/* <WebCodecsCanvas
+        ref={videoRef}
+        className="w-full h-full"
+        style={{ display: 'block' }}
+      /> */}
+      <WebGLCanvas
         ref={videoRef}
         className="w-full h-full"
         style={{ display: 'block' }}

@@ -19,7 +19,7 @@ export const WebCodecsCanvas = React.forwardRef<HTMLCanvasElement, Props>(functi
     const canvas = canvasRef.current;
     if (!canvas) return;
     // Initialize 2D context so the parent can draw frames immediately
-    canvas.getContext("2d");
+    canvas.getContext("2d", { colorSpace: "srgb" });
   }, []);
 
   return <canvas ref={canvasRef} className={className} style={style} width={width} height={height} />;
