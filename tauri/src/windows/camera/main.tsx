@@ -131,7 +131,7 @@ function ConsumerComponent({
                   transform: isSelfTrack ? "scaleX(-1)" : undefined,
                 }}
               />
-              {callTokens?.cameraTrackId === track?.publication?.trackSid && (
+              {isSelfTrack && (
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center rounded-lg">
                   <Button
                     variant="secondary"
