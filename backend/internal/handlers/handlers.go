@@ -642,7 +642,7 @@ func (h *AuthHandler) GetRooms(c echo.Context) error {
 
 	var rooms []models.Room
 	// First, check if the room exists
-	result := h.DB.Where("user_id = ?", user.ID).Find(&rooms)
+	result := h.DB.Where("team_id = ?", user.TeamID).Find(&rooms)
 
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "Rooms not found")
@@ -673,6 +673,8 @@ func (h *AuthHandler) CreateRoom(c echo.Context) error {
 	room = models.Room{
 		Name:   req.Name,
 		UserID: user.ID,
+		Team:   user.Team,
+		TeamID: user.TeamID,
 	}
 
 	if err := h.DB.Create(&room).Error; err != nil {
@@ -684,7 +686,7 @@ func (h *AuthHandler) CreateRoom(c echo.Context) error {
 
 // UpdateRoom updates an existing room for the user.
 func (h *AuthHandler) UpdateRoom(c echo.Context) error {
-	_, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
@@ -705,6 +707,11 @@ func (h *AuthHandler) UpdateRoom(c echo.Context) error {
 
 	result := h.DB.Where("id = ?", roomID).First(&room)
 
+	// Check if user can modify the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "Room not found")
 	}
@@ -718,7 +725,7 @@ func (h *AuthHandler) UpdateRoom(c echo.Context) error {
 }
 
 func (h *AuthHandler) DeleteRoom(c echo.Context) error {
-	_, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
@@ -732,6 +739,11 @@ func (h *AuthHandler) DeleteRoom(c echo.Context) error {
 
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if user can modify the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
 
 	// Delete the room
@@ -758,6 +770,11 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 		return c.String(http.StatusNotFound, "Room not found")
 	}
 
+	// Check if user can access the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
 	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
 	if err != nil {
 		c.Logger().Error("Failed to generate room tokens:", err)
@@ -769,7 +786,6 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, tokens)
 }
-
 
 // RoomAnonymous generates a link that will have an encoded token that will be used
 // in `RoomMeetRedirect` to see if an anonymous user can join the room.
@@ -793,7 +809,7 @@ func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 		"team_id": *user.TeamID,
 		"exp":     jwt.NewNumericDate(time.Now().Add(10 * time.Minute)), // 10-minute expiration
 		"iat":     jwt.NewNumericDate(time.Now()),                       // Issued at
-		"purpose": "anonymous_room",                              // Purpose of the token
+		"purpose": "anonymous_room",                                     // Purpose of the token
 	}
 
 	// Create token with claims

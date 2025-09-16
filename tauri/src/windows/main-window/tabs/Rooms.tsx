@@ -14,7 +14,7 @@ import {
 import { SelectPortal } from "@radix-ui/react-select";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import toast from "react-hot-toast";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useParticipants } from "@livekit/components-react";
@@ -25,16 +25,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { HiMagnifyingGlass } from "react-icons/hi2";
 import { useState } from "react";
 
-interface RoomProps {
-  id: components["schemas"]["Room"]["id"];
-  name: components["schemas"]["Room"]["name"];
-}
+type Room = components["schemas"]["Room"];
 
-interface RoomsProps {
-  rooms: components["schemas"]["Room"][];
-}
-
-const fuseSearch = ({ rooms }: RoomsProps, searchQuery: string) => {
+const fuseSearch = (rooms: Room[], searchQuery: string) => {
   const fuse = new Fuse(rooms, {
     keys: ["name"],
     threshold: 0.3,
@@ -46,7 +39,7 @@ const fuseSearch = ({ rooms }: RoomsProps, searchQuery: string) => {
 export const Rooms = () => {
   const { authToken, callTokens, setCallTokens } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedRoom, setSelectedRoom] = useState<RoomProps>({ id: "", name: "" });
+  const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
 
   const { useQuery } = useAPI();
 
@@ -56,13 +49,16 @@ export const Rooms = () => {
     refetchInterval: 30_000,
     retry: true,
     queryHash: `rooms-${authToken}`,
+    // select: (data) => {
+    //   setRooms(data);
+    // },
   });
 
   const { useMutation } = useAPI();
   const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const handleJoinRoom = useCallback(
-    async (id: string) => {
+    async (room: Room) => {
       try {
         const tokens = await getRoomTokens({
           params: {
@@ -76,7 +72,6 @@ export const Rooms = () => {
           return;
         }
         sounds.callAccepted.play();
-        setSelectedRoom(room);
         setCallTokens({
           ...tokens,
           isRoomCall: true,
@@ -85,6 +80,7 @@ export const Rooms = () => {
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           cameraTrackId: null,
+          room: room,
         });
       } catch (error) {
         toast.error("Error joining room");
@@ -93,65 +89,88 @@ export const Rooms = () => {
     [getRoomTokens],
   );
 
+  useEffect(() => {
+    if (searchQuery == "") {
+      // Set rooms from the fetch response
+      if (rooms) {
+        setFilteredRooms(rooms);
+      }
+    } else {
+      // Filter rooms based on search query
+      if (rooms) {
+        const filteredRooms = fuseSearch(rooms, searchQuery);
+        setFilteredRooms(filteredRooms);
+      }
+    }
+  }, [rooms, searchQuery]);
+
+  callTokens?.audioToken;
+  const isRoomCall = !(callTokens == null || (callTokens !== null && !callTokens.room));
+
   return (
     <div className="flex flex-col items-start gap-1.5 p-2">
-      <div className="flex flex-col gap-2 w-full">
-        <div className="flex items-center gap-2 w-full">
-          <div className="relative flex-1">
-            <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
-            <Input
-              type="text"
-              placeholder="Search rooms..."
-              className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
-            />
-          </div>
-          <Button variant="outline" size="icon">
-            <Plus className="size-4 text-slate-500" />
-          </Button>
-        </div>
-        <div className="grid grid-cols-2 gap-2 w-full">
-          {rooms &&
-            [...rooms, ...rooms]?.map((room) => (
-              <RoomButton
-                size="unsized"
-                title={room.name}
-                className="flex-1 min-w-0 text-slate-600"
-                cornerIcon={
-                  <DropdownMenu>
-                    <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
-                      <MoreHorizontal className="size-3 m-0" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="muted">
-                      <DropdownMenuItem onClick={() => console.log("Copy room link clicked")}>
-                        Copy room link
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => console.log("Favorite room clicked")}>
-                        Favorite room
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => console.log("Subscribe clicked")}>Subscribe</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => console.log("More clicked")}>More</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                }
+      {isRoomCall && callTokens.room && <SelectedRoom room={callTokens.room} />}
+      {!isRoomCall && (
+        <div className="flex flex-col gap-2 w-full">
+          <div className="flex items-center gap-2 w-full">
+            <div className="relative flex-1">
+              <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+              <Input
+                type="text"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search rooms"
+                className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
               />
-            ))}
+            </div>
+            <Button variant="outline" size="icon">
+              <Plus className="size-4 text-slate-500" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 w-full">
+            {filteredRooms &&
+              filteredRooms?.map((room) => (
+                <RoomButton
+                  onClick={() => handleJoinRoom(room)}
+                  size="unsized"
+                  title={room.name}
+                  className="flex-1 min-w-0 text-slate-600"
+                  cornerIcon={
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
+                        <MoreHorizontal className="size-3 m-0" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent className="muted">
+                        <DropdownMenuItem onClick={() => console.log("Copy room link clicked")}>
+                          Copy room link
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => console.log("Favorite room clicked")}>
+                          Favorite room
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => console.log("Subscribe clicked")}>Subscribe</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => console.log("More clicked")}>More</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  }
+                />
+              ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
-const SelectedRoom = (room: RoomProps) => {
+const SelectedRoom = ({ room }: { room: Room }) => {
   const { useMutation } = useAPI();
   const participants = useParticipants();
-  const { teammates, user } = useStore();
+  const { teammates, user, callTokens } = useStore();
 
   const { mutateAsync: getRoomAnonymous, error: errorAnonymous } = useMutation(
     "get",
     "/api/auth/room/anonymous",
     undefined,
   );
-  console.log("Here?", room.id);
+
   const handleInviteAnonymousUser = useCallback(async () => {
     const redirectURL = await getRoomAnonymous({});
     if (!redirectURL || !redirectURL.redirect_url) {
@@ -211,7 +230,7 @@ const SelectedRoom = (room: RoomProps) => {
     <div className="flex flex-col w-full">
       <div className="flex flex-row gap-2 justify-between items-center mb-4">
         <div>
-          <h3 className="small">Watercooler 🚰</h3>
+          <h3 className="small">{room.name}</h3>
           <span className="text-xs font-medium text-slate-600 mb-2">Participants ({participantList.length})</span>
         </div>
         <div className="flex flex-row gap-2">

@@ -13,6 +13,8 @@ type Room struct {
 	UserID    string    `gorm:"not null" json:"user_id" validate:"required"`
 	CreatedAt time.Time `json:"created_at"` // Automatically managed by GORM for creation time
 	UpdatedAt time.Time `json:"updated_at"` // Automatically managed by GORM for update time
+	TeamID    *uint     `json:"team_id" gorm:"default:null"`
+	Team      *Team     `json:"team,omitempty"`
 }
 
 func (r *Room) BeforeCreate(tx *gorm.DB) (err error) {
