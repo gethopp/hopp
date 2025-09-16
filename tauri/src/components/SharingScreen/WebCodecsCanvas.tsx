@@ -30,46 +30,6 @@ function calculateDisplaySize(width: number, height: number) {
   return { displayWidth: width, displayHeight: height, scaleX: 1 };
 }
 
-export function drawNV12FrameToCanvas(
-  canvas: HTMLCanvasElement,
-  yData: Uint8Array,
-  uvData: Uint8Array,
-  width: number,
-  height: number,
-  timestamp: number,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-
-  const ySize = width * height;
-  const uvSize = (width * height) / 2;
-  // TODO: check if it is more efficient to use double buffer and initialize them once
-  const nv12Buffer = new ArrayBuffer(ySize + uvSize);
-  const nv12View = new Uint8Array(nv12Buffer);
-
-  nv12View.set(yData, 0);
-  nv12View.set(uvData, ySize);
-
-  const frame = new VideoFrame(nv12Buffer, {
-    format: "NV12",
-    codedWidth: width,
-    codedHeight: height,
-    timestamp: timestamp * 1000, // microseconds
-    duration: 16666, // ~60fps
-  });
-
-  try {
-    const { displayWidth, displayHeight } = calculateDisplaySize(width, height);
-    if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
-      canvas.width = displayWidth;
-      canvas.height = displayHeight;
-    }
-    ctx.drawImage(frame, 0, 0, displayWidth, displayHeight);
-  } finally {
-    try { frame.close(); } catch {}
-  }
-}
-
 export function drawI420FrameToCanvas(
   canvas: HTMLCanvasElement,
   yData: Uint8Array,
@@ -103,6 +63,12 @@ export function drawI420FrameToCanvas(
       { offset: ySize, stride: width >> 1 }, // U
       { offset: ySize + uvPlaneSize, stride: width >> 1 }, // V
     ],
+    colorSpace: {
+      primaries: "bt709",
+      transfer: "bt709",
+      matrix: "bt709",
+      fullRange: false
+    }
   } as any);
 
   try {
