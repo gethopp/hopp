@@ -73,7 +73,7 @@ tasks:
         $SED_INPLACE 's/"productName": "hopp"/"productName": "hopp_repl"/' "$TEMP_FILE"
         $SED_INPLACE 's/"beforeDevCommand": "yarn dev"/"beforeDevCommand": "yarn dev:replica"/' "$TEMP_FILE"
         # Run the Tauri development server using the temporary configuration file
-        RUST_LOG=info yarn tauri dev -c "$TEMP_FILE" "$ARGS"
+        RUST_LOG=info yarn tauri dev -c "$TEMP_FILE" $ARGS
 
   generate-openapi-types:
     desc: Generate type-safe code from the OpenAPI specification.
