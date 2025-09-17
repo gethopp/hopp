@@ -193,7 +193,7 @@ impl CursorSocket {
             let mut listener = None;
 
             // Try to bind, incrementing port if necessary
-            for _ in 0..100 {
+            for try_num in 0..500 {
                 let addr = format!("127.0.0.1:{port}");
                 match TcpListener::bind(addr) {
                     Ok(l) => {
@@ -203,6 +203,10 @@ impl CursorSocket {
                     Err(_) => {
                         log::info!("Port {port} is in use, trying next port...");
                         port += 1;
+                        if try_num != 0 && try_num % 100 == 0 {
+                            port += 100;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 }
             }
@@ -302,7 +306,7 @@ fn socket_path_to_port(socket_path: &str) -> u16 {
     // First try to read the port from the file
     if let Ok(content) = fs::read_to_string(socket_path) {
         if let Ok(port) = content.trim().parse::<u16>() {
-            log::debug!("Found port {port} in file {socket_path}");
+            log::info!("Found port {port} in file {socket_path}");
             port
         } else {
             log::warn!("Could not parse port from file {socket_path}: '{content}'");
@@ -321,5 +325,5 @@ fn calculate_port_from_hash(socket_path: &str) -> u16 {
         hash = ((hash << 5).wrapping_add(hash)).wrapping_add(byte as u32);
     }
     // Use ports in range 49152-65535 (dynamic/private range)
-    (hash % 16384 + 49152) as u16
+    (hash % 15900 + 49152) as u16
 }
