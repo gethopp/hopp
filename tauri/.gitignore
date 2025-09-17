@@ -24,5 +24,6 @@ dist-ssr
 *.sw?
 
 *target/
+*target-dev/
 
 *.yarn/install-state.gz

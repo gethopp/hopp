@@ -52,11 +52,19 @@ tasks:
     cmds:
       - |
         # Create repl hopp_core binary
-        cp src-tauri/target/debug/hopp_core src-tauri/target/debug/hopp_core_repl
+        ARGS=""
         TEMP_FILE=$(mktemp /tmp/tauri.conf.json.XXXXXX)
+        if [[ "{{.VITE_OS}}" == "windows" ]]; then
+          TEMP_FILE=$(cygpath -w $TEMP_FILE)
+          mkdir -p src-tauri/target-dev/debug
+          cp src-tauri/target/debug/hopp_core.exe src-tauri/target-dev/debug/hopp_core_repl.exe
+          ARGS="--no-watch -- --target-dir target-dev"
+        else
+          cp src-tauri/target/debug/hopp_core src-tauri/target/debug/hopp_core_repl
+        fi
         # Copy the contents of tauri.conf.json to the temporary file
         cp src-tauri/tauri.conf.json "$TEMP_FILE"
-        if [[ "{{.VITE_OS}}" == "linux" ]]; then
+        if [[ "{{.VITE_OS}}" == "linux" || "{{.VITE_OS}}" == "windows" ]]; then
           SED_INPLACE="sed -i"
         else
           SED_INPLACE="sed -i ''"
@@ -65,7 +73,7 @@ tasks:
         $SED_INPLACE 's/"productName": "hopp"/"productName": "hopp_repl"/' "$TEMP_FILE"
         $SED_INPLACE 's/"beforeDevCommand": "yarn dev"/"beforeDevCommand": "yarn dev:replica"/' "$TEMP_FILE"
         # Run the Tauri development server using the temporary configuration file
-        RUST_LOG=info yarn tauri dev -c "$TEMP_FILE"
+        RUST_LOG=info yarn tauri dev -c "$TEMP_FILE" "$ARGS"
 
   generate-openapi-types:
     desc: Generate type-safe code from the OpenAPI specification.
