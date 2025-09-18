@@ -10,6 +10,7 @@ import (
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
+	"hopp-backend/internal/utils"
 	"net/http"
 	"time"
 
@@ -62,6 +63,19 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			isNewUser = true // Mark as new user
+			
+			// Validate email for disposable domains before creating user
+			cfg := &utils.EmailValidationConfig{
+				BlockDisposableEmails: h.Config.EmailValidation.BlockDisposableEmails,
+				StrictMode:           h.Config.EmailValidation.StrictMode,
+			}
+			if err := utils.ValidateEmailAddressWithConfig(user.Email, cfg); err != nil {
+				if emailErr, ok := err.(*utils.EmailValidationError); ok && emailErr.Code == "DISPOSABLE_EMAIL" {
+					return fmt.Errorf("disposable email not allowed: %s", emailErr.Message)
+				}
+				return fmt.Errorf("email validation failed: %w", err)
+			}
+			
 			u = models.User{
 				FirstName: user.FirstName,
 				LastName:  user.LastName,
@@ -217,6 +231,25 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	u := &req.User
 	if err := c.Validate(u); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Validate email for disposable domains
+	cfg := &utils.EmailValidationConfig{
+		BlockDisposableEmails: h.Config.EmailValidation.BlockDisposableEmails,
+		StrictMode:           h.Config.EmailValidation.StrictMode,
+	}
+	if err := utils.ValidateEmailAddressWithConfig(u.Email, cfg); err != nil {
+		if emailErr, ok := err.(*utils.EmailValidationError); ok {
+			if emailErr.Code == "DISPOSABLE_EMAIL" {
+				return c.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error":       emailErr.Message,
+					"error_code":  emailErr.Code,
+					"suggestions": utils.SuggestAlternatives(),
+				})
+			}
+			return echo.NewHTTPError(http.StatusBadRequest, emailErr.Message)
+		}
+		return echo.NewHTTPError(http.StatusBadRequest, "Email validation failed")
 	}
 
 	// Check if team invite UUID was provided
