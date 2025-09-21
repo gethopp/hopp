@@ -21,10 +21,10 @@ tasks:
   dev:
     desc: Start the development server
     cmds:
-      - task: web-app:build-dev
-      - task: web-app:inject-to-backend
-        vars:
-          SUFFIX: "-debug"
+      # - task: web-app:build-dev
+      # - task: web-app:inject-to-backend
+      #   vars:
+      #     SUFFIX: "-debug"
       - go run *.go
     env:
       ENV_STACK: local
