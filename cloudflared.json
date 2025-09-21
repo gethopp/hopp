@@ -1,0 +1,20 @@
+{
+  "tunnel": "03df49ee-6fa6-4eb0-81e5-00c9778798d9",
+  "ingress": [
+    {
+      "hostname": "cracked.alexoglou.com",
+      "service": "https://localhost:1926"
+    },
+    {
+      "hostname": "cracked-livekit.alexoglou.com",
+      "service": "ws://localhost:7880"
+    },
+    {
+      "hostname": "cracked-livekit-2.alexoglou.com",
+      "service": "tcp://localhost:1994"
+    },
+    {
+      "service": "http_status:404"
+    }
+  ]
+}

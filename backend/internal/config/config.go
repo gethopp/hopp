@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -48,6 +49,14 @@ type Config struct {
 	}
 	Sentry struct {
 		DSN string
+	}
+	Stripe struct {
+		SecretKey      string
+		PublishableKey string
+		WebhookSecret  string
+		PaidPriceID    string // Single price ID for paid tier
+		SuccessURL     string
+		CancelURL      string
 	}
 }
 
@@ -121,6 +130,24 @@ func Load() (*Config, error) {
 	}
 
 	c.Sentry.DSN = os.Getenv("SENTRY_DSN")
+
+	// Stripe configuration
+	c.Stripe.SecretKey = os.Getenv("STRIPE_SECRET_KEY")
+	c.Stripe.PublishableKey = os.Getenv("STRIPE_PUBLISHABLE_KEY")
+	c.Stripe.WebhookSecret = os.Getenv("STRIPE_WEBHOOK_SECRET")
+	c.Stripe.PaidPriceID = os.Getenv("STRIPE_PAID_PRICE_ID")
+
+	if c.Stripe.PaidPriceID != "" && !strings.HasPrefix(c.Stripe.PaidPriceID, "price_") {
+		fmt.Printf("WARNING: STRIPE_PAID_PRICE_ID should start with 'price_', but got: %s\n", c.Stripe.PaidPriceID)
+		fmt.Println("Please check your Stripe dashboard for the correct Price ID (not Product ID)")
+		return c, fmt.Errorf("STRIPE_PAID_PRICE_ID should start with 'price_', but got: %s", c.Stripe.PaidPriceID)
+	}
+
+	// c.Stripe.SuccessURL = fmt.Sprintf("https://%s/subscription/success", c.Server.DeployDomain)
+	// c.Stripe.CancelURL = fmt.Sprintf("https://%s/subscription/cancel", c.Server.DeployDomain)
+
+	c.Stripe.SuccessURL = "http://localhost:5173/subscription/success"
+	c.Stripe.CancelURL = "http://localhost:5173/subscription/cancel"
 
 	return c, nil
 }

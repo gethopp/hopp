@@ -345,18 +345,6 @@ export function Dashboard() {
               {/* Container with max-width matching the grid */}
               <div className="flex flex-row items-center justify-between max-w-sm">
                 <h3 className="h3-subsection">Teammates</h3>
-                {user?.is_admin && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      navigate("/teammates");
-                    }}
-                  >
-                    <FiEdit />
-                    <span className="sr-only">Edit teammates</span>
-                  </Button>
-                )}
               </div>
               <div className="flex flex-col gap-4">
                 <div className="grid gap-3 md:[grid-template-columns:repeat(2,minmax(0,180px))] lg:[grid-template-columns:repeat(4,minmax(0,180px))]">

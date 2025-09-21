@@ -361,7 +361,15 @@ func (h *AuthHandler) User(c echo.Context) error {
 		return c.String(http.StatusUnauthorized, "Unauthorized here")
 	}
 
-	return c.JSON(http.StatusOK, user)
+	// We need additional payload for subscription information
+	userWithSubscription, err := models.GetUserWithSubscription(h.DB, user)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	c.Logger().Info("User with subscription:", userWithSubscription)
+
+	return c.JSON(http.StatusOK, userWithSubscription)
 }
 
 func (h *AuthHandler) Teammates(c echo.Context) error {

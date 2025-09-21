@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stripe/stripe-go/v82"
+	"github.com/stripe/stripe-go/v82/subscription"
+	"github.com/stripe/stripe-go/v82/subscriptionitem"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -172,4 +176,108 @@ func (u *User) UnsubscribeFromAllEmails(db *gorm.DB) error {
 	u.EmailSubscriptions.MarketingEmails = false
 
 	return db.Save(u).Error
+}
+
+func updateSubscriptionQuantity(tx *gorm.DB, teamID uint) error {
+	teamMembers, err := GetTeamMembersByTeamID(tx, teamID)
+	if err != nil {
+		return fmt.Errorf("failed to get team members: %w", err)
+	}
+
+	newUserCount := len(teamMembers)
+	fmt.Println("updateSubscriptionQuantity", newUserCount)
+
+	dbSub, err := GetSubscriptionByTeamID(tx, teamID)
+	if err != nil {
+		return fmt.Errorf("failed to get subscription: %w", err)
+	}
+
+	if dbSub == nil || !dbSub.IsActive() {
+		// No active subscription found for team, skipping
+		return nil
+	}
+
+	stripeSubscription, err := subscription.Get(dbSub.StripeSubscriptionID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to get Stripe subscription: %w", err)
+	}
+
+	if len(stripeSubscription.Items.Data) == 0 {
+		return fmt.Errorf("no subscription items found")
+	}
+
+	subscriptionItemID := stripeSubscription.Items.Data[0].ID
+
+	// Update the subscription item quantity for the next billing cycle
+	params := &stripe.SubscriptionItemParams{
+		Quantity: stripe.Int64(int64(newUserCount)),
+	}
+
+	_, err = subscriptionitem.Update(subscriptionItemID, params)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription quantity: %w", err)
+	}
+
+	return nil
+}
+
+func (u *User) AfterCreate(tx *gorm.DB) (err error) {
+	err = updateSubscriptionQuantity(tx, *u.TeamID)
+	fmt.Println("AfterCreate", err)
+	return nil
+}
+
+func (u *User) AfterDelete(tx *gorm.DB) (err error) {
+	err = updateSubscriptionQuantity(tx, *u.TeamID)
+	fmt.Println("AfterDelete", err)
+	return nil
+}
+
+func GetAdminUserForTeam(db *gorm.DB, teamID uint) (*User, error) {
+	var adminUser User
+	result := db.Where("team_id = ? AND is_admin = ?", teamID, true).First(&adminUser)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &adminUser, nil
+}
+
+type UserWithSubscription struct {
+	User
+	IsPro       bool       `json:"is_pro"`
+	IsTrial     bool       `json:"is_trial"`
+	TrialEndsAt *time.Time `json:"trial_ends_at,omitempty"`
+}
+
+// GetUserWithSubscription returns a user with subscription information
+// 1. Check if team is manually upgraded, if so return true to `is_pro`
+// 2. Fetch if any sub for their team exists and if its active
+// 3. If no sub, return `IsTrial` and `TrialEndsAt`
+func GetUserWithSubscription(db *gorm.DB, user *User) (*UserWithSubscription, error) {
+	team, err := GetTeamByID(db, strconv.Itoa(int(*user.TeamID)))
+	if err != nil {
+		return nil, err
+	}
+
+	if team.IsManualUpgrade {
+		return &UserWithSubscription{User: *user, IsPro: true}, nil
+	}
+
+	sub, err := GetSubscriptionByTeamID(db, *user.TeamID)
+	if err != nil {
+		return nil, err
+	}
+
+	if sub != nil && sub.IsActive() {
+		return &UserWithSubscription{User: *user, IsPro: true}, nil
+	}
+
+	// Trial will be team creation + 30 days
+	trialEndsAt := team.CreatedAt.AddDate(0, 0, 30)
+	return &UserWithSubscription{
+		User:        *user,
+		IsTrial:     true,
+		TrialEndsAt: &trialEndsAt,
+		IsPro:       false,
+	}, nil
 }
