@@ -30,6 +30,10 @@ function calculateDisplaySize(width: number, height: number) {
   return { displayWidth: width, displayHeight: height, scaleX: 1 };
 }
 
+// Reusable buffer to avoid allocations
+let reusableBuffer: ArrayBuffer | null = null;
+let reusableBufferSize = 0;
+
 export function drawI420FrameToCanvas(
   canvas: HTMLCanvasElement,
   yData: Uint8Array,
@@ -45,14 +49,22 @@ export function drawI420FrameToCanvas(
 
   const ySize = width * height;
   const uvPlaneSize = (width * height) >> 2; // 4:2:0
+  const totalSize = ySize + uvPlaneSize + uvPlaneSize;
 
-  const buffer = new ArrayBuffer(ySize + uvPlaneSize + uvPlaneSize);
-  const view = new Uint8Array(buffer);
+  // Reuse buffer if possible to avoid allocations
+  if (!reusableBuffer || reusableBufferSize < totalSize) {
+    reusableBuffer = new ArrayBuffer(totalSize);
+    reusableBufferSize = totalSize;
+  }
+
+  const view = new Uint8Array(reusableBuffer, 0, totalSize);
+
+  // Direct memory copies - unavoidable for VideoFrame API but minimized
   view.set(yData, 0);
   view.set(uData, ySize);
   view.set(vData, ySize + uvPlaneSize);
 
-  const frame = new VideoFrame(buffer, {
+  const frame = new VideoFrame(view.buffer.slice(0, totalSize), {
     format: "I420",
     codedWidth: width,
     codedHeight: height,
@@ -86,4 +98,8 @@ export function drawI420FrameToCanvas(
   }
 }
 
-
+// Cleanup function to release the reusable buffer
+export function cleanupWebCodecsCanvas() {
+  reusableBuffer = null;
+  reusableBufferSize = 0;
+}

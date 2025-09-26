@@ -100,6 +100,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
     count: 0,
     sumCaptureToReceive: 0,
     sumReceiveToBeforeDraw: 0,
+    headerLatency: 0,
   }).current;
 
   // Callback handlers for extended header data
@@ -122,7 +123,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
   }, [updateCallTokens]);
 
   const handleParticipantLocation = React.useCallback((x: number, y: number, sid: string) => {
-    console.log("Participant location:", x, y, sid);
+    //console.log("Participant location:", x, y, sid);
     if (!videoRef.current) return;
 
     const canvas = videoRef.current;
@@ -230,7 +231,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
       if (offset < data.byteLength) {
         const hasParticipantLocation = dv.getUint8(offset) === 1;
         offset++;
-        console.log("hasParticipantLocation:", hasParticipantLocation);
+        //console.log("hasParticipantLocation:", hasParticipantLocation);
         if (hasParticipantLocation && offset + 16 <= data.byteLength) {
           participantX = dv.getFloat64(offset, true);
           offset += 8;
@@ -247,7 +248,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
         }
       }
 
-      console.log("Participant location sid:", participantLocationSid);
+      //console.log("Participant location sid:", participantLocationSid);
 
 
       // Handle parsed extended data with callbacks
@@ -273,6 +274,7 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
       });
 
 
+      metrics.headerLatency += receivedAt - captureTs;
 
     } else if (packetTypeCode === 0x44) { // 'D' = 68 = 0x44
       // Data packet
@@ -288,23 +290,12 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
       const frameBuffer = frameBuffers.get(frameId);
       if (!frameBuffer || !frameBuffer.frameData) return;
 
-      // Copy chunk data directly into pre-allocated buffer
+      // Store chunk data as a view into the original buffer - zero-copy
       const chunkData = new Uint8Array(data, 11, chunkSize);
       frameBuffer.chunks.set(chunkIndex, chunkData);
 
       // Check if frame is complete
       if (frameBuffer.chunks.size === frameBuffer.chunksTotal) {
-        let offset = 0;
-
-        // Combine chunks directly into pre-allocated buffer
-        for (let i = 0; i < frameBuffer.chunksTotal; i++) {
-          const chunk = frameBuffer.chunks.get(i);
-          if (chunk) {
-            frameBuffer.frameData.set(chunk, offset);
-            offset += chunk.length;
-          }
-        }
-
         // Use cached values (avoid destructuring and recalculation)
         const width = frameBuffer.width;
         const height = frameBuffer.height;
@@ -312,10 +303,20 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
         const ySize = width * height;
         const uvPlaneSize = ySize >> 2;
 
-        // Create subarrays directly from pre-allocated buffer
-        const yData = frameBuffer.frameData.subarray(0, ySize);
-        const uData = frameBuffer.frameData.subarray(ySize, ySize + uvPlaneSize);
-        const vData = frameBuffer.frameData.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
+        // Combine chunks directly into pre-allocated buffer - zero-copy assembly
+        let offset = 0;
+        for (let i = 0; i < frameBuffer.chunksTotal; i++) {
+          const chunk = frameBuffer.chunks.get(i);
+          if (chunk) {
+            frameBuffer.frameData!.set(chunk, offset);
+            offset += chunk.length;
+          }
+        }
+
+        // Create zero-copy subarrays directly from pre-allocated buffer
+        const yData = frameBuffer.frameData!.subarray(0, ySize);
+        const uData = frameBuffer.frameData!.subarray(ySize, ySize + uvPlaneSize);
+        const vData = frameBuffer.frameData!.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
 
         // Update metrics
         const captureToReceiveMs = receivedAt - captureTs;
@@ -323,21 +324,25 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
         metrics.sumCaptureToReceive += captureToReceiveMs;
 
         // Draw frame
-        drawI420FrameToCanvasWebGL(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
+        //drawI420FrameToCanvasWebGL(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
+        drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
           metrics.sumReceiveToBeforeDraw += beforeDrawMs - receivedAt;
 
           if (metrics.count % 30 === 0) {
             const n = metrics.count;
-            /* console.log(
-              "avg[30] capture->recv=%dms, receive->beforeDraw=%dms",
+            console.log(
+              "avg[30] capture->recv=%dms, receive->beforeDraw=%dms, headerLatency=%dms",
               Math.round(metrics.sumCaptureToReceive / n),
               Math.round(metrics.sumReceiveToBeforeDraw / n),
-            ); */
+              Math.round(metrics.headerLatency / n),
+            );
             metrics.count = 0;
             metrics.sumCaptureToReceive = 0;
             metrics.sumReceiveToBeforeDraw = 0;
+            metrics.headerLatency = 0;
           }
-        }, false);
+        //}, false);
+        });
 
         // Clean up completed frame
         frameBuffers.delete(frameId);
@@ -743,16 +748,16 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
           </Draggable>
         </div>
       )} */}
-      {/* <WebCodecsCanvas
-        ref={videoRef}
-        className="w-full h-full"
-        style={{ display: 'block' }}
-      /> */}
-      <WebGLCanvas
+      <WebCodecsCanvas
         ref={videoRef}
         className="w-full h-full"
         style={{ display: 'block' }}
       />
+      {/* <WebGLCanvas
+        ref={videoRef}
+        className="w-full h-full"
+        style={{ display: 'block' }}
+      /> */}
       {cursorSlots.map((slot, index) => {
         const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
 
