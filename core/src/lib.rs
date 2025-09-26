@@ -40,7 +40,7 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
@@ -405,7 +405,10 @@ impl<'a> Application<'a> {
 
         window.set_visible(true);
         let monitor_position = selected_monitor.position();
-        window.set_outer_position(LogicalPosition::new(monitor_position.x, monitor_position.y));
+        window.set_outer_position(PhysicalPosition::new(
+            monitor_position.x,
+            monitor_position.y,
+        ));
 
         let res = set_fullscreen(&window, selected_monitor.clone());
         if let Err(error) = res {
