@@ -4,7 +4,7 @@ import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
 import { Input } from "@/components/ui/input";
 import Fuse from "fuse.js";
-import { FormEvent } from 'react';
+import { FormEvent } from "react";
 import { Plus, MoreHorizontal } from "lucide-react";
 import {
   DropdownMenu,
@@ -25,8 +25,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useEffect, useMemo } from "react";
@@ -55,15 +55,18 @@ export const Rooms = () => {
   const { authToken, callTokens, setCallTokens } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-  const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false)
-  const [selectedRoom, setSelectedRoom ] = useState<Room|null>(null)
-
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
 
   const { useQuery } = useAPI();
 
   // Get current user's rooms
-  const { error: roomsError, data: rooms } = useQuery("get", "/api/auth/rooms", undefined, {
+  const {
+    error: roomsError,
+    data: rooms,
+    refetch,
+  } = useQuery("get", "/api/auth/rooms", undefined, {
     enabled: !!authToken,
     refetchInterval: 30_000,
     retry: true,
@@ -78,49 +81,35 @@ export const Rooms = () => {
 
   const { mutateAsync: createRoom } = useMutation("post", "/api/auth/room", undefined);
 
-  const handleCreateRoom = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    
+  const handleCreateRoom = async (roomName: string) => {
     try {
-      const formData = new FormData(e.currentTarget);
-      const roomName = formData.get('name') as string;
-      
-      // Send JSON body as specified in OpenAPI
       const response = await createRoom({
-        body: { name: roomName }
+        body: { name: roomName },
       });
-      
-      // response will be of type Room (from your components.schemas)
-      console.log('Room created:', response);
-      
+      refetch();
     } catch (error) {
-      // Handle 401, 500, or other errors
-      console.error('Failed to create room:', error);
+      console.error("Failed to create room:", error);
+      toast.error("Failed to create room");
     }
   };
 
   const { mutateAsync: deleteRoom } = useMutation("delete", "/api/auth/room/{id}", undefined);
 
   const handleDeleteRoom = async (room: Room) => {
-    
     try {
-      
-      
       // Send JSON body as specified in OpenAPI
       const response = await deleteRoom({
         params: {
-            path: {
-              id: room.id,
-            },
+          path: {
+            id: room.id,
           },
-        });
-      
-      // response will be of type Room (from your components.schemas)
-      console.log('Room deleted:', response);
-      
+        },
+      });
+
+      refetch();
     } catch (error) {
       // Handle 401, 500, or other errors
-      console.error('Failed to delete room:', error);
+      console.error("Failed to delete room:", error);
     }
   };
 
@@ -130,24 +119,29 @@ export const Rooms = () => {
     e.preventDefault();
     try {
       const formData = new FormData(e.currentTarget);
-      const roomName = formData.get('name') as string;
-      
+      const roomName = formData.get("roomName") as string;
+      console.log(e.currentTarget);
+      return;
+
+      if (!!room) {
+        toast.error("Provide room name");
+      }
+
       // Send JSON body as specified in OpenAPI
       const response = await updateRoom({
         body: { name: roomName },
         params: {
-            path: {
-              id: room.id,
-            },
+          path: {
+            id: room.id,
           },
-        });
-      
+        },
+      });
+
       // response will be of type Room (from your components.schemas)
-      console.log('Room name updated:', response);
-      
+      console.log("Room name updated:", response);
     } catch (error) {
       // Handle 401, 500, or other errors
-      console.error('Failed to update room:', error);
+      console.error("Failed to update room:", error);
     }
   };
 
@@ -219,27 +213,31 @@ export const Rooms = () => {
             <Dialog>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon">
-                <Plus className="size-4 text-slate-500" />
+                  <Plus className="size-4 text-slate-500" />
                 </Button>
               </DialogTrigger>
-              <DialogContent >
-                <form onSubmit={handleCreateRoom}>
+              <DialogContent className="max-w-[80%]">
                 <DialogHeader>
                   <DialogTitle>Create new room</DialogTitle>
+                  <DialogDescription>Create a new room for your team to collaborate on.</DialogDescription>
                 </DialogHeader>
-                  <div className="grid gap-2">
-                    <Label htmlFor="room-name" className="text-xs text-slate-500 dark:text-slate-400">Room name</Label>
-                    <Input id="room-name" name="name" className="text-xs text-slate-500" defaultValue="Watercooler" />
-                  </div>
-                <DialogDescription>
-                  Anyone in your team can modify or remove this room.
-                </DialogDescription>
+                <div className="grid gap-3">
+                  <Label htmlFor="room-name">Room name</Label>
+                  <Input id="room-name" name="roomName" placeholder="Watercooler" />
+                </div>
+                <DialogDescription>Anyone in your team can modify or remove this room.</DialogDescription>
                 <DialogFooter>
                   <DialogClose asChild>
-                  <Button type="submit" className="text-xs">Create room</Button>
+                    <Button
+                      onClick={() => {
+                        handleCreateRoom(document.getElementById("room-name")?.value);
+                      }}
+                      className="text-xs"
+                    >
+                      Create room
+                    </Button>
                   </DialogClose>
                 </DialogFooter>
-                </form>
               </DialogContent>
             </Dialog>
           </div>
@@ -257,30 +255,40 @@ export const Rooms = () => {
                         <MoreHorizontal className="size-3 m-0" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent className="muted">
-                        <DropdownMenuItem className="text-xs [&>svg]:size-3.5" onClick={() => console.log("Copy room link clicked")}>
-                        <HiMiniLink />
+                        <DropdownMenuItem
+                          className="text-xs [&>svg]:size-3.5"
+                          onClick={() => console.log("Copy room link clicked")}
+                        >
+                          <HiMiniLink />
                           Copy room link
                         </DropdownMenuItem>
-                        <DropdownMenuItem className="text-xs [&>svg]:size-3.5" onClick={() => console.log("Favorite room clicked")}>
+                        <DropdownMenuItem
+                          className="text-xs [&>svg]:size-3.5"
+                          onClick={() => console.log("Favorite room clicked")}
+                        >
                           Favorite room
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuSub>
-                          <DropdownMenuSubTrigger className="text-xs [&>svg]:size-3.5">
-                            More
-                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubTrigger className="text-xs [&>svg]:size-3.5">More</DropdownMenuSubTrigger>
                           <DropdownMenuSubContent>
-                            <DropdownMenuItem className="text-xs [&>svg]:size-3.5" onClick={() => {
-                                setSelectedRoom(room)
-                                setIsUpdateDialogOpen(true)
-                              }}>
-                            <HiOutlinePencil />
+                            <DropdownMenuItem
+                              className="text-xs [&>svg]:size-3.5"
+                              onClick={() => {
+                                setSelectedRoom(room);
+                                setIsUpdateDialogOpen(true);
+                              }}
+                            >
+                              <HiOutlinePencil />
                               Rename room
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-xs [&>svg]:size-3.5" onClick={() => {
-                                setSelectedRoom(room)
-                                setIsDeleteDialogOpen(true)
-                              }}>
+                            <DropdownMenuItem
+                              className="text-xs [&>svg]:size-3.5"
+                              onClick={() => {
+                                setSelectedRoom(room);
+                                setIsDeleteDialogOpen(true);
+                              }}
+                            >
                               <HiOutlineTrash />
                               Delete room
                             </DropdownMenuItem>
@@ -301,14 +309,14 @@ export const Rooms = () => {
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
-                <Button 
-                  variant="destructive" 
+                <Button
+                  variant="destructive"
                   onClick={() => {
                     // Handle delete logic here
                     if (selectedRoom) {
-                      handleDeleteRoom(selectedRoom)
-                      setIsDeleteDialogOpen(false)
-                      setSelectedRoom(null)
+                      handleDeleteRoom(selectedRoom);
+                      setIsDeleteDialogOpen(false);
+                      setSelectedRoom(null);
                     }
                   }}
                 >
@@ -318,33 +326,39 @@ export const Rooms = () => {
             </DialogContent>
           </Dialog>
           <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
-              <DialogContent >
-                <form onSubmit={handleCreateRoom}>
+            <DialogContent>
+              <form onSubmit={handleCreateRoom}>
                 <DialogHeader>
                   <DialogTitle>Rename room</DialogTitle>
                 </DialogHeader>
-                  <div className="grid gap-2">
-                    <Label htmlFor="room-name" className="text-xs text-slate-500 dark:text-slate-400">Room name</Label>
-                    <Input id="room-name" name="name" className="text-xs text-slate-500" defaultValue="Watercooler" />
-                  </div>
-                <DialogDescription>
-                  Anyone in your team can modify or remove this room.
-                </DialogDescription>
+                <div className="grid gap-2">
+                  <Label htmlFor="room-name" className="text-xs text-slate-500 dark:text-slate-400">
+                    Room name
+                  </Label>
+                  <Input id="room-name" name="name" className="text-xs text-slate-500" defaultValue="Watercooler" />
+                </div>
+                <DialogDescription>Anyone in your team can modify or remove this room.</DialogDescription>
                 <DialogFooter>
                   <DialogClose asChild>
-                  <Button type="submit" className="text-xs" onClick={() => {
-                    // Handle delete logic here
-                    if (selectedRoom) {
-                      handleUpdateRoom(selectedRoom)
-                      setIsUpdateDialogOpen(false)
-                      setSelectedRoom(null)
-                    }
-                  }}>update room</Button>
+                    <Button
+                      type="submit"
+                      className="text-xs"
+                      onClick={() => {
+                        // Handle delete logic here
+                        if (selectedRoom) {
+                          handleUpdateRoom(selectedRoom);
+                          setIsUpdateDialogOpen(false);
+                          setSelectedRoom(null);
+                        }
+                      }}
+                    >
+                      update room
+                    </Button>
                   </DialogClose>
                 </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
     </div>
