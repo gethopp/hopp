@@ -28,6 +28,16 @@ export const WebGLCanvas = React.forwardRef<HTMLCanvasElement, Props>(function W
 
     // Store the WebGL context for later use
     (canvas as any).__webglContext = gl;
+
+    // Cleanup function to prevent memory leaks
+    return () => {
+      const renderer = (canvas as any).__webglRenderer as WebGLRenderer;
+      if (renderer) {
+        cleanupWebGLRenderer(renderer);
+        (canvas as any).__webglRenderer = null;
+      }
+      (canvas as any).__webglContext = null;
+    };
   }, []);
 
   return <canvas ref={canvasRef} className={className} style={style} width={width} height={height} />;
@@ -132,15 +142,48 @@ interface WebGLRenderer {
     textureV: WebGLUniformLocation;
     fullRange: WebGLUniformLocation;
   };
+  // Cache for texture parameters to avoid redundant state changes
+  lastTextureParams?: {
+    yWidth: number;
+    yHeight: number;
+    uvWidth: number;
+    uvHeight: number;
+  };
+}
+
+function cleanupWebGLRenderer(renderer: WebGLRenderer) {
+  const { gl } = renderer;
+
+  // Delete textures
+  gl.deleteTexture(renderer.textureY);
+  gl.deleteTexture(renderer.textureU);
+  gl.deleteTexture(renderer.textureV);
+
+  // Delete buffers
+  gl.deleteBuffer(renderer.positionBuffer);
+  gl.deleteBuffer(renderer.texCoordBuffer);
+
+  // Delete program (this also detaches shaders)
+  gl.deleteProgram(renderer.program);
 }
 
 function initializeWebGLRenderer(gl: WebGLRenderingContext): WebGLRenderer | null {
   const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
   const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 
-  if (!vertexShader || !fragmentShader) return null;
+  if (!vertexShader || !fragmentShader) {
+    // Clean up any created shaders
+    if (vertexShader) gl.deleteShader(vertexShader);
+    if (fragmentShader) gl.deleteShader(fragmentShader);
+    return null;
+  }
 
   const program = createProgram(gl, vertexShader, fragmentShader);
+
+  // Clean up shaders after linking (they're now part of the program)
+  gl.deleteShader(vertexShader);
+  gl.deleteShader(fragmentShader);
+
   if (!program) return null;
 
   // Create buffers for quad vertices
@@ -250,40 +293,65 @@ export function drawI420FrameToCanvasWebGL(
     gl.viewport(0, 0, displayWidth, displayHeight);
   }
 
-  // Upload Y plane texture
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, renderer.textureY);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, yData);
-
-  // Upload U plane texture
   const uvWidth = width >> 1;
   const uvHeight = height >> 1;
 
+  // Check if texture dimensions changed to avoid redundant texture parameter calls
+  const dimensionsChanged = !renderer.lastTextureParams ||
+    renderer.lastTextureParams.yWidth !== width ||
+    renderer.lastTextureParams.yHeight !== height ||
+    renderer.lastTextureParams.uvWidth !== uvWidth ||
+    renderer.lastTextureParams.uvHeight !== uvHeight;
+
+  // Upload Y plane texture
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, renderer.textureY);
+  if (dimensionsChanged) {
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // Allocate texture storage
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null);
+  }
+  // Update texture data (more efficient than texImage2D when dimensions haven't changed)
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.LUMINANCE, gl.UNSIGNED_BYTE, yData);
+
+  // Upload U plane texture
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, renderer.textureU);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uvWidth, uvHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, uData);
+  if (dimensionsChanged) {
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // Allocate texture storage
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uvWidth, uvHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null);
+  }
+  // Update texture data
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight, gl.LUMINANCE, gl.UNSIGNED_BYTE, uData);
 
   // Upload V plane texture
   gl.activeTexture(gl.TEXTURE2);
   gl.bindTexture(gl.TEXTURE_2D, renderer.textureV);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uvWidth, uvHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, vData);
+  if (dimensionsChanged) {
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // Allocate texture storage
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uvWidth, uvHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null);
+
+    // Cache the texture parameters
+    renderer.lastTextureParams = { yWidth: width, yHeight: height, uvWidth, uvHeight };
+  }
+  // Update texture data
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight, gl.LUMINANCE, gl.UNSIGNED_BYTE, vData);
 
   // Use the shader program
   gl.useProgram(renderer.program);
 
-  // Set up uniforms
+  // Set up uniforms (these are lightweight and don't need caching)
   gl.uniform1i(renderer.locations.textureY, 0);
   gl.uniform1i(renderer.locations.textureU, 1);
   gl.uniform1i(renderer.locations.textureV, 2);
@@ -303,4 +371,14 @@ export function drawI420FrameToCanvasWebGL(
 
   const afterDrawMs = Date.now();
   if (onMetrics) onMetrics(beforeDrawMs, afterDrawMs);
+}
+
+// Export cleanup function for external use
+export function cleanupWebGLCanvas(canvas: HTMLCanvasElement) {
+  const renderer = (canvas as any).__webglRenderer as WebGLRenderer;
+  if (renderer) {
+    cleanupWebGLRenderer(renderer);
+    (canvas as any).__webglRenderer = null;
+  }
+  (canvas as any).__webglContext = null;
 }
