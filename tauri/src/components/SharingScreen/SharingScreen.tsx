@@ -23,8 +23,7 @@ import { Cursor, SvgComponent } from "../ui/cursor";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { wsClient } from "./WSClient";
-import { WebCodecsCanvas, drawI420FrameToCanvas } from "./WebCodecsCanvas";
-import { drawI420FrameToCanvasWebGL, WebGLCanvas } from "./WebGLCanvas";
+import { WebCodecsCanvas } from "./WebCodecsCanvas";
 
 const CURSORS_TOPIC = "participant_location";
 const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
@@ -38,6 +37,20 @@ type SharingScreenProps = {
 
 const encoder = new TextEncoder();
 // const decoder = new TextDecoder();
+
+type FrameMeta = {
+  frameId: number;
+  width: number;
+  height: number;
+  timestamp: number;
+  fullRange: boolean;
+};
+
+type PendingFrame = {
+  meta: FrameMeta;
+  buffer: ArrayBuffer;
+  receivedAt: number;
+};
 
 export function SharingScreen(props: SharingScreenProps) {
   const { serverURL, token, port } = props;
@@ -102,6 +115,98 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
     sumReceiveToBeforeDraw: 0,
     headerLatency: 0,
   }).current;
+
+  const rendererWorkerRef = React.useRef<Worker | null>(null);
+  const rendererReadyRef = React.useRef(false);
+  const frameReceiveTimesRef = React.useRef<Map<number, number>>(new Map());
+  const pendingFramesRef = React.useRef<Map<number, PendingFrame>>(new Map());
+
+  const maybeLogMetrics = React.useCallback(() => {
+    if (metrics.count > 0 && metrics.count % 30 === 0) {
+      const n = metrics.count;
+      console.log(
+        "avg[30] capture->recv=%dms, receive->beforeDraw=%dms, headerLatency=%dms",
+        Math.round(metrics.sumCaptureToReceive / n),
+        Math.round(metrics.sumReceiveToBeforeDraw / n),
+        Math.round(metrics.headerLatency / n),
+      );
+      metrics.count = 0;
+      metrics.sumCaptureToReceive = 0;
+      metrics.sumReceiveToBeforeDraw = 0;
+      metrics.headerLatency = 0;
+    }
+  }, [metrics]);
+
+  const postFrameToWorker = React.useCallback((worker: Worker, frame: PendingFrame) => {
+    const { meta, buffer, receivedAt } = frame;
+    try {
+      frameReceiveTimesRef.current.set(meta.frameId, receivedAt);
+      worker.postMessage(
+        {
+          type: "frame",
+          frameId: meta.frameId,
+          width: meta.width,
+          height: meta.height,
+          timestamp: meta.timestamp,
+          data: buffer,
+          fullRange: meta.fullRange,
+        },
+        [buffer],
+      );
+    } catch (error) {
+      console.error("Failed to post frame to renderer worker", error);
+    }
+  }, []);
+
+  const ensureRendererWorker = React.useCallback((canvas: HTMLCanvasElement) => {
+    if (rendererWorkerRef.current) {
+      return rendererWorkerRef.current;
+    }
+
+    const transferControl = (canvas as any).transferControlToOffscreen;
+    if (typeof transferControl !== "function") {
+      console.error("OffscreenCanvas is not supported in this environment");
+      return null;
+    }
+
+    const worker = new Worker(new URL("@/workers/offscreenRenderer.worker.ts", import.meta.url), { type: "module" });
+    rendererWorkerRef.current = worker;
+    rendererReadyRef.current = false;
+
+    const offscreenCanvas = transferControl.call(canvas);
+    worker.postMessage({ type: "init", canvas: offscreenCanvas }, [offscreenCanvas]);
+
+    worker.onmessage = (event: MessageEvent<any>) => {
+      const message = event.data;
+      if (!message || typeof message !== "object") return;
+
+      if (message.type === "ready") {
+        rendererReadyRef.current = true;
+        const pendingFrames = Array.from(pendingFramesRef.current.values());
+        pendingFramesRef.current.clear();
+        for (const frame of pendingFrames) {
+          postFrameToWorker(worker, frame);
+        }
+        return;
+      }
+
+      if (message.type === "metrics") {
+        const { frameId, beforeDrawMs } = message as { frameId: number; beforeDrawMs: number };
+        const receivedAt = frameReceiveTimesRef.current.get(frameId);
+        if (typeof receivedAt === "number") {
+          metrics.sumReceiveToBeforeDraw += beforeDrawMs - receivedAt;
+          frameReceiveTimesRef.current.delete(frameId);
+          maybeLogMetrics();
+        }
+      }
+    };
+
+    worker.onerror = (error) => {
+      console.error("Renderer worker error", error);
+    };
+
+    return worker;
+  }, [maybeLogMetrics, postFrameToWorker]);
 
   // Callback handlers for extended header data
   const handleRemoteControlChange = React.useCallback((enabled: boolean) => {
@@ -176,6 +281,9 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
   const onMessage = (data: ArrayBuffer, receivedAtMs?: number) => {
     const canvas = videoRef.current;
     if (!canvas) return;
+
+    const worker = ensureRendererWorker(canvas);
+    if (!worker) return;
 
     const dv = new DataView(data);
     const receivedAt = receivedAtMs ?? Date.now();
@@ -313,36 +421,32 @@ const ConsumerComponent = React.memo(({ port }: { port: number }) => {
           }
         }
 
-        // Create zero-copy subarrays directly from pre-allocated buffer
-        const yData = frameBuffer.frameData!.subarray(0, ySize);
-        const uData = frameBuffer.frameData!.subarray(ySize, ySize + uvPlaneSize);
-        const vData = frameBuffer.frameData!.subarray(ySize + uvPlaneSize, ySize + uvPlaneSize + uvPlaneSize);
-
         // Update metrics
         const captureToReceiveMs = receivedAt - captureTs;
         metrics.count++;
         metrics.sumCaptureToReceive += captureToReceiveMs;
 
-        // Draw frame
-        //drawI420FrameToCanvasWebGL(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
-        drawI420FrameToCanvas(canvas, yData, uData, vData, width, height, captureTs, (beforeDrawMs, afterDrawMs) => {
-          metrics.sumReceiveToBeforeDraw += beforeDrawMs - receivedAt;
+        const frameMeta: FrameMeta = {
+          frameId,
+          width,
+          height,
+          timestamp: captureTs,
+          fullRange: false,
+        };
 
-          if (metrics.count % 30 === 0) {
-            const n = metrics.count;
-            console.log(
-              "avg[30] capture->recv=%dms, receive->beforeDraw=%dms, headerLatency=%dms",
-              Math.round(metrics.sumCaptureToReceive / n),
-              Math.round(metrics.sumReceiveToBeforeDraw / n),
-              Math.round(metrics.headerLatency / n),
-            );
-            metrics.count = 0;
-            metrics.sumCaptureToReceive = 0;
-            metrics.sumReceiveToBeforeDraw = 0;
-            metrics.headerLatency = 0;
-          }
-        //}, false);
-        });
+        const buffer = frameBuffer.frameData!.slice(0, frameBuffer.totalSize).buffer;
+        const pendingFrame: PendingFrame = {
+          meta: frameMeta,
+          buffer,
+          receivedAt,
+        };
+
+        pendingFramesRef.current.set(frameId, pendingFrame);
+
+        if (rendererReadyRef.current) {
+          pendingFramesRef.current.delete(frameId);
+          postFrameToWorker(worker, pendingFrame);
+        }
 
         // Clean up completed frame
         frameBuffers.delete(frameId);
