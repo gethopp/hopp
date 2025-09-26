@@ -139,7 +139,6 @@ async fn send_frames(
     {
         // Clear vectors for reuse
         header.clear();
-        chunk.clear();
         let res = receiver.try_recv();
         if let Ok(msg) = res {
             match msg {
@@ -178,6 +177,7 @@ async fn send_frames(
             }
         }
 
+        let now = std::time::SystemTime::now();
         let capture_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -265,7 +265,7 @@ async fn send_frames(
             header.extend_from_slice(&0u32.to_le_bytes());
         }
 
-        if let Err(e) = ws_sender.send(Message::Binary(header.into())).await {
+        if let Err(e) = ws_sender.send(Message::Binary(header.clone().into())).await {
             log::error!("Failed to send header: {e:?}");
             break;
         }
@@ -280,6 +280,8 @@ async fn send_frames(
         ];
         let mut global_index = 0;
         for chunk_index in 0..total_chunks {
+            chunk.clear();
+
             chunk.extend_from_slice(&[b'D']);
             chunk.extend_from_slice(&frame_id.to_le_bytes());
             chunk.extend_from_slice(&(chunk_index as u16).to_le_bytes());
@@ -309,7 +311,10 @@ async fn send_frames(
 
             chunk[7..11].copy_from_slice(&(bytes_copied as u32).to_le_bytes());
 
-            if let Err(e) = ws_sender.send(Message::Binary(chunk.into())).await {
+            if frame_id % 30 == 0 {
+                log::info!("send_frames: chunk {chunk_index} elapsed: {}", now.elapsed().unwrap().as_millis());
+            }
+            if let Err(e) = ws_sender.send(Message::Binary(chunk.clone().into())).await {
                 log::error!("Failed to send chunk: {e:?}");
                 break;
             }
@@ -318,6 +323,7 @@ async fn send_frames(
         if frame_id % 30 == 0 {
             let fps = frame_id as f64 / start_time.elapsed().unwrap().as_secs_f64();
             log::info!("send_frames: fps: {fps}");
+            log::info!("send_frames: capture ts elapsed: {}", now.elapsed().unwrap().as_millis());
         }
     }
     log::info!("send_frames: stopped");
