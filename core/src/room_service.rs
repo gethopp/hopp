@@ -27,6 +27,11 @@ const BITRATE_2048: u64 = 3_500_000; // 3.5 Mbps
 const BITRATE_2560: u64 = 5_000_000; // 5 Mbps
 const BITRATE_DEFAULT: u64 = 8_000_000; // 8 Mbps
 
+const AV1_BITRATE_1920: u64 = 1_500_000; // 1.5 Mbps
+const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
+const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
+const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
+
 // Resolution thresholds
 const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
@@ -425,11 +430,18 @@ async fn room_service_commands(
                 );
 
                 /* Have different max_bitrate based on width. */
-                let max_bitrate = match width {
-                    WIDTH_THRESHOLD_1920 => BITRATE_1920,
-                    WIDTH_THRESHOLD_2048 => BITRATE_2048,
-                    WIDTH_THRESHOLD_2560 => BITRATE_2560,
-                    _ => BITRATE_DEFAULT,
+                let (av1_bitrate, vp9_bitrate) = match width {
+                    WIDTH_THRESHOLD_1920 => (AV1_BITRATE_1920, BITRATE_1920),
+                    WIDTH_THRESHOLD_2048 => (AV1_BITRATE_2048, BITRATE_2048),
+                    WIDTH_THRESHOLD_2560 => (AV1_BITRATE_2560, BITRATE_2560),
+                    _ => (AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
+                };
+
+                let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
+                let video_codec = if use_av1 {
+                    VideoCodec::AV1
+                } else {
+                    VideoCodec::VP9
                 };
 
                 let res = room
@@ -438,7 +450,7 @@ async fn room_service_commands(
                         LocalTrack::Video(track),
                         TrackPublishOptions {
                             source: TrackSource::Screenshare,
-                            video_codec: VideoCodec::VP9,
+                            video_codec,
                             video_encoding: Some(VideoEncoding {
                                 max_bitrate,
                                 max_framerate: MAX_FRAMERATE,
