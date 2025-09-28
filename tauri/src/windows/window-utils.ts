@@ -42,7 +42,7 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string) => {
+const createContentPickerWindow = async (videoToken: string, useAv1: boolean) => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
   if (isWindowOpen) {
@@ -54,7 +54,7 @@ const createContentPickerWindow = async (videoToken: string) => {
     return;
   }
 
-  const URL = `contentPicker.html?videoToken=${videoToken}`;
+  const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
 
   if (isTauri) {
     const newWindow = new WebviewWindow("contentPicker", {

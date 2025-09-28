@@ -37,6 +37,7 @@ async fn screenshare(
     token: String,
     resolution: Extent,
     accessibility_permission: bool,
+    use_av1: bool,
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
     log::debug!("screenshare: token: {token}");
@@ -60,6 +61,7 @@ async fn screenshare(
             token: token.clone(),
             resolution,
             accessibility_permission,
+            use_av1,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");

@@ -44,6 +44,7 @@ enum RoomServiceCommand {
         width: u32,
         height: u32,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        use_av1: bool,
     },
     PublishSharerLocation(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -164,6 +165,7 @@ impl RoomService {
         width: u32,
         height: u32,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        use_av1: bool,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room: {width:?}, {height:?}");
         let res = self
@@ -173,6 +175,7 @@ impl RoomService {
                 width,
                 height,
                 event_loop_proxy,
+                use_av1,
             });
         if let Err(e) = res {
             return Err(RoomServiceError::CreateRoom(format!(
@@ -348,6 +351,7 @@ async fn room_service_commands(
                 width,
                 height,
                 event_loop_proxy,
+                use_av1,
             } => {
                 {
                     let mut inner_room = inner.room.lock().await;
@@ -380,48 +384,6 @@ async fn room_service_commands(
                 // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
                 tokio::spawn(handle_room_events(rx, event_loop_proxy, user_sid));
-
-                let mut use_av1 = true;
-                let user_id = room
-                    .local_participant()
-                    .identity()
-                    .0
-                    .rsplit(':')
-                    .nth(1)
-                    .unwrap_or_else(|| "")
-                    .to_string();
-                log::info!("room_service_commands: User id: {user_id}");
-                for remote_participant in room.remote_participants() {
-                    let remote_participant_id = remote_participant.1.identity().0;
-                    if !remote_participant_id.contains("audio") {
-                        continue;
-                    }
-
-                    let remote_participant_id = remote_participant
-                        .1
-                        .identity()
-                        .0
-                        .rsplit(':')
-                        .nth(1)
-                        .unwrap_or_else(|| "")
-                        .to_string();
-                    if remote_participant_id.is_empty() {
-                        continue;
-                    }
-                    if remote_participant_id != user_id {
-                        let attributes = remote_participant.1.attributes();
-                        log::info!("room_service_commands: Remote participant id: {remote_participant_id} Attributes: {attributes:?}");
-                        let av1_support = attributes
-                            .get("av1Support")
-                            .map(|value| value.as_str())
-                            .unwrap_or("false");
-                        if av1_support == "false" {
-                            use_av1 = false;
-                            break;
-                        }
-                    }
-                }
-                log::info!("room_service_commands: Use av1: {use_av1}");
 
                 let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
                 let track = LocalVideoTrack::create_video_track(

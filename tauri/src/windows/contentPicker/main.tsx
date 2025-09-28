@@ -45,6 +45,7 @@ async function screenshare(
   resolution: ResolutionKey,
   videoToken: string,
   accessibilityPermission: boolean,
+  useAv1: boolean,
 ) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
@@ -59,6 +60,7 @@ async function screenshare(
     token: videoToken,
     resolution: resolutionMap[resolution],
     accessibilityPermission: accessibilityPermission,
+    useAv1: useAv1,
   });
   return true;
 }
@@ -69,6 +71,7 @@ function Window() {
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getTokenParam("videoToken");
+  const useAv1 = tauriUtils.getTokenParam("useAv1") === "true";
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
@@ -102,7 +105,7 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(content, resolution, videoToken, accessibilityPermission);
+      const success = await screenshare(content, resolution, videoToken, accessibilityPermission, useAv1);
       if (success) {
         await appWindow.close();
       }

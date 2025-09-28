@@ -163,7 +163,7 @@ export function ConnectedActions() {
     const revCaps = RTCRtpReceiver.getCapabilities("video");
     let av1Support = false;
     for (const codec of revCaps?.codecs || []) {
-      if (codec.mimeType === "video/av1") {
+      if (codec.mimeType === "video/AV1") {
         av1Support = true;
         break;
       }
@@ -421,12 +421,25 @@ function ScreenShareIcon({
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
 }) {
+  const room = useRoomContext();
+  const localParticipant = useLocalParticipant();
+  let useAv1 = true;
+  for (const participant of room.remoteParticipants) {
+    if (participant[1].identity === localParticipant.localParticipant.identity) continue;
+
+    const attributes = participant[1].attributes;
+    if (attributes["av1Support"] === "false") {
+      useAv1 = false;
+      break;
+    }
+  }
+
   const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken);
+      tauriUtils.createContentPickerWindow(callTokens.videoToken, useAv1);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -439,7 +452,7 @@ function ScreenShareIcon({
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken);
+    tauriUtils.createContentPickerWindow(callTokens.videoToken, useAv1);
   }, [callTokens, callTokens?.videoToken]);
 
   return (
@@ -507,21 +520,24 @@ function ScreensharingEventListener({
 
   const tracks = useTracks([Track.Source.ScreenShare]);
   const localParticipant = useLocalParticipant();
+  const room = useRoomContext();
   useEffect(() => {
     const localParticipantId = localParticipant?.localParticipant.identity.split(":").slice(0, -1).join(":") || "";
     let trackFound = false;
     let screenshareTrackFound = false;
-    for (const track of tracks) {
-      const trackParticipantId = track.participant.identity.split(":").slice(0, -1).join(":");
+    for (const participant of room.remoteParticipants) {
+      for (const track of participant[1].getTrackPublications()) {
+        const trackParticipantId = participant[1].identity.split(":").slice(0, -1).join(":");
 
-      if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
-        screenshareTrackFound = true;
-        break;
-      }
+        if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
+          screenshareTrackFound = true;
+          break;
+        }
 
-      if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
-        trackFound = true;
-        break;
+        if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
+          trackFound = true;
+          break;
+        }
       }
     }
 
@@ -547,6 +563,7 @@ function ScreensharingEventListener({
       updateRole(newRole);
     }
   }, [tracks]);
+
   return <div />;
 }
 
