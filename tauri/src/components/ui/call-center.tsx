@@ -148,6 +148,31 @@ export function ConnectedActions() {
     }
   }, [callParticipant, teammates, callTokens]);
 
+  const { localParticipant } = useLocalParticipant();
+  const room = useRoomContext();
+
+  useEffect(() => {
+    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
+
+    if (localParticipant?.permissions) {
+      const updatedPermissions = localParticipant.permissions;
+      updatedPermissions.canUpdateMetadata = true;
+      localParticipant.setPermissions(updatedPermissions);
+    }
+
+    const revCaps = RTCRtpReceiver.getCapabilities("video");
+    let av1Support = false;
+    for (const codec of revCaps?.codecs || []) {
+      if (codec.mimeType === "video/av1") {
+        av1Support = true;
+        break;
+      }
+    }
+    localParticipant.setAttributes({
+      av1Support: av1Support.toString(),
+    });
+  }, [localParticipant, room?.state]);
+
   return (
     <>
       <ScreensharingEventListener callTokens={callTokens} updateRole={handleRoleChange} />

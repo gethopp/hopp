@@ -95,8 +95,12 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 		SetValidFor(24 * time.Hour).
 		SetName(participant.GetDisplayName() + " " + "audio").
 		SetVideoGrant(&auth.VideoGrant{
-			RoomJoin: true,
-			Room:     roomName,
+			RoomJoin:             true,
+			Room:                 roomName,
+			CanUpdateOwnMetadata: &[]bool{true}[0],
+		}).
+		SetAttributes(map[string]string{
+			"av1Support": "false",
 		})
 
 	camera := auth.
