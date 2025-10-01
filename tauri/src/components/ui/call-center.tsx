@@ -12,6 +12,7 @@ import {
   StartAudio,
   useLocalParticipant,
   useMediaDeviceSelect,
+  useRemoteParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
@@ -74,6 +75,7 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -149,6 +151,7 @@ export function ConnectedActions() {
   }, [callParticipant, teammates, callTokens]);
 
   const { localParticipant } = useLocalParticipant();
+  const remoteParticipants = useRemoteParticipants();
   const room = useRoomContext();
 
   useEffect(() => {
@@ -171,7 +174,21 @@ export function ConnectedActions() {
     localParticipant.setAttributes({
       av1Support: av1Support.toString(),
     });
-  }, [localParticipant, room?.state]);
+
+    let participantsSupportAv1 = 0;
+    let audioParticipants = 0;
+    for (const participant of remoteParticipants) {
+      if (!participant.identity.includes("audio")) continue;
+      audioParticipants++;
+      const participantAttributes = participant.attributes;
+      if (participantAttributes["av1Support"] === "true") {
+        participantsSupportAv1++;
+      }
+    }
+    if (participantsSupportAv1 !== 0) {
+      setControllerSupportsAv1(participantsSupportAv1 === audioParticipants);
+    }
+  }, [localParticipant, room?.state, remoteParticipants]);
 
   return (
     <>
@@ -204,7 +221,11 @@ export function ConnectedActions() {
           <div className="flex flex-row gap-1 w-full">
             <MicrophoneIcon />
             <CameraIcon />
-            <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
+            <ScreenShareIcon
+              callTokens={callTokens}
+              setCallTokens={setCallTokens}
+              controllerSupportsAv1={controllerSupportsAv1}
+            />
           </div>
           <div className="flex flex-col gap-2 w-full">
             {callTokens?.role === ParticipantRole.CONTROLLER && (
@@ -417,29 +438,19 @@ function MicrophoneIcon() {
 function ScreenShareIcon({
   callTokens,
   setCallTokens,
+  controllerSupportsAv1,
 }: {
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
+  controllerSupportsAv1: boolean;
 }) {
-  const room = useRoomContext();
-  const localParticipant = useLocalParticipant();
-  let useAv1 = true;
-  for (const participant of room.remoteParticipants) {
-    if (participant[1].identity === localParticipant.localParticipant.identity) continue;
-
-    const attributes = participant[1].attributes;
-    if (attributes["av1Support"] === "false") {
-      useAv1 = false;
-      break;
-    }
-  }
-
+  const isRoomCall = callTokens?.isRoomCall || false;
   const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken, useAv1);
+      tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -448,12 +459,12 @@ function ScreenShareIcon({
       });
       tauriUtils.stopSharing();
     }
-  }, [callTokens, callTokens?.videoToken]);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken, useAv1);
-  }, [callTokens, callTokens?.videoToken]);
+    tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   return (
     <ToggleIconButton

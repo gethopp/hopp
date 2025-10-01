@@ -41,6 +41,11 @@ async fn screenshare(
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
     log::debug!("screenshare: token: {token}");
+
+    if use_av1 {
+        sentry_utils::simple_event("Use AV1");
+    }
+
     /*
      * If the user was previously a controller, we need to hide the viewing
      * window, to hide the delay from requesting the screen share to
