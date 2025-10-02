@@ -43,7 +43,7 @@ async fn screenshare(
     log::debug!("screenshare: token: {token}");
 
     if use_av1 {
-        sentry_utils::simple_event("Use AV1");
+        sentry_utils::simple_event("AV1 used".to_string());
     }
 
     /*
