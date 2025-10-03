@@ -56,6 +56,8 @@ enum CursorTest {
     WindowEdges,
     /// Test concurrent scrolling
     ConcurrentScrolling,
+    /// Click animation
+    ClickAnimation,
 }
 
 #[tokio::main]
@@ -118,6 +120,10 @@ async fn main() -> io::Result<()> {
                 CursorTest::ConcurrentScrolling => {
                     println!("Running concurrent scrolling test...");
                     remote_cursor::test_concurrent_scrolling().await?;
+                }
+                CursorTest::ClickAnimation => {
+                    println!("Running click animation test...");
+                    remote_cursor::test_click_animation().await?;
                 }
             }
             println!("Cursor test finished.");

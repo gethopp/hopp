@@ -1,8 +1,9 @@
-use crate::events::{ClientEvent, ClientPoint, MouseClickData, WheelDelta};
+use crate::events::{ClickAnimation, ClientEvent, ClientPoint, MouseClickData, WheelDelta};
 use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use socket_lib::Message;
 use std::{io, time::Duration};
 use tokio::time::sleep;
 
@@ -56,6 +57,45 @@ async fn send_mouse_click(room: &Room, x: f64, y: f64, button: u32) -> io::Resul
         })
         .await
         .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+/// Sends a ClickAnimation event via the LiveKit data channel.
+async fn send_click_animation(room: &Room, enabled: bool) -> io::Result<()> {
+    let click_animation_data = ClickAnimation { enabled };
+    let event = ClientEvent::ClickAnimation(click_animation_data);
+    let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
+    room.local_participant()
+        .publish_data(DataPacket {
+            payload,
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// Smoothly moves the cursor from one position to another
+async fn smooth_cursor_move(
+    room: &Room,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+) -> io::Result<()> {
+    let steps = 30; // Number of steps for smooth movement
+    let delay = Duration::from_millis(16); // ~60fps
+
+    for i in 0..=steps {
+        let t = i as f64 / steps as f64;
+        let x = from_x + (to_x - from_x) * t;
+        let y = from_y + (to_y - from_y) * t;
+
+        send_mouse_move(room, x, y).await?;
+        sleep(delay).await;
+    }
 
     Ok(())
 }
@@ -1205,6 +1245,155 @@ pub async fn test_concurrent_scrolling() -> io::Result<()> {
     println!("=== CONCURRENT SCROLLING TEST COMPLETED ===");
     println!("Alice and Bob completed scrolling in opposite directions, then reversed.");
 
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    println!("Screenshare session stopped.");
+
+    Ok(())
+}
+
+/// Test click animation with various remote control states
+pub async fn test_click_animation() -> io::Result<()> {
+    // Start single screenshare session
+    println!("Starting screenshare session...");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    // Create single participant connection
+    let token = livekit_utils::generate_token("TestUser");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected.");
+
+    // We need to wait for the textures to load
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+
+    // Starting position - middle of screen
+    let start_x = 0.5;
+    let start_y = 0.5;
+    let move_distance = 0.2;
+
+    // Track current cursor position - start slightly to the left
+    let mut current_x = start_x - 0.1;
+    let mut current_y = start_y;
+
+    println!("\n=== Phase 1: Click Animation Enabled with Remote Control ===");
+    // Move to starting position before first click
+    println!("Moving to starting position ({start_x}, {current_y})");
+    smooth_cursor_move(&room, current_x, current_y, start_x, current_y).await?;
+    current_x = start_x;
+    sleep(Duration::from_millis(500)).await;
+
+    // Enable click animation
+    println!("Enabling click animation");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(200)).await;
+
+    // Perform a click
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Move to the right
+    let new_x = current_x + move_distance;
+    println!("Moving to the right to ({new_x}, {current_y})");
+    smooth_cursor_move(&room, current_x, current_y, new_x, current_y).await?;
+    current_x = new_x;
+    sleep(Duration::from_millis(500)).await;
+
+    // Perform a click
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Disable click animation
+    println!("Disabling click animation");
+    send_click_animation(&room, false).await?;
+    sleep(Duration::from_millis(200)).await;
+
+    println!("\n=== Phase 2: Remote Control Disabled ===");
+    // Disable remote control
+    println!("Disabling remote control");
+    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Move down
+    let new_y = current_y + move_distance;
+    println!("Moving down to ({current_x}, {new_y})");
+    smooth_cursor_move(&room, current_x, current_y, current_x, new_y).await?;
+    current_y = new_y;
+    sleep(Duration::from_millis(500)).await;
+
+    // Enable click animation
+    println!("Enabling click animation");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(200)).await;
+
+    // Click - move right - click
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    let new_x2 = current_x + move_distance;
+    println!("Moving right to ({new_x2}, {current_y})");
+    smooth_cursor_move(&room, current_x, current_y, new_x2, current_y).await?;
+    current_x = new_x2;
+    sleep(Duration::from_millis(500)).await;
+
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    println!("\n=== Phase 3: Remote Control Re-enabled ===");
+    // Enable remote control
+    println!("Enabling remote control");
+    cursor_socket.send_message(Message::ControllerCursorEnabled(true))?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Disable click animation
+    println!("Disabling click animation");
+    send_click_animation(&room, false).await?;
+    sleep(Duration::from_millis(200)).await;
+
+    // Click
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Move up
+    let new_y2 = current_y - move_distance;
+    println!("Moving up to ({current_x}, {new_y2})");
+    smooth_cursor_move(&room, current_x, current_y, current_x, new_y2).await?;
+    current_y = new_y2;
+    sleep(Duration::from_millis(500)).await;
+
+    println!("\n=== Phase 4: Final Click Animation Sequence ===");
+    // Enable click animation
+    println!("Enabling click animation");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(200)).await;
+
+    // Click - move right - click
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    let final_x = current_x + move_distance;
+    println!("Moving right to ({final_x}, {current_y})");
+    smooth_cursor_move(&room, current_x, current_y, final_x, current_y).await?;
+    current_x = final_x;
+    sleep(Duration::from_millis(500)).await;
+
+    println!("Clicking at ({current_x}, {current_y})");
+    send_mouse_click(&room, current_x, current_y, 0).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    println!("All click animation phases completed successfully.");
+
+    // Stop the screenshare session
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     println!("Screenshare session stopped.");
 

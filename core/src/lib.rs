@@ -55,6 +55,7 @@ use winit::platform::windows::WindowExtWindows;
 use winit::window::{WindowAttributes, WindowLevel};
 
 use crate::overlay_window::DisplayInfo;
+use crate::utils::geometry::Position;
 
 // Constants for magic numbers
 /// Initial size for the overlay window (width and height in logical pixels)
@@ -808,6 +809,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     sentry_metadata.app_version,
                 );
             }
+            UserEvent::EnableClickAnimation(position) => {
+                log::debug!("user_event: Enable click animation: {position:?}");
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none enable click animation");
+                    return;
+                }
+                let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
+                gfx.enable_click_animation(position);
+            }
+            UserEvent::ClickAnimation(visible, sid) => {
+                log::debug!("user_event: click animation: {visible:?} {sid}");
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none click animation");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let cursor_controller = &mut remote_control.cursor_controller;
+                cursor_controller.set_controller_click_animation(visible, sid.as_str());
+            }
         }
     }
 
@@ -884,6 +904,7 @@ pub enum UserEvent {
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
     RequestRedraw,
+    EnableClickAnimation(Position),
     SharerPosition(f64, f64),
     ResetState,
     Tick(u128),
@@ -893,6 +914,7 @@ pub enum UserEvent {
     ControllerTakesScreenShare,
     ParticipantInControl(String),
     SentryMetadata(SentryMetadata),
+    ClickAnimation(bool, String),
 }
 
 pub struct RenderEventLoop {

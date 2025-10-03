@@ -322,6 +322,7 @@ struct ControllerCursor {
      */
     clicked: bool,
     enabled: bool,
+    click_animation: bool,
     has_control: bool,
     visible_name: String,
     sid: String,
@@ -340,6 +341,7 @@ impl ControllerCursor {
             pointer_cursor,
             clicked: false,
             enabled,
+            click_animation: false,
             has_control: false,
             visible_name,
             sid,
@@ -427,6 +429,14 @@ impl ControllerCursor {
     fn has_control(&self) -> bool {
         self.has_control
     }
+
+    fn set_click_animation(&mut self, click_animation: bool) {
+        self.click_animation = click_animation;
+    }
+
+    fn click_animation(&self) -> bool {
+        self.click_animation
+    }
 }
 
 pub struct SharerCursor {
@@ -488,8 +498,7 @@ impl SharerCursor {
             return;
         }
 
-        self.has_control = true;
-        self.cursor.hide();
+        self.hide();
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             if controller.has_control() {
@@ -504,7 +513,6 @@ impl SharerCursor {
          */
         let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
         let global_position = self.global_position();
-        cursor_simulator.simulate_cursor_movement(global_position, false);
         cursor_simulator.simulate_click(MouseClickData {
             x: global_position.x as f32,
             y: global_position.y as f32,
@@ -516,13 +524,6 @@ impl SharerCursor {
             ctrl: false,
             meta: false,
         });
-
-        let res = self
-            .event_loop_proxy
-            .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
-        if let Err(e) = res {
-            error!("sharer_cursor: click: error sending participant in control: {e:?}");
-        }
     }
 
     fn scroll(&mut self) {
@@ -532,31 +533,12 @@ impl SharerCursor {
             return;
         }
 
-        {
-            /*
-             * This is the same as the click, we need to move the system cursor to the
-             * position of the scroll, because the system cursor was were the controlling
-             * controller was.
-             */
-            let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
-            let global_position = self.global_position();
-            cursor_simulator.simulate_cursor_movement(global_position, false);
-        }
-
-        self.has_control = true;
-        self.cursor.hide();
+        self.hide();
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             if controller.has_control() {
                 controller.show();
             }
-        }
-
-        let res = self
-            .event_loop_proxy
-            .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
-        if let Err(e) = res {
-            error!("sharer_cursor: scroll: error sending participant in control: {e:?}");
         }
     }
 
@@ -577,6 +559,22 @@ impl SharerCursor {
     fn show(&mut self) {
         self.has_control = false;
         self.cursor.show();
+    }
+
+    fn hide(&mut self) {
+        self.has_control = true;
+        self.cursor.hide();
+
+        let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
+        let global_position = self.global_position();
+        cursor_simulator.simulate_cursor_movement(global_position, false);
+
+        let res = self
+            .event_loop_proxy
+            .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
+        if let Err(e) = res {
+            error!("sharer_cursor: click: error sending participant in control: {e:?}");
+        }
     }
 
     #[allow(dead_code)]
@@ -603,7 +601,7 @@ fn redraw_thread(
     receiver: Receiver<RedrawThreadCommands>,
 ) {
     loop {
-        match receiver.recv_timeout(std::time::Duration::from_millis(16)) {
+        match receiver.recv_timeout(std::time::Duration::from_millis(12)) {
             Ok(command) => match command {
                 RedrawThreadCommands::Stop => break,
             },
@@ -923,6 +921,19 @@ impl CursorController {
 
             if !controller.enabled() {
                 log::info!("mouse_click_controller: controller is disabled.");
+                if click_data.down && controller.click_animation() {
+                    if let Err(e) =
+                        self.event_loop_proxy
+                            .send_event(UserEvent::EnableClickAnimation(Position {
+                                x: click_data.x as f64,
+                                y: click_data.y as f64,
+                            }))
+                    {
+                        error!(
+                            "mouse_click_controller: error sending enable click animation: {e:?}"
+                        );
+                    }
+                }
                 break;
             }
 
@@ -1148,6 +1159,38 @@ impl CursorController {
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             controller.draw(render_pass, gfx);
+        }
+    }
+
+    pub fn set_controller_click_animation(&mut self, click_animation: bool, sid: &str) {
+        log::info!("set_controller_click_animation: {click_animation} {sid}");
+
+        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter_mut() {
+            if controller.sid != sid {
+                continue;
+            }
+
+            if controller.has_control() {
+                log::info!("set_controller_click_animation: controller {sid} has control, give control back to sharer.");
+                controller.show();
+                let mut sharer_cursor = self
+                    .remote_control
+                    .as_ref()
+                    .unwrap()
+                    .sharer_cursor
+                    .lock()
+                    .unwrap();
+                sharer_cursor.hide();
+            }
+
+            // We disable the controller in order to not allow scrolling
+            // and taking control. Also we want the cursor to change.
+            if self.controllers_cursors_enabled {
+                controller.set_enabled(!click_animation);
+            }
+            controller.set_click_animation(click_animation);
+            break;
         }
     }
 }
