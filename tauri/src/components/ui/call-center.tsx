@@ -177,7 +177,7 @@ export function ConnectedActions() {
         )}
         <div className="flex flex-col gap-2 items-center col-span-9">
           <div className="flex flex-row gap-1 w-full">
-            <MediaDevicesSettings callTokens={callTokens} setCallTokens={setCallTokens} />
+            <MediaDevicesSettings />
           </div>
           <div className="flex flex-col gap-2 w-full">
             {callTokens?.role === ParticipantRole.CONTROLLER && (
@@ -501,17 +501,12 @@ function ScreensharingEventListener({
   return <div />;
 }
 
-function CameraIcon({
-  cameraEnabled,
-  setCameraEnabled,
-}: {
-  cameraEnabled: boolean;
-  setCameraEnabled: (enabled: boolean) => void;
-}) {
+function CameraIcon() {
   const { updateCallTokens, callTokens } = useStore();
   const [retry, setRetry] = useState(0);
   const tracks = useTracks([Track.Source.Camera], {});
   const { localParticipant } = useLocalParticipant();
+  const cameraEnabled = callTokens?.hasCameraEnabled || false;
 
   const clickedCameraRef = useRef(false);
   const errorCallback = useCallback(
@@ -541,7 +536,10 @@ function CameraIcon({
   const handleCameraToggle = () => {
     clickedCameraRef.current = true;
     let newCameraEnabled = !cameraEnabled;
-    setCameraEnabled(newCameraEnabled);
+    updateCallTokens({
+      ...callTokens,
+      hasCameraEnabled: newCameraEnabled,
+    });
     if (!newCameraEnabled) {
       const cameraTrack = localParticipant
         .getTrackPublications()
@@ -634,13 +632,8 @@ function CameraIcon({
   );
 }
 
-function MediaDevicesSettings({
-  callTokens,
-  setCallTokens,
-}: {
-  callTokens: CallState | null;
-  setCallTokens: (callTokens: CallState | null) => void;
-}) {
+function MediaDevicesSettings() {
+  const { callTokens, setCallTokens } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter();
@@ -655,15 +648,19 @@ function MediaDevicesSettings({
   }, [room]);
 
   useEffect(() => {
-    console.debug(`state changed: ${roomState} mic: ${micEnabled} camera: ${cameraEnabled}`);
+    if (!callTokens) return;
+
+    console.debug(
+      `state changed: ${roomState} mic: ${callTokens?.hasAudioEnabled} camera: ${callTokens?.hasCameraEnabled}`,
+    );
     if (roomState === ConnectionState.Connected) {
-      console.debug(`Setting microphone enabled: ${micEnabled}`);
-      localParticipant.setMicrophoneEnabled(micEnabled, {
+      console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
+      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled, {
         noiseSuppression: true,
         echoCancellation: true,
       });
       localParticipant.setCameraEnabled(
-        cameraEnabled,
+        callTokens?.hasCameraEnabled,
         {
           resolution: VideoPresets.h216.resolution,
         },
@@ -676,12 +673,12 @@ function MediaDevicesSettings({
     if (micEnabled && !isNoiseFilterPending) {
       setNoiseFilterEnabled(true);
     }
-  }, [roomState, micEnabled, localParticipant, cameraEnabled, roomConnected]);
+  }, [roomState, callTokens?.hasAudioEnabled, localParticipant, roomConnected, callTokens?.hasCameraEnabled]);
 
   return (
     <div className="flex flex-row gap-1 w-full">
       <MicrophoneIcon setMicEnabled={setMicEnabled} />
-      <CameraIcon cameraEnabled={cameraEnabled} setCameraEnabled={setCameraEnabled} />
+      <CameraIcon />
       <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
     </div>
   );
