@@ -75,7 +75,6 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
-  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -149,38 +148,6 @@ export function ConnectedActions() {
       handleEndCall();
     }
   }, [callParticipant, teammates, callTokens]);
-
-  const { localParticipant } = useLocalParticipant();
-  const remoteParticipants = useRemoteParticipants();
-  const room = useRoomContext();
-
-  useEffect(() => {
-    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
-
-    if (localParticipant?.permissions) {
-      const updatedPermissions = localParticipant.permissions;
-      updatedPermissions.canUpdateMetadata = true;
-      localParticipant.setPermissions(updatedPermissions);
-    }
-
-    const revCaps = RTCRtpReceiver.getCapabilities("video");
-    let av1Support = false;
-    for (const codec of revCaps?.codecs || []) {
-      if (codec.mimeType === "video/AV1") {
-        av1Support = true;
-        break;
-      }
-    }
-    localParticipant.setAttributes({
-      av1Support: av1Support.toString(),
-    });
-
-    setControllerSupportsAv1(
-      remoteParticipants
-        .filter((p) => p.identity.includes("audio"))
-        .every((p) => p.attributes["av1Support"] === "true"),
-    );
-  }, [localParticipant, room?.state, remoteParticipants]);
 
   return (
     <>
@@ -716,11 +683,45 @@ function MediaDevicesSettings() {
     }
   }, [roomState, callTokens?.hasAudioEnabled, localParticipant, roomConnected, callTokens?.hasCameraEnabled]);
 
+  const remoteParticipants = useRemoteParticipants();
+  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
+  useEffect(() => {
+    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
+
+    if (localParticipant?.permissions) {
+      const updatedPermissions = localParticipant.permissions;
+      updatedPermissions.canUpdateMetadata = true;
+      localParticipant.setPermissions(updatedPermissions);
+    }
+
+    const revCaps = RTCRtpReceiver.getCapabilities("video");
+    let av1Support = false;
+    for (const codec of revCaps?.codecs || []) {
+      if (codec.mimeType === "video/AV1") {
+        av1Support = true;
+        break;
+      }
+    }
+    localParticipant.setAttributes({
+      av1Support: av1Support.toString(),
+    });
+
+    setControllerSupportsAv1(
+      remoteParticipants
+        .filter((p) => p.identity.includes("audio"))
+        .every((p) => p.attributes["av1Support"] === "true"),
+    );
+  }, [localParticipant, room?.state, remoteParticipants]);
+
   return (
     <div className="flex flex-row gap-1 w-full">
       <MicrophoneIcon setMicEnabled={setMicEnabled} />
       <CameraIcon />
-      <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
+      <ScreenShareIcon
+        callTokens={callTokens}
+        setCallTokens={setCallTokens}
+        controllerSupportsAv1={controllerSupportsAv1}
+      />
     </div>
   );
 }
