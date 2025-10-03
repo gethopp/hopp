@@ -31,6 +31,7 @@ export const Rooms = () => {
         isRoomCall: true,
         timeStarted: new Date(),
         hasAudioEnabled: true,
+        hasCameraEnabled: false,
         role: ParticipantRole.NONE,
         isRemoteControlEnabled: true,
         cameraTrackId: null,
