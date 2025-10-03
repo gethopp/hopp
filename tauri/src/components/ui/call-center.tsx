@@ -175,19 +175,11 @@ export function ConnectedActions() {
       av1Support: av1Support.toString(),
     });
 
-    let participantsSupportAv1 = 0;
-    let audioParticipants = 0;
-    for (const participant of remoteParticipants) {
-      if (!participant.identity.includes("audio")) continue;
-      audioParticipants++;
-      const participantAttributes = participant.attributes;
-      if (participantAttributes["av1Support"] === "true") {
-        participantsSupportAv1++;
-      }
-    }
-    if (participantsSupportAv1 !== 0) {
-      setControllerSupportsAv1(participantsSupportAv1 === audioParticipants);
-    }
+    setControllerSupportsAv1(
+      remoteParticipants
+        .filter((p) => p.identity.includes("audio"))
+        .every((p) => p.attributes["av1Support"] === "true"),
+    );
   }, [localParticipant, room?.state, remoteParticipants]);
 
   return (
