@@ -5,7 +5,8 @@
 //! The system uses a shared transform buffer with dynamic offsets for efficient
 //! rendering of multiple cursors.
 
-use crate::utils::geometry::Extent;
+use crate::utils::geometry::{Extent, Position};
+use std::{collections::VecDeque, fs::File, io::Read, sync::Mutex};
 use wgpu::util::DeviceExt;
 
 use super::{
@@ -15,11 +16,7 @@ use super::{
 };
 
 /// Maximum number of cursors that can be rendered simultaneously
-const MAX_CURSORS: u32 = 100;
-/// Base horizontal offset for cursor positioning (as a fraction of screen space)
-const BASE_OFFSET_X: f32 = 0.001;
-/// Base vertical offset for cursor positioning (as a fraction of screen space)
-const BASE_OFFSET_Y: f32 = 0.002;
+const MAX_ANIMATIONS: usize = 100;
 
 /// Represents a single cursor with its texture, geometry, and position data.
 ///
@@ -27,7 +24,7 @@ const BASE_OFFSET_Y: f32 = 0.002;
 /// a texture for appearance, and position information for rendering.
 /// The cursor uses a dynamic offset into a shared transform buffer.
 #[derive(Debug)]
-pub struct Cursor {
+pub struct ClickAnimation {
     /// The cursor's texture (image)
     texture: Texture,
     /// GPU buffer containing vertex data for the cursor quad
@@ -40,7 +37,7 @@ pub struct Cursor {
     position: Point,
 }
 
-impl Cursor {
+impl ClickAnimation {
     /// Updates the cursor's position.
     ///
     /// # Arguments
@@ -67,7 +64,7 @@ impl Cursor {
     /// at the appropriate offset in the shared buffer.
     pub fn update_transform_buffer(&self, gfx: &GraphicsContext) {
         gfx.queue.write_buffer(
-            &gfx.cursor_renderer.transforms_buffer,
+            &gfx.click_animation_renderer.transforms_buffer,
             self.transform_offset as wgpu::BufferAddress,
             bytemuck::cast_slice(&[self.position.get_transform_matrix()]),
         );
@@ -85,7 +82,7 @@ impl Cursor {
         render_pass.set_bind_group(0, &self.texture.bind_group, &[]);
         render_pass.set_bind_group(
             1,
-            &gfx.cursor_renderer.transforms_bind_group,
+            &gfx.click_animation_renderer.transforms_bind_group,
             &[self.transform_offset],
         );
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -106,7 +103,7 @@ impl Cursor {
 /// uses a shared transform buffer with dynamic offsets rather than separate
 /// buffers for each cursor.
 #[derive(Debug)]
-pub struct CursorsRenderer {
+pub struct ClickAnimationRenderer {
     /// GPU render pipeline for cursor rendering
     pub render_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for cursor textures
@@ -121,9 +118,29 @@ pub struct CursorsRenderer {
     pub transforms_bind_group: wgpu::BindGroup,
     /// Number of cursors that have been created
     pub cursors_created: u32,
+
+    // TODO: see if there is a better way to do this
+    click_animations_lock: Mutex<()>,
+    /// click animation array
+    pub click_animations: Vec<ClickAnimation>,
+    /// available click animation slots
+    pub available_slots: VecDeque<usize>,
+    pub used_slots: VecDeque<usize>,
 }
 
-impl CursorsRenderer {
+struct ClickAnimationCreateData<'a> {
+    texture_path: String,
+    scale: f64,
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    window_size: Extent,
+    texture_bind_group_layout: &'a wgpu::BindGroupLayout,
+    transforms_buffer_entry_offset: wgpu::BufferAddress,
+    transforms_buffer: &'a wgpu::Buffer,
+    animations_created: u32,
+}
+
+impl ClickAnimationRenderer {
     /// Creates a new cursor renderer with all necessary GPU resources.
     ///
     /// # Arguments
@@ -138,11 +155,18 @@ impl CursorsRenderer {
     /// - A shared transform buffer with proper alignment
     /// - Render pipeline with vertex and fragment shaders
     /// - All necessary GPU state for cursor rendering
-    pub fn create(device: &wgpu::Device, texture_format: wgpu::TextureFormat) -> Self {
+    pub fn create(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture_format: wgpu::TextureFormat,
+        texture_path: &String,
+        window_size: Extent,
+        scale: f64,
+    ) -> Result<Self, OverlayError> {
         // Create bind group layout for cursor textures
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Shared Cursor Texture BGL"),
+                label: Some("Shared Click Animation Texture BGL"),
                 entries: &[
                     // Texture
                     wgpu::BindGroupLayoutEntry {
@@ -196,7 +220,7 @@ impl CursorsRenderer {
             });
 
         // Create shared transform buffer for all cursors
-        let transforms_buffer_size = aligned_buffer_size * MAX_CURSORS as wgpu::BufferAddress;
+        let transforms_buffer_size = aligned_buffer_size * MAX_ANIMATIONS as wgpu::BufferAddress;
         let transforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Transforms Buffer"),
             size: transforms_buffer_size,
@@ -222,17 +246,17 @@ impl CursorsRenderer {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline"),
+                label: Some("Render Pipeline Click Animation"),
                 bind_group_layouts: &[&texture_bind_group_layout, &transform_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
+            label: Some("Render Pipeline Click Animation"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
+                entry_point: Some("vs_click_animation_main"),
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -253,7 +277,7 @@ impl CursorsRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some("fs_click_animation_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: texture_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -280,7 +304,27 @@ impl CursorsRenderer {
             cache: None,
         });
 
-        Self {
+        // Create the click animations
+        let mut click_animations = Vec::new();
+        let mut available_slots = VecDeque::new();
+        for i in 0..MAX_ANIMATIONS {
+            let click_animation = Self::create_click_animation(ClickAnimationCreateData {
+                texture_path: texture_path.clone(),
+                scale,
+                device,
+                queue,
+                window_size,
+                texture_bind_group_layout: &texture_bind_group_layout,
+                transforms_buffer_entry_offset: aligned_buffer_size,
+                transforms_buffer: &transforms_buffer,
+                animations_created: i as u32,
+            })?;
+
+            click_animations.push(click_animation);
+            available_slots.push_back(i);
+        }
+
+        Ok(Self {
             render_pipeline,
             texture_bind_group_layout,
             transform_bind_group_layout,
@@ -288,7 +332,11 @@ impl CursorsRenderer {
             transforms_buffer_entry_offset: aligned_buffer_size,
             transforms_bind_group: transform_bind_group,
             cursors_created: 0,
-        }
+            click_animations_lock: Mutex::new(()),
+            click_animations,
+            available_slots,
+            used_slots: VecDeque::new(),
+        })
     }
 
     /// Creates a new cursor with the specified image and properties.
@@ -311,47 +359,53 @@ impl CursorsRenderer {
     ///
     /// The cursor is automatically positioned at (0,0) and its transform matrix
     /// is uploaded to the GPU.
-    pub fn create_cursor(
-        &mut self,
-        image_data: &[u8],
-        scale: f64,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        window_size: Extent,
-    ) -> Result<Cursor, OverlayError> {
-        if self.cursors_created >= MAX_CURSORS {
-            log::error!("create_cursor: maximum number of cursors reached");
+    fn create_click_animation(
+        data: ClickAnimationCreateData,
+    ) -> Result<ClickAnimation, OverlayError> {
+        let resource_path = format!("{}/click_texture.png", data.texture_path);
+        log::debug!("create_cursor_texture: resource path: {resource_path:?}");
+
+        let mut file = match File::open(&resource_path) {
+            Ok(file) => file,
+            Err(_) => {
+                log::error!("create_cursor_texture: failed to open file: click_texture.png");
+                return Err(OverlayError::TextureCreationError);
+            }
+        };
+        let mut image_data = Vec::new();
+        let res = file.read_to_end(&mut image_data);
+        if res.is_err() {
+            log::error!("create_cursor_texture: failed to read file: click_texture.png");
             return Err(OverlayError::TextureCreationError);
         }
 
         // Create texture from image file
-        let texture = create_texture(device, queue, image_data, &self.texture_bind_group_layout)?;
+        let texture = create_texture(
+            data.device,
+            data.queue,
+            &image_data,
+            &data.texture_bind_group_layout,
+        )?;
 
         // Create vertex and index buffers for cursor geometry
         let (vertex_buffer, index_buffer) =
-            Self::create_cursor_vertex_buffer(device, &texture, scale, window_size);
+            Self::create_cursor_vertex_buffer(data.device, &texture, data.scale, data.window_size);
 
         // Calculate offset into shared transform buffer
         let transform_offset =
-            (self.cursors_created as wgpu::BufferAddress) * self.transforms_buffer_entry_offset;
-        self.cursors_created += 1;
+            (data.animations_created as wgpu::BufferAddress) * data.transforms_buffer_entry_offset;
 
         // Initialize cursor position with base offsets
-        let point = Point::new(
-            0.0,
-            0.0,
-            BASE_OFFSET_X * (scale as f32),
-            BASE_OFFSET_Y * (scale as f32),
-        );
+        let point = Point::new(0.0, 0.0, 0.0, 0.0);
 
         // Upload initial transform matrix to GPU
-        queue.write_buffer(
-            &self.transforms_buffer,
+        data.queue.write_buffer(
+            &data.transforms_buffer,
             transform_offset,
             bytemuck::cast_slice(&[point.get_transform_matrix()]),
         );
 
-        Ok(Cursor {
+        Ok(ClickAnimation {
             texture,
             vertex_buffer,
             index_buffer,
@@ -389,8 +443,8 @@ impl CursorsRenderer {
 
         // Calculate cursor size in clip space, maintaining aspect ratio
         let clip_extent = Extent {
-            width: (texture.extent.width / window_size.width) * 2.0 * scale / 2.5,
-            height: (texture.extent.height / window_size.height) * 2.0 * scale / 2.5,
+            width: (texture.extent.width / window_size.width) * scale,
+            height: (texture.extent.height / window_size.height) * scale,
         };
 
         // Create quad vertices with texture coordinates
@@ -432,5 +486,29 @@ impl CursorsRenderer {
         });
 
         (vertex_buffer, index_buffer)
+    }
+
+    pub fn enable_click_animation(&mut self, position: Position) {
+        let _lock = self.click_animations_lock.lock().unwrap();
+
+        if self.available_slots.is_empty() {
+            return;
+        }
+
+        let slot = self.available_slots.pop_front().unwrap();
+        self.used_slots.push_back(slot);
+
+        self.click_animations[slot].set_position(position.x, position.y);
+    }
+
+    pub fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
+        render_pass.set_pipeline(&self.render_pipeline);
+
+        let _lock = self.click_animations_lock.lock().unwrap();
+
+        for slot in self.used_slots.iter() {
+            self.click_animations[*slot].update_transform_buffer(gfx);
+            self.click_animations[*slot].draw(render_pass, gfx);
+        }
     }
 }

@@ -923,6 +923,15 @@ impl CursorController {
 
             if !controller.enabled() {
                 log::info!("mouse_click_controller: controller is disabled.");
+                if let Err(e) = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::EnableClickAnimation(Position {
+                        x: click_data.x as f64,
+                        y: click_data.y as f64,
+                    }))
+                {
+                    error!("mouse_click_controller: error sending enable click animation: {e:?}");
+                }
                 break;
             }
 

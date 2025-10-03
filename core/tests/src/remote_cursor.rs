@@ -3,6 +3,7 @@ use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use socket_lib::Message;
 use std::{io, time::Duration};
 use tokio::time::sleep;
 
@@ -1205,6 +1206,208 @@ pub async fn test_concurrent_scrolling() -> io::Result<()> {
     println!("=== CONCURRENT SCROLLING TEST COMPLETED ===");
     println!("Alice and Bob completed scrolling in opposite directions, then reversed.");
 
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    println!("Screenshare session stopped.");
+
+    Ok(())
+}
+
+/// Multiple participants
+pub async fn test_click_animation() -> io::Result<()> {
+    // Start single screenshare session
+    println!("Starting screenshare session...");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Deactivate remote control
+    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    // Create persistent room connections for all participants
+    let token_1 = livekit_utils::generate_token("Al");
+    let token_2 = livekit_utils::generate_token("Robert");
+    let token_3 = livekit_utils::generate_token("Christopher");
+    let token_4 = livekit_utils::generate_token("Christopher Martin");
+
+    let (room_1, _rx_1) = Room::connect(&url, &token_1, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_2, _rx_2) = Room::connect(&url, &token_2, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_3, _rx_3) = Room::connect(&url, &token_3, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_4, _rx_4) = Room::connect(&url, &token_4, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("All 4 participants connected with persistent connections.");
+
+    // We need to wait for the textures to load
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Define quadrants for each participant
+    let quadrants = [
+        (0.1, 0.1), // Al: top-left
+        (0.6, 0.1), // Robert: top-right
+        (0.1, 0.6), // Christopher: bottom-left
+        (0.6, 0.6), // Christopher Martin: bottom-right
+    ];
+
+    println!("Starting cursor control test with 4 rounds...");
+
+    // Each participant runs through all 4 iterations concurrently
+    let task_1 = tokio::spawn(async move {
+        for round in 0..4 {
+            println!("\n=== Al: ROUND {} ===", round + 1);
+
+            // Al clicks to take control when it's her turn (round 0)
+            if round == 0 {
+                let (control_x, control_y) = quadrants[0];
+                println!("Al clicking at ({control_x}, {control_y}) to take control");
+                send_mouse_click(&room_1, control_x, control_y, 0).await?;
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            println!(
+                "Al: Starting square at ({}, {})",
+                quadrants[0].0, quadrants[0].1
+            );
+            internal_cursor_move(&room_1, quadrants[0].0, quadrants[0].1, 0.3).await?;
+            println!("Al: Completed square for round {}", round + 1);
+
+            // Pause between rounds
+            if round < 3 {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+        Ok::<(), io::Error>(())
+    });
+
+    let task_2 = tokio::spawn(async move {
+        for round in 0..4 {
+            println!("\n=== Robert: ROUND {} ===", round + 1);
+
+            // Robert clicks to take control when it's his turn (round 1)
+            if round == 1 {
+                let (control_x, control_y) = quadrants[1];
+                println!("Robert clicking at ({control_x}, {control_y}) to take control");
+                send_mouse_click(&room_2, control_x, control_y, 0).await?;
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            println!(
+                "Robert: Starting square at ({}, {})",
+                quadrants[1].0, quadrants[1].1
+            );
+            internal_cursor_move(&room_2, quadrants[1].0, quadrants[1].1, 0.3).await?;
+            println!("Robert: Completed square for round {}", round + 1);
+
+            // Pause between rounds
+            if round < 3 {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+        Ok::<(), io::Error>(())
+    });
+
+    let task_3 = tokio::spawn(async move {
+        for round in 0..4 {
+            println!("\n=== Christopher: ROUND {} ===", round + 1);
+
+            // Christopher clicks to take control when it's his turn (round 2)
+            if round == 2 {
+                let (control_x, control_y) = quadrants[2];
+                println!("Christopher clicking at ({control_x}, {control_y}) to take control");
+                send_mouse_click(&room_3, control_x, control_y, 0).await?;
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            println!(
+                "Christopher: Starting square at ({}, {})",
+                quadrants[2].0, quadrants[2].1
+            );
+            internal_cursor_move(&room_3, quadrants[2].0, quadrants[2].1, 0.3).await?;
+            println!("Christopher: Completed square for round {}", round + 1);
+
+            // Pause between rounds
+            if round < 3 {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+        Ok::<(), io::Error>(())
+    });
+
+    let task_4 = tokio::spawn(async move {
+        for round in 0..4 {
+            println!("\n=== Christopher Martin: ROUND {} ===", round + 1);
+
+            // Christopher Martin clicks to take control when it's her turn (round 3)
+            if round == 3 {
+                let (control_x, control_y) = quadrants[3];
+                println!(
+                    "Christopher Martin clicking at ({control_x}, {control_y}) to take control"
+                );
+                send_mouse_click(&room_4, control_x, control_y, 0).await?;
+                sleep(Duration::from_millis(500)).await;
+            }
+
+            println!(
+                "Christopher Martin: Starting square at ({}, {})",
+                quadrants[3].0, quadrants[3].1
+            );
+            internal_cursor_move(&room_4, quadrants[3].0, quadrants[3].1, 0.3).await?;
+            println!(
+                "Christopher Martin: Completed square for round {}",
+                round + 1
+            );
+
+            // Pause between rounds
+            if round < 3 {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+        Ok::<(), io::Error>(())
+    });
+
+    // Wait for all participants to finish all their iterations
+    let results = tokio::try_join!(task_1, task_2, task_3, task_4);
+
+    match results {
+        Ok((res1, res2, res3, res4)) => {
+            if let Err(e) = res1 {
+                println!("Al: Error in test: {e:?}");
+            } else {
+                println!("Al: Successfully completed all rounds");
+            }
+            if let Err(e) = res2 {
+                println!("Robert: Error in test: {e:?}");
+            } else {
+                println!("Robert: Successfully completed all rounds");
+            }
+            if let Err(e) = res3 {
+                println!("Christopher: Error in test: {e:?}");
+            } else {
+                println!("Christopher: Successfully completed all rounds");
+            }
+            if let Err(e) = res4 {
+                println!("Christopher Martin: Error in test: {e:?}");
+            } else {
+                println!("Christopher Martin: Successfully completed all rounds");
+            }
+        }
+        Err(e) => {
+            println!("Task execution error: {e:?}");
+            return Err(io::Error::other(e));
+        }
+    }
+
+    println!("\n=== TEST COMPLETED ===");
+    println!("All 4 rounds completed successfully. Each participant had control once.");
+
+    // Stop the screenshare session
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     println!("Screenshare session stopped.");
 

@@ -37,8 +37,17 @@ pub fn request_screenshare(
         },
         token,
         resolution: Extent { width, height },
+        accessibility_permission: true,
+        use_av1: false,
     });
-    socket.send_message(message)
+    socket.send_message(message).unwrap();
+
+    match socket.receive_message() {
+        Ok(_message) => Ok(()),
+        Err(e) => Err(io::Error::other(format!(
+            "Failed to receive message: {e:?}"
+        ))),
+    }
 }
 
 /// Sends a request to stop screen sharing.

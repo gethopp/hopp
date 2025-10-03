@@ -45,3 +45,18 @@ fn vs_lines_main(
     out.clip_position = vec4<f32>(model.position, 0.0, 1.0);
     return out;
 }
+
+@vertex
+fn vs_click_animation_main(
+    model: VertexInput,
+) -> VertexOutput {
+    var out: VertexOutput;
+    out.texture_coords = model.texture_coords;
+    out.clip_position = coords.transform * vec4<f32>(model.position, 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_click_animation_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(t_diffuse, s_diffuse, in.texture_coords);
+}
