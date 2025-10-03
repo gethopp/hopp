@@ -273,10 +273,11 @@ impl<'a> Application<'a> {
         event_loop: &ActiveEventLoop,
     ) -> Result<(), ServerError> {
         log::info!(
-            "screenshare: resolution: {:?} content: {} accessibility_permission: {}",
+            "screenshare: resolution: {:?} content: {} accessibility_permission: {} use_av1: {}",
             screenshare_input.resolution,
             screenshare_input.content,
-            screenshare_input.accessibility_permission
+            screenshare_input.accessibility_permission,
+            screenshare_input.use_av1
         );
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
         /*
@@ -319,6 +320,7 @@ impl<'a> Application<'a> {
             extent.width as u32,
             extent.height as u32,
             self.event_loop_proxy.clone(),
+            screenshare_input.use_av1,
         );
         if let Err(error) = res {
             log::error!("screenshare: error creating room: {error:?}");
