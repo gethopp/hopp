@@ -130,6 +130,25 @@ pub fn upload_logs_event(failure_reason: String) {
     client.send_envelope(envelope);
 }
 
+pub fn simple_event(message: String) {
+    let client = match sentry::Hub::current().client() {
+        Some(client) => client,
+        None => {
+            log::warn!("simple_event: No client found");
+            return;
+        }
+    };
+    let tags = get_system_tags();
+    let event = Event {
+        event_id: random_uuid(),
+        message: Some(message),
+        level: Level::Info,
+        tags,
+        ..Default::default()
+    };
+    client.capture_event(event, None);
+}
+
 pub fn init_sentry(failure_reason: String, dsn: Option<String>) -> Option<ClientInitGuard> {
     if dsn.is_none() {
         log::warn!("init_sentry: No DSN provided");

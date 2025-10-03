@@ -37,9 +37,15 @@ async fn screenshare(
     token: String,
     resolution: Extent,
     accessibility_permission: bool,
+    use_av1: bool,
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
     log::debug!("screenshare: token: {token}");
+
+    if use_av1 {
+        sentry_utils::simple_event("AV1 used".to_string());
+    }
+
     /*
      * If the user was previously a controller, we need to hide the viewing
      * window, to hide the delay from requesting the screen share to
@@ -60,6 +66,7 @@ async fn screenshare(
             token: token.clone(),
             resolution,
             accessibility_permission,
+            use_av1,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");

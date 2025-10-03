@@ -12,6 +12,7 @@ import {
   StartAudio,
   useLocalParticipant,
   useMediaDeviceSelect,
+  useRemoteParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
@@ -74,6 +75,7 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -148,6 +150,38 @@ export function ConnectedActions() {
     }
   }, [callParticipant, teammates, callTokens]);
 
+  const { localParticipant } = useLocalParticipant();
+  const remoteParticipants = useRemoteParticipants();
+  const room = useRoomContext();
+
+  useEffect(() => {
+    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
+
+    if (localParticipant?.permissions) {
+      const updatedPermissions = localParticipant.permissions;
+      updatedPermissions.canUpdateMetadata = true;
+      localParticipant.setPermissions(updatedPermissions);
+    }
+
+    const revCaps = RTCRtpReceiver.getCapabilities("video");
+    let av1Support = false;
+    for (const codec of revCaps?.codecs || []) {
+      if (codec.mimeType === "video/AV1") {
+        av1Support = true;
+        break;
+      }
+    }
+    localParticipant.setAttributes({
+      av1Support: av1Support.toString(),
+    });
+
+    setControllerSupportsAv1(
+      remoteParticipants
+        .filter((p) => p.identity.includes("audio"))
+        .every((p) => p.attributes["av1Support"] === "true"),
+    );
+  }, [localParticipant, room?.state, remoteParticipants]);
+
   return (
     <>
       <ScreensharingEventListener callTokens={callTokens} updateRole={handleRoleChange} />
@@ -179,7 +213,11 @@ export function ConnectedActions() {
           <div className="flex flex-row gap-1 w-full">
             <MicrophoneIcon />
             <CameraIcon />
-            <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
+            <ScreenShareIcon
+              callTokens={callTokens}
+              setCallTokens={setCallTokens}
+              controllerSupportsAv1={controllerSupportsAv1}
+            />
           </div>
           <div className="flex flex-col gap-2 w-full">
             {callTokens?.role === ParticipantRole.CONTROLLER && (
@@ -392,16 +430,19 @@ function MicrophoneIcon() {
 function ScreenShareIcon({
   callTokens,
   setCallTokens,
+  controllerSupportsAv1,
 }: {
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
+  controllerSupportsAv1: boolean;
 }) {
+  const isRoomCall = callTokens?.isRoomCall || false;
   const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken);
+      tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -410,12 +451,12 @@ function ScreenShareIcon({
       });
       tauriUtils.stopSharing();
     }
-  }, [callTokens, callTokens?.videoToken]);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken);
-  }, [callTokens, callTokens?.videoToken]);
+    tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   return (
     <ToggleIconButton
@@ -482,21 +523,24 @@ function ScreensharingEventListener({
 
   const tracks = useTracks([Track.Source.ScreenShare]);
   const localParticipant = useLocalParticipant();
+  const room = useRoomContext();
   useEffect(() => {
     const localParticipantId = localParticipant?.localParticipant.identity.split(":").slice(0, -1).join(":") || "";
     let trackFound = false;
     let screenshareTrackFound = false;
-    for (const track of tracks) {
-      const trackParticipantId = track.participant.identity.split(":").slice(0, -1).join(":");
+    for (const participant of room.remoteParticipants) {
+      for (const track of participant[1].getTrackPublications()) {
+        const trackParticipantId = participant[1].identity.split(":").slice(0, -1).join(":");
 
-      if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
-        screenshareTrackFound = true;
-        break;
-      }
+        if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
+          screenshareTrackFound = true;
+          break;
+        }
 
-      if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
-        trackFound = true;
-        break;
+        if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
+          trackFound = true;
+          break;
+        }
       }
     }
 
@@ -522,6 +566,7 @@ function ScreensharingEventListener({
       updateRole(newRole);
     }
   }, [tracks]);
+
   return <div />;
 }
 
