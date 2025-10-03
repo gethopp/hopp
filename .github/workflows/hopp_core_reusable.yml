@@ -111,10 +111,8 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.target }}
+        run: |
+          rustup target add ${{ matrix.target }}
 
       - name: Cache Cargo builds
         uses: Swatinem/rust-cache@v2
