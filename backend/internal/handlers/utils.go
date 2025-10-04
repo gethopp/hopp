@@ -154,6 +154,8 @@ func generateMeetRedirectToken(s *common.ServerState, roomName string, participa
 	return audioToken, nil
 }
 
+// GetAuthenticatedUser returns the authenticated user from the session
+// Returns nil and false if the user is not authenticated or not found
 func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.User, bool) {
 	email, err := jwtIssuer.GetUserEmail(c)
 	if err != nil {
@@ -169,8 +171,6 @@ func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssue
 	return user, true
 }
 
-// GetAuthenticatedUser returns the authenticated user from the session
-// Returns nil and false if the user is not authenticated or not found
 func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
 	return getAuthenticatedUserFromJWTCommon(c, h.JwtIssuer, h.DB)
 }
