@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
+	"github.com/lindell/go-burner-email-providers/burner"
 	"github.com/markbates/goth/gothic"
 	"github.com/redis/go-redis/v9"
 	"github.com/tidwall/gjson"
@@ -217,6 +218,10 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	u := &req.User
 	if err := c.Validate(u); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	if burner.IsBurnerEmail(u.Email) {
+		return echo.NewHTTPError(http.StatusBadRequest, "Temporary email addresses are not allowed")
 	}
 
 	// Check if team invite UUID was provided
