@@ -15,6 +15,8 @@ type EmailClient interface {
 	SendAsync(toEmail, subject, htmlBody string)
 	SendWelcomeEmail(user *models.User)
 	SendTeamInvitationEmail(inviterName, teamName, inviteLink, toEmail string)
+	SendSubscriptionConfirmationEmail(user *models.User)
+	SendSubscriptionCancellationEmail(user *models.User)
 }
 
 // ResendEmailClient implements EmailClient using the Resend service
@@ -106,4 +108,46 @@ func (c *ResendEmailClient) SendTeamInvitationEmail(inviterName, teamName, invit
 	subject := fmt.Sprintf("%s has invited you to join %s team - join the team", inviterName, teamName)
 
 	c.SendAsync(toEmail, subject, htmlBody)
+}
+
+// SendSubscriptionConfirmationEmail sends a subscription confirmation email
+func (c *ResendEmailClient) SendSubscriptionConfirmationEmail(user *models.User) {
+	if user == nil {
+		c.logger.Error("Cannot send subscription confirmation email to nil user")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-subscription.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read subscription confirmation email template: %v", err)
+		return
+	}
+
+	htmlBody := strings.Replace(string(templateBytes), "{first_name}", user.FirstName, -1)
+
+	subject := "Welcome to Hopp Pro! 🎉"
+
+	c.SendAsync(user.Email, subject, htmlBody)
+}
+
+// SendSubscriptionCancellationEmail sends a subscription cancellation email
+func (c *ResendEmailClient) SendSubscriptionCancellationEmail(user *models.User) {
+	if user == nil {
+		c.logger.Error("Cannot send subscription cancellation email to nil user")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-unsubscribe.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read subscription cancellation email template: %v", err)
+		return
+	}
+
+	htmlBody := strings.Replace(string(templateBytes), "{first_name}", user.FirstName, -1)
+
+	subject := "We're sorry to see you go 😢"
+
+	c.SendAsync(user.Email, subject, htmlBody)
 }

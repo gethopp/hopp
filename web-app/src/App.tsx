@@ -11,6 +11,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { HoppSidebar } from "./components/sidebar";
 import { Settings } from "./pages/Settings";
 import { Teammates } from "./pages/Teammates";
+import { Subscription } from "./pages/Subscription";
 import { BACKEND_URLS, META } from "./constants";
 import { PostHogProvider } from "posthog-js/react";
 import { PostHogConfig } from "posthog-js";
@@ -91,6 +92,11 @@ const router = createBrowserRouter([
     ],
   },
   {
+    path: "/subscription/success",
+    element: <Providers requireAuth={true} />,
+    loader: () => redirect("/dashboard?subscription_success=true"),
+  },
+  {
     path: "/",
     element: <Providers requireAuth={true} />,
     children: [
@@ -109,6 +115,10 @@ const router = createBrowserRouter([
       {
         path: "teammates",
         element: <Teammates />,
+      },
+      {
+        path: "subscription",
+        element: <Subscription />,
       },
       {
         path: "login-app",
