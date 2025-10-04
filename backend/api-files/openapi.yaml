@@ -557,8 +557,8 @@ paths:
                   - cameraToken
                   - participant
 
-    patch:
-      summary: Modify room details
+    put:
+      summary: Update room details
       security:
         - BearerAuth: []
       parameters:
@@ -581,7 +581,7 @@ paths:
                   description: Name of the room
       responses:
         "200":
-          description: Room name updated retrieved successfully
+          description: Room updated successfully
           content:
             application/json:
               schema:

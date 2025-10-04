@@ -11,10 +11,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
@@ -113,18 +109,17 @@ export const Rooms = () => {
     }
   };
 
-  const { mutateAsync: updateRoom } = useMutation("patch", "/api/auth/room/{id}", undefined);
+  const { mutateAsync: updateRoom } = useMutation("put", "/api/auth/room/{id}", undefined);
 
   const handleUpdateRoom = async (room: Room, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
       const formData = new FormData(e.currentTarget);
-      const roomName = formData.get("roomName") as string;
-      console.log(e.currentTarget);
-      return;
+      const roomName = formData.get("name") as string;
 
-      if (!!room) {
+      if (!roomName) {
         toast.error("Provide room name");
+        return;
       }
 
       // Send JSON body as specified in OpenAPI
@@ -137,11 +132,15 @@ export const Rooms = () => {
         },
       });
 
-      // response will be of type Room (from your components.schemas)
-      console.log("Room name updated:", response);
+      // Close dialog and refresh rooms
+      setIsUpdateDialogOpen(false);
+      setSelectedRoom(null);
+      refetch();
+      toast.success("Room renamed successfully");
     } catch (error) {
       // Handle 401, 500, or other errors
       console.error("Failed to update room:", error);
+      toast.error("Failed to rename room");
     }
   };
 
@@ -216,7 +215,7 @@ export const Rooms = () => {
                   <Plus className="size-4 text-slate-500" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-[80%]">
+              <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
                 <DialogHeader>
                   <DialogTitle>Create new room</DialogTitle>
                   <DialogDescription>Create a new room for your team to collaborate on.</DialogDescription>
@@ -254,46 +253,27 @@ export const Rooms = () => {
                       <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
                         <MoreHorizontal className="size-3 m-0" />
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent className="muted">
+                      <DropdownMenuContent className="muted" align="end">
                         <DropdownMenuItem
                           className="text-xs [&>svg]:size-3.5"
-                          onClick={() => console.log("Copy room link clicked")}
+                          onClick={() => {
+                            setSelectedRoom(room);
+                            setIsUpdateDialogOpen(true);
+                          }}
                         >
-                          <HiMiniLink />
-                          Copy room link
+                          <HiOutlinePencil />
+                          Rename room
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="text-xs [&>svg]:size-3.5"
-                          onClick={() => console.log("Favorite room clicked")}
+                          className="text-xs [&>svg]:size-3.5 text-red-600"
+                          onClick={() => {
+                            setSelectedRoom(room);
+                            setIsDeleteDialogOpen(true);
+                          }}
                         >
-                          Favorite room
+                          <HiOutlineTrash />
+                          Delete room
                         </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuSub>
-                          <DropdownMenuSubTrigger className="text-xs [&>svg]:size-3.5">More</DropdownMenuSubTrigger>
-                          <DropdownMenuSubContent>
-                            <DropdownMenuItem
-                              className="text-xs [&>svg]:size-3.5"
-                              onClick={() => {
-                                setSelectedRoom(room);
-                                setIsUpdateDialogOpen(true);
-                              }}
-                            >
-                              <HiOutlinePencil />
-                              Rename room
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-xs [&>svg]:size-3.5"
-                              onClick={() => {
-                                setSelectedRoom(room);
-                                setIsDeleteDialogOpen(true);
-                              }}
-                            >
-                              <HiOutlineTrash />
-                              Delete room
-                            </DropdownMenuItem>
-                          </DropdownMenuSubContent>
-                        </DropdownMenuSub>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   }
@@ -301,7 +281,7 @@ export const Rooms = () => {
               ))}
           </div>
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-            <DialogContent>
+            <DialogContent container={document.getElementById("app-body")}>
               <DialogHeader>
                 <DialogTitle>Delete Room</DialogTitle>
                 <DialogDescription>
@@ -326,33 +306,26 @@ export const Rooms = () => {
             </DialogContent>
           </Dialog>
           <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
-            <DialogContent>
-              <form onSubmit={handleCreateRoom}>
+            <DialogContent container={document.getElementById("app-body")}>
+              <form onSubmit={(e) => selectedRoom && handleUpdateRoom(selectedRoom, e)}>
                 <DialogHeader>
                   <DialogTitle>Rename room</DialogTitle>
                 </DialogHeader>
                 <div className="grid gap-2">
-                  <Label htmlFor="room-name" className="text-xs text-slate-500 dark:text-slate-400">
-                    Room name
-                  </Label>
-                  <Input id="room-name" name="name" className="text-xs text-slate-500" defaultValue="Watercooler" />
+                  <Input
+                    id="room-name"
+                    name="name"
+                    className="text-xs text-slate-500"
+                    defaultValue={selectedRoom?.name}
+                  />
                 </div>
-                <DialogDescription>Anyone in your team can modify or remove this room.</DialogDescription>
+                <DialogDescription className="mt-4 mb-2">
+                  Anyone in your team can modify or remove this room.
+                </DialogDescription>
                 <DialogFooter>
                   <DialogClose asChild>
-                    <Button
-                      type="submit"
-                      className="text-xs"
-                      onClick={() => {
-                        // Handle delete logic here
-                        if (selectedRoom) {
-                          handleUpdateRoom(selectedRoom);
-                          setIsUpdateDialogOpen(false);
-                          setSelectedRoom(null);
-                        }
-                      }}
-                    >
-                      update room
+                    <Button type="submit" className="text-xs">
+                      Update room
                     </Button>
                   </DialogClose>
                 </DialogFooter>

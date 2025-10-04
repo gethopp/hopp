@@ -884,34 +884,8 @@ export interface paths {
         };
       };
     };
-    put?: never;
-    post?: never;
-    /** Get LiveKit tokens for joining the team's selected room */
-    delete: {
-      parameters: {
-        query?: never;
-        header?: never;
-        path: {
-          /** @description The ID of the room to delete */
-          id: string;
-        };
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description User successfully deleted (no content) */
-        204: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content?: never;
-        };
-      };
-    };
-    options?: never;
-    head?: never;
-    /** Modify room details */
-    patch: {
+    /** Update room details */
+    put: {
       parameters: {
         query?: never;
         header?: never;
@@ -930,7 +904,7 @@ export interface paths {
         };
       };
       responses: {
-        /** @description Room name updated retrieved successfully */
+        /** @description Room updated successfully */
         200: {
           headers: {
             [name: string]: unknown;
@@ -959,6 +933,32 @@ export interface paths {
         };
       };
     };
+    post?: never;
+    /** Get LiveKit tokens for joining the team's selected room */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description The ID of the room to delete */
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description User successfully deleted (no content) */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/auth/room/anonymous": {
