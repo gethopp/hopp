@@ -5,7 +5,7 @@ import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
-import { LiveKitRoom, useTracks, VideoTrack } from "@livekit/components-react";
+import { LiveKitRoom, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
@@ -194,7 +194,22 @@ function CameraWindow() {
   const [isSelfHidden, setIsSelfHidden] = useState(false);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
   const [isExpanded, setIsExpanded] = useState(false);
+  // this is to resolve the issue of audio sync playback
+const { localParticipant } = useLocalParticipant();
+const [micEnabled, setMicEnabled] = useState(false);
 
+useEffect(() => {
+  if (!localParticipant) return;
+
+  if (micEnabled) {
+    localParticipant.setMicrophoneEnabled(true, {
+      noiseSuppression: true,
+      echoCancellation: true,
+    });
+  } else {
+    localParticipant.setMicrophoneEnabled(false);
+  }
+}, [micEnabled]);
   useEffect(() => {
     // Set correct window size
     CameraWindowSize({ numOfTracks: 0, expansionFactor: isExpanded ? EXPANSION_FACTOR : 1 });
