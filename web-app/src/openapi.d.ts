@@ -974,7 +974,10 @@ export interface paths {
      */
     get: {
       parameters: {
-        query?: never;
+        query: {
+          /** @description The ID of the room to generate an anonymous link for */
+          room_id: string;
+        };
         header?: never;
         path?: never;
         cookie?: never;

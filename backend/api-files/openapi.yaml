@@ -624,6 +624,14 @@ paths:
       description: Get a link that will have an encoded token that will be used
       security:
         - BearerAuth: []
+      parameters:
+        - name: room_id
+          in: query
+          required: true
+          description: The ID of the room to generate an anonymous link for
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Link with encoded token retrieved successfully

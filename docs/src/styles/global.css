@@ -10,3 +10,7 @@
   --font-sans: "Geist", sans-serif;
   --font-mono: "Geist Mono", monospace;
 }
+
+code {
+  border-radius: 4px;
+}

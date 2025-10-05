@@ -668,9 +668,7 @@ func (h *AuthHandler) CreateRoom(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	var room models.Room
-
-	room = models.Room{
+	room := models.Room{
 		Name:   req.Name,
 		UserID: user.ID,
 		Team:   user.Team,
@@ -680,6 +678,9 @@ func (h *AuthHandler) CreateRoom(c echo.Context) error {
 	if err := h.DB.Create(&room).Error; err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
 	}
+
+	// Send Telegram notification for room creation
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("Room created: '%s' by user %s", room.Name, user.ID), h.Config)
 
 	return c.JSON(http.StatusOK, room)
 }
@@ -720,6 +721,9 @@ func (h *AuthHandler) UpdateRoom(c echo.Context) error {
 	if err := h.DB.Save(&room).Error; err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
 	}
+
+	// Send Telegram notification for room modification
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("Room modified: '%s' by user %s", room.Name, user.ID), h.Config)
 
 	return c.JSON(http.StatusOK, room)
 }
@@ -792,7 +796,7 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 // The generated token should be in the format:
 // /api/room/meet-redirect?token=<GENERATED_TOKEN>
 // The generated token will be a JWT token valid for 10 minutes with payload
-// the team id.
+// the team id and room id.
 func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
@@ -804,9 +808,28 @@ func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
 	}
 
+	// Get room ID from query parameter
+	roomID := c.QueryParam("room_id")
+	if roomID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Missing room_id parameter")
+	}
+
+	// Verify the room exists and user has access to it
+	var room models.Room
+	result := h.DB.Where("id = ?", roomID).First(&room)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if user can access the room (same team)
+	if room.TeamID == nil || *room.TeamID != *user.TeamID {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized access to room")
+	}
+
 	// Create custom claims for anonymous room access
 	claims := jwt.MapClaims{
 		"team_id": *user.TeamID,
+		"room_id": roomID,
 		"exp":     jwt.NewNumericDate(time.Now().Add(10 * time.Minute)), // 10-minute expiration
 		"iat":     jwt.NewNumericDate(time.Now()),                       // Issued at
 		"purpose": "anonymous_room",                                     // Purpose of the token
@@ -883,8 +906,26 @@ func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
 	}
 	teamID := uint(teamIDFloat)
 
-	// Generate a room name for the room
-	roomName := fmt.Sprintf("team-%d-room", teamID)
+	// Extract room ID
+	roomID, ok := claims["room_id"].(string)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid room ID in token")
+	}
+
+	// Verify the room exists and belongs to the team
+	var room models.Room
+	result := h.DB.Where("id = ?", roomID).First(&room)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if room belongs to the team
+	if room.TeamID == nil || *room.TeamID != teamID {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Room does not belong to team")
+	}
+
+	// Use the specific room ID as the room name
+	roomName := roomID
 
 	// Generate 4 random characters for anonymous user
 	randomChars := rand.Text()[:4]

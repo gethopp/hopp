@@ -28,13 +28,15 @@ import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useEffect, useMemo } from "react";
 import toast from "react-hot-toast";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
-import { useParticipants } from "@livekit/components-react";
+import { useParticipants, useRoomContext } from "@livekit/components-react";
+import { RoomEvent } from "livekit-client";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
 import { HiMiniLink } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
 import { useState } from "react";
+import doorImage from "@/assets/door.png";
 
 type Room = components["schemas"]["Room"];
 
@@ -53,6 +55,7 @@ export const Rooms = () => {
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
 
   const { useQuery } = useAPI();
@@ -122,8 +125,7 @@ export const Rooms = () => {
         return;
       }
 
-      // Send JSON body as specified in OpenAPI
-      const response = await updateRoom({
+      await updateRoom({
         body: { name: roomName },
         params: {
           path: {
@@ -132,7 +134,6 @@ export const Rooms = () => {
         },
       });
 
-      // Close dialog and refresh rooms
       setIsUpdateDialogOpen(false);
       setSelectedRoom(null);
       refetch();
@@ -209,7 +210,7 @@ export const Rooms = () => {
                 className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
               />
             </div>
-            <Dialog>
+            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="icon">
                   <Plus className="size-4 text-slate-500" />
@@ -229,7 +230,9 @@ export const Rooms = () => {
                   <DialogClose asChild>
                     <Button
                       onClick={() => {
-                        handleCreateRoom(document.getElementById("room-name")?.value);
+                        const input = document.getElementById("room-name") as HTMLInputElement;
+                        handleCreateRoom(input?.value || "");
+                        setIsCreateDialogOpen(false);
                       }}
                       className="text-xs"
                     >
@@ -240,9 +243,9 @@ export const Rooms = () => {
               </DialogContent>
             </Dialog>
           </div>
-          <div className="grid grid-cols-2 gap-2 w-full">
-            {filteredRooms &&
-              filteredRooms?.map((room) => (
+          {filteredRooms && filteredRooms.length > 0 ?
+            <div className="grid grid-cols-2 gap-2 w-full">
+              {filteredRooms?.map((room) => (
                 <RoomButton
                   onClick={() => handleJoinRoom(room)}
                   size="unsized"
@@ -279,7 +282,8 @@ export const Rooms = () => {
                   }
                 />
               ))}
-          </div>
+            </div>
+          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} />}
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
             <DialogContent container={document.getElementById("app-body")}>
               <DialogHeader>
@@ -338,19 +342,42 @@ export const Rooms = () => {
   );
 };
 
+const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void }) => {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+      <img src={doorImage} alt="No rooms" className="size-38 mb-6" />
+      <p className="text-xs text-slate-600 mb-6 max-w-sm leading-relaxed">
+        Think of Rooms as permanent, named meeting spots. They're great for your team's regular get-togethers like daily
+        stand-ups or mob programming sessions.
+      </p>
+      <div className="flex flex-col gap-2 items-center">
+        <Button onClick={onCreateRoomClick} className="text-sm">
+          Create room
+        </Button>
+        <a href="https://docs.hopp.so/rooms" target="_blank" className="text-xs text-slate-600">
+          Read docs
+        </a>
+      </div>
+    </div>
+  );
+};
+
 const SelectedRoom = ({ room }: { room: Room }) => {
   const { useMutation } = useAPI();
   const participants = useParticipants();
-  const { teammates, user, callTokens } = useStore();
+  const { teammates, user } = useStore();
+  const roomContext = useRoomContext();
 
-  const { mutateAsync: getRoomAnonymous, error: errorAnonymous } = useMutation(
-    "get",
-    "/api/auth/room/anonymous",
-    undefined,
-  );
+  const { mutateAsync: getRoomAnonymous } = useMutation("get", "/api/auth/room/anonymous", undefined);
 
   const handleInviteAnonymousUser = useCallback(async () => {
-    const redirectURL = await getRoomAnonymous({});
+    const redirectURL = await getRoomAnonymous({
+      params: {
+        query: {
+          room_id: room.id,
+        },
+      },
+    });
     if (!redirectURL || !redirectURL.redirect_url) {
       toast.error("Error generating link");
       return;
@@ -358,7 +385,25 @@ const SelectedRoom = ({ room }: { room: Room }) => {
     const link = `${BACKEND_URLS.BASE}${redirectURL.redirect_url}`;
     await writeText(link);
     toast.success("Link copied to clipboard");
-  }, [getRoomAnonymous]);
+  }, [getRoomAnonymous, room.id]);
+
+  // Listen for participant connection events and play sound when someone joins
+  useEffect(() => {
+    const handleParticipantConnected = (participant: any) => {
+      // Filter out video/camera tracks to only play sound for actual users
+      if (!participant.identity.includes("video") && !participant.identity.includes("camera")) {
+        sounds.callAccepted.play();
+      }
+    };
+
+    // Add event listener for participant connections
+    roomContext.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
+
+    // Cleanup event listener on component unmount
+    return () => {
+      roomContext.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
+    };
+  }, [roomContext]);
 
   // Parse participant identities and match with teammates
   const participantList = useMemo(() => {
