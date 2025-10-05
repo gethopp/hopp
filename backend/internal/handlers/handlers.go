@@ -238,6 +238,7 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		}
 		h.DB.Create(&team)
 		u.TeamID = &team.ID
+		u.IsAdmin = true
 	}
 
 	result := h.DB.Create(u)
