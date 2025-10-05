@@ -184,13 +184,6 @@ export function Dashboard() {
   const { useQuery, useMutation } = useAPI();
   const authToken = useHoppStore((store) => store.authToken);
 
-  // TODO: Combine useQueries into one, and merge
-  // the store from individual useState
-  const { data: user } = useQuery("get", "/api/auth/user", undefined, {
-    queryHash: `user-${authToken}`,
-    select: (data) => data,
-  });
-
   const { data: teammates } = useQuery("get", "/api/auth/teammates", undefined, {
     queryHash: `teammates-${authToken}`,
     select: (data) => data,
