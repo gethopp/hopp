@@ -247,7 +247,8 @@ export function ConnectedActions() {
           </div>
         </div>
       </div>
-      {/* <ListenToRemoteAudio /> */} diable to solve the issue related to sync audio playback
+    {/* Render remote audio only if camera is NOT enabled */}
+      {!callTokens?.hasCameraEnabled && <ListenToRemoteAudio />} diable to solve the issue related to sync audio playback
     </>
   );
 }
@@ -541,22 +542,7 @@ function CameraIcon({ micEnabled }: { micEnabled: boolean }) {
 
   const isDisabled = cameraDevices.length === 0;
 
-  // const handleCameraToggle = () => {
-  //   clickedCameraRef.current = true;
-  //   let newCameraEnabled = !cameraEnabled;
-  //   updateCallTokens({
-  //     ...callTokens,
-  //     hasCameraEnabled: newCameraEnabled,
-  //   });
-  //   if (!newCameraEnabled) {
-  //     const cameraTrack = localParticipant
-  //       .getTrackPublications()
-  //       .filter((track) => track.source === Track.Source.Camera)[0];
-  //     if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
-  //       localParticipant.unpublishTrack(cameraTrack.track);
-  //     }
-  //   }
-  // };
+
 
   const handleCameraToggle = () => {
   clickedCameraRef.current = true;
