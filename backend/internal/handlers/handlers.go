@@ -842,6 +842,7 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 	teamID := uint(invitation.TeamID)
 	user.TeamID = &teamID
 	user.Team = &invitation.Team
+	user.IsAdmin = false
 
 	if err := h.DB.Save(&user).Error; err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user team")
