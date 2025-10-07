@@ -47,7 +47,7 @@ enum RoomServiceCommand {
         width: u32,
         height: u32,
         use_av1: bool,
-    }
+    },
     PublishSharerLocation(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
@@ -66,11 +66,6 @@ enum RoomServiceCommandResult {
 pub enum RoomServiceError {
     #[error("Failed to create room: {0}")]
     CreateRoom(String),
-}
-
-
-#[derive(Debug, thiserror::Error)]
-pub enum PublishTrackError {
     #[error("Failed to publish track: {0}")]
     PublishTrack(String),
 }
@@ -440,10 +435,14 @@ async fn room_service_commands(
                 height,
                 use_av1,
             } => {
-                let mut inner_room = inner.room.lock().await;
+                let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
-                    log::warn!("room_service_commands: Room doesn't exist.");
-                    continue
+                    log::error!("room_service_commands: Room doesn't exist.");
+                    let res = tx.send(RoomServiceCommandResult::Failure);
+                    if let Err(e) = res {
+                        log::error!("room_service_commands: Failed to send result: {e:?}");
+                    }
+                    continue;
                 }
                 let room = inner_room.as_ref().unwrap();
 
