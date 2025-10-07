@@ -505,12 +505,13 @@ function ScreensharingEventListener({
 
       updateRole(newRole);
     }
+    
   }, [tracks]);
 
   return <div />;
 }
 
-function CameraIcon({ micEnabled }: { micEnabled: boolean }) {
+function CameraIcon() {
   const { updateCallTokens, callTokens } = useStore();
   const [retry, setRetry] = useState(0);
   const tracks = useTracks([Track.Source.Camera], {});
@@ -549,7 +550,7 @@ function CameraIcon({ micEnabled }: { micEnabled: boolean }) {
   const newCameraEnabled = !cameraEnabled;
   updateCallTokens({ ...callTokens, hasCameraEnabled: newCameraEnabled });
 
-  if (newCameraEnabled && micEnabled) {
+  if (newCameraEnabled) {
     // Publish a camera track with audio
     localParticipant.setMicrophoneEnabled(true, { noiseSuppression: true, echoCancellation: true });
   } else if (!newCameraEnabled) {
@@ -577,9 +578,14 @@ function CameraIcon({ micEnabled }: { micEnabled: boolean }) {
   useEffect(() => {
     if (tracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
+ // Update store
+    updateCallTokens({ cameraWindowOpen: true });
+    
     } else {
       // If there are 0 then close the window
       tauriUtils.closeCameraWindow();
+      // Update store
+    updateCallTokens({ cameraWindowOpen: false });
     }
 
     if (localParticipant) {
@@ -721,7 +727,7 @@ function MediaDevicesSettings() {
   return (
     <div className="flex flex-row gap-1 w-full">
       <MicrophoneIcon setMicEnabled={setMicEnabled} />
-      <CameraIcon micEnabled={micEnabled}/>
+      <CameraIcon />
       <ScreenShareIcon
         callTokens={callTokens}
         setCallTokens={setCallTokens}
