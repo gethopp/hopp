@@ -10,6 +10,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/livekit/protocol/auth"
+	"gorm.io/gorm"
 )
 
 func getTeamInfoRawJSON(accessToken string) ([]byte, error) {
@@ -159,19 +160,25 @@ func generateMeetRedirectToken(s *common.ServerState, roomName string, participa
 
 // GetAuthenticatedUser returns the authenticated user from the session
 // Returns nil and false if the user is not authenticated or not found
-func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
-	email, err := h.JwtIssuer.GetUserEmail(c)
+func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.User, bool) {
+	email, err := jwtIssuer.GetUserEmail(c)
 	if err != nil {
-		c.Logger().Error("Failed to get user email: " + err.Error())
 		return nil, false
 	}
 
 	// Fetch user from database
-	user := &models.User{}
-	result := h.DB.Where("email = ?", email).First(user)
-	if result.Error != nil || user.ID == "" {
+	user, err := models.GetUserByEmail(db, email)
+	if err != nil {
 		return nil, false
 	}
 
 	return user, true
+}
+
+func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
+	return getAuthenticatedUserFromJWTCommon(c, h.JwtIssuer, h.DB)
+}
+
+func (bh *BillingHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
+	return getAuthenticatedUserFromJWTCommon(c, bh.JwtIssuer, bh.DB)
 }

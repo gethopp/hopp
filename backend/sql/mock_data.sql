@@ -1,11 +1,12 @@
 -- Simple mock data for testing
 INSERT INTO
-    teams (id, name, created_at, updated_at)
+    teams (id, name, created_at, updated_at, is_manual_upgrade)
 SELECT
     1,
     'Dunder Mifflin',
     NOW(),
-    NOW()
+    NOW(),
+    true
 WHERE
     NOT EXISTS (
         SELECT

@@ -66,12 +66,63 @@ components:
               type: object
               additionalProperties: true
               nullable: true
+            is_pro:
+              type: boolean
+              description: Whether the user has an active paid subscription
+            is_trial:
+              type: boolean
+              description: Whether the user is currently in trial period
+            trial_ends_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: When the trial period ends (null if not in trial or has active subscription)
 
     Error:
       type: object
       properties:
         message:
           type: string
+
+    SubscriptionResponse:
+      type: object
+      required:
+        - status
+        - manual_upgrade
+        - is_admin
+      properties:
+        status:
+          type: string
+          enum: [active, canceled, past_due, trialing, incomplete]
+          description: Current subscription status
+        manual_upgrade:
+          type: boolean
+          description: Whether the team has been manually upgraded
+        current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+          description: End date of current billing period (null for manual upgrades or trialing)
+        cancel_at_period_end:
+          type: boolean
+          nullable: true
+          description: Whether subscription will cancel at period end (null for manual upgrades or trialing)
+        is_admin:
+          type: boolean
+          description: Whether the current user is a team admin
+
+    CreateCheckoutSessionRequest:
+      type: object
+      required:
+        - tier
+      properties:
+        tier:
+          type: string
+          enum: [paid]
+          description: Subscription tier to create checkout session for
+        price_id:
+          type: string
+          description: Optional Stripe price ID (uses environment default if not provided)
 
   securitySchemes:
     BearerAuth:
@@ -565,6 +616,139 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: Cannot change teams - user has teammates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/billing/subscription:
+    get:
+      summary: Get current subscription status
+      description: Returns the subscription status for the current user's team
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Subscription status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription:
+                    $ref: "#/components/schemas/SubscriptionResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/billing/create-checkout-session:
+    post:
+      summary: Create Stripe checkout session
+      description: Creates a Stripe checkout session for team subscription
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCheckoutSessionRequest"
+      responses:
+        "200":
+          description: Checkout session created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - checkout_url
+                  - session_id
+                properties:
+                  checkout_url:
+                    type: string
+                    description: URL to redirect user to Stripe checkout
+                  session_id:
+                    type: string
+                    description: Stripe checkout session ID
+        "400":
+          description: Bad request - invalid input or team already has active subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - only team admins can manage subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/billing/create-portal-session:
+    post:
+      summary: Create Stripe billing portal session
+      description: Creates a Stripe billing portal session for subscription management
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Portal session created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - portal_url
+                properties:
+                  portal_url:
+                    type: string
+                    description: URL to redirect user to Stripe billing portal
+        "400":
+          description: Bad request - user must be part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - only team admins can access billing portal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No subscription found
           content:
             application/json:
               schema:

@@ -243,6 +243,7 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		}
 		h.DB.Create(&team)
 		u.TeamID = &team.ID
+		u.IsAdmin = true
 	}
 
 	result := h.DB.Create(u)
@@ -366,7 +367,13 @@ func (h *AuthHandler) User(c echo.Context) error {
 		return c.String(http.StatusUnauthorized, "Unauthorized here")
 	}
 
-	return c.JSON(http.StatusOK, user)
+	// We need additional payload for subscription information
+	userWithSubscription, err := models.GetUserWithSubscription(h.DB, user)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, userWithSubscription)
 }
 
 func (h *AuthHandler) Teammates(c echo.Context) error {
@@ -840,6 +847,7 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 	teamID := uint(invitation.TeamID)
 	user.TeamID = &teamID
 	user.Team = &invitation.Team
+	user.IsAdmin = false
 
 	if err := h.DB.Save(&user).Error; err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user team")
