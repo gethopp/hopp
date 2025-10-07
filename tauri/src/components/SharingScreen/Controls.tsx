@@ -4,11 +4,12 @@ import { useSharingContext } from "@/windows/screensharing/context";
 import { TooltipContent, TooltipTrigger, Tooltip, TooltipProvider } from "../ui/tooltip";
 import { BiSolidJoystick } from "react-icons/bi";
 import useStore from "@/store/store";
-import { SegmentedControl } from "../ui/segmented-control";
+import { SegmentedControl, ClickAnimationButton } from "../ui/segmented-control";
 import { useState } from "react";
 
 export function ScreenSharingControls() {
-  const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
+  const { setIsSharingKeyEvents, setIsSharingMouse, clickAnimationEnabled, setClickAnimationEnabled } =
+    useSharingContext();
   const isRemoteControlEnabled = useStore((state) => state.callTokens?.isRemoteControlEnabled);
   const [remoteControlStatus, setRemoteControlStatus] = useState<string>("controlling");
 
@@ -23,27 +24,34 @@ export function ScreenSharingControls() {
     }
   };
 
+  const handleClickAnimationToggle = () => {
+    setClickAnimationEnabled(!clickAnimationEnabled);
+  };
+
   return (
     <TooltipProvider>
       <div className="w-full pt-2 flex flex-row items-center relative pointer-events-none">
         <div className="w-full flex justify-center">
-          <SegmentedControl
-            items={[
-              {
-                id: "controlling",
-                content: <HiOutlineCursorClick className="size-3" />,
-                tooltipContent: "Remote control",
-              },
-              {
-                id: "pointing",
-                content: <LiaHandPointerSolid className="size-3 -rotate-12" />,
-                tooltipContent: "Pointing",
-              },
-            ]}
-            value={remoteControlStatus}
-            onValueChange={handleRemoteControlChange}
-            className="pointer-events-auto"
-          />
+          <div className="flex flex-row gap-1 items-center">
+            <SegmentedControl
+              items={[
+                {
+                  id: "controlling",
+                  content: <HiOutlineCursorClick className="size-3" />,
+                  tooltipContent: "Remote control",
+                },
+                {
+                  id: "pointing",
+                  content: <LiaHandPointerSolid className="size-3 -rotate-12" />,
+                  tooltipContent: "Pointing",
+                },
+              ]}
+              value={remoteControlStatus}
+              onValueChange={handleRemoteControlChange}
+              className="pointer-events-auto"
+            />
+            <ClickAnimationButton enabled={clickAnimationEnabled} onToggle={handleClickAnimationToggle} />
+          </div>
         </div>
         {isRemoteControlEnabled === false && (
           <div className="absolute right-0">

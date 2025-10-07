@@ -70,6 +70,14 @@ export const PKeystroke = z.object({
 });
 export type TPKeystroke = z.infer<typeof PKeystroke>;
 
+export const PClickAnimation = z.object({
+  type: z.literal("ClickAnimation"),
+  payload: z.object({
+    enabled: z.boolean(),
+  }),
+});
+export type TPClickAnimation = z.infer<typeof PClickAnimation>;
+
 // WebSocket Message Types
 export const MessageType = z.enum([
   "success",

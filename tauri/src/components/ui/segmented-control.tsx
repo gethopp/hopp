@@ -4,6 +4,7 @@ import * as React from "react";
 import { motion, LayoutGroup } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { HiOutlineCursorArrowRipple } from "react-icons/hi2";
 
 interface SegmentedControlItem {
   id: string;
@@ -143,5 +144,49 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
 
 SegmentedControl.displayName = "SegmentedControl";
 
-export { SegmentedControl };
-export type { SegmentedControlProps, SegmentedControlItem };
+interface ClickAnimationButtonProps {
+  enabled: boolean;
+  onToggle: () => void;
+}
+
+const ClickAnimationButton = React.forwardRef<HTMLButtonElement, ClickAnimationButtonProps>(
+  ({ enabled, onToggle }, ref) => {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <motion.button
+            ref={ref}
+            onClick={onToggle}
+            whileTap={{ scale: 0.95 }}
+            className={cn("inline-flex p-0.5 bg-zinc-600 rounded-lg h-[28px] cursor-default pointer-events-auto")}
+          >
+            <div
+              className={cn(
+                "relative m-0 px-3 py-1 text-white text-xs leading-none bg-transparent border-none h-6 flex items-center",
+              )}
+            >
+              {enabled && (
+                <motion.div
+                  layoutId="ClickAnimationActive"
+                  className="absolute inset-0 z-1 bg-slate-300/50 rounded-md"
+                  style={{
+                    boxShadow: "0 1px 2px rgba(0,0,0,.1)",
+                  }}
+                />
+              )}
+              <span className="relative z-2">
+                <HiOutlineCursorArrowRipple className="size-3.5" />
+              </span>
+            </div>
+          </motion.button>
+        </TooltipTrigger>
+        <TooltipContent>Highlight clicks</TooltipContent>
+      </Tooltip>
+    );
+  },
+);
+
+ClickAnimationButton.displayName = "ClickAnimationButton";
+
+export { SegmentedControl, ClickAnimationButton };
+export type { SegmentedControlProps, SegmentedControlItem, ClickAnimationButtonProps };

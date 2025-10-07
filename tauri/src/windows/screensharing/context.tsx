@@ -3,9 +3,11 @@ import React, { createContext, useContext, useState, ReactNode } from "react";
 type SharingContextType = {
   isSharingMouse: boolean;
   isSharingKeyEvents: boolean;
+  clickAnimationEnabled: boolean;
   videoToken: string | null;
   setIsSharingMouse: (value: boolean) => void;
   setIsSharingKeyEvents: (value: boolean) => void;
+  setClickAnimationEnabled: (value: boolean) => void;
   setVideoToken: (value: string) => void;
   parentKeyTrap?: HTMLDivElement;
   setParentKeyTrap: (value: HTMLDivElement) => void;
@@ -28,6 +30,7 @@ type SharingProviderProps = {
 export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) => {
   const [isSharingMouse, setIsSharingMouse] = useState<boolean>(true);
   const [isSharingKeyEvents, setIsSharingKeyEvents] = useState<boolean>(true);
+  const [clickAnimationEnabled, setClickAnimationEnabled] = useState<boolean>(false);
   const [parentKeyTrap, setParentKeyTrap] = useState<HTMLDivElement | undefined>(undefined);
   const [videoToken, setVideoToken] = useState<string | null>(null);
 
@@ -36,8 +39,10 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
       value={{
         isSharingMouse,
         isSharingKeyEvents,
+        clickAnimationEnabled,
         setIsSharingMouse,
         setIsSharingKeyEvents,
+        setClickAnimationEnabled,
         parentKeyTrap,
         setParentKeyTrap,
         videoToken,
