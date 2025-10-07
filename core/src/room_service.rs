@@ -206,7 +206,7 @@ impl RoomService {
         &self,
         width: u32,
         height: u32,
-        use_av1: bool
+        use_av1: bool,
     ) -> Result<(), RoomServiceError> {
         log::info!("publish_track: {width:?}, {height:?}");
         let res = self
@@ -353,7 +353,7 @@ impl RoomService {
 /// * `CreateRoom` - Creates a new LiveKit room connection and sets up event handing.
 ///   If a room already exists, it will be closed first.
 ///
-/// * `PublishTrack` - Publishes a video track. The video track is configured with 
+/// * `PublishTrack` - Publishes a video track. The video track is configured with
 ///   VP9 codec and adaptive bitrate based on width.
 ///
 /// * `DestroyRoom` - Closes the current room connection and cleans up associated

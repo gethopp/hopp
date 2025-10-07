@@ -317,10 +317,7 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.create_room(
-            screenshare_input.token,
-            self.event_loop_proxy.clone(),
-        );
+        let res = room_service.create_room(screenshare_input.token, self.event_loop_proxy.clone());
         if let Err(error) = res {
             log::error!("screenshare: error creating room: {error:?}");
             drop(screen_capturer);
