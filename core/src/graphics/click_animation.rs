@@ -57,7 +57,7 @@ impl ClickAnimation {
     /// at the appropriate offset in the shared buffer.
     pub fn update_transform_buffer(&self, queue: &wgpu::Queue, transforms_buffer: &wgpu::Buffer) {
         queue.write_buffer(
-            &transforms_buffer,
+            transforms_buffer,
             self.transform_offset as wgpu::BufferAddress,
             bytemuck::cast_slice(&[self.position.get_transform_matrix()]),
         );
@@ -71,7 +71,7 @@ impl ClickAnimation {
     /// * `radius` - Current radius value for the animation
     pub fn update_radius(&self, queue: &wgpu::Queue, radius_buffer: &wgpu::Buffer, radius: f32) {
         queue.write_buffer(
-            &radius_buffer,
+            radius_buffer,
             self.radius_offset as wgpu::BufferAddress,
             bytemuck::cast_slice(&[radius]),
         );
@@ -96,8 +96,8 @@ impl ClickAnimation {
     ) {
         self.position
             .set_position(position.x as f32, position.y as f32);
-        self.update_transform_buffer(queue, &transforms_buffer);
-        self.update_radius(queue, &radius_buffer, 0.1);
+        self.update_transform_buffer(queue, transforms_buffer);
+        self.update_radius(queue, radius_buffer, 0.1);
         self.enabled_instant = Some(std::time::Instant::now());
     }
 
@@ -111,7 +111,7 @@ impl ClickAnimation {
     /// clears the enabled timestamp.
     pub fn disable(&mut self, queue: &wgpu::Queue, transforms_buffer: &wgpu::Buffer) {
         self.position.set_position(-100.0, -100.0);
-        self.update_transform_buffer(queue, &transforms_buffer);
+        self.update_transform_buffer(queue, transforms_buffer);
         self.enabled_instant = None;
     }
 
@@ -147,7 +147,7 @@ impl ClickAnimation {
             self.update_radius(queue, radius_buffer, radius);
         }
         if elapsed > 1000 {
-            self.disable(queue, &radius_buffer);
+            self.disable(queue, radius_buffer);
         }
         render_pass.set_bind_group(0, &self.texture.bind_group, &[]);
         render_pass.set_bind_group(1, transforms_bind_group, &[self.transform_offset]);
@@ -243,7 +243,7 @@ impl ClickAnimationRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         texture_format: wgpu::TextureFormat,
-        texture_path: &String,
+        texture_path: &str,
         window_size: Extent,
         scale: f64,
     ) -> Result<Self, OverlayError> {
@@ -440,7 +440,7 @@ impl ClickAnimationRenderer {
         let mut available_slots = VecDeque::new();
         for i in 0..MAX_ANIMATIONS {
             let click_animation = Self::create_click_animation(ClickAnimationCreateData {
-                texture_path: texture_path.clone(),
+                texture_path: texture_path.to_owned(),
                 scale,
                 device,
                 queue,
@@ -517,7 +517,7 @@ impl ClickAnimationRenderer {
             data.device,
             data.queue,
             &image_data,
-            &data.texture_bind_group_layout,
+            data.texture_bind_group_layout,
         )?;
 
         // Create vertex and index buffers for animation geometry
@@ -542,7 +542,7 @@ impl ClickAnimationRenderer {
 
         // Upload initial transform matrix to GPU
         data.queue.write_buffer(
-            &data.transforms_buffer,
+            data.transforms_buffer,
             transform_offset,
             bytemuck::cast_slice(&[point.get_transform_matrix()]),
         );
@@ -550,7 +550,7 @@ impl ClickAnimationRenderer {
         let radius_offset =
             (data.animations_created as wgpu::BufferAddress) * data.radius_buffer_entry_offset;
         data.queue.write_buffer(
-            &data.radius_buffer,
+            data.radius_buffer,
             radius_offset,
             bytemuck::cast_slice(&[0.0f32]),
         );
@@ -703,7 +703,7 @@ impl ClickAnimationRenderer {
                 break;
             }
 
-            let slot = front.unwrap().clone();
+            let slot = *front.unwrap();
             if self.click_animations[slot].enabled_instant.is_none() {
                 let front = self.used_slots.pop_front().unwrap();
                 self.available_slots.push_back(front);
