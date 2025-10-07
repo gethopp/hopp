@@ -157,7 +157,7 @@ function Window() {
         className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
       ></div>
       {!accessibilityPermission && (
-        <div className="flex flex-row items-center justify-center gap-2 px-2 py-2 mt-1">
+        <div className="flex flex-row items-center justify-center gap-2 px-4 py-2 mt-2">
           <span className="text-center text-base font-medium text-yellow-400">
             ⚠️ Accessibility permission is not granted, remote control will not work
           </span>
@@ -166,7 +166,7 @@ function Window() {
           </Button>
         </div>
       )}
-      <div className="flex flex-col items-start gap-2 px-2 py-2 mt-1">
+      <div className="flex flex-col items-start gap-2 px-4 py-2 mt-2">
         <span className="mr-2 small">Choose resolution:</span>
         <Select onValueChange={updateResolution} value={resolution}>
           <SelectTrigger className="w-[180px]">
@@ -182,7 +182,7 @@ function Window() {
         </Select>
       </div>
       <div
-        className={clsx("content px-2 pb-2 pt-[8px] overflow-auto gap-3", {
+        className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
           "h-full flex flex-col justify-center": hasClicked,
           "grid grid-cols-2 h-full items-start": !hasClicked,
         })}
@@ -208,7 +208,7 @@ function Window() {
         : content.map((item) => (
             <div
               key={item.content.id}
-              className="flex flex-col group items-start gap-2 cursor-pointer transition-all duration-300 hover:bg-slate-500 p-1 rounded-md"
+              className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-500 p-2 rounded-md"
               onClick={() => handleItemClick(item.content)}
             >
               <AspectRatio ratio={16 / 9}>
@@ -218,7 +218,7 @@ function Window() {
                   className="w-full max-h-full object-contain rounded-md group-hover:scale-[100.5%] transition-all duration-300 overflow-hidden bg-slate-600 bg-opacity-40"
                 />
               </AspectRatio>
-              <span className="text-center small">{`${item.title}`}</span>
+              <span className="text-center small ml-0.5">{`${item.title}`}</span>
             </div>
           ))
         }
