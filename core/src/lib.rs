@@ -335,7 +335,7 @@ impl<'a> Application<'a> {
             log::error!("screenshare: error publishing track: {error:?}");
             drop(screen_capturer);
             self.stop_screenshare();
-            return Err(ServerError::RoomCreationError);
+            return Err(ServerError::PublishTrackError);
         }
         log::info!("screenshare: track published");
         let buffer_source = room_service.get_buffer_source();
