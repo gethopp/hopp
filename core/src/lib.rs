@@ -643,7 +643,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controller_visible(visible, sid.as_str());
+                cursor_controller.set_controller_pointer_enabled(visible, sid.as_str());
             }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
@@ -818,16 +818,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
                 gfx.enable_click_animation(position);
             }
-            UserEvent::ClickAnimation(visible, sid) => {
-                log::debug!("user_event: click animation: {visible:?} {sid}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none click animation");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controller_click_animation(visible, sid.as_str());
-            }
         }
     }
 
@@ -914,7 +904,6 @@ pub enum UserEvent {
     ControllerTakesScreenShare,
     ParticipantInControl(String),
     SentryMetadata(SentryMetadata),
-    ClickAnimation(bool, String),
 }
 
 pub struct RenderEventLoop {

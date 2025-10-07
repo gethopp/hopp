@@ -1,4 +1,4 @@
-use crate::events::{ClickAnimation, ClientEvent, ClientPoint, MouseClickData, WheelDelta};
+use crate::events::{ClientEvent, ClientPoint, MouseClickData, MouseVisibleData, WheelDelta};
 use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
@@ -63,8 +63,8 @@ async fn send_mouse_click(room: &Room, x: f64, y: f64, button: u32) -> io::Resul
 
 /// Sends a ClickAnimation event via the LiveKit data channel.
 async fn send_click_animation(room: &Room, enabled: bool) -> io::Result<()> {
-    let click_animation_data = ClickAnimation { enabled };
-    let event = ClientEvent::ClickAnimation(click_animation_data);
+    let click_animation_data = MouseVisibleData { visible: enabled };
+    let event = ClientEvent::MouseVisible(click_animation_data);
     let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
     room.local_participant()
         .publish_data(DataPacket {
@@ -1397,5 +1397,345 @@ pub async fn test_click_animation() -> io::Result<()> {
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     println!("Screenshare session stopped.");
 
+    Ok(())
+}
+
+/// Test cursor transitions with remote control enabled - Animation toggling
+/// Expected behavior:
+/// - Move: normal cursor (no control)
+/// - Click: take control
+/// - Move: give control back -> pointy finger
+/// - Enable animation: pointy finger still
+/// - Move: pointy finger still
+/// - Click: click animation plays
+/// - Disable animation: back to pointy finger
+/// - Move: pointy finger
+/// - Click: take control again (no animation)
+pub async fn test_transitions_remote_enabled_with_animation() -> io::Result<()> {
+    println!("\n=== TEST: Remote Control Enabled - Animation Toggling ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("TestUser");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for textures...");
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+
+    let mut x = 0.3;
+    let y = 0.3;
+    let step = 0.15;
+
+    // Move (normal cursor, no control)
+    println!("\n1. Move - Expected: normal cursor (no control)");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (take control)
+    println!("\n2. Click - Expected: take control");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (give control back, pointy finger)
+    println!("\n3. Move - Expected: give control back -> pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Enable animation (pointy finger still)
+    println!("\n4. Enable animation - Expected: pointy finger still");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n5. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (click animation)
+    println!("\n6. Click - Expected: click animation plays");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable animation (back to pointy finger)
+    println!("\n7. Disable animation - Expected: back to pointy finger");
+    send_click_animation(&room, false).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n8. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (take control, no animation)
+    println!("\n9. Click - Expected: take control (no animation)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
+
+/// Test cursor transitions with remote control toggling
+/// Expected behavior:
+/// - Move: normal cursor (no control)
+/// - Click: take control
+/// - Move: give control back -> pointy finger
+/// - Disable remote control: pointy finger still (but clicks won't work)
+/// - Move: pointy finger
+/// - Click: noop (no action, stays pointy finger)
+pub async fn test_transitions_remote_enabled_then_disabled() -> io::Result<()> {
+    println!("\n=== TEST: Remote Control Enabled Then Disabled ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("TestUser");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for textures...");
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+
+    let mut x = 0.3;
+    let y = 0.4;
+    let step = 0.15;
+
+    // Move (normal cursor, no control)
+    println!("\n1. Move - Expected: normal cursor (no control)");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (take control)
+    println!("\n2. Click - Expected: take control");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (give control back, pointy finger)
+    println!("\n3. Move - Expected: give control back -> pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable remote control
+    println!("\n4. Disable ControllerCursorEnabled - Expected: pointy finger (but no interaction)");
+    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (still pointy finger)
+    println!("\n5. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (noop - no action)
+    println!("\n6. Click - Expected: noop (no action, stays pointy finger)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
+
+/// Test cursor transitions with remote control disabled from start
+/// Expected behavior:
+/// - Move: pointy finger (remote control disabled)
+/// - Click: noop (no action)
+/// - Move: pointy finger
+/// - Enable animation: pointy finger with animation enabled
+/// - Move: pointy finger
+/// - Click: click animation plays (but doesn't take control)
+/// - Disable animation: back to pointy finger
+/// - Move: pointy finger
+/// - Click: noop (no action)
+pub async fn test_transitions_remote_disabled_with_animation() -> io::Result<()> {
+    println!("\n=== TEST: Remote Control Disabled - Animation Toggling ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    // Disable remote control before connecting
+    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("TestUser");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for textures...");
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+
+    let mut x = 0.3;
+    let y = 0.5;
+    let step = 0.15;
+
+    // Move (pointy finger)
+    println!("\n1. Move - Expected: pointy finger (remote control disabled)");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (noop)
+    println!("\n2. Click - Expected: noop (no action)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n3. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Enable animation
+    println!("\n4. Enable animation - Expected: pointy finger with animation enabled");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n5. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (animation plays but doesn't take control)
+    println!("\n6. Click - Expected: click animation plays (but doesn't take control)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable animation
+    println!("\n7. Disable animation - Expected: back to pointy finger");
+    send_click_animation(&room, false).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n8. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (noop)
+    println!("\n9. Click - Expected: noop (no action)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
+
+/// Test cursor transitions with remote control toggling and animation
+/// Expected behavior:
+/// - Move: normal cursor (no control)
+/// - Click: take control
+/// - Move: give control back -> pointy finger
+/// - Enable animation: pointy finger with animation
+/// - Move: pointy finger
+/// - Click: click animation plays
+/// - Disable remote control: pointy finger (clicks won't work)
+/// - Move: pointy finger
+/// - Click: noop (animation doesn't play, no control taken)
+/// - Disable animation: pointy finger
+/// - Move: pointy finger
+/// - Click: noop (no action)
+pub async fn test_transitions_mixed_remote_and_animation() -> io::Result<()> {
+    println!("\n=== TEST: Mixed Remote Control and Animation Transitions ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("TestUser");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for textures...");
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
+
+    let mut x = 0.1;
+    let y = 0.6;
+    let step = 0.12;
+
+    // Move (normal cursor)
+    println!("\n1. Move - Expected: normal cursor (no control)");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (take control)
+    println!("\n2. Click - Expected: take control");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (give control, pointy finger)
+    println!("\n3. Move - Expected: give control back -> pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Enable animation
+    println!("\n4. Enable animation - Expected: pointy finger with animation");
+    send_click_animation(&room, true).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n5. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (animation plays)
+    println!("\n6. Click - Expected: click animation plays");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable remote control
+    println!("\n7. Disable ControllerCursorEnabled - Expected: pointy finger (clicks won't work)");
+    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (noop - animation doesn't play, no control)
+    println!("\n8. Click - Expected: noop (animation doesn't play, no control taken)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable remote control
+    println!("\n9. Enable ControllerCursorEnabled - Expected: pointy finger (clicks won't work)");
+    cursor_socket.send_message(Message::ControllerCursorEnabled(true))?;
+    sleep(Duration::from_millis(1000)).await;
+
+    println!("\n10. Click - Expected: click animation plays");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n11. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Disable animation
+    println!("\n12. Disable animation - Expected: pointy finger");
+    send_click_animation(&room, false).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Move (pointy finger)
+    println!("\n13. Move - Expected: pointy finger");
+    smooth_cursor_move(&room, x, y, x + step, y).await?;
+    x += step;
+    sleep(Duration::from_millis(1000)).await;
+
+    // Click (noop)
+    println!("\n14. Click - Expected: noop (no action)");
+    send_mouse_click(&room, x, y, 0).await?;
+    sleep(Duration::from_millis(1000)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     Ok(())
 }

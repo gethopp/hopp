@@ -322,7 +322,7 @@ struct ControllerCursor {
      */
     clicked: bool,
     enabled: bool,
-    click_animation: bool,
+    pointer_enabled: bool,
     has_control: bool,
     visible_name: String,
     sid: String,
@@ -341,7 +341,7 @@ impl ControllerCursor {
             pointer_cursor,
             clicked: false,
             enabled,
-            click_animation: false,
+            pointer_enabled: false,
             has_control: false,
             visible_name,
             sid,
@@ -354,23 +354,23 @@ impl ControllerCursor {
             global_position,
             local_position,
             self.has_control,
-            self.enabled
+            self.enabled_control_cursor()
         );
         self.control_cursor.set_position(
             global_position,
             local_position,
-            !self.has_control && self.enabled,
+            !self.has_control && self.enabled_control_cursor(),
         );
         self.pointer_cursor.set_position(
             global_position,
             local_position,
-            !self.has_control && !self.enabled,
+            !self.has_control && !self.enabled_control_cursor(),
         );
     }
 
     fn show(&mut self) {
         self.has_control = false;
-        if self.enabled {
+        if self.enabled_control_cursor() {
             self.control_cursor.show();
         } else {
             self.pointer_cursor.show();
@@ -378,12 +378,16 @@ impl ControllerCursor {
     }
 
     fn hide(&mut self) {
-        if self.enabled {
+        if self.enabled_control_cursor() {
             self.has_control = true;
             self.control_cursor.hide();
         } else {
             self.pointer_cursor.hide();
         }
+    }
+
+    fn enabled_control_cursor(&self) -> bool {
+        self.enabled && !self.pointer_enabled
     }
 
     fn enabled(&self) -> bool {
@@ -393,7 +397,7 @@ impl ControllerCursor {
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
 
-        if enabled {
+        if enabled && !self.pointer_enabled {
             self.control_cursor.show();
             self.pointer_cursor.hide();
         } else {
@@ -419,7 +423,7 @@ impl ControllerCursor {
             return;
         }
 
-        if self.enabled {
+        if self.enabled && !self.pointer_enabled {
             self.control_cursor.draw(render_pass, gfx);
         } else {
             self.pointer_cursor.draw(render_pass, gfx);
@@ -430,12 +434,20 @@ impl ControllerCursor {
         self.has_control
     }
 
-    fn set_click_animation(&mut self, click_animation: bool) {
-        self.click_animation = click_animation;
+    fn set_pointer_enabled(&mut self, pointer_enabled: bool) {
+        self.pointer_enabled = pointer_enabled;
+
+        if pointer_enabled {
+            self.pointer_cursor.show();
+            self.control_cursor.hide();
+        } else if self.enabled {
+            self.pointer_cursor.hide();
+            self.control_cursor.show();
+        }
     }
 
-    fn click_animation(&self) -> bool {
-        self.click_animation
+    fn pointer_enabled(&self) -> bool {
+        self.pointer_enabled
     }
 }
 
@@ -919,9 +931,9 @@ impl CursorController {
                 continue;
             }
 
-            if !controller.enabled() {
+            if !controller.enabled() || controller.pointer_enabled() {
                 log::info!("mouse_click_controller: controller is disabled.");
-                if click_data.down && controller.click_animation() {
+                if click_data.down && controller.pointer_enabled() {
                     if let Err(e) =
                         self.event_loop_proxy
                             .send_event(UserEvent::EnableClickAnimation(Position {
@@ -1025,7 +1037,7 @@ impl CursorController {
                 continue;
             }
 
-            if !controller.enabled() {
+            if !controller.enabled() || controller.pointer_enabled() {
                 log::info!("scroll_controller: controller is disabled.");
                 break;
             }
@@ -1100,6 +1112,18 @@ impl CursorController {
         self.controllers_cursors_enabled = enabled;
         for controller in controllers_cursors.iter_mut() {
             controller.set_enabled(enabled);
+
+            if controller.has_control() {
+                controller.show();
+                let mut sharer_cursor = self
+                    .remote_control
+                    .as_ref()
+                    .unwrap()
+                    .sharer_cursor
+                    .lock()
+                    .unwrap();
+                sharer_cursor.hide();
+            }
         }
     }
 
@@ -1109,17 +1133,10 @@ impl CursorController {
     ///
     /// # Parameters
     ///
-    /// * `visible` - Whether to show full cursor (true) or minimal pointer (false)
+    /// * `enabled` - Whether to show full cursor (true) or minimal pointer (false)
     /// * `sid` - Session ID identifying which controller to modify
-    pub fn set_controller_visible(&mut self, visible: bool, sid: &str) {
-        log::info!("set_controller_visible: {visible} {sid}");
-
-        if !self.controllers_cursors_enabled {
-            log::info!(
-                "set_controller_visible: sharer has disabled controllers' cursors this is a noop."
-            );
-            return;
-        }
+    pub fn set_controller_pointer_enabled(&mut self, enabled: bool, sid: &str) {
+        log::info!("set_controller_pointer_enabled: {enabled} {sid}");
 
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -1127,7 +1144,20 @@ impl CursorController {
                 continue;
             }
 
-            controller.set_enabled(visible);
+            if controller.has_control() {
+                log::info!("set_controller_pointer_enabled: controller {sid} has control, give control back to sharer.");
+                controller.show();
+                let mut sharer_cursor = self
+                    .remote_control
+                    .as_ref()
+                    .unwrap()
+                    .sharer_cursor
+                    .lock()
+                    .unwrap();
+                sharer_cursor.hide();
+            }
+
+            controller.set_pointer_enabled(enabled);
             break;
         }
     }
@@ -1159,38 +1189,6 @@ impl CursorController {
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             controller.draw(render_pass, gfx);
-        }
-    }
-
-    pub fn set_controller_click_animation(&mut self, click_animation: bool, sid: &str) {
-        log::info!("set_controller_click_animation: {click_animation} {sid}");
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
-                continue;
-            }
-
-            if controller.has_control() {
-                log::info!("set_controller_click_animation: controller {sid} has control, give control back to sharer.");
-                controller.show();
-                let mut sharer_cursor = self
-                    .remote_control
-                    .as_ref()
-                    .unwrap()
-                    .sharer_cursor
-                    .lock()
-                    .unwrap();
-                sharer_cursor.hide();
-            }
-
-            // We disable the controller in order to not allow scrolling
-            // and taking control. Also we want the cursor to change.
-            if self.controllers_cursors_enabled {
-                controller.set_enabled(!click_animation);
-            }
-            controller.set_click_animation(click_animation);
-            break;
         }
     }
 }

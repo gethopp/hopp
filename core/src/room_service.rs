@@ -691,15 +691,6 @@ pub struct RemoteControlEnabled {
     pub enabled: bool,
 }
 
-/// Contains the click animation enabled/disabled state.
-///
-/// This structure is used to communicate whether click animation is currently enabled in the room.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ClickAnimation {
-    /// Whether click animation is currently enabled
-    pub enabled: bool,
-}
-
 /// Represents all possible client events that can be sent between room participants.
 ///
 /// This enum defines the different types of events that can be transmitted through
@@ -725,8 +716,6 @@ pub enum ClientEvent {
     TickResponse(TickData),
     /// Remote control enabled/disabled status change
     RemoteControlEnabled(RemoteControlEnabled),
-    /// Enable/disable click animation for a remote controller
-    ClickAnimation(ClickAnimation),
 }
 
 async fn handle_room_events(
@@ -817,8 +806,6 @@ async fn handle_room_events(
                             Ok(())
                         }
                     }
-                    ClientEvent::ClickAnimation(click_animation) => event_loop_proxy
-                        .send_event(UserEvent::ClickAnimation(click_animation.enabled, sid)),
                     _ => Ok(()),
                 };
                 if let Err(e) = res {

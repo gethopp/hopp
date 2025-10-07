@@ -10,7 +10,6 @@ import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
 import { cn, getAbsolutePosition, getRelativePosition } from "@/lib/utils";
 import {
-  TPClickAnimation,
   TPKeystroke,
   TPMouseClick,
   TPMouseMove,
@@ -80,7 +79,7 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  let { isSharingMouse, isSharingKeyEvents, parentKeyTrap, clickAnimationEnabled } = useSharingContext();
+  let { isSharingMouse, isSharingKeyEvents, parentKeyTrap } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
   const [mouse, mouseRef] = useMouse();
@@ -357,26 +356,18 @@ const ConsumerComponent = React.memo(() => {
     if (videoElement) {
       const payload: TPMouseVisible = {
         type: "MouseVisible",
-        payload: { visible: isSharingMouse },
-      };
-      localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-    }
-
-    if (videoElement) {
-      const payload: TPClickAnimation = {
-        type: "ClickAnimation",
-        payload: { enabled: clickAnimationEnabled },
+        payload: { visible: !isSharingMouse },
       };
       localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
     }
 
     if (videoElement) {
       videoElement.addEventListener("mousemove", handleMouseMove);
+      videoElement.addEventListener("mousedown", handleMouseDown);
     }
 
     if (videoElement && isSharingMouse) {
       videoElement.addEventListener("wheel", handleWheel);
-      videoElement.addEventListener("mousedown", handleMouseDown);
       videoElement.addEventListener("mouseup", handleMouseUp);
       videoElement.addEventListener("contextmenu", handleContextMenu);
     }
@@ -390,7 +381,7 @@ const ConsumerComponent = React.memo(() => {
         videoElement.removeEventListener("contextmenu", handleContextMenu);
       }
     };
-  }, [isSharingMouse, updateMouseControls, clickAnimationEnabled]);
+  }, [isSharingMouse, updateMouseControls]);
 
   /**
    * Keyboard sharing logic

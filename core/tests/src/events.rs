@@ -54,11 +54,6 @@ pub struct RemoteControlEnabled {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ClickAnimation {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum ClientEvent {
     MouseMove(ClientPoint),
@@ -70,5 +65,4 @@ pub enum ClientEvent {
     Tick(TickData),
     TickResponse(TickData),
     RemoteControlEnabled(RemoteControlEnabled),
-    ClickAnimation(ClickAnimation),
 }

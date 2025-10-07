@@ -4,12 +4,11 @@ import { useSharingContext } from "@/windows/screensharing/context";
 import { TooltipContent, TooltipTrigger, Tooltip, TooltipProvider } from "../ui/tooltip";
 import { BiSolidJoystick } from "react-icons/bi";
 import useStore from "@/store/store";
-import { SegmentedControl, ClickAnimationButton } from "../ui/segmented-control";
+import { SegmentedControl } from "../ui/segmented-control";
 import { useState } from "react";
 
 export function ScreenSharingControls() {
-  const { setIsSharingKeyEvents, setIsSharingMouse, clickAnimationEnabled, setClickAnimationEnabled } =
-    useSharingContext();
+  const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
   const isRemoteControlEnabled = useStore((state) => state.callTokens?.isRemoteControlEnabled);
   const [remoteControlStatus, setRemoteControlStatus] = useState<string>("controlling");
 
@@ -22,10 +21,6 @@ export function ScreenSharingControls() {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
     }
-  };
-
-  const handleClickAnimationToggle = () => {
-    setClickAnimationEnabled(!clickAnimationEnabled);
   };
 
   return (
@@ -50,7 +45,6 @@ export function ScreenSharingControls() {
               onValueChange={handleRemoteControlChange}
               className="pointer-events-auto"
             />
-            <ClickAnimationButton enabled={clickAnimationEnabled} onToggle={handleClickAnimationToggle} />
           </div>
         </div>
         {isRemoteControlEnabled === false && (
