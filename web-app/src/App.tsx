@@ -16,6 +16,7 @@ import { BACKEND_URLS, META } from "./constants";
 import { PostHogProvider } from "posthog-js/react";
 import { PostHogConfig } from "posthog-js";
 import { InvitationHandler } from "./pages/InvitationHandler";
+import { ColorModeProvider } from "@/components/ui/color-mode";
 
 const options: Partial<PostHogConfig> = {
   api_host: "https://eu.i.posthog.com",
@@ -53,16 +54,18 @@ const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boo
       <PostHogProvider apiKey="phc_qOumHIIkywfbcmxjoI84orWP5Wo2oZVamh83bOUeF5x" options={options}>
         <QueryClientProvider client={queryClient}>
           <QueryProvider>
-            <ReactQueryDevtools initialIsOpen={false} />
-            {!authToken && <Outlet />}
-            {authToken && (
-              <SidebarProvider>
-                <HoppSidebar />
-                <main className="p-8 w-full">
-                  <Outlet />
-                </main>
-              </SidebarProvider>
-            )}
+            <ColorModeProvider>
+              <ReactQueryDevtools initialIsOpen={false} />
+              {!authToken && <Outlet />}
+              {authToken && (
+                <SidebarProvider>
+                  <HoppSidebar />
+                  <main className="p-8 w-full">
+                    <Outlet />
+                  </main>
+                </SidebarProvider>
+              )}
+            </ColorModeProvider>
           </QueryProvider>
         </QueryClientProvider>
       </PostHogProvider>

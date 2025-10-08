@@ -13,6 +13,7 @@ import Logo from "@/assets/Hopp.png";
 import { Button } from "./ui/button";
 import { resetAllStores, useHoppStore } from "@/store/store";
 import { useAPI } from "@/hooks/useQueryClients";
+import { ColorModeButton } from "@/components/ui/color-mode-button";
 
 const items = [
   {
@@ -82,16 +83,19 @@ export function HoppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <Button
-          variant="outline"
-          className="w-full flex flex-row justify-start max-w-min items-start gap-2"
-          onClick={() => {
-            resetAllStores();
-            setAuthToken(null);
-          }}
-        >
-          <HiArrowRightStartOnRectangle /> Logout
-        </Button>
+        <div className="flex items-center gap-2 px-2">
+          <ColorModeButton />
+          <Button
+            variant="outline"
+            className="flex flex-row justify-start items-start gap-2"
+            onClick={() => {
+              resetAllStores();
+              setAuthToken(null);
+            }}
+          >
+            <HiArrowRightStartOnRectangle /> Logout
+          </Button>
+        </div>
       </SidebarFooter>
     </Sidebar>
   );
