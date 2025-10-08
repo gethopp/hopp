@@ -184,7 +184,7 @@ function Window() {
       <div
         className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
           "h-full flex flex-col justify-center": hasClicked,
-          "grid grid-cols-2 h-full": !hasClicked,
+          "grid grid-cols-2 h-full items-start": !hasClicked,
         })}
       >
         {hasEmptyContentFromBackend ?
