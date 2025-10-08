@@ -20,7 +20,7 @@ const tiers = [
     name: "Cracked teams",
     id: "tier-cracked",
     href: "#",
-    priceMonthly: "$5",
+    priceMonthly: "$8",
     description: "Perfect for engineering teams who want to ship faster and collaborate better.",
     features: [
       "Unlimited pair programming sessions",
