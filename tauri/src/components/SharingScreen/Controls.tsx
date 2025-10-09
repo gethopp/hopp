@@ -6,6 +6,7 @@ import { BiSolidJoystick } from "react-icons/bi";
 import useStore from "@/store/store";
 import { SegmentedControl } from "../ui/segmented-control";
 import { useState } from "react";
+import { CustomIcons } from "../ui/icons";
 
 export function ScreenSharingControls() {
   const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
@@ -37,7 +38,7 @@ export function ScreenSharingControls() {
                 },
                 {
                   id: "pointing",
-                  content: <LiaHandPointerSolid className="size-3 -rotate-12" />,
+                  content: <CustomIcons.PointerClick className="size-3.5 -rotate-12 text-white" />,
                   tooltipContent: "Pointing",
                 },
               ]}
