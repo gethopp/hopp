@@ -15,7 +15,8 @@
   "devDependencies": {
     "openapi-typescript": "^7.4.4",
     "prettier": "^3.5.1",
-    "pretty-quick": "^4.0.0"
+    "pretty-quick": "^4.0.0",
+    "typescript": "^5.2.2"
   },
   "workspaces": [
     "tauri",
