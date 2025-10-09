@@ -286,6 +286,8 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/user", auth.User)
 	protectedAPI.PUT("/update-user-name", auth.UpdateName)
 	protectedAPI.GET("/teammates", auth.Teammates)
+	protectedAPI.DELETE("/teammates/:userId", auth.RemoveTeammate)
+
 	protectedAPI.GET("/websocket", handlers.CreateWSHandler(&s.ServerState))
 	protectedAPI.GET("/get-invite-uuid", auth.GetInviteUUID)
 	protectedAPI.POST("/change-team/:uuid", auth.ChangeTeam)
