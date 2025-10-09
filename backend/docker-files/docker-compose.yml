@@ -17,7 +17,7 @@ services:
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=hopp
     ports:
-      - '5433:5432'
+      - '5432:5432'
     volumes:
       - ./docker_data/postgres:/var/lib/postgresql/data
 
