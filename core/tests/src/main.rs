@@ -56,6 +56,16 @@ enum CursorTest {
     WindowEdges,
     /// Test concurrent scrolling
     ConcurrentScrolling,
+    /// Click animation
+    ClickAnimation,
+    /// Test transitions: Remote enabled with animation toggling
+    TransitionsRemoteEnabledAnimation,
+    /// Test transitions: Remote enabled then disabled
+    TransitionsRemoteEnabledThenDisabled,
+    /// Test transitions: Remote disabled with animation
+    TransitionsRemoteDisabledAnimation,
+    /// Test transitions: Mixed remote control and animation
+    TransitionsMixed,
 }
 
 #[tokio::main]
@@ -118,6 +128,26 @@ async fn main() -> io::Result<()> {
                 CursorTest::ConcurrentScrolling => {
                     println!("Running concurrent scrolling test...");
                     remote_cursor::test_concurrent_scrolling().await?;
+                }
+                CursorTest::ClickAnimation => {
+                    println!("Running click animation test...");
+                    remote_cursor::test_click_animation().await?;
+                }
+                CursorTest::TransitionsRemoteEnabledAnimation => {
+                    println!("Running transitions test: Remote enabled with animation...");
+                    remote_cursor::test_transitions_remote_enabled_with_animation().await?;
+                }
+                CursorTest::TransitionsRemoteEnabledThenDisabled => {
+                    println!("Running transitions test: Remote enabled then disabled...");
+                    remote_cursor::test_transitions_remote_enabled_then_disabled().await?;
+                }
+                CursorTest::TransitionsRemoteDisabledAnimation => {
+                    println!("Running transitions test: Remote disabled with animation...");
+                    remote_cursor::test_transitions_remote_disabled_with_animation().await?;
+                }
+                CursorTest::TransitionsMixed => {
+                    println!("Running transitions test: Mixed remote and animation...");
+                    remote_cursor::test_transitions_mixed_remote_and_animation().await?;
                 }
             }
             println!("Cursor test finished.");

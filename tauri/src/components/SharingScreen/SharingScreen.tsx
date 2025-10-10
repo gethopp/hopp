@@ -209,6 +209,21 @@ const ConsumerComponent = React.memo(() => {
     return () => clearInterval(interval);
   }, []);
 
+  // Apply cursor ripple effect function
+  const applyCursorRippleEffect = (e: MouseEvent) => {
+    const ripple = document.createElement("div");
+
+    ripple.className = "click-ripple";
+    document.body.appendChild(ripple);
+
+    ripple.style.left = `${e.clientX - 10}px`;
+    ripple.style.top = `${e.clientY - 10}px`;
+    ripple.style.animation = "click-ripple-effect 0.8s ease-out forwards";
+    ripple.onanimationend = () => {
+      document.body.removeChild(ripple);
+    };
+  };
+
   /**
    * Currently returning the last screen share track
    * If there are multiple screen share tracks, and some are "white"
@@ -284,6 +299,11 @@ const ConsumerComponent = React.memo(() => {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
+        // Add click pulse when NOT sharing mouse (pointing mode)
+        if (!isSharingMouse) {
+          applyCursorRippleEffect(e);
+        }
+
         const payload: TPMouseClick = {
           type: "MouseClick",
           payload: {
@@ -356,18 +376,18 @@ const ConsumerComponent = React.memo(() => {
     if (videoElement) {
       const payload: TPMouseVisible = {
         type: "MouseVisible",
-        payload: { visible: isSharingMouse },
+        payload: { visible: !isSharingMouse },
       };
       localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
     }
 
     if (videoElement) {
       videoElement.addEventListener("mousemove", handleMouseMove);
+      videoElement.addEventListener("mousedown", handleMouseDown);
     }
 
     if (videoElement && isSharingMouse) {
       videoElement.addEventListener("wheel", handleWheel);
-      videoElement.addEventListener("mousedown", handleMouseDown);
       videoElement.addEventListener("mouseup", handleMouseUp);
       videoElement.addEventListener("contextmenu", handleContextMenu);
     }

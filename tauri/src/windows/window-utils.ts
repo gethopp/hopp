@@ -64,7 +64,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
       hiddenTitle: true,
       titleBarStyle: "overlay",
       resizable: true,
-      alwaysOnTop: false,
+      alwaysOnTop: true,
       visible: true,
       title: "Content picker",
     });

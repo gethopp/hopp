@@ -6,6 +6,7 @@ import { BiSolidJoystick } from "react-icons/bi";
 import useStore from "@/store/store";
 import { SegmentedControl } from "../ui/segmented-control";
 import { useState } from "react";
+import { CustomIcons } from "../ui/icons";
 
 export function ScreenSharingControls() {
   const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
@@ -27,23 +28,25 @@ export function ScreenSharingControls() {
     <TooltipProvider>
       <div className="w-full pt-2 flex flex-row items-center relative pointer-events-none">
         <div className="w-full flex justify-center">
-          <SegmentedControl
-            items={[
-              {
-                id: "controlling",
-                content: <HiOutlineCursorClick className="size-3" />,
-                tooltipContent: "Remote control",
-              },
-              {
-                id: "pointing",
-                content: <LiaHandPointerSolid className="size-3 -rotate-12" />,
-                tooltipContent: "Pointing",
-              },
-            ]}
-            value={remoteControlStatus}
-            onValueChange={handleRemoteControlChange}
-            className="pointer-events-auto"
-          />
+          <div className="flex flex-row gap-1 items-center">
+            <SegmentedControl
+              items={[
+                {
+                  id: "controlling",
+                  content: <HiOutlineCursorClick className="size-3" />,
+                  tooltipContent: "Remote control",
+                },
+                {
+                  id: "pointing",
+                  content: <CustomIcons.PointerClick className="size-3.5 -rotate-12 text-white" />,
+                  tooltipContent: "Pointing",
+                },
+              ]}
+              value={remoteControlStatus}
+              onValueChange={handleRemoteControlChange}
+              className="pointer-events-auto"
+            />
+          </div>
         </div>
         {isRemoteControlEnabled === false && (
           <div className="absolute right-0">
