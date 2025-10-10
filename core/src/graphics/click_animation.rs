@@ -143,6 +143,8 @@ impl ClickAnimation {
         let elapsed = enabled_instant.elapsed().as_millis();
         let time_offset = 300;
         if elapsed > time_offset {
+            // We want the radius to reach up to 0.1 + 0.3. We got
+            // 2333 by (1000 - 300) / 0.3.
             let radius = radius_start + (elapsed - time_offset) as f32 / 2333.0;
             self.update_radius(queue, radius_buffer, radius);
         }
@@ -193,9 +195,9 @@ pub struct ClickAnimationRenderer {
     /// Bind group for accessing the radius buffer
     pub radius_bind_group: wgpu::BindGroup,
     /// Sender for communicating animation enable requests to the render thread
-    pub clik_animation_position_sender: std::sync::mpsc::Sender<Position>,
+    pub click_animation_position_sender: std::sync::mpsc::Sender<Position>,
     /// Receiver for animation enable requests (only accessed from render thread)
-    pub clik_animation_position_receiver: std::sync::mpsc::Receiver<Position>,
+    pub click_animation_position_receiver: std::sync::mpsc::Receiver<Position>,
     /// Array of all click animation instances
     pub click_animations: Vec<ClickAnimation>,
     /// Queue of available (inactive) animation slots
@@ -346,7 +348,6 @@ impl ClickAnimationRenderer {
                     count: None,
                 }],
             });
-        log::info!("aligned_radius_buffer_size: {}", aligned_radius_buffer_size);
         let radius_whole_buffer_size =
             aligned_radius_buffer_size * MAX_ANIMATIONS as wgpu::BufferAddress;
         let radius_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -469,8 +470,8 @@ impl ClickAnimationRenderer {
             radius_buffer,
             radius_buffer_entry_offset: aligned_radius_buffer_size,
             radius_bind_group,
-            clik_animation_position_sender: sender,
-            clik_animation_position_receiver: receiver,
+            click_animation_position_sender: sender,
+            click_animation_position_receiver: receiver,
             click_animations,
             available_slots,
             used_slots: VecDeque::new(),
@@ -643,7 +644,7 @@ impl ClickAnimationRenderer {
     /// where it will be processed on the next draw call. This allows animations
     /// to be triggered from any thread safely.
     pub fn enable_click_animation(&mut self, position: Position) {
-        if let Err(e) = self.clik_animation_position_sender.send(position) {
+        if let Err(e) = self.click_animation_position_sender.send(position) {
             log::error!("enable_click_animation: error sending position: {e:?}");
         }
     }
@@ -664,7 +665,7 @@ impl ClickAnimationRenderer {
     /// them to the available pool once they complete.
     pub fn draw(&mut self, render_pass: &mut wgpu::RenderPass, queue: &wgpu::Queue) {
         // Drain click animation enable requests.
-        while let Ok(position) = self.clik_animation_position_receiver.try_recv() {
+        while let Ok(position) = self.click_animation_position_receiver.try_recv() {
             if self.available_slots.is_empty() {
                 log::warn!("enable_click_animation: available_slots is empty");
                 break;
