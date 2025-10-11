@@ -55,7 +55,6 @@ type Actions = {
   reset: () => void;
   setCalling: (calling: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
-  // setRoom: (room: components["schemas"]["Room"] | null) => void;
   updateCallTokens: (tokens: Partial<CallState>) => void;
 };
 
@@ -69,7 +68,6 @@ const initialState: State = {
   teammates: null,
   calling: null,
   callTokens: null,
-  // room: null,
 };
 
 /**
@@ -128,10 +126,6 @@ const useStore = create<State & Actions>()(
       set((state) => {
         state.socketConnected = connected;
       }),
-    // setRoom: (room) =>
-    //   set((state) => {
-    //     state.room = room;
-    //   }),
     reset: () =>
       set((state) => {
         // First clear the auth token to prevent re-fetching
