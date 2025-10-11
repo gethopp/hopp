@@ -126,7 +126,10 @@ export const PCallTokensMessage = z.object({
 
 export const PRejectCallMessage = z.object({
   type: z.literal("call_reject"),
-  payload: z.object({ caller_id: z.string() }),
+  payload: z.object({
+    caller_id: z.string(),
+    reject_reason: z.enum(["in-call", "rejected"]).optional(),
+  }),
 });
 
 export const PErrorMessage = z.object({

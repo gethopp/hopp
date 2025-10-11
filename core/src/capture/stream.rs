@@ -89,7 +89,6 @@ fn get_excluded_application_pids() -> Vec<u64> {
             }
         }
     }
-    log::info!("get_excluded_application_pids: {pids:?}");
     pids
 }
 
@@ -102,6 +101,7 @@ fn create_capture_callback(
     failures_count: Arc<Mutex<u64>>,
 ) -> impl Fn(CaptureResult, DesktopFrame) {
     let capture_buffer = Arc::new(Mutex::new(NV12Buffer::new(0, 0)));
+    let stream_failed = Arc::new(Mutex::new(false));
     move |result: CaptureResult, frame: DesktopFrame| {
         match result {
             CaptureResult::ErrorTemporary => {
@@ -110,8 +110,17 @@ fn create_capture_callback(
             }
             CaptureResult::ErrorPermanent => {
                 log::info!("Capture frame, permanent error");
+
+                let mut stream_failed = stream_failed.lock().unwrap();
+                if *stream_failed {
+                    return;
+                }
+
+                log::info!("Capture frame, permanent error, incrementing failures count");
+
                 let mut failures_count = failures_count.lock().unwrap();
                 *failures_count += 1;
+                *stream_failed = true;
                 let res = tx.send(StreamRuntimeMessage::Failed);
                 if let Err(e) = res {
                     log::error!("Failed to send Failed message: {e}");
@@ -344,6 +353,7 @@ impl Stream {
         }
         let capturer = capturer.unwrap();
         let apps_to_exclude = get_excluded_application_pids();
+        log::info!("Stream::new: apps_to_exclude: {apps_to_exclude:?}");
         capturer.set_excluded_applications(apps_to_exclude);
         Ok(Stream {
             capturer: Arc::new(Mutex::new(capturer)),

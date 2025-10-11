@@ -43,7 +43,7 @@ export function SignInSuccessModal() {
 
       // Configure Tally with user's email as hidden field
       window.TallyConfig = {
-        formId: "nPeOk0",
+        formId: "nGMylz",
         popup: {
           width: 700,
           layout: "modal",

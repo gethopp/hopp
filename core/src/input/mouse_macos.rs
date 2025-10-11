@@ -51,6 +51,8 @@ impl MouseObserver {
 
         /* We run the event tap in separate thread to avoid blocking and getting blocked by the main thread. */
         let event_tap_thread = std::thread::spawn(move || {
+            let tap_disabled = Arc::new(Mutex::new(false));
+            let tap_disabled_clone = tap_disabled.clone();
             let mouse_tap = CGEventTap::new(
                 CGEventTapLocation::HID,
                 CGEventTapPlacement::HeadInsertEventTap,
@@ -139,6 +141,7 @@ impl MouseObserver {
                         CGEventType::TapDisabledByTimeout => {
                             log::error!("Tap disabled by timeout");
                             sentry_utils::upload_logs_event("Tap disabled by timeout".to_string());
+                            *tap_disabled_clone.lock().unwrap() = true;
                         }
                         _ => {
                             log::debug!("Any other event received");
@@ -197,6 +200,12 @@ impl MouseObserver {
                         std::time::Duration::from_millis(EVENT_TAP_DURATION_MS),
                         false,
                     );
+                }
+                let mut tap_disabled = tap_disabled.lock().unwrap();
+                if *tap_disabled {
+                    log::info!("MouseObserver::new: re enable tap");
+                    mouse_tap.enable();
+                    *tap_disabled = false;
                 }
             }
 

@@ -27,6 +27,11 @@ const BITRATE_2048: u64 = 3_500_000; // 3.5 Mbps
 const BITRATE_2560: u64 = 5_000_000; // 5 Mbps
 const BITRATE_DEFAULT: u64 = 8_000_000; // 8 Mbps
 
+const AV1_BITRATE_1920: u64 = 1_500_000; // 1.5 Mbps
+const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
+const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
+const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
+
 // Resolution thresholds
 const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
@@ -36,9 +41,12 @@ const WIDTH_THRESHOLD_2560: u32 = 2560;
 enum RoomServiceCommand {
     CreateRoom {
         token: String,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
+    },
+    PublishTrack {
         width: u32,
         height: u32,
-        event_loop_proxy: EventLoopProxy<UserEvent>,
+        use_av1: bool,
     },
     PublishSharerLocation(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -58,6 +66,8 @@ enum RoomServiceCommandResult {
 pub enum RoomServiceError {
     #[error("Failed to create room: {0}")]
     CreateRoom(String),
+    #[error("Failed to publish track: {0}")]
+    PublishTrack(String),
 }
 
 /*
@@ -145,8 +155,6 @@ impl RoomService {
     /// # Arguments
     ///
     /// * `token` - The token to use to connect to the room
-    /// * `width` - The width of the video track
-    /// * `height` - The height of the video track
     /// * `event_loop_proxy` - The event loop proxy to send events to
     ///
     /// # Returns
@@ -156,17 +164,13 @@ impl RoomService {
     pub fn create_room(
         &self,
         token: String,
-        width: u32,
-        height: u32,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<(), RoomServiceError> {
-        log::info!("create_room: {token:?}, {width:?}, {height:?}");
+        log::info!("create_room");
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::CreateRoom {
                 token,
-                width,
-                height,
                 event_loop_proxy,
             });
         if let Err(e) = res {
@@ -181,6 +185,49 @@ impl RoomService {
                 "Failed to create room".to_string(),
             )),
             Err(e) => Err(RoomServiceError::CreateRoom(format!(
+                "Failed to receive result: {e:?}"
+            ))),
+        }
+    }
+
+    /// Publishes a video track, this will block until the room is created.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - The width of the video track
+    /// * `height` - The height of the video track
+    /// * `use_av1` - If av1 codec is being used
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - The track was published successfully
+    /// * `Err(())` - The track was not published successfully
+    pub fn publish_track(
+        &self,
+        width: u32,
+        height: u32,
+        use_av1: bool,
+    ) -> Result<(), RoomServiceError> {
+        log::info!("publish_track: {width:?}, {height:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishTrack {
+                width,
+                height,
+                use_av1,
+            });
+        if let Err(e) = res {
+            return Err(RoomServiceError::PublishTrack(format!(
+                "Failed to send command: {e:?}"
+            )));
+        }
+        let res = self.service_command_res_rx.recv();
+        match res {
+            Ok(RoomServiceCommandResult::Success) => Ok(()),
+            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
+                "Failed to publish track".to_string(),
+            )),
+            Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
         }
@@ -303,9 +350,11 @@ impl RoomService {
 ///
 /// # Commands Handled
 ///
-/// * `CreateRoom` - Creates a new LiveKit room connection, publishes a video track,
-///   and sets up event handling. If a room already exists, it will be closed first.
-///   The video track is configured with VP9 codec and adaptive bitrate based on width.
+/// * `CreateRoom` - Creates a new LiveKit room connection and sets up event handing.
+///   If a room already exists, it will be closed first.
+///
+/// * `PublishTrack` - Publishes a video track. The video track is configured with
+///   VP9 codec and adaptive bitrate based on width.
 ///
 /// * `DestroyRoom` - Closes the current room connection and cleans up associated
 ///   resources including the buffer source.
@@ -340,8 +389,6 @@ async fn room_service_commands(
             // TODO: Break this into create room and publish track commands
             RoomServiceCommand::CreateRoom {
                 token,
-                width,
-                height,
                 event_loop_proxy,
             } => {
                 {
@@ -376,6 +423,29 @@ async fn room_service_commands(
                 /* Spawn thread for handling livekit data events. */
                 tokio::spawn(handle_room_events(rx, event_loop_proxy, user_sid));
 
+                let mut inner_room = inner.room.lock().await;
+                *inner_room = Some(room);
+                let res = tx.send(RoomServiceCommandResult::Success);
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to send result: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishTrack {
+                width,
+                height,
+                use_av1,
+            } => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::error!("room_service_commands: Room doesn't exist.");
+                    let res = tx.send(RoomServiceCommandResult::Failure);
+                    if let Err(e) = res {
+                        log::error!("room_service_commands: Failed to send result: {e:?}");
+                    }
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+
                 let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
                 let track = LocalVideoTrack::create_video_track(
                     VIDEO_TRACK_NAME,
@@ -383,11 +453,18 @@ async fn room_service_commands(
                 );
 
                 /* Have different max_bitrate based on width. */
-                let max_bitrate = match width {
-                    WIDTH_THRESHOLD_1920 => BITRATE_1920,
-                    WIDTH_THRESHOLD_2048 => BITRATE_2048,
-                    WIDTH_THRESHOLD_2560 => BITRATE_2560,
-                    _ => BITRATE_DEFAULT,
+                let (av1_bitrate, vp9_bitrate) = match width {
+                    WIDTH_THRESHOLD_1920 => (AV1_BITRATE_1920, BITRATE_1920),
+                    WIDTH_THRESHOLD_2048 => (AV1_BITRATE_2048, BITRATE_2048),
+                    WIDTH_THRESHOLD_2560 => (AV1_BITRATE_2560, BITRATE_2560),
+                    _ => (AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
+                };
+
+                let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
+                let video_codec = if use_av1 {
+                    VideoCodec::AV1
+                } else {
+                    VideoCodec::VP9
                 };
 
                 let res = room
@@ -396,7 +473,7 @@ async fn room_service_commands(
                         LocalTrack::Video(track),
                         TrackPublishOptions {
                             source: TrackSource::Screenshare,
-                            video_codec: VideoCodec::VP9,
+                            video_codec,
                             video_encoding: Some(VideoEncoding {
                                 max_bitrate,
                                 max_framerate: MAX_FRAMERATE,
@@ -406,6 +483,7 @@ async fn room_service_commands(
                         },
                     )
                     .await;
+
                 if let Err(e) = res {
                     log::error!("room_service_command: Failed to publish track: {e:?}");
                     let res = tx.send(RoomServiceCommandResult::Failure);
@@ -415,10 +493,9 @@ async fn room_service_commands(
                     continue;
                 }
 
-                let mut inner_room = inner.room.lock().await;
-                *inner_room = Some(room);
                 let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
                 *inner_buffer_source = Some(buffer_source);
+
                 let res = tx.send(RoomServiceCommandResult::Success);
                 if let Err(e) = res {
                     log::error!("room_service_commands: Failed to send result: {e:?}");
@@ -516,7 +593,6 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::IterateParticipants => {
-                log::info!("room_service_commands: Iterating participants");
                 let room = inner.room.lock().await;
                 if room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -524,7 +600,10 @@ async fn room_service_commands(
                 }
                 let room = room.as_ref().unwrap();
                 for participant in room.remote_participants() {
-                    log::info!("room_service_commands: Participant: {participant:?}");
+                    log::info!(
+                        "room_service_commands: Participant: {}",
+                        participant.1.sid()
+                    );
 
                     let name = participant.1.name();
                     if participant.0.as_str().contains("audio")
@@ -547,9 +626,6 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::PublishParticipantInControl(participant) => {
-                log::info!(
-                    "room_service_commands: Publishing participant in control: {participant:?}"
-                );
                 let room = inner.room.lock().await;
                 if room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -798,7 +874,10 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantConnected(participant) => {
-                log::info!("handle_room_events: Participant connected: {participant:?}");
+                log::info!(
+                    "handle_room_events: Participant connected: {}",
+                    participant.sid()
+                );
 
                 let name = participant.name();
                 let participant_id = participant.identity().as_str().to_string();
@@ -822,7 +901,10 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantDisconnected(participant) => {
-                log::info!("handle_room_events: Participant disconnected: {participant:?}");
+                log::info!(
+                    "handle_room_events: Participant disconnected: {}",
+                    participant.sid()
+                );
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
                     ParticipantData {
@@ -836,14 +918,19 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::TrackPublished {
-                publication,
+                publication: _,
                 participant,
             } => {
-                log::info!("handle_room_events: Track published: {publication:?}, {participant:?}");
-                let name = participant.name();
+                log::info!(
+                    "handle_room_events: Track published: from {}",
+                    participant.sid()
+                );
                 let participant_id = participant.identity().as_str().to_string();
                 if participant_id.contains("video") {
-                    log::info!("handle_room_events: Controller {name} takes screen share");
+                    log::info!(
+                        "handle_room_events: Controller {} takes screen share",
+                        participant.sid()
+                    );
                     if let Err(e) =
                         event_loop_proxy.send_event(UserEvent::ControllerTakesScreenShare)
                     {

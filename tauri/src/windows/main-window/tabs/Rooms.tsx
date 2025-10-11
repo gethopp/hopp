@@ -70,9 +70,6 @@ export const Rooms = () => {
     refetchInterval: 30_000,
     retry: true,
     queryHash: `rooms-${authToken}`,
-    // select: (data) => {
-    //   setRooms(data);
-    // },
   });
 
   const { useMutation } = useAPI();
@@ -165,6 +162,7 @@ export const Rooms = () => {
           isRoomCall: true,
           timeStarted: new Date(),
           hasAudioEnabled: true,
+          hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           cameraTrackId: null,

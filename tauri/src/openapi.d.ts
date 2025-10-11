@@ -1143,6 +1143,321 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/teammates/{userId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Remove a teammate from your team
+     * @description Removes a user from the team and automatically creates a new solo team for them. The removed user becomes an admin of their new team and can continue using Hopp. Admins cannot remove themselves.
+     */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description UUID of the user to remove from the team */
+          userId: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Teammate removed successfully */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Bad request - missing userId, cannot remove yourself, or cannot remove last admin */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - user is not an admin or target user is not in your team */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description User not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/billing/subscription": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get current subscription status
+     * @description Returns the subscription status for the current user's team
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Subscription status retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              subscription?: components["schemas"]["SubscriptionResponse"];
+            };
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/billing/create-checkout-session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Stripe checkout session
+     * @description Creates a Stripe checkout session for team subscription
+     */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["CreateCheckoutSessionRequest"];
+        };
+      };
+      responses: {
+        /** @description Checkout session created successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @description URL to redirect user to Stripe checkout */
+              checkout_url: string;
+              /** @description Stripe checkout session ID */
+              session_id: string;
+            };
+          };
+        };
+        /** @description Bad request - invalid input or team already has active subscription */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - only team admins can manage subscriptions */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/billing/create-portal-session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Stripe billing portal session
+     * @description Creates a Stripe billing portal session for subscription management
+     */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Portal session created successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @description URL to redirect user to Stripe billing portal */
+              portal_url: string;
+            };
+          };
+        };
+        /** @description Bad request - user must be part of a team */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - only team admins can access billing portal */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description No subscription found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1174,6 +1489,15 @@ export interface components {
       metadata?: {
         [key: string]: unknown;
       } | null;
+      /** @description Whether the user has an active paid subscription */
+      is_pro?: boolean;
+      /** @description Whether the user is currently in trial period */
+      is_trial?: boolean;
+      /**
+       * Format: date-time
+       * @description When the trial period ends (null if not in trial or has active subscription)
+       */
+      trial_ends_at?: string | null;
     };
     Room: {
       /** Format: uuid */
@@ -1183,6 +1507,33 @@ export interface components {
     };
     Error: {
       message?: string;
+    };
+    SubscriptionResponse: {
+      /**
+       * @description Current subscription status
+       * @enum {string}
+       */
+      status: "active" | "canceled" | "past_due" | "trialing" | "incomplete";
+      /** @description Whether the team has been manually upgraded */
+      manual_upgrade: boolean;
+      /**
+       * Format: date-time
+       * @description End date of current billing period (null for manual upgrades or trialing)
+       */
+      current_period_end?: string | null;
+      /** @description Whether subscription will cancel at period end (null for manual upgrades or trialing) */
+      cancel_at_period_end?: boolean | null;
+      /** @description Whether the current user is a team admin */
+      is_admin: boolean;
+    };
+    CreateCheckoutSessionRequest: {
+      /**
+       * @description Subscription tier to create checkout session for
+       * @enum {string}
+       */
+      tier: "paid";
+      /** @description Optional Stripe price ID (uses environment default if not provided) */
+      price_id?: string;
     };
   };
   responses: never;

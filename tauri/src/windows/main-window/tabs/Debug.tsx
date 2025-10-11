@@ -75,7 +75,7 @@ export const Debug = () => {
                 timeStarted: new Date(),
                 // hasAudioEnabled: true,
                 hasAudioEnabled: false,
-                hasVideoEnabled: false,
+                hasCameraEnabled: false,
                 isRemoteControlEnabled: true,
                 cameraTrackId: null,
               });

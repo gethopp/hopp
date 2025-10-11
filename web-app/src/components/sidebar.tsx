@@ -8,10 +8,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { HiHome, HiCog6Tooth, HiUserGroup, HiArrowRightStartOnRectangle } from "react-icons/hi2";
+import { HiHome, HiCog6Tooth, HiUserGroup, HiArrowRightStartOnRectangle, HiCreditCard } from "react-icons/hi2";
 import Logo from "@/assets/Hopp.png";
 import { Button } from "./ui/button";
 import { resetAllStores, useHoppStore } from "@/store/store";
+import { useAPI } from "@/hooks/useQueryClients";
 
 const items = [
   {
@@ -34,6 +35,31 @@ const items = [
 export function HoppSidebar() {
   const setAuthToken = useHoppStore((state) => state.setAuthToken);
 
+  const { useQuery } = useAPI();
+  const authToken = useHoppStore((store) => store.authToken);
+
+  // TODO: add user object in store
+  const { data: user } = useQuery("get", "/api/auth/user", undefined, {
+    queryHash: `user-${authToken}`,
+    select: (data) => data,
+    enabled: !!authToken,
+    refetchInterval: 10_000,
+  });
+
+  // Add subscription item for admin users
+  const navigationItems = [
+    ...items,
+    ...(user?.is_admin ?
+      [
+        {
+          title: "Subscription",
+          url: "/subscription",
+          icon: HiCreditCard,
+        },
+      ]
+    : []),
+  ];
+
   return (
     <Sidebar className="px-1 py-3 bg-sidebar">
       <SidebarHeader>
@@ -42,7 +68,7 @@ export function HoppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            {items.map((item) => (
+            {navigationItems.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton asChild>
                   <a href={item.url}>

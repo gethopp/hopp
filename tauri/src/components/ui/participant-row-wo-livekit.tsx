@@ -6,7 +6,7 @@ import { socketService } from "@/services/socket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
-import { TCallRequestMessage, TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TCallRequestMessage, TWebSocketMessage } from "@/payloads";
 import useStore, { ParticipantRole } from "@/store/store";
 import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
@@ -68,9 +68,16 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
 
       switch (data.type) {
         case "call_reject":
-          toast.error(`${props.user.first_name} rejected your call`, {
-            duration: 2500,
-          });
+          const { payload } = data as TRejectCallMessage;
+          if (payload.reject_reason == "in-call") {
+            toast.error(`${props.user.first_name} is already in a call`, {
+              duration: 2500,
+            });
+          } else {
+            toast.error(`${props.user.first_name} rejected your call`, {
+              duration: 2500,
+            });
+          }
           setCalling(null);
           sounds.ringing.stop();
           sounds.unavailable.play();
@@ -87,6 +94,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.success(`${props.user.first_name} accepted your call`, {
             duration: 1500,
           });
+          tauriUtils.callStarted(props.user.id);
           break;
         case "call_tokens":
           setCalling(null);
@@ -97,6 +105,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             ...data.payload,
             timeStarted: new Date(),
             hasAudioEnabled: true,
+            hasCameraEnabled: false,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
             cameraTrackId: null,

@@ -4,8 +4,8 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
-use crate::input::mouse::CursorController;
 use crate::utils::geometry::Extent;
+use crate::{input::mouse::CursorController, utils::geometry::Position};
 use image::GenericImageView;
 use log::error;
 use std::sync::Arc;
@@ -22,6 +22,13 @@ use marker::MarkerRenderer;
 #[path = "cursor.rs"]
 pub mod cursor;
 use cursor::{Cursor, CursorsRenderer};
+
+#[path = "click_animation.rs"]
+pub mod click_animation;
+use click_animation::ClickAnimationRenderer;
+
+#[path = "point.rs"]
+pub mod point;
 
 /// Errors that can occur during overlay graphics operations.
 #[derive(Error, Debug)]
@@ -128,6 +135,9 @@ pub struct GraphicsContext<'a> {
 
     /// Renderer for corner markers indicating overlay boundaries
     marker_renderer: MarkerRenderer,
+
+    /// Renderer for click animations
+    click_animation_renderer: ClickAnimationRenderer,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -160,7 +170,7 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
     pub fn new(window: Window, texture_path: String, scale: f64) -> OverlayResult<Self> {
-        log::info!("GraphicsContext::new: path: {texture_path:?} scale: {scale:?}");
+        log::info!("GraphicsContext::new");
         let size = window.inner_size();
         let window_arc = Arc::new(window);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -275,6 +285,18 @@ impl<'a> GraphicsContext<'a> {
             scale,
         )?;
 
+        let click_animation_renderer = ClickAnimationRenderer::create(
+            &device,
+            &queue,
+            surface_config.format,
+            &texture_path,
+            Extent {
+                width: size.width as f64,
+                height: size.height as f64,
+            },
+            scale,
+        )?;
+
         Ok(Self {
             surface,
             device,
@@ -284,6 +306,7 @@ impl<'a> GraphicsContext<'a> {
             #[cfg(target_os = "windows")]
             _direct_composition: direct_composition,
             marker_renderer,
+            click_animation_renderer,
         })
     }
 
@@ -345,7 +368,7 @@ impl<'a> GraphicsContext<'a> {
     /// If frame acquisition fails (e.g., surface lost), the method logs the error
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
-    pub fn draw(&self, cursor_controller: &CursorController) {
+    pub fn draw(&mut self, cursor_controller: &CursorController) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -385,6 +408,8 @@ impl<'a> GraphicsContext<'a> {
         cursor_controller.draw(&mut render_pass, self);
 
         self.marker_renderer.draw(&mut render_pass);
+        self.click_animation_renderer
+            .draw(&mut render_pass, &self.queue);
 
         drop(render_pass);
 
@@ -402,6 +427,16 @@ impl<'a> GraphicsContext<'a> {
     /// A reference to the `Window` instance used for overlay rendering.
     pub fn window(&self) -> &Window {
         &self.window
+    }
+
+    /// Requests to enable a click animation at the specified position.
+    ///
+    /// # Arguments
+    /// * `position` - Screen position where the animation should appear
+    pub fn enable_click_animation(&mut self, position: Position) {
+        log::debug!("GraphicsContext::enable_click_animation: {position:?}");
+        self.click_animation_renderer
+            .enable_click_animation(position);
     }
 }
 

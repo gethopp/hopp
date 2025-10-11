@@ -42,7 +42,7 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string) => {
+const createContentPickerWindow = async (videoToken: string, useAv1: boolean) => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
   if (isWindowOpen) {
@@ -54,7 +54,7 @@ const createContentPickerWindow = async (videoToken: string) => {
     return;
   }
 
-  const URL = `contentPicker.html?videoToken=${videoToken}`;
+  const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
 
   if (isTauri) {
     const newWindow = new WebviewWindow("contentPicker", {
@@ -64,7 +64,7 @@ const createContentPickerWindow = async (videoToken: string) => {
       hiddenTitle: true,
       titleBarStyle: "overlay",
       resizable: true,
-      alwaysOnTop: false,
+      alwaysOnTop: true,
       visible: true,
       title: "Content picker",
     });
@@ -254,6 +254,15 @@ const getLivekitUrl = async () => {
   return url;
 };
 
+const setSentryMetadata = async (userEmail: string) => {
+  const appVersion = await getVersion();
+  return await invoke("set_sentry_metadata", { userEmail, appVersion });
+};
+
+const callStarted = async (callerId: string) => {
+  return await invoke("call_started", { callerId });
+};
+
 export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
@@ -284,4 +293,6 @@ export const tauriUtils = {
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,
+  setSentryMetadata,
+  callStarted,
 };

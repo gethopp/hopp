@@ -3,7 +3,7 @@
 
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
-use socket_lib::{CaptureContent, Content, Extent, Message, ScreenShareMessage};
+use socket_lib::{CaptureContent, Content, Extent, Message, ScreenShareMessage, SentryMetadata};
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -37,8 +37,15 @@ async fn screenshare(
     token: String,
     resolution: Extent,
     accessibility_permission: bool,
+    use_av1: bool,
 ) -> Result<(), String> {
-    log::info!("screenshare: content: {content:?}, token: {token}, resolution: {resolution:?}");
+    log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
+    log::debug!("screenshare: token: {token}");
+
+    if use_av1 {
+        sentry_utils::simple_event("AV1 used".to_string());
+    }
+
     /*
      * If the user was previously a controller, we need to hide the viewing
      * window, to hide the delay from requesting the screen share to
@@ -59,6 +66,7 @@ async fn screenshare(
             token: token.clone(),
             resolution,
             accessibility_permission,
+            use_av1,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");
@@ -130,7 +138,11 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
 
 #[tauri::command]
 fn play_sound(app: tauri::AppHandle, sound_name: String) {
-    log::info!("play_sound: {sound_name}");
+    log::info!("play_sound");
+    let tmp_sound_name = sound_name.split("/").last();
+    if tmp_sound_name.is_some() {
+        log::info!("Playing sound: {}", tmp_sound_name.unwrap());
+    }
     /*
      * Check if the sound is already playing, if it has finished we
      * remove the entry from the sound_entries vector.
@@ -148,7 +160,7 @@ fn play_sound(app: tauri::AppHandle, sound_name: String) {
                     data.sound_entries.remove(i);
                     break;
                 }
-                log::warn!("play_sound: Sound {sound_name} is already playing");
+                log::warn!("play_sound: Sound is already playing");
                 return;
             } else {
                 i += 1;
@@ -172,7 +184,7 @@ fn play_sound(app: tauri::AppHandle, sound_name: String) {
         }
     }
     if sound_path.is_empty() {
-        log::error!("play_sound: Failed to find sound: {sound_name}");
+        log::error!("play_sound: Failed to find sound");
         return;
     }
 
@@ -194,7 +206,11 @@ fn play_sound(app: tauri::AppHandle, sound_name: String) {
 
 #[tauri::command]
 fn stop_sound(app: tauri::AppHandle, sound_name: String) {
-    log::info!("Stopping sound: {sound_name}");
+    log::info!("stop_sound");
+    let tmp_sound_name = sound_name.split("/").last();
+    if tmp_sound_name.is_some() {
+        log::info!("Stopping sound: {}", tmp_sound_name.unwrap());
+    }
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     let mut i = 0;
@@ -463,7 +479,7 @@ fn minimize_main_window(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn set_livekit_url(app: tauri::AppHandle, url: String) {
-    log::info!("set_livekit_url: {url}");
+    log::info!("set_livekit_url");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     if data.livekit_server_url != url {
@@ -549,6 +565,28 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .map_err(|e| format!("Failed to run on main thread: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: String) {
+    log::info!("set_sentry_metadata");
+    sentry_utils::init_metadata(user_email.clone(), app_version.clone());
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .socket
+        .send_message(Message::SentryMetadata(SentryMetadata {
+            user_email,
+            app_version,
+        }))
+    {
+        log::error!("set_sentry_metadata: failed to send message: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn call_started(_app: tauri::AppHandle, caller_id: String) {
+    log::info!("call_started: {caller_id}");
 }
 
 fn main() {
@@ -641,6 +679,7 @@ fn main() {
                 ])
                 .level(LevelFilter::Warn)
                 .level_for("hopp", log_level)
+                .max_file_size(50 * 1024 * 1024) // We are emptying them on startup
                 .build(),
         )
         .setup(move |app| {
@@ -894,6 +933,8 @@ fn main() {
             get_camera_permission,
             open_camera_settings,
             create_camera_window,
+            set_sentry_metadata,
+            call_started,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,6 +8,7 @@ import { socketService } from "@/services/socket";
 import { TWebSocketMessage } from "@/payloads";
 import { sounds } from "@/constants/sounds";
 import { HoppAvatar } from "./hopp-avatar";
+import { tauriUtils } from "@/windows/window-utils";
 
 export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: string }) => {
   let caller = useStore((state) => state?.teammates?.find((user) => user.id === callerId));
@@ -55,11 +56,13 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         console.log("Received call_tokens", data);
         tokensReceived = true;
         sounds.callAccepted.play();
+        tauriUtils.callStarted(callerId);
 
         setCallTokens({
           ...data.payload,
           timeStarted: new Date(),
           hasAudioEnabled: true,
+          hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           cameraTrackId: null,

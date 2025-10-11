@@ -12,6 +12,7 @@ import {
   StartAudio,
   useLocalParticipant,
   useMediaDeviceSelect,
+  useRemoteParticipants,
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
@@ -24,7 +25,7 @@ import {
   LocalTrack,
   RemoteTrackPublication,
 } from "livekit-client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
 import { Button } from "./button";
@@ -37,6 +38,14 @@ import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
+
+const Colors = {
+  deactivatedIcon: "text-slate-600",
+  deactivatedText: "text-slate-500",
+  mic: { text: "text-blue-600", icon: "text-blue-600", ring: "ring-blue-600" },
+  camera: { text: "text-green-600", icon: "text-green-600", ring: "ring-green-600" },
+  screen: { text: "text-yellow-600", icon: "text-yellow-600", ring: "ring-yellow-600" },
+} as const;
 
 export function CallCenter() {
   const { callTokens } = useStore();
@@ -177,9 +186,7 @@ export function ConnectedActions() {
         )}
         <div className="flex flex-col gap-2 items-center col-span-9">
           <div className="flex flex-row gap-1 w-full">
-            <MicrophoneIcon />
-            <CameraIcon />
-            <ScreenShareIcon callTokens={callTokens} setCallTokens={setCallTokens} />
+            <MediaDevicesSettings />
           </div>
           <div className="flex flex-col gap-2 w-full">
             {callTokens?.role === ParticipantRole.CONTROLLER && (
@@ -253,36 +260,14 @@ export function ConnectedActions() {
   );
 }
 
-function MicrophoneIcon() {
-  const { state: roomState } = useRoomContext();
-  const { localParticipant } = useLocalParticipant();
-  const [roomConnected, setRoomConnected] = useState(false);
+function MicrophoneIcon({ setMicEnabled }: { setMicEnabled: (enabled: boolean) => void }) {
   const [retry, setRetry] = useState(0);
   const { updateCallTokens, callTokens } = useStore();
   const hasAudioEnabled = callTokens?.hasAudioEnabled || false;
 
-  const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter();
-
-  const room = useRoomContext();
   useEffect(() => {
-    room.on(RoomEvent.Connected, () => {
-      setRoomConnected(true);
-    });
-  }, [room]);
-
-  useEffect(() => {
-    console.debug(`Microphone state changed: ${roomState} mic: ${hasAudioEnabled}`);
-    if (roomState === ConnectionState.Connected) {
-      void localParticipant.setMicrophoneEnabled(hasAudioEnabled, {
-        noiseSuppression: true,
-        echoCancellation: true,
-      });
-    }
-
-    if (hasAudioEnabled && !isNoiseFilterPending) {
-      setNoiseFilterEnabled(true);
-    }
-  }, [roomState, hasAudioEnabled, localParticipant, roomConnected]);
+    setMicEnabled(hasAudioEnabled);
+  }, [hasAudioEnabled]);
 
   /* Force re enumeration of mic devices on dropdown open */
   const errorCallback = useCallback(
@@ -344,17 +329,30 @@ function MicrophoneIcon() {
           hasAudioEnabled: !hasAudioEnabled,
         });
       }}
-      icon={hasAudioEnabled ? <LuMic className="size-4" /> : <LuMicOff className="size-4" />}
+      icon={
+        hasAudioEnabled ?
+          <LuMic className={`size-4 ${Colors.mic.icon}`} />
+        : <LuMicOff className={`size-4 ${Colors.deactivatedIcon}`} />
+      }
       state={hasAudioEnabled ? "active" : "neutral"}
       size="unsized"
-      className="flex-1 min-w-0 text-slate-600"
+      className={clsx("flex-1 min-w-0", {
+        [Colors.deactivatedText]: !hasAudioEnabled,
+        [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
+      })}
       cornerIcon={
         <Select
           value={activeMicrophoneDeviceId}
           onValueChange={handleMicrophoneChange}
           onOpenChange={handleDropdownOpenChange}
         >
-          <SelectTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs" />
+          <SelectTrigger
+            iconClassName={clsx({
+              [Colors.mic.text]: hasAudioEnabled,
+              [Colors.deactivatedIcon]: !hasAudioEnabled,
+            })}
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+          />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
               {microphoneDevices.map((device) => {
@@ -371,7 +369,7 @@ function MicrophoneIcon() {
         </Select>
       }
     >
-      {hasAudioEnabled ? "Mute me" : "Mic"}
+      {hasAudioEnabled ? "Mute me" : "Open mic"}
     </ToggleIconButton>
   );
 }
@@ -379,16 +377,19 @@ function MicrophoneIcon() {
 function ScreenShareIcon({
   callTokens,
   setCallTokens,
+  controllerSupportsAv1,
 }: {
   callTokens: CallState | null;
   setCallTokens: (callTokens: CallState | null) => void;
+  controllerSupportsAv1: boolean;
 }) {
+  const isRoomCall = callTokens?.isRoomCall || false;
   const toggleScreenShare = useCallback(async () => {
     if (!callTokens || !callTokens.videoToken) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
       // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken);
+      tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -397,36 +398,44 @@ function ScreenShareIcon({
       });
       tauriUtils.stopSharing();
     }
-  }, [callTokens, callTokens?.videoToken]);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken);
-  }, [callTokens, callTokens?.videoToken]);
+    tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
+  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
 
   return (
     <ToggleIconButton
       onClick={toggleScreenShare}
       icon={
         callTokens?.role === ParticipantRole.SHARER ?
-          <LuScreenShare className="size-4" />
-        : <LuScreenShareOff className="size-4" />
+          <LuScreenShare className={`size-4 ${Colors.screen.icon}`} />
+        : <LuScreenShareOff className={`size-4 ${Colors.deactivatedIcon}`} />
       }
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       size="unsized"
-      className="flex-1 min-w-0 text-slate-600"
+      className={clsx("flex-1 min-w-0", {
+        [Colors.deactivatedText]: !(callTokens?.role === ParticipantRole.SHARER),
+        [`${Colors.screen.text} ${Colors.screen.ring}`]: callTokens?.role === ParticipantRole.SHARER,
+      })}
       cornerIcon={
         callTokens?.role === ParticipantRole.SHARER && (
           <button
             onClick={changeScreenShare}
-            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
           >
-            <ChevronDownIcon className="size-3" />
+            <ChevronDownIcon
+              className={clsx("size-4", {
+                [Colors.screen.icon]: callTokens?.role === ParticipantRole.SHARER,
+                [Colors.deactivatedIcon]: !(callTokens?.role === ParticipantRole.SHARER),
+              })}
+            />
           </button>
         )
       }
     >
-      Screen
+      {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
     </ToggleIconButton>
   );
 }
@@ -461,21 +470,24 @@ function ScreensharingEventListener({
 
   const tracks = useTracks([Track.Source.ScreenShare]);
   const localParticipant = useLocalParticipant();
+  const room = useRoomContext();
   useEffect(() => {
     const localParticipantId = localParticipant?.localParticipant.identity.split(":").slice(0, -1).join(":") || "";
     let trackFound = false;
     let screenshareTrackFound = false;
-    for (const track of tracks) {
-      const trackParticipantId = track.participant.identity.split(":").slice(0, -1).join(":");
+    for (const participant of room.remoteParticipants) {
+      for (const track of participant[1].getTrackPublications()) {
+        const trackParticipantId = participant[1].identity.split(":").slice(0, -1).join(":");
 
-      if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
-        screenshareTrackFound = true;
-        break;
-      }
+        if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
+          screenshareTrackFound = true;
+          break;
+        }
 
-      if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
-        trackFound = true;
-        break;
+        if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
+          trackFound = true;
+          break;
+        }
       }
     }
 
@@ -501,62 +513,22 @@ function ScreensharingEventListener({
       updateRole(newRole);
     }
   }, [tracks]);
+
   return <div />;
 }
 
 function CameraIcon() {
   const { updateCallTokens, callTokens } = useStore();
   const [retry, setRetry] = useState(0);
-
-  const [cameraEnabled, setCameraEnabled] = useState(callTokens?.cameraTrackId !== null);
-
   const tracks = useTracks([Track.Source.Camera], {});
-  const [roomConnected, setRoomConnected] = useState(false);
-  const room = useRoomContext();
-  useEffect(() => {
-    room.on(RoomEvent.Connected, () => {
-      setRoomConnected(true);
-    });
-  }, [room]);
-
   const { localParticipant } = useLocalParticipant();
+  const cameraEnabled = callTokens?.hasCameraEnabled || false;
 
-  const pubUnpubTrack = useCallback(
-    async (hasCameraEnabled: boolean) => {
-      if (!localParticipant) return;
-
-      if (hasCameraEnabled) {
-        try {
-          await localParticipant.setCameraEnabled(
-            true,
-            {
-              deviceId: activeCameraDeviceId,
-              resolution: VideoPresets.h216.resolution,
-            },
-            {
-              videoCodec: "h264",
-            },
-          );
-        } catch (error) {
-          console.error("Error selecting camera: ", error);
-          toast.error("Failed to select camera", {
-            duration: 2500,
-          });
-        }
-      } else {
-        const cameraTrack = localParticipant
-          .getTrackPublications()
-          .filter((track) => track.source === Track.Source.Camera)[0];
-        if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
-          localParticipant.unpublishTrack(cameraTrack.track);
-        }
-      }
-    },
-    [localParticipant],
-  );
-
+  const clickedCameraRef = useRef(false);
   const errorCallback = useCallback(
     (error: Error) => {
+      if (!clickedCameraRef.current) return;
+
       console.error("Error initializing camera: ", error);
       toast.error("Failed to initialize camera", {
         duration: 2500,
@@ -575,14 +547,23 @@ function CameraIcon() {
     onError: errorCallback,
   });
 
-  useEffect(() => {
-    if (roomConnected) {
-      pubUnpubTrack(cameraEnabled);
-    }
-  }, [cameraEnabled, localParticipant, roomConnected]);
+  const isDisabled = cameraDevices.length === 0;
 
   const handleCameraToggle = () => {
-    setCameraEnabled(!cameraEnabled);
+    clickedCameraRef.current = true;
+    let newCameraEnabled = !cameraEnabled;
+    updateCallTokens({
+      ...callTokens,
+      hasCameraEnabled: newCameraEnabled,
+    });
+    if (!newCameraEnabled) {
+      const cameraTrack = localParticipant
+        .getTrackPublications()
+        .filter((track) => track.source === Track.Source.Camera)[0];
+      if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
+        localParticipant.unpublishTrack(cameraTrack.track);
+      }
+    }
   };
 
   const handleCameraChange = (value: string) => {
@@ -633,11 +614,14 @@ function CameraIcon() {
     }
   }, [tracks]);
 
-  const isDisabled = cameraDevices.length === 0;
   return (
     <ToggleIconButton
       onClick={handleCameraToggle}
-      icon={cameraEnabled ? <LuVideo className="size-4" /> : <LuVideoOff className="size-4" />}
+      icon={
+        cameraEnabled ?
+          <LuVideo className={`size-4 ${Colors.camera.icon}`} />
+        : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
+      }
       state={
         cameraEnabled ? "active"
         : isDisabled ?
@@ -646,17 +630,30 @@ function CameraIcon() {
       }
       size="unsized"
       disabled={isDisabled}
-      className="flex-1 min-w-0 text-slate-600"
+      className={clsx("flex-1 min-w-0", {
+        [Colors.deactivatedText]: !cameraEnabled,
+        [`${Colors.camera.text} ${Colors.camera.ring}`]: cameraEnabled,
+      })}
       cornerIcon={
         <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
-          <SelectTrigger className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs" />
+          <SelectTrigger
+            iconClassName={clsx({
+              [Colors.camera.text]: cameraEnabled,
+              [Colors.deactivatedIcon]: !cameraEnabled,
+            })}
+            className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+          />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
               {cameraDevices.map((device) => {
                 return (
-                  <SelectItem key={device.deviceId} value={device.deviceId}>
-                    <span className="text-xs truncate">{device.label || `Camera ${device.label.slice(0, 8)}...`}</span>
-                  </SelectItem>
+                  device.deviceId !== "" && (
+                    <SelectItem key={device.deviceId} value={device.deviceId}>
+                      <span className="text-xs truncate">
+                        {device.label || `Camera ${device.label.slice(0, 8)}...`}
+                      </span>
+                    </SelectItem>
+                  )
                 );
               })}
             </SelectContent>
@@ -664,7 +661,92 @@ function CameraIcon() {
         </Select>
       }
     >
-      Cam
+      {cameraEnabled ? "Stop sharing" : "Share cam"}
     </ToggleIconButton>
+  );
+}
+
+function MediaDevicesSettings() {
+  const { callTokens, setCallTokens } = useStore();
+  const { state: roomState } = useRoomContext();
+  const { localParticipant } = useLocalParticipant();
+  const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter();
+  const [micEnabled, setMicEnabled] = useState(false);
+  const room = useRoomContext();
+  const [roomConnected, setRoomConnected] = useState(false);
+  useEffect(() => {
+    room.on(RoomEvent.Connected, () => {
+      setRoomConnected(true);
+    });
+  }, [room]);
+
+  useEffect(() => {
+    if (!callTokens) return;
+
+    console.debug(
+      `state changed: ${roomState} mic: ${callTokens?.hasAudioEnabled} camera: ${callTokens?.hasCameraEnabled}`,
+    );
+    if (roomState === ConnectionState.Connected) {
+      console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
+      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled, {
+        noiseSuppression: true,
+        echoCancellation: true,
+      });
+      localParticipant.setCameraEnabled(
+        callTokens?.hasCameraEnabled,
+        {
+          resolution: VideoPresets.h216.resolution,
+        },
+        {
+          videoCodec: "h264",
+        },
+      );
+    }
+
+    if (micEnabled && !isNoiseFilterPending) {
+      setNoiseFilterEnabled(true);
+    }
+  }, [roomState, callTokens?.hasAudioEnabled, localParticipant, roomConnected, callTokens?.hasCameraEnabled]);
+
+  const remoteParticipants = useRemoteParticipants();
+  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
+  useEffect(() => {
+    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
+
+    if (localParticipant?.permissions) {
+      const updatedPermissions = localParticipant.permissions;
+      updatedPermissions.canUpdateMetadata = true;
+      localParticipant.setPermissions(updatedPermissions);
+    }
+
+    const revCaps = RTCRtpReceiver.getCapabilities("video");
+    let av1Support = false;
+    for (const codec of revCaps?.codecs || []) {
+      if (codec.mimeType === "video/AV1") {
+        av1Support = true;
+        break;
+      }
+    }
+    localParticipant.setAttributes({
+      av1Support: av1Support.toString(),
+    });
+
+    setControllerSupportsAv1(
+      remoteParticipants
+        .filter((p) => p.identity.includes("audio"))
+        .every((p) => p.attributes["av1Support"] === "true"),
+    );
+  }, [localParticipant, room?.state, remoteParticipants]);
+
+  return (
+    <div className="flex flex-row gap-1 w-full">
+      <MicrophoneIcon setMicEnabled={setMicEnabled} />
+      <CameraIcon />
+      <ScreenShareIcon
+        callTokens={callTokens}
+        setCallTokens={setCallTokens}
+        controllerSupportsAv1={controllerSupportsAv1}
+      />
+    </div>
   );
 }

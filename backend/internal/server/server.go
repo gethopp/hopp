@@ -184,6 +184,7 @@ func (s *Server) runMigrations() {
 		&models.Room{},
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
+		&models.Subscription{},
 	)
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
@@ -249,6 +250,7 @@ func (s *Server) setupRoutes() {
 
 	// Initialize handlers
 	auth := handlers.NewAuthHandler(s.DB, s.Config, s.JwtIssuer, s.Redis)
+	billing := handlers.NewBillingHandler(s.DB, s.Config, s.JwtIssuer, s.EmailClient)
 
 	// Set the EmailClient field directly
 	auth.ServerState.EmailClient = s.EmailClient
@@ -268,6 +270,9 @@ func (s *Server) setupRoutes() {
 	api.GET("/unsubscribe/:token", auth.UnsubscribeUser)
 	api.POST("/unsubscribe/:token", auth.UnsubscribeUser)
 
+	// Billing webhook endpoint (public)
+	api.POST("/billing/webhook", billing.HandleWebhook)
+
 	// Authentication endpoints
 	api.GET("/auth/social/:provider", auth.SocialLogin)
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
@@ -282,6 +287,8 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/user", auth.User)
 	protectedAPI.PUT("/update-user-name", auth.UpdateName)
 	protectedAPI.GET("/teammates", auth.Teammates)
+	protectedAPI.DELETE("/teammates/:userId", auth.RemoveTeammate)
+
 	protectedAPI.GET("/websocket", handlers.CreateWSHandler(&s.ServerState))
 	protectedAPI.GET("/get-invite-uuid", auth.GetInviteUUID)
 	protectedAPI.POST("/change-team/:uuid", auth.ChangeTeam)
@@ -297,6 +304,11 @@ func (s *Server) setupRoutes() {
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)
+
+	// Protected billing endpoints
+	protectedAPI.GET("/billing/subscription", billing.GetSubscriptionStatus)
+	protectedAPI.POST("/billing/create-checkout-session", billing.CreateCheckoutSession)
+	protectedAPI.POST("/billing/create-portal-session", billing.CreatePortalSession)
 
 	// Debug endpoints - only enabled when ENABLE_DEBUG_ENDPOINTS=true
 	if s.Config.Server.Debug {
