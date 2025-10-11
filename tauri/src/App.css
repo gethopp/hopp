@@ -403,6 +403,7 @@ body {
   display: flex;
   margin: 0;
   background-color: transparent;
+  position: relative;
 }
 
 .screenshare-body {

@@ -1,0 +1,21 @@
+meta {
+  name: Create Room
+  type: http
+  seq: 2
+}
+
+post {
+  url: https://localhost:1926/api/auth/room
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Im1pY2hhZWxAZHVuZGVybWlmZmxpbi5jb20iLCJleHAiOjE3ODkzMzQxODl9.56ZzU1MPIp8eIIavgvXxWLkGO1hgfTrbxIY99TpQKEo
+}
+
+body:json {
+  {
+    "name": "Watercooler"
+  }
+}
