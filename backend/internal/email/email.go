@@ -125,12 +125,14 @@ func (c *ResendEmailClient) SendTeamRemovalEmail(user *models.User, oldTeamName,
 		return
 	}
 
-	htmlBody := string(templateBytes)
-	htmlBody = strings.Replace(htmlBody, "{first_name}", user.FirstName, -1)
-	htmlBody = strings.Replace(htmlBody, "{old_team_name}", oldTeamName, -1)
-	htmlBody = strings.Replace(htmlBody, "{new_team_name}", newTeamName, -1)
+	replacer := strings.NewReplacer(
+		"{first_name}", user.FirstName,
+		"{old_team_name}", oldTeamName,
+		"{new_team_name}", newTeamName,
+	)
+	htmlBody := replacer.Replace(string(templateBytes))
 
-	subject := fmt.Sprintf("You've been removed from %s", oldTeamName)
+	subject := fmt.Sprintf("Hopp: You've been removed from %s", oldTeamName)
 
 	c.SendAsync(user.Email, subject, htmlBody)
 }

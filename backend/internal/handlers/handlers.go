@@ -931,6 +931,11 @@ func (h *AuthHandler) RemoveTeammate(c echo.Context) error {
 			return err
 		}
 
+		// Update subscription quantity if there is a subscription for the old team
+		if err := models.UpdateSubscriptionQuantity(tx, *user.TeamID); err != nil {
+			return err
+		}
+
 		return nil
 	}); err != nil {
 		c.Logger().Error("RemoveTeammate error:", err)
