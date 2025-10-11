@@ -860,6 +860,96 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 	})
 }
 
+// RemoveTeammate removes a user from a team and creates a new solo team for them
+// removed user will also receive an email notification
+func (h *AuthHandler) RemoveTeammate(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	if user.TeamID == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
+	}
+
+	// Preload team to avoid extra query for email
+	if err := h.DB.Preload("Team").Where("id = ?", user.ID).First(user).Error; err != nil {
+		c.Logger().Error("Failed to load user team:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load user")
+	}
+
+	if user.Team == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "User team not found")
+	}
+
+	teammateID := c.Param("userId")
+	if teammateID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "userId is required")
+	}
+
+	if user.ID == teammateID {
+		return echo.NewHTTPError(http.StatusBadRequest, "cannot remove yourself")
+	}
+
+	if !user.IsAdmin {
+		return echo.NewHTTPError(http.StatusForbidden, "admin required")
+	}
+
+	var teammate models.User
+	if err := h.DB.Select("id, team_id, is_admin, first_name, last_name, email").Where("id = ?", teammateID).First(&teammate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load user")
+	}
+
+	if teammate.TeamID == nil || *teammate.TeamID != *user.TeamID {
+		return echo.NewHTTPError(http.StatusForbidden, "user not in your team")
+	}
+
+	oldTeamName := user.Team.Name
+	var newTeamName string
+
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+
+		// Create new team
+		newTeamName := fmt.Sprintf("team-%s", uuid.NewString()[:8])
+		newTeam := models.Team{
+			Name: newTeamName,
+		}
+		if err := tx.Create(&newTeam).Error; err != nil {
+			return err
+		}
+
+		// assign new team to removed user
+		if err := tx.Model(&models.User{}).
+			Where("id = ?", teammate.ID).
+			Updates(map[string]any{
+				"team_id":  newTeam.ID,
+				"is_admin": true,
+			}).Error; err != nil {
+			return err
+		}
+
+		// Update subscription quantity if there is a subscription for the old team
+		if err := models.UpdateSubscriptionQuantity(tx, *user.TeamID); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		c.Logger().Error("RemoveTeammate error:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to remove teammate")
+	}
+
+	// Send email to removed user
+	if h.EmailClient != nil {
+		h.EmailClient.SendTeamRemovalEmail(&teammate, oldTeamName, newTeamName)
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
 // UnsubscribeUser handles both GET and POST requests for unsubscribing users.
 // Follows instructions from:
 // https://resend.com/docs/dashboard/emails/add-unsubscribe-to-transactional-emails

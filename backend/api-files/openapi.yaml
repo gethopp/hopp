@@ -627,6 +627,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/auth/teammates/{userId}:
+    delete:
+      summary: Remove a teammate from your team
+      description: Removes a user from the team and automatically creates a new solo team for them. The removed user becomes an admin of their new team and can continue using Hopp. Admins cannot remove themselves.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the user to remove from the team
+      responses:
+        "204":
+          description: Teammate removed successfully
+        "400":
+          description: Bad request - missing userId, cannot remove yourself, or cannot remove last admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - user is not an admin or target user is not in your team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/billing/subscription:
     get:
       summary: Get current subscription status

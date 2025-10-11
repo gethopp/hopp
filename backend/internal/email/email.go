@@ -15,6 +15,7 @@ type EmailClient interface {
 	SendAsync(toEmail, subject, htmlBody string)
 	SendWelcomeEmail(user *models.User)
 	SendTeamInvitationEmail(inviterName, teamName, inviteLink, toEmail string)
+	SendTeamRemovalEmail(user *models.User, oldTeamName, newTeamName string)
 	SendSubscriptionConfirmationEmail(user *models.User)
 	SendSubscriptionCancellationEmail(user *models.User)
 }
@@ -108,6 +109,32 @@ func (c *ResendEmailClient) SendTeamInvitationEmail(inviterName, teamName, invit
 	subject := fmt.Sprintf("%s has invited you to join %s team - join the team", inviterName, teamName)
 
 	c.SendAsync(toEmail, subject, htmlBody)
+}
+
+// SendTeamRemovalEmail sends an email to a user who has been removed from a team
+func (c *ResendEmailClient) SendTeamRemovalEmail(user *models.User, oldTeamName, newTeamName string) {
+	if user == nil {
+		c.logger.Error("Cannot send team removal email to nil user")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-team-removed.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read team removal email template: %v", err)
+		return
+	}
+
+	replacer := strings.NewReplacer(
+		"{first_name}", user.FirstName,
+		"{old_team_name}", oldTeamName,
+		"{new_team_name}", newTeamName,
+	)
+	htmlBody := replacer.Replace(string(templateBytes))
+
+	subject := fmt.Sprintf("Hopp: You've been removed from %s", oldTeamName)
+
+	c.SendAsync(user.Email, subject, htmlBody)
 }
 
 // SendSubscriptionConfirmationEmail sends a subscription confirmation email

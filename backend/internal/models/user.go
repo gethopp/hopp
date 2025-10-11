@@ -178,7 +178,7 @@ func (u *User) UnsubscribeFromAllEmails(db *gorm.DB) error {
 	return db.Save(u).Error
 }
 
-func updateSubscriptionQuantity(tx *gorm.DB, teamID uint) error {
+func UpdateSubscriptionQuantity(tx *gorm.DB, teamID uint) error {
 	teamMembers, err := GetTeamMembersByTeamID(tx, teamID)
 	if err != nil {
 		return fmt.Errorf("failed to get team members: %w", err)
@@ -221,12 +221,12 @@ func updateSubscriptionQuantity(tx *gorm.DB, teamID uint) error {
 }
 
 func (u *User) AfterCreate(tx *gorm.DB) (err error) {
-	_ = updateSubscriptionQuantity(tx, *u.TeamID)
+	_ = UpdateSubscriptionQuantity(tx, *u.TeamID)
 	return nil
 }
 
 func (u *User) AfterDelete(tx *gorm.DB) (err error) {
-	_ = updateSubscriptionQuantity(tx, *u.TeamID)
+	_ = UpdateSubscriptionQuantity(tx, *u.TeamID)
 	return nil
 }
 
