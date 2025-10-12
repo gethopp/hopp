@@ -444,7 +444,7 @@ impl CursorSimulatorFunctions for CursorSimulator {
      * get from a mouse. A touchpad has smaller deltas but is generating more
      * events compared to a mouse.
      *
-     * We try to work around this by using a different multipling factor to
+     * We try to work around this by using a different multiplying factor to
      * 120 for different input values, below 100 the factor is bigger and as
      * delta is increasing the factor become smaller and eventually 1. We want
      *

@@ -277,7 +277,7 @@ const ConsumerComponent = React.memo(() => {
   useEffect(() => {
     const videoElement = videoRef.current;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = throttle((e: MouseEvent) => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
@@ -292,7 +292,7 @@ const ConsumerComponent = React.memo(() => {
           topic: CURSORS_TOPIC,
         });
       }
-    };
+    }, 30);
 
     const handleMouseDown = (e: MouseEvent) => {
       if (videoElement) {
@@ -351,7 +351,7 @@ const ConsumerComponent = React.memo(() => {
       e.preventDefault();
     };
 
-    const handleWheel = (e: WheelEvent) => {
+    const handleWheel = throttle((e: WheelEvent) => {
       if (videoElement) {
         // Solve natural flow of the wheel
         // Source: https://stackoverflow.com/a/23668035
@@ -370,7 +370,7 @@ const ConsumerComponent = React.memo(() => {
 
         localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
       }
-    };
+    }, 16);
 
     // Send mouse visible data
     if (videoElement) {

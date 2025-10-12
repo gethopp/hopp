@@ -440,6 +440,14 @@ impl<'a> GraphicsContext<'a> {
     }
 }
 
+impl Drop for GraphicsContext<'_> {
+    fn drop(&mut self) {
+        // This is needed for windows, because otherwise the title bar becomes
+        // visible when a new overlay surface is created.
+        self.window.set_minimized(true);
+    }
+}
+
 /// Creates a GPU texture from an image file for overlay rendering.
 ///
 /// This function loads an image from disk, uploads it to GPU memory, and creates

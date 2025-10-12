@@ -4,7 +4,7 @@ use std::{
         Arc, Mutex,
     },
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -97,6 +97,8 @@ const MAX_CURSORS: u32 = 10;
 pub static SVG_BADGE_COLORS: [&str; 7] = [
     "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040",
 ];
+
+const SHARER_POSITION_UPDATE_INTERVAL: Duration = Duration::from_millis(30);
 
 /// Specific error types for CursorController initialization failures.
 ///
@@ -460,6 +462,7 @@ pub struct SharerCursor {
     controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
     cursor_simulator: Arc<Mutex<CursorSimulator>>,
     last_event_position: Position,
+    last_event_position_time: Instant,
 }
 
 impl SharerCursor {
@@ -478,6 +481,7 @@ impl SharerCursor {
             controllers_cursors,
             cursor_simulator,
             last_event_position: Position::default(),
+            last_event_position_time: Instant::now(),
         }
     }
 
@@ -494,12 +498,15 @@ impl SharerCursor {
         self.cursor
             .set_position(global_position, local_position, !self.has_control);
 
-        let res = self.event_loop_proxy.send_event(UserEvent::SharerPosition(
-            display_percentage.x,
-            display_percentage.y,
-        ));
-        if let Err(e) = res {
-            error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+        if self.last_event_position_time.elapsed() > SHARER_POSITION_UPDATE_INTERVAL {
+            let res = self.event_loop_proxy.send_event(UserEvent::SharerPosition(
+                display_percentage.x,
+                display_percentage.y,
+            ));
+            if let Err(e) = res {
+                error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+            }
+            self.last_event_position_time = Instant::now();
         }
     }
 
