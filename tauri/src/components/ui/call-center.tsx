@@ -691,6 +691,8 @@ function MediaDevicesSettings() {
       localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled, {
         noiseSuppression: true,
         echoCancellation: true,
+        autoGainControl: false,
+        sampleRate: 48000,
       });
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
