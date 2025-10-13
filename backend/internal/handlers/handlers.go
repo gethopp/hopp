@@ -63,93 +63,97 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			isNewUser = true // Mark as new user
+
+			var assignedTeamID *uint
+
+			// Check if the user has a team invite UUID
+			sess, err := session.Get("session", c)
+			if err == nil {
+				inviteUUID := sess.Values["team_invite_uuid"]
+				if inviteUUID != nil {
+					// Find team that this invitation belongs to
+					var invitation models.TeamInvitation
+					if err := tx.Where("unique_id = ?", inviteUUID).First(&invitation).Error; err == nil {
+						teamID := uint(invitation.TeamID)
+						assignedTeamID = &teamID
+					}
+				}
+				// Clean up the session
+				delete(sess.Values, "team_invite_uuid")
+				sess.Save(c.Request(), c.Response())
+			}
+
+			var isAdmin bool = false
+			// If no team invitation, we need to create a new team
+			if assignedTeamID == nil {
+				isAdmin = true
+				// Provider-specific handling to get team name
+				switch providerName {
+				case "slack":
+					c.Logger().Infof("Received Slack auth request")
+					// Get the team name from Slack
+					resp, err := getTeamInfoRawJSON(user.AccessToken)
+					if err != nil {
+						return fmt.Errorf("failed to get team info: %w", err)
+					}
+					name := gjson.Get(string(resp), "team.name")
+					if name.Exists() {
+						teamName = name.String()
+					}
+				case "google":
+					c.Logger().Infof("Received Google auth request")
+				}
+
+				// Use fallback team name if none provided
+				if teamName == "" {
+					teamName = fmt.Sprintf("%s-Team", user.FirstName)
+				}
+
+				// Create a new team
+				team := models.Team{
+					Name: teamName,
+				}
+				if err := tx.Create(&team).Error; err != nil {
+					return fmt.Errorf("failed to create team: %w", err)
+				}
+				assignedTeamID = &team.ID
+			}
+
 			u = models.User{
 				FirstName: user.FirstName,
 				LastName:  user.LastName,
 				Email:     user.Email,
 				AvatarURL: user.AvatarURL,
+				TeamID:    assignedTeamID,
+				IsAdmin:   isAdmin,
 			}
 			if err := tx.Create(&u).Error; err != nil {
 				return fmt.Errorf("failed to create user: %w", err)
 			}
-		}
 
-		// Provider-specific handling
-		switch providerName {
-		case "slack":
-			c.Logger().Infof("Received Slack auth request")
-
-			// Update to higher resolution image
-			rawData, _ := json.Marshal(user.RawData)
-			avatar := gjson.Get(string(rawData), "user.profile.image_512")
-			if avatar.Exists() {
-				u.AvatarURL = avatar.String()
-			}
-
-			// Get the team members
-			resp, err := getTeamMembersRawJSON(user.AccessToken)
-			if err != nil {
-				return fmt.Errorf("failed to get team members: %w", err)
-			}
-
-			var result map[string]interface{}
-			if err := json.Unmarshal([]byte(resp), &result); err != nil {
-				return fmt.Errorf("failed to parse team members: %w", err)
-			}
-			u.SocialMetadata = result
-			if err := tx.Save(&u).Error; err != nil {
-				return fmt.Errorf("failed to update user: %w", err)
-			}
-
-			// Get the team name
-			resp, err = getTeamInfoRawJSON(user.AccessToken)
-			if err != nil {
-				return fmt.Errorf("failed to get team info: %w", err)
-			}
-			name := gjson.Get(string(resp), "team.name")
-			if name.Exists() {
-				teamName = name.String()
-			}
-
-		case "google":
-			c.Logger().Infof("Received Google auth request")
-		}
-
-		// Check if the user has a team invite UUID
-		sess, err := session.Get("session", c)
-		if err == nil {
-			inviteUUID := sess.Values["team_invite_uuid"]
-			// Find team that this invitation belongs to
-			var invitation models.TeamInvitation
-			tx.Where("unique_id = ?", inviteUUID).First(&invitation)
-			if invitation.ID != 0 {
-				teamID := uint(invitation.TeamID)
-				u.TeamID = &teamID
-				if err := tx.Save(&u).Error; err != nil {
-					return fmt.Errorf("failed to update user team: %w", err)
+			switch providerName {
+			case "slack":
+				// Update to higher resolution image
+				rawData, _ := json.Marshal(user.RawData)
+				avatar := gjson.Get(string(rawData), "user.profile.image_512")
+				if avatar.Exists() {
+					u.AvatarURL = avatar.String()
 				}
-			}
-			// Clean up the session
-			delete(sess.Values, "team_invite_uuid")
-			sess.Save(c.Request(), c.Response())
-		}
 
-		if u.TeamID == nil {
-			// We did not assign any team to this user
-			// So we'll use the team name from the provider
-			if teamName == "" {
-				teamName = fmt.Sprintf("%s-Team", u.FirstName)
-			}
-			// Create a new team
-			team := models.Team{
-				Name: teamName,
-			}
-			if err := tx.Create(&team).Error; err != nil {
-				return fmt.Errorf("failed to create team: %w", err)
-			}
-			u.TeamID = &team.ID
-			if err := tx.Save(&u).Error; err != nil {
-				return fmt.Errorf("failed to update user with team: %w", err)
+				// Get the team members
+				resp, err := getTeamMembersRawJSON(user.AccessToken)
+				if err != nil {
+					return fmt.Errorf("failed to get team members: %w", err)
+				}
+
+				var result map[string]interface{}
+				if err := json.Unmarshal([]byte(resp), &result); err != nil {
+					return fmt.Errorf("failed to parse team members: %w", err)
+				}
+				u.SocialMetadata = result
+				if err := tx.Save(&u).Error; err != nil {
+					return fmt.Errorf("failed to update user: %w", err)
+				}
 			}
 		}
 
