@@ -38,7 +38,7 @@ export const ToggleIconButton: React.FC<
         </span>
       )}
       {icon && <span>{icon}</span>}
-      {children && <span className="text-xs whitespace-nowrap">{children}</span>}
+      {children && <span className="text-[11px] whitespace-nowrap">{children}</span>}
     </button>
   );
 };
