@@ -222,154 +222,156 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   }
 
   return (
-    <div className="flex min-w-screen min-h-screen overflow-clip">
-      <div className="flex flex-col items-center justify-center w-full xl:w-1/2 min-h-screen bg-white p-8">
-        <img src={Logo} alt="Logo" className="h-12 w-auto mb-8" />
-        <div className={cn("flex flex-col gap-6 w-full max-w-md", className)} {...props}>
-          <Card className="w-full">
-            <CardHeader className="text-center">
-              <CardTitle className="text-xl">
-                {isInvitation && invitationDetails ?
-                  `Join ${invitationDetails.name} team on Hopp`
-                : isSignUp ?
-                  "Create an account"
-                : "Welcome back"}
-              </CardTitle>
-              <CardDescription>
-                {isInvitation && invitationDetails ?
-                  "Sign up to join your team"
-                : isSignUp ?
-                  "Sign up for a new account"
-                : "Login with your email or social account"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleEmailAuth}>
-                <div className="grid gap-6">
-                  <div className="flex flex-col gap-4">
-                    <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
-                      <FaSlack className="size-5 mr-2" />
-                      {isSignUp ? "Sign up with Slack" : "Login with Slack"}
-                    </Button>
-                    <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
-                      <FaGoogle className="size-5 mr-2" />
-                      {isSignUp ? "Sign up with Google" : "Login with Google"}
-                    </Button>
-                  </div>
-                  {!isSignUp && (
-                    <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
-                      <span className="relative z-10 bg-background px-2 text-muted-foreground">
-                        Or continue with email
-                      </span>
+    <div className="flex flex-col items-center justify-center w-screen h-screen">
+      <div className="flex w-full h-full max-h-[1200px] max-w-[2500px] overflow-clip">
+        <div className="flex flex-col items-center justify-center w-full xl:w-1/2 bg-white p-8">
+          <img src={Logo} alt="Logo" className="h-12 w-auto mb-8" />
+          <div className={cn("flex flex-col gap-6 w-full max-w-md", className)} {...props}>
+            <Card className="w-full">
+              <CardHeader className="text-center">
+                <CardTitle className="text-xl">
+                  {isInvitation && invitationDetails ?
+                    `Join ${invitationDetails.name} team on Hopp`
+                  : isSignUp ?
+                    "Create an account"
+                  : "Welcome back"}
+                </CardTitle>
+                <CardDescription>
+                  {isInvitation && invitationDetails ?
+                    "Sign up to join your team"
+                  : isSignUp ?
+                    "Sign up for a new account"
+                  : "Login with your email or social account"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleEmailAuth}>
+                  <div className="grid gap-6">
+                    <div className="flex flex-col gap-4">
+                      <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
+                        <FaSlack className="size-5 mr-2" />
+                        {isSignUp ? "Sign up with Slack" : "Login with Slack"}
+                      </Button>
+                      <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
+                        <FaGoogle className="size-5 mr-2" />
+                        {isSignUp ? "Sign up with Google" : "Login with Google"}
+                      </Button>
                     </div>
-                  )}
-                  <div className="grid gap-4">
-                    {isSignUp && (
-                      <>
-                        <div className="grid gap-2">
-                          <Label htmlFor="firstName">First Name</Label>
-                          <Input id="firstName" value={formData.firstName} onChange={handleInputChange} required />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="lastName">Last Name</Label>
-                          <Input id="lastName" value={formData.lastName} onChange={handleInputChange} required />
-                        </div>
-                        {!isInvitation && (
-                          <div className="grid gap-2">
-                            <Label htmlFor="teamName">Team Name</Label>
-                            <Input id="teamName" value={formData.teamName} onChange={handleInputChange} required />
-                          </div>
-                        )}
-                      </>
-                    )}
-                    <div className="grid gap-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleInputChange}
-                        placeholder="10x_engineer@unicorn.com"
-                        required
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <div className="flex items-center">
-                        <Label htmlFor="password">Password</Label>
-                        {!isSignUp && (
-                          <a href="#" className="ml-auto text-sm underline-offset-4 hover:underline">
-                            Forgot your password?
-                          </a>
-                        )}
+                    {!isSignUp && (
+                      <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
+                        <span className="relative z-10 bg-background px-2 text-muted-foreground">
+                          Or continue with email
+                        </span>
                       </div>
-                      <Input
-                        id="password"
-                        type="password"
-                        value={formData.password}
-                        onChange={handleInputChange}
-                        required
-                      />
-                    </div>
-                    <Button type="submit" className="w-full" disabled={isLoading}>
-                      {isLoading ?
-                        "Loading..."
-                      : isSignUp ?
-                        "Sign Up"
-                      : "Sign In"}
-                    </Button>
-                  </div>
-                  {!isInvitation && (
-                    <div className="text-center text-sm">
-                      {isSignUp ?
+                    )}
+                    <div className="grid gap-4">
+                      {isSignUp && (
                         <>
-                          Already have an account?{" "}
-                          <button
-                            type="button"
-                            onClick={() => setIsSignUp(false)}
-                            className="text-primary underline underline-offset-4"
-                          >
-                            Sign in
-                          </button>
+                          <div className="grid gap-2">
+                            <Label htmlFor="firstName">First Name</Label>
+                            <Input id="firstName" value={formData.firstName} onChange={handleInputChange} required />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label htmlFor="lastName">Last Name</Label>
+                            <Input id="lastName" value={formData.lastName} onChange={handleInputChange} required />
+                          </div>
+                          {!isInvitation && (
+                            <div className="grid gap-2">
+                              <Label htmlFor="teamName">Team Name</Label>
+                              <Input id="teamName" value={formData.teamName} onChange={handleInputChange} required />
+                            </div>
+                          )}
                         </>
-                      : <>
-                          Don&apos;t have an account?{" "}
-                          <button
-                            type="button"
-                            onClick={() => setIsSignUp(true)}
-                            className="text-primary underline underline-offset-4"
-                          >
-                            Sign up
-                          </button>
-                        </>
-                      }
+                      )}
+                      <div className="grid gap-2">
+                        <Label htmlFor="email">Email</Label>
+                        <Input
+                          id="email"
+                          type="email"
+                          value={formData.email}
+                          onChange={handleInputChange}
+                          placeholder="10x_engineer@unicorn.com"
+                          required
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <div className="flex items-center">
+                          <Label htmlFor="password">Password</Label>
+                          {!isSignUp && (
+                            <a href="#" className="ml-auto text-sm underline-offset-4 hover:underline">
+                              Forgot your password?
+                            </a>
+                          )}
+                        </div>
+                        <Input
+                          id="password"
+                          type="password"
+                          value={formData.password}
+                          onChange={handleInputChange}
+                          required
+                        />
+                      </div>
+                      <Button type="submit" className="w-full" disabled={isLoading}>
+                        {isLoading ?
+                          "Loading..."
+                        : isSignUp ?
+                          "Sign Up"
+                        : "Sign In"}
+                      </Button>
                     </div>
-                  )}
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+                    {!isInvitation && (
+                      <div className="text-center text-sm">
+                        {isSignUp ?
+                          <>
+                            Already have an account?{" "}
+                            <button
+                              type="button"
+                              onClick={() => setIsSignUp(false)}
+                              className="text-primary underline underline-offset-4"
+                            >
+                              Sign in
+                            </button>
+                          </>
+                        : <>
+                            Don&apos;t have an account?{" "}
+                            <button
+                              type="button"
+                              onClick={() => setIsSignUp(true)}
+                              className="text-primary underline underline-offset-4"
+                            >
+                              Sign up
+                            </button>
+                          </>
+                        }
+                      </div>
+                    )}
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
         </div>
-      </div>
 
-      <div className="hidden xl:flex w-1/2 h-screen max-h-[99.8vh] bg-white flex-col justify-center items-center p-2 relative overflow-visible">
-        <div className="w-full h-full p-16 bg-[#5625E7] flex flex-col rounded-3xl">
-          <div className="relative z-10 text-center">
-            <h1 className="text-4xl font-medium text-left text-white mb-6 leading-tight">
-              Remote teams start to love <br /> pair-programming again
-            </h1>
-            <p className="text-2xl text-left font-light text-purple-100 mb-12 leading-tight opacity-70 max-w-[70%]">
-              Low-latency, crisp quality and everything you need to stay in the flow while pairing
-            </p>
-
-            <div className="mb-8 relative w-full h-[350px]">
-              <img
-                src={LoginScreen}
-                alt="Hopp Login Interface"
-                className="absolute w-[110%] h-auto max-w-md mx-auto top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 min-w-[135%] overflow-visible"
-              />
+        <div className="hidden xl:flex w-1/2 h-full bg-white flex-col justify-center items-center p-2 relative overflow-visible">
+          <div className="w-full h-full max-h-full py-16 bg-[#5625E7] flex flex-col items-start rounded-3xl">
+            <div className="relative z-10 text-center px-16">
+              <h1 className="text-4xl font-medium text-left text-white mb-6 leading-tight">
+                Remote teams start to love <br /> pair-programming again
+              </h1>
+              <p className="text-2xl text-left font-light text-purple-100 mb-12 leading-tight opacity-70 max-w-[70%]">
+                Low-latency, crisp quality and everything you need to stay in the flow while pairing
+              </p>
+            </div>
+            {/* <img
+              src={LoginScreen}
+              alt="Hopp Login Interface"
+              className="w-full h-auto mx-0 object-contain flex-shrink"
+            /> */}
+            <div className="flex-1 flex items-center justify-center min-h-0 w-full px-4 shrink">
+              <img src={LoginScreen} alt="Hopp Login Interface" className="w-auto h-full object-contain" />
             </div>
 
-            <div className="mt-18">
+            <div className="justify-self-end mt-auto w-full text-center shrink-0">
               <p className="text-purple-200 text-sm mb-4">What engineers say about Hopp</p>
 
               <div className="flex justify-center items-center gap-0">
