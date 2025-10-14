@@ -282,6 +282,9 @@ impl<'a> Application<'a> {
             screenshare_input.accessibility_permission,
             screenshare_input.use_av1
         );
+
+        self.stop_screenshare();
+
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
         /*
          * In order to not rely on the buffer source to exist before starting the room

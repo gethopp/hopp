@@ -16,7 +16,15 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { Track, RemoteParticipant, ConnectionState, RoomEvent, VideoPresets, LocalTrack } from "livekit-client";
+import {
+  Track,
+  RemoteParticipant,
+  ConnectionState,
+  RoomEvent,
+  VideoPresets,
+  LocalTrack,
+  RemoteTrackPublication,
+} from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -570,7 +578,25 @@ function CameraIcon() {
   };
 
   useEffect(() => {
-    if (tracks.length > 0) {
+    // Filter out anonymous tracks that do not share their camera
+    const filteredTracks = tracks.filter((track) => {
+      if (!track.participant.identity.includes("anonymous")) {
+        return true;
+      }
+
+      // If participant is anonymous and the video track is muted or not shared, return false
+      for (const trackPublication of track.participant.trackPublications) {
+        console.log("--- Track publication: ", trackPublication);
+        const pub: RemoteTrackPublication = trackPublication[1];
+        if (pub.source === Track.Source.Camera && pub.isMuted) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (filteredTracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
     } else {
       // If there are 0 then close the window
@@ -646,7 +672,6 @@ function MediaDevicesSettings() {
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter();
   const [micEnabled, setMicEnabled] = useState(false);
-  const [cameraEnabled, setCameraEnabled] = useState(false);
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
   useEffect(() => {
@@ -666,6 +691,8 @@ function MediaDevicesSettings() {
       localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled, {
         noiseSuppression: true,
         echoCancellation: true,
+        autoGainControl: false,
+        sampleRate: 48000,
       });
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,

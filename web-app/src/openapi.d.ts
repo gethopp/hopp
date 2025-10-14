@@ -751,19 +751,119 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/auth/watercooler": {
+  "/api/auth/room": {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Get LiveKit tokens for joining the team's watercooler room */
+    get?: never;
+    put?: never;
+    /** Create a new room */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** @description Name of the room */
+            name?: string;
+          };
+        };
+      };
+      responses: {
+        /** @description LiveKit tokens retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Room"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/rooms": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get all rooms for the user */
     get: {
       parameters: {
         query?: never;
         header?: never;
         path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Rooms for user retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Room"][];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/room/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get LiveKit tokens for joining the team's selected room */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description The ID of the room to retrieve */
+          id: string;
+        };
         cookie?: never;
       };
       requestBody?: never;
@@ -784,15 +884,84 @@ export interface paths {
         };
       };
     };
-    put?: never;
+    /** Update room details */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description The ID of the room to update */
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** @description Name of the room */
+            name?: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Room updated successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Room"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
     post?: never;
-    delete?: never;
+    /** Get LiveKit tokens for joining the team's selected room */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description The ID of the room to delete */
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description User successfully deleted (no content) */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+      };
+    };
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  "/api/auth/watercooler/anonymous": {
+  "/api/auth/room/anonymous": {
     parameters: {
       query?: never;
       header?: never;
@@ -805,7 +974,10 @@ export interface paths {
      */
     get: {
       parameters: {
-        query?: never;
+        query: {
+          /** @description The ID of the room to generate an anonymous link for */
+          room_id: string;
+        };
         header?: never;
         path?: never;
         cookie?: never;
@@ -1326,6 +1498,12 @@ export interface components {
        * @description When the trial period ends (null if not in trial or has active subscription)
        */
       trial_ends_at?: string | null;
+    };
+    Room: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      user_id: string;
     };
     Error: {
       message?: string;

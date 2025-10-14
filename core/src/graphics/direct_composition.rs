@@ -157,3 +157,12 @@ impl DirectComposition {
         Ok(())
     }
 }
+
+impl Drop for DirectComposition {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.target.SetRoot(None);
+            let _ = self.desktop.Commit();
+        }
+    }
+}

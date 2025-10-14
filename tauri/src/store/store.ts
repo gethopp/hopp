@@ -27,6 +27,7 @@ export type CallState = {
   isRemoteControlEnabled: boolean;
   isRoomCall?: boolean;
   cameraTrackId?: string | null;
+  room?: components["schemas"]["Room"];
 } & TCallTokensMessage["payload"];
 
 type State = {

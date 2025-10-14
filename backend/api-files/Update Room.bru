@@ -1,0 +1,25 @@
+meta {
+  name: Update Room
+  type: http
+  seq: 13
+}
+
+put {
+  url: https://localhost:1926/api/auth/room/:id
+  body: json
+  auth: none
+}
+
+params:path {
+  id: 20
+}
+
+headers {
+  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6Im1pY2hhZWxAZHVuZGVybWlmZmxpbi5jb20iLCJleHAiOjE3ODkwNjM5OTd9.4cNbNEHiLjuflD4ZDzLnoLCoSBstC0CbwX6P4i9HOj0
+}
+
+body:json {
+  {
+    "name": "Umair"
+  }
+}

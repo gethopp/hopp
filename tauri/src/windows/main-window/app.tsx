@@ -354,7 +354,7 @@ function App() {
   }
 
   return (
-    <div className="container flex flex-row bg-white">
+    <div className="container flex flex-row bg-white" id="app-body">
       {/* Action Sidebar */}
       <Sidebar />
       <ConditionalWrap

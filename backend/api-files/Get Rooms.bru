@@ -1,0 +1,15 @@
+meta {
+  name: Get Rooms
+  type: http
+  seq: 16
+}
+
+get {
+  url: https://localhost:1926/api/auth/rooms
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6ImR3aWdodEBkdW5kZXJtaWZmbGluLmNvbSIsImV4cCI6MTc4OTE1NzQzNH0.2f6apCqEGGGzPV3shdXzCBTOofrMCa-584Y2ZtnxIQY
+}

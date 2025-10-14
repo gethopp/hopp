@@ -63,93 +63,97 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			isNewUser = true // Mark as new user
+
+			var assignedTeamID *uint
+
+			// Check if the user has a team invite UUID
+			sess, err := session.Get("session", c)
+			if err == nil {
+				inviteUUID := sess.Values["team_invite_uuid"]
+				if inviteUUID != nil {
+					// Find team that this invitation belongs to
+					var invitation models.TeamInvitation
+					if err := tx.Where("unique_id = ?", inviteUUID).First(&invitation).Error; err == nil {
+						teamID := uint(invitation.TeamID)
+						assignedTeamID = &teamID
+					}
+				}
+				// Clean up the session
+				delete(sess.Values, "team_invite_uuid")
+				sess.Save(c.Request(), c.Response())
+			}
+
+			var isAdmin bool = false
+			// If no team invitation, we need to create a new team
+			if assignedTeamID == nil {
+				isAdmin = true
+				// Provider-specific handling to get team name
+				switch providerName {
+				case "slack":
+					c.Logger().Infof("Received Slack auth request")
+					// Get the team name from Slack
+					resp, err := getTeamInfoRawJSON(user.AccessToken)
+					if err != nil {
+						return fmt.Errorf("failed to get team info: %w", err)
+					}
+					name := gjson.Get(string(resp), "team.name")
+					if name.Exists() {
+						teamName = name.String()
+					}
+				case "google":
+					c.Logger().Infof("Received Google auth request")
+				}
+
+				// Use fallback team name if none provided
+				if teamName == "" {
+					teamName = fmt.Sprintf("%s-Team", user.FirstName)
+				}
+
+				// Create a new team
+				team := models.Team{
+					Name: teamName,
+				}
+				if err := tx.Create(&team).Error; err != nil {
+					return fmt.Errorf("failed to create team: %w", err)
+				}
+				assignedTeamID = &team.ID
+			}
+
 			u = models.User{
 				FirstName: user.FirstName,
 				LastName:  user.LastName,
 				Email:     user.Email,
 				AvatarURL: user.AvatarURL,
+				TeamID:    assignedTeamID,
+				IsAdmin:   isAdmin,
 			}
 			if err := tx.Create(&u).Error; err != nil {
 				return fmt.Errorf("failed to create user: %w", err)
 			}
-		}
 
-		// Provider-specific handling
-		switch providerName {
-		case "slack":
-			c.Logger().Infof("Received Slack auth request")
-
-			// Update to higher resolution image
-			rawData, _ := json.Marshal(user.RawData)
-			avatar := gjson.Get(string(rawData), "user.profile.image_512")
-			if avatar.Exists() {
-				u.AvatarURL = avatar.String()
-			}
-
-			// Get the team members
-			resp, err := getTeamMembersRawJSON(user.AccessToken)
-			if err != nil {
-				return fmt.Errorf("failed to get team members: %w", err)
-			}
-
-			var result map[string]interface{}
-			if err := json.Unmarshal([]byte(resp), &result); err != nil {
-				return fmt.Errorf("failed to parse team members: %w", err)
-			}
-			u.SocialMetadata = result
-			if err := tx.Save(&u).Error; err != nil {
-				return fmt.Errorf("failed to update user: %w", err)
-			}
-
-			// Get the team name
-			resp, err = getTeamInfoRawJSON(user.AccessToken)
-			if err != nil {
-				return fmt.Errorf("failed to get team info: %w", err)
-			}
-			name := gjson.Get(string(resp), "team.name")
-			if name.Exists() {
-				teamName = name.String()
-			}
-
-		case "google":
-			c.Logger().Infof("Received Google auth request")
-		}
-
-		// Check if the user has a team invite UUID
-		sess, err := session.Get("session", c)
-		if err == nil {
-			inviteUUID := sess.Values["team_invite_uuid"]
-			// Find team that this invitation belongs to
-			var invitation models.TeamInvitation
-			tx.Where("unique_id = ?", inviteUUID).First(&invitation)
-			if invitation.ID != 0 {
-				teamID := uint(invitation.TeamID)
-				u.TeamID = &teamID
-				if err := tx.Save(&u).Error; err != nil {
-					return fmt.Errorf("failed to update user team: %w", err)
+			switch providerName {
+			case "slack":
+				// Update to higher resolution image
+				rawData, _ := json.Marshal(user.RawData)
+				avatar := gjson.Get(string(rawData), "user.profile.image_512")
+				if avatar.Exists() {
+					u.AvatarURL = avatar.String()
 				}
-			}
-			// Clean up the session
-			delete(sess.Values, "team_invite_uuid")
-			sess.Save(c.Request(), c.Response())
-		}
 
-		if u.TeamID == nil {
-			// We did not assign any team to this user
-			// So we'll use the team name from the provider
-			if teamName == "" {
-				teamName = fmt.Sprintf("%s-Team", u.FirstName)
-			}
-			// Create a new team
-			team := models.Team{
-				Name: teamName,
-			}
-			if err := tx.Create(&team).Error; err != nil {
-				return fmt.Errorf("failed to create team: %w", err)
-			}
-			u.TeamID = &team.ID
-			if err := tx.Save(&u).Error; err != nil {
-				return fmt.Errorf("failed to update user with team: %w", err)
+				// Get the team members
+				resp, err := getTeamMembersRawJSON(user.AccessToken)
+				if err != nil {
+					return fmt.Errorf("failed to get team members: %w", err)
+				}
+
+				var result map[string]interface{}
+				if err := json.Unmarshal([]byte(resp), &result); err != nil {
+					return fmt.Errorf("failed to parse team members: %w", err)
+				}
+				u.SocialMetadata = result
+				if err := tx.Save(&u).Error; err != nil {
+					return fmt.Errorf("failed to update user: %w", err)
+				}
 			}
 		}
 
@@ -645,38 +649,171 @@ func (h *AuthHandler) UpdateOnboardingFormStatus(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-// Watercooler generates LiveKit tokens for joining the team's watercooler room
-// The team's watercooler room will be a room that will have a room name:
-// `team-<team-id>-watercooler`
-func (h *AuthHandler) Watercooler(c echo.Context) error {
+// Get all rooms for the user
+func (h *AuthHandler) GetRooms(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
 
-	// Generate a room name for the watercooler room
-	roomName := fmt.Sprintf("team-%d-watercooler", *user.TeamID)
+	var rooms []models.Room
+	// First, check if the room exists
+	result := h.DB.Where("team_id = ?", user.TeamID).Find(&rooms)
 
-	// Generate LiveKit tokens
-	tokens, err := generateLiveKitTokens(&h.ServerState, roomName, user)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Rooms not found")
+	}
+
+	return c.JSON(http.StatusOK, rooms)
+}
+
+// CreateRoom creates a new room for the user.
+func (h *AuthHandler) CreateRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	type Room struct {
+		Name string `gorm:"not null" json:"name" validate:"required"`
+	}
+
+	req := &Room{}
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	room := models.Room{
+		Name:   req.Name,
+		UserID: user.ID,
+		Team:   user.Team,
+		TeamID: user.TeamID,
+	}
+
+	if err := h.DB.Create(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
+	}
+
+	// Send Telegram notification for room creation
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("Room created: '%s' by user %s", room.Name, user.ID), h.Config)
+
+	return c.JSON(http.StatusOK, room)
+}
+
+// UpdateRoom updates an existing room for the user.
+func (h *AuthHandler) UpdateRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+
+	type Room struct {
+		Name string `gorm:"not null" json:"name" validate:"required"`
+	}
+
+	req := &Room{}
+
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	var room models.Room
+
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	// Check if user can modify the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+	room.Name = req.Name
+
+	if err := h.DB.Save(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create room")
+	}
+
+	// Send Telegram notification for room modification
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("Room modified: '%s' by user %s", room.Name, user.ID), h.Config)
+
+	return c.JSON(http.StatusOK, room)
+}
+
+func (h *AuthHandler) DeleteRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+
+	var room models.Room
+
+	// First, check if the room exists
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if user can modify the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	// Delete the room
+	if err := h.DB.Delete(&room).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete room")
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *AuthHandler) GetRoom(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	roomID := c.Param("id")
+	var room models.Room
+
+	// First, check if the room exists
+	result := h.DB.Where("id = ?", roomID).First(&room)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return c.String(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if user can access the room
+	if user.Team != room.Team {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
 	if err != nil {
-		c.Logger().Error("Failed to generate watercooler tokens:", err)
+		c.Logger().Error("Failed to generate room tokens:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 	tokens.Participant = user.ID
 
-	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the watercooler room", user.ID), h.Config)
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
 }
 
-// WatercoolerAnonymous generates a link that will have an encoded token that will be used
-// in `WatercoolerMeetRedirect` to see if an anonymous user can join the watercooler room.
+// RoomAnonymous generates a link that will have an encoded token that will be used
+// in `RoomMeetRedirect` to see if an anonymous user can join the room.
 // The generated token should be in the format:
-// /api/watercooler/meet-redirect?token=<GENERATED_TOKEN>
+// /api/room/meet-redirect?token=<GENERATED_TOKEN>
 // The generated token will be a JWT token valid for 10 minutes with payload
-// the team id.
-func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
+// the team id and room id.
+func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
@@ -687,12 +824,31 @@ func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
 	}
 
-	// Create custom claims for anonymous watercooler access
+	// Get room ID from query parameter
+	roomID := c.QueryParam("room_id")
+	if roomID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Missing room_id parameter")
+	}
+
+	// Verify the room exists and user has access to it
+	var room models.Room
+	result := h.DB.Where("id = ?", roomID).First(&room)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if user can access the room (same team)
+	if room.TeamID == nil || *room.TeamID != *user.TeamID {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized access to room")
+	}
+
+	// Create custom claims for anonymous room access
 	claims := jwt.MapClaims{
 		"team_id": *user.TeamID,
+		"room_id": roomID,
 		"exp":     jwt.NewNumericDate(time.Now().Add(10 * time.Minute)), // 10-minute expiration
 		"iat":     jwt.NewNumericDate(time.Now()),                       // Issued at
-		"purpose": "anonymous_watercooler",                              // Purpose of the token
+		"purpose": "anonymous_room",                                     // Purpose of the token
 	}
 
 	// Create token with claims
@@ -707,24 +863,24 @@ func (h *AuthHandler) WatercoolerAnonymous(c echo.Context) error {
 	// Generate encoded token
 	tokenString, err := token.SignedString([]byte(jwtAuth.Secret))
 	if err != nil {
-		c.Logger().Error("Failed to generate anonymous watercooler token:", err)
+		c.Logger().Error("Failed to generate anonymous room token:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate token")
 	}
 
 	// Return the redirect URL
-	redirectURL := fmt.Sprintf("/api/watercooler/meet-redirect?token=%s", tokenString)
+	redirectURL := fmt.Sprintf("/api/room/meet-redirect?token=%s", tokenString)
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"redirect_url": redirectURL,
 	})
 }
 
-// WatercoolerMeetRedirect generates LiveKit tokens
-// for joining the team's watercooler room via the meet.livekit.io/custom URL.
+// RoomMeetRedirect generates LiveKit tokens
+// for joining the team's room via the meet.livekit.io/custom URL.
 // The token will be valid for 3 hours maximum, and the format of the generated URL
 // that we will redirect user to will be:
-// The encoded token will come from the `WatercoolerAnonymous` generated link.
-func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
+// The encoded token will come from the `RoomAnonymous` generated link.
+func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
 	// Get the token from query parameters
 	tokenString := c.QueryParam("token")
 	if tokenString == "" {
@@ -743,7 +899,7 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 	})
 
 	if err != nil {
-		c.Logger().Error("Failed to parse anonymous watercooler token:", err)
+		c.Logger().Error("Failed to parse anonymous room token:", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
 	}
 
@@ -755,7 +911,7 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 
 	// Check token purpose
 	purpose, ok := claims["purpose"].(string)
-	if !ok || purpose != "anonymous_watercooler" {
+	if !ok || purpose != "anonymous_room" {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token purpose")
 	}
 
@@ -766,8 +922,26 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 	}
 	teamID := uint(teamIDFloat)
 
-	// Generate a room name for the watercooler room
-	roomName := fmt.Sprintf("team-%d-watercooler", teamID)
+	// Extract room ID
+	roomID, ok := claims["room_id"].(string)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid room ID in token")
+	}
+
+	// Verify the room exists and belongs to the team
+	var room models.Room
+	result := h.DB.Where("id = ?", roomID).First(&room)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
+	}
+
+	// Check if room belongs to the team
+	if room.TeamID == nil || *room.TeamID != teamID {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Room does not belong to team")
+	}
+
+	// Use the specific room ID as the room name
+	roomName := roomID
 
 	// Generate 4 random characters for anonymous user
 	randomChars := rand.Text()[:4]
@@ -779,10 +953,10 @@ func (h *AuthHandler) WatercoolerMeetRedirect(c echo.Context) error {
 		TeamID: &teamID,
 	}
 
-	// Generate a token for the anonymous user to join the watercooler room
+	// Generate a token for the anonymous user to join the room
 	livekitToken, err := generateMeetRedirectToken(&h.ServerState, roomName, anonymousUser)
 	if err != nil {
-		c.Logger().Error("Failed to generate watercooler tokens:", err)
+		c.Logger().Error("Failed to generate room tokens:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 

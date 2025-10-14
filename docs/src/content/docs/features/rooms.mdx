@@ -3,19 +3,34 @@ title: Rooms
 description: Learn about Hopp's room system for organizing pair programming sessions.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-import { Image } from 'astro:assets';
+import { Aside } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
 import room from "../../../assets/room.gif";
 
+Rooms are permanent, named meeting spots. Some rooms for example can be `Stand-ups`, `Mob Programming`, `Planning`, `Retrospectives`, etc.
 
-<Aside type="note">
-Rooms are currently in beta.
-</Aside>
+You can just hop into a room and start collaborating with your teammates. Additionally, rooms allow more than 2 users to collaborate in a single call, and do not request a call request to be made.
 
-Rooms are spaces where you can just hop-in and start collaborating with your teammates. Rooms allow more than 2 users to collaborate in a single call, and do not request a call request to be made.
+## Creating a room
 
-## How to join a room?
+Click on the top right corner of the app, and click on the `+` button.
 
-To join a room, for now only the `Watercooler` room is available, navigate inside the app to the Room tab, and click on the `Watercooler` room.
+Then give a name to your room, and click on the `Create room` button.
+
+Do not worry, you can always rename your room later.
 
 <Image src={room} class="rounded-md max-w-[300px] mx-auto mt-6" alt="Join room" />
+
+## Joining a room
+
+To join a room, all you have to do is click on the room tile you want to join.
+
+## More features to components
+
+We want to improve room experience, and some features we will add in the future are:
+
+1. Favourite a room
+2. See who is in the room without joining
+3. Subscribe to a room so you can get notified when someone joins
+
+If you want to tackle any of these features, please open an issue on our GitHub repository and you can work on it.
