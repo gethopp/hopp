@@ -9,6 +9,7 @@ import (
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -262,6 +263,41 @@ func sendWSErrorMessage(ws *websocket.Conn, message string) {
 func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, rdb *redis.PubSub, callerId, calleeID string) {
 	rdbCtx := context.Background()
 	calleeChannelID := common.GetUserChannel(calleeID)
+
+	// Check if the caller's team is in trial or paid tier
+	caller, err := models.GetUserByID(s.DB, callerId)
+	if err != nil {
+		ctx.Logger().Error("Error getting caller: ", err)
+		sendWSErrorMessage(ws, "Failed to get caller information")
+		return
+	}
+
+	callerWithSub, err := models.GetUserWithSubscription(s.DB, caller)
+	if err != nil {
+		ctx.Logger().Error("Error getting caller subscription: ", err)
+		sendWSErrorMessage(ws, "Failed to check subscription status")
+		return
+	}
+
+	// Check if caller has access (paid or active trial)
+	hasAccess := callerWithSub.IsPro
+	if !hasAccess && callerWithSub.IsTrial && callerWithSub.TrialEndsAt != nil {
+		// Check if trial is still active
+		hasAccess = callerWithSub.TrialEndsAt.After(time.Now())
+	}
+
+	if !hasAccess {
+		ctx.Logger().Warn("Caller does not have active subscription or trial: ", callerId)
+		msg := messages.NewRejectCallMessage(calleeID, "inactive-account")
+		msgJSON, err := json.Marshal(msg)
+		if err != nil {
+			ctx.Logger().Error("Error marshalling reject message: ", err)
+			return
+		}
+		ws.WriteMessage(websocket.TextMessage, msgJSON)
+		_ = notifications.SendTelegramNotification(fmt.Sprintf("Unsubscribed user %s tried to call", caller.ID), s.Config)
+		return
+	}
 
 	// Check first if the callee online
 	channels, err := s.Redis.PubSubChannels(rdbCtx, calleeChannelID).Result()

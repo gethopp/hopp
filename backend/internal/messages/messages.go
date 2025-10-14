@@ -111,7 +111,7 @@ type RejectCallMessage struct {
 	Type    MessageType `json:"type"`
 	Payload struct {
 		CallerID     string `json:"caller_id" validate:"required"`
-		RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected"`
+		RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected inactive-account"`
 	} `json:"payload"`
 }
 
@@ -343,6 +343,20 @@ func NewTeammateOnlineMessage(teammateID string) TeammateOnlineMessage {
 		Type: MessageTypeTeammateOnline,
 		Payload: TeammateOnlinePayload{
 			TeammateID: teammateID,
+		},
+	}
+}
+
+// NewRejectCallMessage creates a new reject call message
+func NewRejectCallMessage(calleeID, reason string) RejectCallMessage {
+	return RejectCallMessage{
+		Type: MessageTypeCallReject,
+		Payload: struct {
+			CallerID     string `json:"caller_id" validate:"required"`
+			RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected inactive-account"`
+		}{
+			CallerID:     calleeID,
+			RejectReason: reason,
 		},
 	}
 }
