@@ -19,6 +19,10 @@ task backend:create-certs
 
 # Start Docker containers for PostgreSQL and Redis
 task backend:compose-up
+
+# If it is the first time you are running the backend, you need to add mock data to the database.
+# By default it adds `michael@dundermifflin.com` and `dwight@dundermifflin.com` users.
+task backend:add-mock-data
 ```
 
 After the initial setup, **start the backend with the local LiveKit server**:
@@ -27,9 +31,6 @@ You can change the server's configuration in the `backend/env-files/.env.local` 
 ```bash
 task dev-server
 ```
-
-On your initial run, you can add mock data test users to the database, by default it adds `michael@dundermifflin.com` and `dwight@dundermifflin.com`.
-
 
 ## Tauri App Development
 
