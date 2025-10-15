@@ -53,6 +53,8 @@ cd hopp
 
 This will avoid any painful last minute breaking CI in your PR.
 
+Before installing our hooks you should install [pre-commit](https://pre-commit.com/#install).
+
 ```bash
 pre-commit install
 ```
