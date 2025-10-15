@@ -111,7 +111,7 @@ type RejectCallMessage struct {
 	Type    MessageType `json:"type"`
 	Payload struct {
 		CallerID     string `json:"caller_id" validate:"required"`
-		RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected inactive-account"`
+		RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected trial-ended"`
 	} `json:"payload"`
 }
 
@@ -353,7 +353,7 @@ func NewRejectCallMessage(calleeID, reason string) RejectCallMessage {
 		Type: MessageTypeCallReject,
 		Payload: struct {
 			CallerID     string `json:"caller_id" validate:"required"`
-			RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected inactive-account"`
+			RejectReason string `json:"reject_reason,omitempty" validate:"omitempty,oneof=in-call rejected trial-ended"`
 		}{
 			CallerID:     calleeID,
 			RejectReason: reason,

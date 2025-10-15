@@ -288,7 +288,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	if !hasAccess {
 		ctx.Logger().Warn("Caller does not have active subscription or trial: ", callerId)
-		msg := messages.NewRejectCallMessage(calleeID, "inactive-account")
+		msg := messages.NewRejectCallMessage(calleeID, "trial-ended")
 		msgJSON, err := json.Marshal(msg)
 		if err != nil {
 			ctx.Logger().Error("Error marshalling reject message: ", err)
