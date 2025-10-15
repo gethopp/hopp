@@ -24,6 +24,7 @@ import {
   VideoPresets,
   LocalTrack,
   RemoteTrackPublication,
+  AudioPresets,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
@@ -670,7 +671,13 @@ function MediaDevicesSettings() {
   const { callTokens, setCallTokens } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
-  const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter();
+  const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter({
+    filterOptions: {
+      quality: "high",
+      bufferOverflowMs: 100,
+      bufferDropMs: 200,
+    },
+  });
   const [micEnabled, setMicEnabled] = useState(false);
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
@@ -688,12 +695,19 @@ function MediaDevicesSettings() {
     );
     if (roomState === ConnectionState.Connected) {
       console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
-      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled, {
-        noiseSuppression: true,
-        echoCancellation: true,
-        autoGainControl: false,
-        sampleRate: 48000,
-      });
+      localParticipant.setMicrophoneEnabled(
+        callTokens?.hasAudioEnabled,
+        {
+          noiseSuppression: false,
+          echoCancellation: false,
+          autoGainControl: false,
+          sampleRate: 48000,
+          channelCount: 2,
+        },
+        {
+          audioPreset: AudioPresets.musicHighQuality,
+        },
+      );
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
         {
