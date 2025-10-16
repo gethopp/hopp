@@ -20,6 +20,9 @@ task backend:create-certs
 # Start Docker containers for PostgreSQL and Redis
 task backend:compose-up
 
+# Start the backend which inits the database
+task backend:dev
+
 # If it is the first time you are running the backend, you need to add mock data to the database.
 # By default it adds `michael@dundermifflin.com` and `dwight@dundermifflin.com` users.
 task backend:add-mock-data
