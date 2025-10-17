@@ -49,31 +49,34 @@ git clone https://github.com/YOUR-USERNAME/hopp.git
 cd hopp
 ```
 
-### 2. Install pre-commit hooks
+
+### 2. Install pre-requisites
+
+Install [prerequisites](https://docs.gethopp.app/quick-start/local-development/prerequisites/) to local system.
+
+### 3. Install pre-commit hooks
 
 This will avoid any painful last minute breaking CI in your PR.
-
-Before installing our hooks you should install [pre-commit](https://pre-commit.com/#install).
 
 ```bash
 pre-commit install
 ```
 
-### 3. Create a Branch
+### 4. Create a Branch
 
 ```bash
 # Create a new branch for your feature/fix/bug
 git checkout -b feature/your-feature-name
 ```
 
-### 4. Make Your Changes
+### 5. Make Your Changes
 
 - Write clean, well-documented code
 - Follow the existing code style
 - Add tests for new functionality if needed
 - Update documentation as needed
 
-### 5. Test Your Changes
+### 6. Test Your Changes
 
 ```bash
 # Run the test suite
@@ -83,11 +86,11 @@ git checkout -b feature/your-feature-name
 # Ensure your changes don't break existing functionality
 ```
 
-### 6. Commit Your Changes
+### 7. Commit Your Changes
 
 Write clear, descriptive commit messages 🙏. We try to use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for commit messages.
 
-### 7. Push and Create Pull Request
+### 8. Push and Create Pull Request
 
 ```bash
 # Push your branch to your fork
