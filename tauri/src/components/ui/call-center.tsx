@@ -245,18 +245,19 @@ export function ConnectedActions() {
                 </TooltipProvider>
               )}
               <Button
-                className="w-full border-red-500 text-red-600 flex flex-row gap-2"
+                className="w-full border-red-500 text-red-600 flex flex-row gap-1.5 text-sm"
                 variant="gradient-white"
                 onClick={handleEndCall}
               >
-                <HiOutlinePhoneXMark className="size-4" />
+                <HiOutlinePhoneXMark className="size-3.5" />
                 End call
               </Button>
             </div>
           </div>
         </div>
       </div>
-      <ListenToRemoteAudio />
+    {/* Render remote audio only if camera is NOT enabled */}
+      {!callTokens?.hasCameraEnabled && <ListenToRemoteAudio />} diable to solve the issue related to sync audio playback
     </>
   );
 }
@@ -352,7 +353,7 @@ function MicrophoneIcon({ setMicEnabled }: { setMicEnabled: (enabled: boolean) =
               [Colors.mic.text]: hasAudioEnabled,
               [Colors.deactivatedIcon]: !hasAudioEnabled,
             })}
-            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+            className=" p-0.5 text-xs rounded-sm hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4  border-0 shadow-none hover:shadow-xs"
           />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
@@ -513,6 +514,7 @@ function ScreensharingEventListener({
 
       updateRole(newRole);
     }
+    
   }, [tracks]);
 
   return <div />;
@@ -550,23 +552,27 @@ function CameraIcon() {
 
   const isDisabled = cameraDevices.length === 0;
 
-  const handleCameraToggle = () => {
-    clickedCameraRef.current = true;
-    let newCameraEnabled = !cameraEnabled;
-    updateCallTokens({
-      ...callTokens,
-      hasCameraEnabled: newCameraEnabled,
-    });
-    if (!newCameraEnabled) {
-      const cameraTrack = localParticipant
-        .getTrackPublications()
-        .filter((track) => track.source === Track.Source.Camera)[0];
-      if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
-        localParticipant.unpublishTrack(cameraTrack.track);
-      }
-    }
-  };
 
+
+  const handleCameraToggle = () => {
+  clickedCameraRef.current = true;
+  const newCameraEnabled = !cameraEnabled;
+  updateCallTokens({ ...callTokens, hasCameraEnabled: newCameraEnabled });
+
+  if (newCameraEnabled) {
+    // Publish a camera track with audio
+    localParticipant.setMicrophoneEnabled(true, { noiseSuppression: true, echoCancellation: true });
+  } else if (!newCameraEnabled) {
+    // Unpublish camera track and audio
+    const cameraTrack = localParticipant
+      .getTrackPublications()
+      .find((track) => track.source === Track.Source.Camera);
+    if (cameraTrack && cameraTrack.track instanceof LocalTrack) {
+      localParticipant.unpublishTrack(cameraTrack.track);
+    }
+    localParticipant.setMicrophoneEnabled(false);
+  }
+};
   const handleCameraChange = (value: string) => {
     console.debug("Selected camera: ", value);
     setActiveCameraDevice(value);
@@ -599,9 +605,14 @@ function CameraIcon() {
 
     if (filteredTracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
+ // Update store
+    updateCallTokens({ cameraWindowOpen: true });
+    
     } else {
       // If there are 0 then close the window
       tauriUtils.closeCameraWindow();
+      // Update store
+    updateCallTokens({ cameraWindowOpen: false });
     }
 
     if (localParticipant) {
@@ -631,7 +642,7 @@ function CameraIcon() {
       }
       size="unsized"
       disabled={isDisabled}
-      className={clsx("flex-1 min-w-0", {
+      className={clsx("flex-1 min-w-0 text-xs", {
         [Colors.deactivatedText]: !cameraEnabled,
         [`${Colors.camera.text} ${Colors.camera.ring}`]: cameraEnabled,
       })}
@@ -650,7 +661,7 @@ function CameraIcon() {
                 return (
                   device.deviceId !== "" && (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
-                      <span className="text-xs truncate">
+                      <span className="text-xs truncate ">
                         {device.label || `Camera ${device.label.slice(0, 8)}...`}
                       </span>
                     </SelectItem>

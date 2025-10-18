@@ -19,6 +19,7 @@ export enum ParticipantRole {
 }
 
 export type CallState = {
+  cameraWindowOpen?: boolean;
   timeStarted: Date;
   hasAudioEnabled: boolean;
   hasCameraEnabled: boolean;
