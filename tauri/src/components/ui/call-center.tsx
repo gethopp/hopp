@@ -21,7 +21,6 @@ import {
   LocalTrack,
   RemoteTrackPublication,
   AudioPresets,
-  LocalAudioTrack,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
