@@ -262,9 +262,11 @@ function CameraWindow() {
         </div>
       </div>
       <Toaster position="bottom-center" />
-      <LiveKitRoom token={cameraToken ?? undefined} serverUrl={livekitUrl}>
-        <ConsumerComponent hideSelf={isSelfHidden} setHideSelf={setIsSelfHidden} isExpanded={isExpanded} />
-      </LiveKitRoom>
+      {cameraToken && livekitUrl && (
+        <LiveKitRoom token={cameraToken} serverUrl={livekitUrl}>
+          <ConsumerComponent hideSelf={isSelfHidden} setHideSelf={setIsSelfHidden} isExpanded={isExpanded} />
+        </LiveKitRoom>
+      )}
     </div>
   );
 }
