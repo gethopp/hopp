@@ -17,6 +17,7 @@ import { CustomIcons } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import useStore from "@/store/store";
 import clsx from "clsx";
+import ListenToRemoteAudio from "@/components/ui/listen-to-remote-audio";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -147,6 +148,7 @@ function ConsumerComponent({
             </div>
           );
         })}
+        <ListenToRemoteAudio />
       </div>
     </div>
   );
