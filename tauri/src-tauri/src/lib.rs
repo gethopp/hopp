@@ -544,30 +544,26 @@ pub fn get_sentry_dsn() -> String {
 
 #[cfg(target_os = "macos")]
 pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
-    use objc2::msg_send;
-    use objc2::rc::Retained;
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::NSView;
-    use std::os::raw::c_void;
+    let ns_window: &objc2_app_kit::NSWindow = match window.ns_window() {
+        Ok(ns_window) => unsafe { &*ns_window.cast() },
+        Err(e) => {
+            log::error!("set_window_corner_radius: Failed to get NSWindow: {e:?}");
+            return;
+        }
+    };
+    let ns_view = match ns_window.contentView() {
+        Some(view) => view,
+        None => {
+            log::error!("set_window_corner_radius: Failed to get NSView");
+            return;
+        }
+    };
+    ns_view.setWantsLayer(true);
 
-    window
-        .with_webview(move |webview| {
-            let ns_window = webview.ns_window() as *mut AnyObject;
-            let view: *mut c_void = unsafe { msg_send![ns_window, contentView] };
-            let ns_view: Option<Retained<NSView>> = unsafe { Retained::retain(view.cast()) };
-            if ns_view.is_none() {
-                log::error!("set_window_corner_radius: Failed to get NSView");
-                return;
-            }
-            let ns_view = ns_view.unwrap();
-            ns_view.setWantsLayer(true);
-
-            if let Some(layer) = unsafe { ns_view.layer() } {
-                layer.setCornerRadius(radius);
-                layer.setMasksToBounds(true);
-            }
-        })
-        .unwrap();
+    if let Some(layer) = unsafe { ns_view.layer() } {
+        layer.setCornerRadius(radius);
+        layer.setMasksToBounds(true);
+    }
 }
 
 fn create_random_suffix() -> String {
