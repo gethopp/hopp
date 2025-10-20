@@ -28,6 +28,7 @@ export type CallState = {
   isRoomCall?: boolean;
   cameraTrackId?: string | null;
   room?: components["schemas"]["Room"];
+  cameraWindowOpen?: boolean;
 } & TCallTokensMessage["payload"];
 
 type State = {

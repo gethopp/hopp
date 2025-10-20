@@ -66,6 +66,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           cameraTrackId: null,
+          cameraWindowOpen: false,
         });
 
         toast.dismiss(toastId);

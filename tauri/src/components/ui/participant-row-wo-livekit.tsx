@@ -113,6 +113,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
             cameraTrackId: null,
+            cameraWindowOpen: false,
           });
           break;
       }

@@ -7,9 +7,6 @@ import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import { sounds } from "@/constants/sounds";
 import { socketService } from "@/services/socket";
 import {
-  AudioTrack,
-  ParticipantTile,
-  StartAudio,
   useLocalParticipant,
   useMediaDeviceSelect,
   useRemoteParticipants,
@@ -18,7 +15,6 @@ import {
 } from "@livekit/components-react";
 import {
   Track,
-  RemoteParticipant,
   ConnectionState,
   RoomEvent,
   VideoPresets,
@@ -39,6 +35,7 @@ import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
+import ListenToRemoteAudio from "./listen-to-remote-audio";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -256,19 +253,15 @@ export function ConnectedActions() {
           </div>
         </div>
       </div>
-      <ListenToRemoteAudio />
+      <ListenToRemoteAudio muted={callTokens?.cameraWindowOpen} />
     </>
   );
 }
 
-function MicrophoneIcon({ setMicEnabled }: { setMicEnabled: (enabled: boolean) => void }) {
+function MicrophoneIcon() {
   const [retry, setRetry] = useState(0);
   const { updateCallTokens, callTokens } = useStore();
   const hasAudioEnabled = callTokens?.hasAudioEnabled || false;
-
-  useEffect(() => {
-    setMicEnabled(hasAudioEnabled);
-  }, [hasAudioEnabled]);
 
   /* Force re enumeration of mic devices on dropdown open */
   const errorCallback = useCallback(
@@ -294,7 +287,7 @@ function MicrophoneIcon({ setMicEnabled }: { setMicEnabled: (enabled: boolean) =
       if (!lastUsedMic) return;
 
       for (const device of microphoneDevices) {
-        if (device.deviceId === lastUsedMic) {
+        if (device.deviceId === lastUsedMic && device.deviceId !== activeMicrophoneDeviceId) {
           setActiveMicrophoneDevice(device.deviceId);
           break;
         }
@@ -313,8 +306,10 @@ function MicrophoneIcon({ setMicEnabled }: { setMicEnabled: (enabled: boolean) =
 
   const handleMicrophoneChange = (value: string) => {
     console.debug("Selected microphone: ", value);
-    setActiveMicrophoneDevice(value);
-    updateMicrophonePreference(value);
+    if (value !== activeMicrophoneDeviceId) {
+      setActiveMicrophoneDevice(value);
+      updateMicrophonePreference(value);
+    }
   };
 
   const handleDropdownOpenChange = (open: boolean) => {
@@ -440,25 +435,6 @@ function ScreenShareIcon({
     </ToggleIconButton>
   );
 }
-
-const ListenToRemoteAudio = () => {
-  const tracks = useTracks([Track.Source.Microphone], {
-    onlySubscribed: true,
-  });
-
-  return (
-    <>
-      {tracks
-        .filter((track) => track.participant instanceof RemoteParticipant)
-        .map((track) => (
-          <ParticipantTile key={`${track.participant.identity}_${track.publication.trackSid}`} trackRef={track}>
-            <StartAudio label="Click to allow audio playback" />
-            <AudioTrack />
-          </ParticipantTile>
-        ))}
-    </>
-  );
-};
 
 function ScreensharingEventListener({
   callTokens,
@@ -599,9 +575,17 @@ function CameraIcon() {
 
     if (filteredTracks.length > 0) {
       tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
+      updateCallTokens({
+        ...callTokens,
+        cameraWindowOpen: true,
+      });
     } else {
       // If there are 0 then close the window
       tauriUtils.closeCameraWindow();
+      updateCallTokens({
+        ...callTokens,
+        cameraWindowOpen: false,
+      });
     }
 
     if (localParticipant) {
@@ -671,14 +655,14 @@ function MediaDevicesSettings() {
   const { callTokens, setCallTokens } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
-  const { isNoiseFilterPending, setNoiseFilterEnabled } = useKrispNoiseFilter({
+  const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
     filterOptions: {
       quality: "high",
       bufferOverflowMs: 100,
       bufferDropMs: 200,
     },
   });
-  const [micEnabled, setMicEnabled] = useState(false);
+
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
   useEffect(() => {
@@ -699,15 +683,16 @@ function MediaDevicesSettings() {
         callTokens?.hasAudioEnabled,
         {
           noiseSuppression: false,
-          echoCancellation: false,
+          echoCancellation: true,
           autoGainControl: false,
           sampleRate: 48000,
           channelCount: 2,
         },
         {
-          audioPreset: AudioPresets.musicHighQuality,
+          audioPreset: AudioPresets.speech,
         },
       );
+
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
         {
@@ -717,10 +702,12 @@ function MediaDevicesSettings() {
           videoCodec: "h264",
         },
       );
-    }
 
-    if (micEnabled && !isNoiseFilterPending) {
-      setNoiseFilterEnabled(true);
+      // Enable Krisp filter if audio is enabled
+      if (callTokens?.hasAudioEnabled && !isNoiseFilterPending && !isNoiseFilterEnabled) {
+        console.log("Enabling Krisp filter");
+        setNoiseFilterEnabled(true);
+      }
     }
   }, [roomState, callTokens?.hasAudioEnabled, localParticipant, roomConnected, callTokens?.hasCameraEnabled]);
 
@@ -756,7 +743,7 @@ function MediaDevicesSettings() {
 
   return (
     <div className="flex flex-row gap-1 w-full">
-      <MicrophoneIcon setMicEnabled={setMicEnabled} />
+      <MicrophoneIcon />
       <CameraIcon />
       <ScreenShareIcon
         callTokens={callTokens}

@@ -167,6 +167,7 @@ export const Rooms = () => {
           isRemoteControlEnabled: true,
           cameraTrackId: null,
           room: room,
+          cameraWindowOpen: false,
         });
       } catch (error) {
         toast.error("Error joining room");
