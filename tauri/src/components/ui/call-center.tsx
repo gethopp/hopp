@@ -657,7 +657,7 @@ function MediaDevicesSettings() {
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
     filterOptions: {
-      quality: "high",
+      quality: "medium",
       bufferOverflowMs: 100,
       bufferDropMs: 200,
     },
@@ -679,19 +679,7 @@ function MediaDevicesSettings() {
     );
     if (roomState === ConnectionState.Connected) {
       console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
-      localParticipant.setMicrophoneEnabled(
-        callTokens?.hasAudioEnabled,
-        {
-          noiseSuppression: false,
-          echoCancellation: true,
-          autoGainControl: false,
-          sampleRate: 48000,
-          channelCount: 2,
-        },
-        {
-          audioPreset: AudioPresets.speech,
-        },
-      );
+      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled);
 
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
