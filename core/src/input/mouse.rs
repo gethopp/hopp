@@ -691,6 +691,8 @@ pub struct CursorController {
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Event loop proxy for sending events
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    /// Used to assign a unique color to each controller
+    next_controller_id: usize,
 }
 
 impl CursorController {
@@ -771,6 +773,7 @@ impl CursorController {
             })),
             redraw_thread_sender: sender,
             event_loop_proxy,
+            next_controller_id: 1,
         })
     }
 
@@ -822,8 +825,11 @@ impl CursorController {
             return Err(CursorControllerError::MaxControllersReached);
         }
 
-        let controllers_count = controllers_cursors.len() + 1;
-        let color = SVG_BADGE_COLORS[controllers_count % SVG_BADGE_COLORS.len()];
+        // The color at index 0 is reserved for the sharer. By using a counter that only
+        // increments, we avoid reusing a color when a controller leaves and another one joins.
+        let color_index = (self.next_controller_id - 1) % (SVG_BADGE_COLORS.len() - 1) + 1;
+        let color = SVG_BADGE_COLORS[color_index];
+        self.next_controller_id += 1;
         let used_names: Vec<String> = controllers_cursors
             .iter()
             .map(|c| c.visible_name.clone())
