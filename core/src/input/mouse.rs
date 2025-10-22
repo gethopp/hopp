@@ -5,6 +5,7 @@ use std::{
     },
     thread::JoinHandle,
     time::{Duration, Instant},
+    collections::VecDeque,
 };
 
 use crate::{
@@ -328,6 +329,7 @@ struct ControllerCursor {
     has_control: bool,
     visible_name: String,
     sid: String,
+    color_index: usize,
 }
 
 impl ControllerCursor {
@@ -337,6 +339,7 @@ impl ControllerCursor {
         sid: String,
         visible_name: String,
         enabled: bool,
+        color_index: usize,
     ) -> Self {
         Self {
             control_cursor,
@@ -347,6 +350,7 @@ impl ControllerCursor {
             has_control: false,
             visible_name,
             sid,
+            color_index,
         }
     }
 
@@ -693,6 +697,7 @@ pub struct CursorController {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     /// Used to assign a unique color to each controller
     next_controller_id: usize,
+    available_colors: VecDeque<usize>,
 }
 
 impl CursorController {
@@ -763,6 +768,12 @@ impl CursorController {
         };
 
         let (sender, receiver) = std::sync::mpsc::channel();
+        let mut available = VecDeque::new();
+        // push controller color indices (skip 0 - reserved for sharer)
+        for i in 1..SVG_BADGE_COLORS.len() {
+            available.push_back(i);
+        }
+
         Ok(Self {
             remote_control,
             controllers_cursors,
@@ -774,6 +785,7 @@ impl CursorController {
             redraw_thread_sender: sender,
             event_loop_proxy,
             next_controller_id: 1,
+            available_colors: available,
         })
     }
 
@@ -856,6 +868,7 @@ impl CursorController {
             sid,
             visible_name,
             self.controllers_cursors_enabled,
+            color_index,
         ));
         Ok(())
     }
@@ -879,7 +892,20 @@ impl CursorController {
     pub fn remove_controller(&mut self, sid: &str) {
         log::info!("remove_controller: {sid}");
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        controllers_cursors.retain(|controller| controller.sid != sid);
+
+        if let Some(pos) = controllers_cursors.iter().position(|controller| controller.sid == sid)
+        {
+            // take ownership so we can recover color_index
+            let controller = controllers_cursors.remove(pos);
+            let freed_color = controller.color_index;
+            if freed_color > 0 && freed_color < SVG_BADGE_COLORS.len() {
+                if !self.available_colors.contains(&freed_color)
+                    self.available_colors.push_back(freed_color);
+            }
+        } else {
+            // no-op if not present
+            log::info!("remove_controller: controller with sid {} not found", sid);
+        }
     }
 
     /// Handles controller cursor movement from remote input.
