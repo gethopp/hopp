@@ -37,9 +37,12 @@ impl TranslationUniform {
 
     /// Sets the translation component of the transformation matrix.
     ///
+    /// Takes input coordinates in screen percentage and converts them to the
+    /// appropriate shift in device coordinates.
+    ///
     /// # Arguments
-    /// * `x` - Horizontal translation in normalized device coordinates (-1.0 to 1.0)
-    /// * `y` - Vertical translation in normalized device coordinates (-1.0 to 1.0)
+    /// * `x` - width percentage
+    /// * `y` - height percentage
     ///
     /// # Note
     /// The coordinates are multiplied by 2.0 because the input is expected to be
