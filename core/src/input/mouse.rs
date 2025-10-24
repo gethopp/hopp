@@ -1,11 +1,11 @@
 use std::{
+    collections::VecDeque,
     sync::{
         mpsc::{Receiver, RecvTimeoutError, Sender},
         Arc, Mutex,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
-    collections::VecDeque,
 };
 
 use crate::{
@@ -93,11 +93,7 @@ pub const CUSTOM_MOUSE_EVENT: i64 = 1234;
 /// Maximum number of simultaneous remote controllers supported by the system.
 const MAX_CURSORS: u32 = 10;
 
-// Hand-picked colors for the tailwind colors page:
-// https://tailwindcss.com/docs/colors
-pub static SVG_BADGE_COLORS: [&str; 7] = [
-    "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040",
-];
+const SHARER_COLOR: &str = "#7CCF00";
 
 const SHARER_POSITION_UPDATE_INTERVAL: Duration = Duration::from_millis(30);
 
@@ -329,7 +325,7 @@ struct ControllerCursor {
     has_control: bool,
     visible_name: String,
     sid: String,
-    color_index: usize,
+    color: &'static str,
 }
 
 impl ControllerCursor {
@@ -339,7 +335,7 @@ impl ControllerCursor {
         sid: String,
         visible_name: String,
         enabled: bool,
-        color_index: usize,
+        color: &'static str,
     ) -> Self {
         Self {
             control_cursor,
@@ -350,7 +346,7 @@ impl ControllerCursor {
             has_control: false,
             visible_name,
             sid,
-            color_index,
+            color,
         }
     }
 
@@ -695,9 +691,8 @@ pub struct CursorController {
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Event loop proxy for sending events
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    /// Used to assign a unique color to each controller
-    next_controller_id: usize,
-    available_colors: VecDeque<usize>,
+    /// Available colors for new controllers
+    available_colors: VecDeque<&'static str>,
 }
 
 impl CursorController {
@@ -734,7 +729,7 @@ impl CursorController {
 
         let remote_control = if accessibility_permission {
             let scale_factor = overlay_window.get_display_scale();
-            let color = SVG_BADGE_COLORS[0];
+            let color = SHARER_COLOR;
             let svg_badge = render_user_badge_to_png(color, "Me ", false)
                 .map_err(|_| CursorControllerError::SvgRenderError)?;
             let sharer_cursor = match gfx.create_cursor(&svg_badge, scale_factor) {
@@ -768,11 +763,10 @@ impl CursorController {
         };
 
         let (sender, receiver) = std::sync::mpsc::channel();
-        let mut available = VecDeque::new();
-        // push controller color indices (skip 0 - reserved for sharer)
-        for i in 1..SVG_BADGE_COLORS.len() {
-            available.push_back(i);
-        }
+        let available = VecDeque::from([
+            "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040", "#E49500", "#B80088",
+            "#FF5BFF", "#00D091",
+        ]);
 
         Ok(Self {
             remote_control,
@@ -784,7 +778,6 @@ impl CursorController {
             })),
             redraw_thread_sender: sender,
             event_loop_proxy,
-            next_controller_id: 1,
             available_colors: available,
         })
     }
@@ -837,11 +830,10 @@ impl CursorController {
             return Err(CursorControllerError::MaxControllersReached);
         }
 
-        // The color at index 0 is reserved for the sharer. By using a counter that only
-        // increments, we avoid reusing a color when a controller leaves and another one joins.
-        let color_index = (self.next_controller_id - 1) % (SVG_BADGE_COLORS.len() - 1) + 1;
-        let color = SVG_BADGE_COLORS[color_index];
-        self.next_controller_id += 1;
+        let color = match self.available_colors.pop_front() {
+            Some(color) => color,
+            None => return Err(CursorControllerError::MaxControllersReached),
+        };
         let used_names: Vec<String> = controllers_cursors
             .iter()
             .map(|c| c.visible_name.clone())
@@ -868,7 +860,7 @@ impl CursorController {
             sid,
             visible_name,
             self.controllers_cursors_enabled,
-            color_index,
+            color,
         ));
         Ok(())
     }
@@ -893,15 +885,13 @@ impl CursorController {
         log::info!("remove_controller: {sid}");
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
 
-        if let Some(pos) = controllers_cursors.iter().position(|controller| controller.sid == sid)
+        if let Some(pos) = controllers_cursors
+            .iter()
+            .position(|controller| controller.sid == sid)
         {
-            // take ownership so we can recover color_index
+            // take ownership so we can recover color
             let controller = controllers_cursors.remove(pos);
-            let freed_color = controller.color_index;
-            if freed_color > 0 && freed_color < SVG_BADGE_COLORS.len() {
-                if !self.available_colors.contains(&freed_color)
-                    self.available_colors.push_back(freed_color);
-            }
+            self.available_colors.push_back(controller.color);
         } else {
             // no-op if not present
             log::info!("remove_controller: controller with sid {} not found", sid);
