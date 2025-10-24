@@ -79,3 +79,29 @@ tasks:
     desc: Generate type-safe code from the OpenAPI specification.
     cmds:
       - yarn generate-openapi-types
+
+  release:
+    desc: Bundle app, it takes two argument vars, OS (mac | win) and AARCH (arm64 | x64)
+    vars:
+      TARGET_ARCH:
+        sh: |
+          if [[ "{{.ARCH}}" == "arm64" ]]; then
+            echo "aarch64"
+          elif [[ "{{.ARCH}}" == "x64" ]]; then
+            echo "x86_64"
+          fi
+      TARGET_OS:
+        sh: |
+          if [[ "{{.OS}}" == "mac" ]]; then
+            echo "apple-darwin"
+          elif [[ "{{.OS}}" == "win" ]]; then
+            echo "pc-windows-msvc"
+          fi
+    dotenv: [".env"]
+    cmds:
+      - task: core:release
+        vars:
+          OS: "{{.OS}}"
+          ARCH: "{{.ARCH}}"
+      - |
+        yarn tauri build --target {{.TARGET_ARCH}}-{{.TARGET_OS}} --config src-tauri/tauri.conf.rel.json
