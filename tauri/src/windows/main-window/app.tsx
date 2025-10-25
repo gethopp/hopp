@@ -211,8 +211,22 @@ function App() {
       // If there is, reject the call
       const { callTokens } = useStore.getState();
       if (callTokens) {
-        handleInCallRejection((data as TIncomingCallMessage).payload.caller_id);
-        return;
+        const incomingCallerId = (data as TIncomingCallMessage).payload.caller_id;
+
+        // Special case: If we're receiving a call from the same participant we're already in a call with,
+        // close the current call and allow the new call to proceed
+        // This is an edge case, if we do not get a termination signal but not
+        // sure when its happening yet.
+        if (callTokens.participant === incomingCallerId) {
+          console.log("Received call from current participant - closing current call and accepting new one");
+          setCallTokens(null);
+          tauriUtils.endCallCleanup();
+          // Continue to show the call banner below
+        } else {
+          // Different participant - reject as usual
+          handleInCallRejection(incomingCallerId);
+          return;
+        }
       }
 
       if (data.type === "incoming_call") {
