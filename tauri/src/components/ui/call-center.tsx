@@ -36,6 +36,7 @@ import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
+import { useScreenShareListener } from "@/lib/hooks";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -81,6 +82,8 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+
+  useScreenShareListener();
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -135,17 +138,6 @@ export function ConnectedActions() {
     });
   }, [callTokens, setCallTokens]);
 
-  const handleRoleChange = useCallback(
-    (value: ParticipantRole) => {
-      if (!callTokens) return;
-      setCallTokens({
-        ...callTokens,
-        role: value,
-      });
-    },
-    [callTokens],
-  );
-
   // Stop call when teammate disconnects
   useEffect(() => {
     if (!callTokens || !callParticipant) return;
@@ -157,7 +149,6 @@ export function ConnectedActions() {
 
   return (
     <>
-      <ScreensharingEventListener callTokens={callTokens} updateRole={handleRoleChange} />
       {/* <ConnectionsHealthDebug /> */}
       <div
         className={clsx("gap-2 px-3 flex-nowrap grid mb-4 min-w-full", {
@@ -434,64 +425,6 @@ function ScreenShareIcon({
       {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
     </ToggleIconButton>
   );
-}
-
-function ScreensharingEventListener({
-  callTokens,
-  updateRole,
-}: {
-  callTokens: CallState | null;
-  updateRole: (value: ParticipantRole) => void;
-}) {
-  if (!callTokens || !callTokens.videoToken) return null;
-
-  const tracks = useTracks([Track.Source.ScreenShare]);
-  const localParticipant = useLocalParticipant();
-  const room = useRoomContext();
-  useEffect(() => {
-    const localParticipantId = localParticipant?.localParticipant.identity.split(":").slice(0, -1).join(":") || "";
-    let trackFound = false;
-    let screenshareTrackFound = false;
-    for (const participant of room.remoteParticipants) {
-      for (const track of participant[1].getTrackPublications()) {
-        const trackParticipantId = participant[1].identity.split(":").slice(0, -1).join(":");
-
-        if (track.source === "screen_share" && trackParticipantId === localParticipantId) {
-          screenshareTrackFound = true;
-          break;
-        }
-
-        if (track.source === "screen_share" && trackParticipantId !== localParticipantId) {
-          trackFound = true;
-          break;
-        }
-      }
-    }
-
-    let newRole: ParticipantRole;
-    if (trackFound) {
-      newRole = ParticipantRole.CONTROLLER;
-    } else if (screenshareTrackFound) {
-      newRole = ParticipantRole.SHARER;
-    } else {
-      newRole = ParticipantRole.NONE;
-    }
-
-    if (callTokens?.role !== newRole) {
-      if (callTokens?.role === ParticipantRole.CONTROLLER && !trackFound) {
-        tauriUtils.closeScreenShareWindow();
-        tauriUtils.setDockIconVisible(false);
-      }
-
-      if (newRole === ParticipantRole.CONTROLLER) {
-        tauriUtils.createScreenShareWindow(callTokens.videoToken, false);
-      }
-
-      updateRole(newRole);
-    }
-  }, [tracks]);
-
-  return <div />;
 }
 
 function CameraIcon() {
