@@ -514,6 +514,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
         .transparent(true)
         .always_on_top(true)
         .decorations(false)
+        .protected(true)
         .shadow(true);
 
     #[cfg(target_os = "macos")]
