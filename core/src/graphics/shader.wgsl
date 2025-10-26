@@ -71,10 +71,10 @@ fn fs_click_animation_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(color.rgb, color.a * alpha);
     } else {
         let ring_width = 0.01;
-        let edge = 0.02;
-        let outer = smoothstep(radius - ring_width - edge, radius - ring_width + edge, dist);
-        let inner = 1.0 - smoothstep(radius + ring_width - edge, radius + ring_width + edge, dist);
-        let alpha = inner * outer;
+        let edge = fwidth(dist);
+        let ring_dist = abs(dist - radius);
+        let alpha = 1.0 - smoothstep(ring_width * 0.5, ring_width * 0.5 + edge, ring_dist);
+
         return vec4<f32>(color.rgb, color.a * alpha);
     }
 }
