@@ -294,6 +294,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.POST("/change-team/:uuid", auth.ChangeTeam)
 	protectedAPI.POST("/send-team-invites", auth.SendTeamInvites)
 	protectedAPI.POST("/metadata/onboarding-form", auth.UpdateOnboardingFormStatus)
+	protectedAPI.POST("/subscribe-linux-waitlist", auth.SubscribeToLinuxWaitingList)
 
 	protectedAPI.POST("/room", auth.CreateRoom)
 	protectedAPI.PUT("/room/:id", auth.UpdateRoom)

@@ -18,8 +18,9 @@ import (
 
 // EmailSubscriptions tracks user's email subscription preferences
 type EmailSubscriptions struct {
-	MarketingEmails bool       `gorm:"default:false" json:"marketing_emails"`
-	UnsubscribedAt  *time.Time `json:"unsubscribed_at,omitempty"`
+	MarketingEmails  bool       `gorm:"default:false" json:"marketing_emails"`
+	LinuxWaitingList bool       `gorm:"default:false" json:"linux_waitinglist"`
+	UnsubscribedAt   *time.Time `json:"unsubscribed_at,omitempty"`
 }
 
 // If we get more JSON values fields, we can use a Generic
@@ -76,6 +77,7 @@ func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
 	u.UnsubscribeID = unsubUUID.String()
 
 	u.EmailSubscriptions.MarketingEmails = true
+	u.EmailSubscriptions.LinuxWaitingList = false
 	u.EmailSubscriptions.UnsubscribedAt = nil
 
 	// Hash password if it's set

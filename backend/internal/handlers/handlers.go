@@ -974,6 +974,26 @@ func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {
 	})
 }
 
+// SubscribeToLinuxWaitingList subscribes the user to the Linux waiting list
+// and unsubscribes from marketing emails
+func (h *AuthHandler) SubscribeToLinuxWaitingList(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	user.EmailSubscriptions.LinuxWaitingList = true
+	user.EmailSubscriptions.MarketingEmails = false
+
+	if err := h.DB.Save(user).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user preferences")
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Successfully subscribed to Linux waiting list",
+	})
+}
+
 // ChangeTeam allows a logged-in user to change teams using an invitation UUID.
 // It validates the user has no teammates before allowing the change
 func (h *AuthHandler) ChangeTeam(c echo.Context) error {

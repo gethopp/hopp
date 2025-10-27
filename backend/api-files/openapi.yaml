@@ -772,6 +772,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/auth/subscribe-linux-waitlist:
+    post:
+      summary: Subscribe to Linux waiting list
+      description: Subscribes the authenticated user to the Linux waiting list and unsubscribes from marketing emails
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Successfully subscribed to Linux waiting list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully subscribed to Linux waiting list"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/teammates/{userId}:
     delete:
       summary: Remove a teammate from your team

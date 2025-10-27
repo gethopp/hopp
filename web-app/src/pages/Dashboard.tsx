@@ -78,13 +78,15 @@ export function Dashboard() {
   const posthog = usePostHog();
 
   // Function to handle file downloads
-  const downloadFile = (system: DownloadSystem) => {
+  const downloadFile = async (system: DownloadSystem) => {
     if (system === "LINUX") {
-      posthog.capture("app_download_attempted", {
-        platform: "linux",
-        download_type: "notification_signup",
-      });
-      window.open("https://forms.gle/Fce4jTsDGzKVimib6", "_blank");
+      try {
+        await subscribeToLinuxWaitlist({});
+        toast.success("Successfully subscribed to Linux waiting list");
+      } catch (error) {
+        toast.error("Failed to subscribe to Linux waiting list. Please try again.");
+        console.error(error);
+      }
       return;
     }
 
@@ -204,6 +206,11 @@ export function Dashboard() {
   const { mutateAsync: changeTeam } = useMutation("post", "/api/auth/change-team/{uuid}", {
     retry: false,
   });
+
+  const { mutateAsync: subscribeToLinuxWaitlist, isPending: isSubscribing } = useMutation(
+    "post",
+    "/api/auth/subscribe-linux-waitlist",
+  );
 
   const inviteUrl = inviteData?.invite_uuid ? `${BACKEND_URLS.BASE}/invitation/${inviteData.invite_uuid}` : "";
 
@@ -492,8 +499,13 @@ export function Dashboard() {
                 <span className="font-normal">Linux</span>
                 <span className="muted">Various Linux distributions</span>
               </div>
-              <Button variant="outline" className="ml-auto" onClick={() => downloadFile("LINUX")}>
-                Notify me
+              <Button
+                variant="outline"
+                className="ml-auto"
+                onClick={() => downloadFile("LINUX")}
+                disabled={isSubscribing}
+              >
+                {isSubscribing ? "Subscribing..." : "Notify me"}
               </Button>
             </div>
           </div>
