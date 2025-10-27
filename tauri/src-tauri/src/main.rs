@@ -66,7 +66,7 @@ async fn screenshare(
             token: token.clone(),
             resolution,
             accessibility_permission,
-            use_av1,
+            use_av1: false, // Hardcode this to false to check if we have a performance regression
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");

@@ -168,6 +168,7 @@ export const Rooms = () => {
           cameraTrackId: null,
           room: room,
           cameraWindowOpen: false,
+          krispToggle: true,
         });
       } catch (error) {
         toast.error("Error joining room");

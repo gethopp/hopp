@@ -29,6 +29,7 @@ export type CallState = {
   cameraTrackId?: string | null;
   room?: components["schemas"]["Room"];
   cameraWindowOpen?: boolean;
+  krispToggle?: boolean;
 } & TCallTokensMessage["payload"];
 
 type State = {
