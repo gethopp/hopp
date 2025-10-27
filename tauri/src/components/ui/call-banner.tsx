@@ -67,6 +67,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           isRemoteControlEnabled: true,
           cameraTrackId: null,
           cameraWindowOpen: false,
+          krispToggle: true,
         });
 
         toast.dismiss(toastId);

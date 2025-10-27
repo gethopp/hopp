@@ -10,7 +10,7 @@ import { tauriUtils } from "@/windows/window-utils.ts";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, authToken } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, authToken } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
 
@@ -97,6 +97,16 @@ export const Debug = () => {
           Ping websocket
         </Button>
         <Button onClick={toggleSound}>{isPlaying ? "Stop call sound" : "Play call sound"}</Button>
+        <Button
+          onClick={() => {
+            updateCallTokens({
+              krispToggle: !(callTokens?.krispToggle ?? true),
+            });
+          }}
+          variant={callTokens?.krispToggle === false ? "destructive" : "default"}
+        >
+          Krisp: {callTokens?.krispToggle === false ? "Disabled" : "Enabled"}
+        </Button>
       </div>
     </div>
   );

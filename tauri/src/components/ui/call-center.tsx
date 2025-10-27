@@ -624,13 +624,24 @@ function MediaDevicesSettings() {
         },
       );
 
-      // Enable Krisp filter if audio is enabled
-      if (callTokens?.hasAudioEnabled && !isNoiseFilterPending && !isNoiseFilterEnabled) {
+      // Enable Krisp filter if audio is enabled and krispToggle is not disabled
+      const krispEnabled = callTokens?.krispToggle !== false; // Default to true if undefined
+      if (callTokens?.hasAudioEnabled && !isNoiseFilterPending && !isNoiseFilterEnabled && krispEnabled) {
         console.log("Enabling Krisp filter");
         setNoiseFilterEnabled(true);
+      } else if (!krispEnabled && isNoiseFilterEnabled) {
+        console.log("Disabling Krisp filter");
+        setNoiseFilterEnabled(false);
       }
     }
-  }, [roomState, callTokens?.hasAudioEnabled, localParticipant, roomConnected, callTokens?.hasCameraEnabled]);
+  }, [
+    roomState,
+    callTokens?.hasAudioEnabled,
+    localParticipant,
+    roomConnected,
+    callTokens?.hasCameraEnabled,
+    callTokens?.krispToggle,
+  ]);
 
   const remoteParticipants = useRemoteParticipants();
   const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);

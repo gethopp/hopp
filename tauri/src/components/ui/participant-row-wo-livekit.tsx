@@ -114,6 +114,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             isRemoteControlEnabled: true,
             cameraTrackId: null,
             cameraWindowOpen: false,
+            krispToggle: true,
           });
           break;
       }
