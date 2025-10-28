@@ -306,6 +306,11 @@ export function Dashboard() {
       return;
     }
 
+    posthog.capture("invite_teammates_clicked", {
+      method: "email_invites",
+      invite_count: emailOptions.length,
+    });
+
     try {
       const emails = emailOptions.map((option) => option.value);
       await inviteTeammates({
@@ -397,6 +402,9 @@ export function Dashboard() {
                   <Input id="invite-url" value={inviteUrl} disabled className="max-w-md" />
                   <CopyButton
                     onCopy={() => {
+                      posthog.capture("invite_link_copied", {
+                        method: "copy_button",
+                      });
                       navigator.clipboard.writeText(inviteUrl);
                       toast.success("Invitation link copied to clipboard");
                     }}
