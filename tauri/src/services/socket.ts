@@ -86,7 +86,7 @@ class SocketService {
     });
 
     this.socket.addEventListener("error", (event: Event) => {
-      console.error("Socket connection error:", event);
+      console.error("Socket connection error:", JSON.stringify(event));
       useStore.getState().setSocketConnected(false);
     });
 

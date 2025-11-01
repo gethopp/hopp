@@ -62,7 +62,8 @@
         "skipTaskbar": true,
         "alwaysOnTop": true,
         "useHttpsScheme": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ]
   }
