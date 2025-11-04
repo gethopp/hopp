@@ -418,7 +418,6 @@ const ConsumerComponent = React.memo(() => {
     // console.debug(`isMouseInside: ${isMouseInside}, isSharingKeyEvents: ${isSharingKeyEvents}`);
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
       if (isMouseInside && isSharingKeyEvents) {
         e.preventDefault();
         // Skip copy and paste keys
@@ -431,6 +430,8 @@ const ConsumerComponent = React.memo(() => {
             return;
           }
         }
+
+        e.preventDefault();
         /*
          * Hack to handle dead quote key, this
          * list should be updated with other dead keys as they are
@@ -466,7 +467,6 @@ const ConsumerComponent = React.memo(() => {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      e.preventDefault();
       if (isMouseInside && isSharingKeyEvents) {
         e.preventDefault();
         /*
