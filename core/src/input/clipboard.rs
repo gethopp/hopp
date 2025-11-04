@@ -24,9 +24,9 @@ fn simulate_shortcut_key_sequence(
     letter_key: &str,
 ) {
     let modifier_key = if cfg!(target_os = "macos") {
-        "meta"
+        "Meta"
     } else {
-        "ctrl"
+        "Control"
     };
     let mut modifier_keystroke = KeystrokeData {
         key: modifier_key.to_string(),
