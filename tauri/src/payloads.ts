@@ -70,6 +70,29 @@ export const PKeystroke = z.object({
 });
 export type TPKeystroke = z.infer<typeof PKeystroke>;
 
+export const PAddToClipboard = z.object({
+  type: z.literal("AddToClipboard"),
+  payload: z.object({
+    is_copy: z.boolean(),
+  }),
+});
+export type TPAddToClipboard = z.infer<typeof PAddToClipboard>;
+
+export const PClipboardPayload = z.object({
+  packet_id: z.number(),
+  total_packets: z.number(),
+  data: z.array(z.number()),
+});
+export type TPClipboardPayload = z.infer<typeof PClipboardPayload>;
+
+export const PPasteFromClipboard = z.object({
+  type: z.literal("PasteFromClipboard"),
+  payload: z.object({
+    data: PClipboardPayload.nullable(),
+  }),
+});
+export type TPPasteFromClipboard = z.infer<typeof PPasteFromClipboard>;
+
 // WebSocket Message Types
 export const MessageType = z.enum([
   "success",
