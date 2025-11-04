@@ -54,6 +54,23 @@ pub struct RemoteControlEnabled {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AddToClipboardData {
+    pub is_copy: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClipboardPayload {
+    pub packet_id: u64,
+    pub total_packets: u64,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PasteFromClipboardData {
+    pub data: Option<ClipboardPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum ClientEvent {
     MouseMove(ClientPoint),
@@ -65,4 +82,6 @@ pub enum ClientEvent {
     Tick(TickData),
     TickResponse(TickData),
     RemoteControlEnabled(RemoteControlEnabled),
+    AddToClipboard(AddToClipboardData),
+    PasteFromClipboard(PasteFromClipboardData),
 }
