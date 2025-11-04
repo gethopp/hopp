@@ -182,6 +182,7 @@ fn create_capture_callback(
                 resolution.width as u32,
                 resolution.height as u32,
             );
+            log::info!("capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}");
             let mut stream_buffer = stream_buffer.lock().unwrap();
             *stream_buffer = StreamBuffer::new(stream_width, stream_height);
         }
@@ -203,14 +204,20 @@ fn create_capture_callback(
         let mut stream_buffer = stream_buffer.lock().unwrap();
         let stream_width = stream_buffer.video_frame.buffer.width();
         let stream_height = stream_buffer.video_frame.buffer.height();
-        let mut scaled_buffer = framebuffer.scale(stream_width as i32, stream_height as i32);
-        drop(framebuffer);
+        if frame_width != (stream_width as i32) || frame_height != (stream_height as i32) {
+            let mut scaled_buffer = framebuffer.scale(stream_width as i32, stream_height as i32);
+            drop(framebuffer);
 
-        // Copy scaled buffer to stream buffer
-        let (data_y, data_uv) = scaled_buffer.data_mut();
-        let (dst_y, dst_uv) = stream_buffer.video_frame.buffer.data_mut();
-        dst_y.copy_from_slice(data_y);
-        dst_uv.copy_from_slice(data_uv);
+            // Copy scaled buffer to stream buffer
+            let (data_y, data_uv) = scaled_buffer.data_mut();
+            let (dst_y, dst_uv) = stream_buffer.video_frame.buffer.data_mut();
+            dst_y.copy_from_slice(data_y);
+            dst_uv.copy_from_slice(data_uv);
+        } else {
+            let (dst_y, dst_uv) = stream_buffer.video_frame.buffer.data_mut();
+            dst_y.copy_from_slice(data_y);
+            dst_uv.copy_from_slice(data_uv);
+        }
 
         let buffer_source = buffer_source.lock().unwrap();
         if buffer_source.is_some() {
