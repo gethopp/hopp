@@ -419,7 +419,6 @@ const ConsumerComponent = React.memo(() => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isMouseInside && isSharingKeyEvents) {
-        e.preventDefault();
         // Skip copy and paste keys
         if (OS === "macos") {
           if (e.metaKey && (e.code === "KeyC" || e.code === "KeyV" || e.code === "KeyX")) {
@@ -468,6 +467,17 @@ const ConsumerComponent = React.memo(() => {
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (isMouseInside && isSharingKeyEvents) {
+        // Skip copy and paste keys
+        if (OS === "macos") {
+          if (e.metaKey && (e.code === "KeyC" || e.code === "KeyV" || e.code === "KeyX")) {
+            return;
+          }
+        } else if (OS === "windows") {
+          if (e.ctrlKey && (e.code === "KeyC" || e.code === "KeyV" || e.code === "KeyX")) {
+            return;
+          }
+        }
+
         e.preventDefault();
         /*
          * Hack to handle dead quote key, this
