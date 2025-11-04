@@ -8,11 +8,11 @@ pub struct ClipboardController {
     clipboard_payload: Vec<room_service::ClipboardPayload>,
 }
 
-fn construct_clipboard_data(clipboard_payload: &mut Vec<room_service::ClipboardPayload>) -> String {
+fn construct_clipboard_data(clipboard_payload: &mut [room_service::ClipboardPayload]) -> String {
     clipboard_payload.sort_by_key(|p| p.packet_id);
 
     let combined_data: Vec<u8> = clipboard_payload
-        .into_iter()
+        .iter_mut()
         .flat_map(|payload| payload.data.clone())
         .collect();
 
