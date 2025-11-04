@@ -19,6 +19,45 @@ fn construct_clipboard_data(clipboard_payload: &mut Vec<room_service::ClipboardP
     String::from_utf8_lossy(&combined_data).into_owned()
 }
 
+fn simulate_shortcut_key_sequence(
+    keyboard_controller: &mut KeyboardController<KeyboardLayout>,
+    letter_key: &str,
+) {
+    let modifier_key = if cfg!(target_os = "macos") {
+        "meta"
+    } else {
+        "ctrl"
+    };
+    let mut modifier_keystroke = KeystrokeData {
+        key: modifier_key.to_string(),
+        meta: false,
+        shift: false,
+        ctrl: false,
+        alt: false,
+        down: true,
+    };
+    keyboard_controller.simulate_keystrokes(modifier_keystroke.clone());
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    let mut keystroke_data = KeystrokeData {
+        key: letter_key.to_string(),
+        meta: cfg!(target_os = "macos"),
+        shift: false,
+        ctrl: !cfg!(target_os = "macos"),
+        alt: false,
+        down: true,
+    };
+    keyboard_controller.simulate_keystrokes(keystroke_data.clone());
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    keystroke_data.down = false;
+    keyboard_controller.simulate_keystrokes(keystroke_data);
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    modifier_keystroke.down = false;
+    keyboard_controller.simulate_keystrokes(modifier_keystroke);
+}
+
 #[derive(Error, Debug)]
 pub enum ClipboardError {
     #[error("Failed to create clipboard")]
@@ -38,18 +77,8 @@ impl ClipboardController {
         is_copy: bool,
         keyboard_controller: &mut KeyboardController<KeyboardLayout>,
     ) {
-        let mut keystroke_data = KeystrokeData {
-            key: if is_copy { "c" } else { "x" }.to_string(),
-            meta: cfg!(target_os = "macos"),
-            shift: false,
-            ctrl: !cfg!(target_os = "macos"),
-            alt: false,
-            down: true,
-        };
-        keyboard_controller.simulate_keystrokes(keystroke_data.clone());
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        keystroke_data.down = false;
-        keyboard_controller.simulate_keystrokes(keystroke_data);
+        let letter_key = if is_copy { "c" } else { "x" };
+        simulate_shortcut_key_sequence(keyboard_controller, letter_key);
     }
 
     pub fn paste_from_clipboard(
@@ -76,17 +105,6 @@ impl ClipboardController {
                 return;
             }
         }
-        let mut keystroke_data = KeystrokeData {
-            key: "v".to_string(),
-            meta: cfg!(target_os = "macos"),
-            shift: false,
-            ctrl: !cfg!(target_os = "macos"),
-            alt: false,
-            down: true,
-        };
-        keyboard_controller.simulate_keystrokes(keystroke_data.clone());
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        keystroke_data.down = false;
-        keyboard_controller.simulate_keystrokes(keystroke_data);
+        simulate_shortcut_key_sequence(keyboard_controller, "v");
     }
 }
