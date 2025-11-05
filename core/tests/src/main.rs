@@ -3,6 +3,7 @@ use std::io;
 
 mod events;
 mod livekit_utils;
+mod remote_clipboard;
 mod remote_cursor;
 mod remote_keyboard;
 mod screenshare_client;
@@ -24,6 +25,12 @@ enum Commands {
     },
     /// Test keyboard functionality
     Keyboard,
+    /// Test clipboard functionality
+    Clipboard {
+        /// Type of clipboard test to run
+        #[arg(value_enum)]
+        test_type: ClipboardTest,
+    },
     /// Test screenshare functionality
     Screenshare,
 }
@@ -66,6 +73,18 @@ enum CursorTest {
     TransitionsRemoteDisabledAnimation,
     /// Test transitions: Mixed remote control and animation
     TransitionsMixed,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum ClipboardTest {
+    /// Test paste with single payload
+    PasteSingle,
+    /// Test paste with multiple payloads
+    PasteMultiple,
+    /// Test add to clipboard (copy)
+    AddCopy,
+    /// Test add to clipboard (cut)
+    AddCut,
 }
 
 #[tokio::main]
@@ -156,6 +175,27 @@ async fn main() -> io::Result<()> {
             println!("Running keyboard test...");
             remote_keyboard::test_keyboard_chars().await?;
             println!("Keyboard test finished.");
+        }
+        Commands::Clipboard { test_type } => {
+            match test_type {
+                ClipboardTest::PasteSingle => {
+                    println!("Running paste single payload test...");
+                    remote_clipboard::test_paste_single().await?;
+                }
+                ClipboardTest::PasteMultiple => {
+                    println!("Running paste multiple payloads test...");
+                    remote_clipboard::test_paste_multiple().await?;
+                }
+                ClipboardTest::AddCopy => {
+                    println!("Running add to clipboard (copy) test...");
+                    remote_clipboard::test_add_copy().await?;
+                }
+                ClipboardTest::AddCut => {
+                    println!("Running add to clipboard (cut) test...");
+                    remote_clipboard::test_add_cut().await?;
+                }
+            }
+            println!("Clipboard test finished.");
         }
         Commands::Screenshare => {
             println!("Running screenshare test...");

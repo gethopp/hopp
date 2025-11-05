@@ -8,6 +8,7 @@ The test suite provides automated testing for:
 
 - **Cursor functionality** - Testing remote cursor movement, clicks, scrolling, and multi-participant scenarios
 - **Keyboard functionality** - Testing remote keyboard input and character transmission
+- **Clipboard functionality** - Testing clipboard operations including copy, cut, and paste with single and multiple payloads
 - **Screenshare functionality** - Testing screen sharing capabilities via socket communication
 
 ## Prerequisites
@@ -73,6 +74,26 @@ Test keyboard input functionality:
 # Test keyboard character input (lowercase, uppercase, numbers, symbols)
 cargo run -- keyboard
 ```
+
+#### Clipboard Tests
+
+Test clipboard functionality:
+
+```bash
+# Test paste with single payload
+cargo run -- clipboard paste-single
+
+# Test paste with multiple payloads
+cargo run -- clipboard paste-multiple
+
+# Test add to clipboard (copy)
+cargo run -- clipboard add-copy
+
+# Test add to clipboard (cut)
+cargo run -- clipboard add-cut
+```
+
+**Note:** The `add-copy` and `add-cut` tests require user interaction. You will be prompted to select text in any application before the test executes the copy/cut operation.
 
 #### Screenshare Tests
 

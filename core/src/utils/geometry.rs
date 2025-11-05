@@ -62,11 +62,17 @@ impl Default for Position {
 
 pub fn aspect_fit(width: u32, height: u32, target_width: u32, target_height: u32) -> (u32, u32) {
     let size = max(target_width, target_height);
-    if width >= height {
+    let (fitted_width, fitted_height) = if width >= height {
         let aspect_ratio = height as f32 / width as f32;
         (size, ((size as f32) * aspect_ratio) as u32)
     } else {
         let aspect_ratio = width as f32 / height as f32;
         (((size as f32) / aspect_ratio) as u32, size)
+    };
+
+    if fitted_width > width || fitted_height > height {
+        (width, height)
+    } else {
+        (fitted_width, fitted_height)
     }
 }

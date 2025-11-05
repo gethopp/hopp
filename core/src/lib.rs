@@ -1,6 +1,7 @@
 pub mod room_service;
 
 pub mod input {
+    pub mod clipboard;
     pub mod keyboard;
     pub mod mouse;
 }
@@ -25,6 +26,7 @@ pub(crate) mod overlay_window;
 
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
+use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
 use input::mouse::CursorController;
 use log::{debug, error};
@@ -125,6 +127,7 @@ struct RemoteControl<'a> {
     gfx: GraphicsContext<'a>,
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
+    clipboard_controller: Option<ClipboardController>,
 }
 
 /// The main application struct that manages the entire remote desktop control session.
@@ -495,10 +498,18 @@ impl<'a> Application<'a> {
             return Err(ServerError::CursorControllerCreationError);
         }
 
+        let clipboard_controller = match ClipboardController::new() {
+            Ok(controller) => Some(controller),
+            Err(error) => {
+                log::error!("create_overlay_window: Error creating clipboard controller {error:?}");
+                None
+            }
+        };
         self.remote_control = Some(RemoteControl {
             gfx: graphics_context,
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
+            clipboard_controller,
         });
 
         #[cfg(target_os = "linux")]
@@ -829,6 +840,42 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
                 gfx.enable_click_animation(position);
             }
+            UserEvent::AddToClipboard(add_to_clipboard_data) => {
+                log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none add to clipboard");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                if remote_control.clipboard_controller.is_none() {
+                    log::warn!("user_event: clipboard controller is none add to clipboard");
+                    return;
+                }
+                let clipboard_controller =
+                    &mut remote_control.clipboard_controller.as_ref().unwrap();
+                clipboard_controller.add_to_clipboard(
+                    add_to_clipboard_data.is_copy,
+                    &mut remote_control.keyboard_controller,
+                );
+            }
+            UserEvent::PasteFromClipboard(paste_from_clipboard_data) => {
+                log::info!("user_event: Paste from clipboard");
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none paste from clipboard");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                if remote_control.clipboard_controller.is_none() {
+                    log::warn!("user_event: clipboard controller is none paste from clipboard");
+                    return;
+                }
+                let clipboard_controller =
+                    &mut remote_control.clipboard_controller.as_mut().unwrap();
+                clipboard_controller.paste_from_clipboard(
+                    &mut remote_control.keyboard_controller,
+                    paste_from_clipboard_data.data,
+                );
+            }
         }
     }
 
@@ -915,6 +962,8 @@ pub enum UserEvent {
     ControllerTakesScreenShare,
     ParticipantInControl(String),
     SentryMetadata(SentryMetadata),
+    AddToClipboard(room_service::AddToClipboardData),
+    PasteFromClipboard(room_service::PasteFromClipboardData),
 }
 
 pub struct RenderEventLoop {

@@ -752,6 +752,27 @@ pub struct RemoteControlEnabled {
     pub enabled: bool,
 }
 
+/// Contains data for clipboard events.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AddToClipboardData {
+    /// The text to be added to the clipboard
+    pub is_copy: bool,
+}
+
+/// Contains data for clipboard events.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClipboardPayload {
+    pub packet_id: u64,
+    pub total_packets: u64,
+    pub data: Vec<u8>,
+}
+
+/// Contains data for clipboard events.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PasteFromClipboardData {
+    pub data: Option<ClipboardPayload>,
+}
+
 /// Represents all possible client events that can be sent between room participants.
 ///
 /// This enum defines the different types of events that can be transmitted through
@@ -777,6 +798,10 @@ pub enum ClientEvent {
     TickResponse(TickData),
     /// Remote control enabled/disabled status change
     RemoteControlEnabled(RemoteControlEnabled),
+    /// Copy or cut command from a remote controller
+    AddToClipboard(AddToClipboardData),
+    /// Paste command from a remote controller
+    PasteFromClipboard(PasteFromClipboardData),
 }
 
 async fn handle_room_events(
@@ -867,6 +892,10 @@ async fn handle_room_events(
                             Ok(())
                         }
                     }
+                    ClientEvent::AddToClipboard(add_to_clipboard_data) => event_loop_proxy
+                        .send_event(UserEvent::AddToClipboard(add_to_clipboard_data)),
+                    ClientEvent::PasteFromClipboard(paste_from_clipboard_data) => event_loop_proxy
+                        .send_event(UserEvent::PasteFromClipboard(paste_from_clipboard_data)),
                     _ => Ok(()),
                 };
                 if let Err(e) = res {
