@@ -524,11 +524,11 @@ const ConsumerComponent = React.memo(() => {
     };
   }, [isMouseInside, isSharingKeyEvents, parentKeyTrap]);
 
-  useEffect(() => {
-    const clearClipboard = useCallback(async () => {
+  const clearClipboard = useCallback(async () => {
       await writeText("");
-    }, []);
+  }, []);
 
+  useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault();
       if (isMouseInside && isSharingKeyEvents) {
