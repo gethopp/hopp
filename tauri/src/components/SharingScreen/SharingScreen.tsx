@@ -4,7 +4,7 @@ import { throttle } from "lodash";
 import { RiDraggable } from "react-icons/ri";
 import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
@@ -24,6 +24,7 @@ import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
 import { Cursor, SvgComponent } from "../ui/cursor";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 const CURSORS_TOPIC = "participant_location";
 const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
@@ -523,14 +524,41 @@ const ConsumerComponent = React.memo(() => {
     };
   }, [isMouseInside, isSharingKeyEvents, parentKeyTrap]);
 
-  // Copy and paste logic
-  const remoteCopyRef = useRef<boolean>(false);
-
   useEffect(() => {
+    const clearClipboard = useCallback(async () => {
+      await writeText("");
+    }, []);
+
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault();
       if (isMouseInside && isSharingKeyEvents) {
-        if (remoteCopyRef.current) {
+        // Get text from local clipboard and send it in packets
+        const clipboardText = e.clipboardData?.getData("text/plain");
+        if (clipboardText && clipboardText.length > 0) {
+          const textBytes = encoder.encode(clipboardText);
+          const maxPacketSize = 15 * 1024; // 15KB
+          const totalPackets = Math.ceil(textBytes.length / maxPacketSize);
+
+          for (let i = 0; i < totalPackets; i++) {
+            const start = i * maxPacketSize;
+            const end = Math.min((i + 1) * maxPacketSize, textBytes.length);
+            const chunk = textBytes.slice(start, end);
+
+            const payload: TPPasteFromClipboard = {
+              type: "PasteFromClipboard",
+              payload: {
+                data: {
+                  packet_id: i,
+                  total_packets: totalPackets,
+                  data: Array.from(chunk),
+                },
+              },
+            };
+            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+              reliable: true,
+            });
+          }
+        } else {
           // Send null data to trigger paste from remote clipboard
           const payload: TPPasteFromClipboard = {
             type: "PasteFromClipboard",
@@ -539,35 +567,6 @@ const ConsumerComponent = React.memo(() => {
             },
           };
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-          remoteCopyRef.current = false;
-        } else {
-          // Get text from local clipboard and send it in packets
-          const clipboardText = e.clipboardData?.getData("text/plain");
-          if (clipboardText) {
-            const textBytes = encoder.encode(clipboardText);
-            const maxPacketSize = 15 * 1024; // 15KB
-            const totalPackets = Math.ceil(textBytes.length / maxPacketSize);
-
-            for (let i = 0; i < totalPackets; i++) {
-              const start = i * maxPacketSize;
-              const end = Math.min((i + 1) * maxPacketSize, textBytes.length);
-              const chunk = textBytes.slice(start, end);
-
-              const payload: TPPasteFromClipboard = {
-                type: "PasteFromClipboard",
-                payload: {
-                  data: {
-                    packet_id: i,
-                    total_packets: totalPackets,
-                    data: Array.from(chunk),
-                  },
-                },
-              };
-              localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-                reliable: true,
-              });
-            }
-          }
         }
       }
     };
@@ -582,7 +581,7 @@ const ConsumerComponent = React.memo(() => {
           },
         };
         localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-        remoteCopyRef.current = true;
+        clearClipboard();
       }
     };
 
@@ -596,7 +595,7 @@ const ConsumerComponent = React.memo(() => {
           },
         };
         localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
-        remoteCopyRef.current = true;
+        clearClipboard();
       }
     };
 
