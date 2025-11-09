@@ -33,7 +33,9 @@ import (
 	resend "github.com/resend/resend-go/v2"
 	"github.com/wader/gormstore/v2"
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // CustomValidator Source: https://echo.labstack.com/docs/request#validate-data
@@ -132,7 +134,19 @@ func (s *Server) setupDatabase() {
 		s.Echo.Logger.Fatal("DATABASE_DSN environment variable is required")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true})
+	var db *gorm.DB
+	var err error
+
+	// Detect database driver from DSN
+	// SQLite DSNs typically start with "file:"
+	if strings.HasPrefix(dsn, "file:") {
+		// Use SQLite driver for testing
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+	} else {
+		// Use PostgreSQL driver for production
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+	}
+
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
 	}
@@ -140,21 +154,31 @@ func (s *Server) setupDatabase() {
 }
 
 func (s *Server) setupRedis() {
-
 	url := s.Config.Database.RedisURI
+
+	// Make Redis optional - if URI is empty, skip Redis setup
+	if url == "" {
+		s.Echo.Logger.Warn("REDIS_URI not configured, Redis features will be disabled")
+		s.Redis = nil
+		return
+	}
 
 	opts, err := redis.ParseURL(url)
 	if err != nil {
-		panic(err)
+		s.Echo.Logger.Warnf("Failed to parse Redis URL: %v, Redis features will be disabled", err)
+		s.Redis = nil
+		return
 	}
 
 	s.Redis = redis.NewClient(opts)
 
-	// Validate proper connection
+	// Validate proper connection, but don't panic on failure
 	ctx := context.Background()
 	result := s.Redis.Ping(ctx)
 	if result.Err() != nil {
-		panic(result.Err())
+		s.Echo.Logger.Warnf("Redis connection failed: %v, Redis features will be disabled", result.Err())
+		s.Redis = nil
+		return
 	}
 }
 
@@ -171,8 +195,14 @@ func (s *Server) setupSessionStore() {
 }
 
 func (s *Server) setupTemplates() {
+	// Try to load templates, but don't fail if they don't exist (e.g., in tests)
+	tmpl, err := template.ParseGlob("./web/*.html")
+	if err != nil {
+		s.Echo.Logger.Warnf("Failed to load templates: %v, template rendering will be disabled", err)
+		return
+	}
 	t := &Template{
-		templates: template.Must(template.ParseGlob("./web/*.html")),
+		templates: tmpl,
 	}
 	s.Echo.Renderer = t
 }
@@ -195,10 +225,26 @@ func (s *Server) setupMiddleware() {
 	s.Echo.Use(middleware.CORS())
 	s.Echo.Use(session.Middleware(s.Store))
 	s.Echo.Use(middleware.Recover())
+	// Try to add prometheus middleware, but don't panic if already registered (e.g., in tests)
+	// This allows multiple test runs without panicking
+	defer func() {
+		if r := recover(); r != nil {
+			if err, ok := r.(error); ok && err.Error() == "duplicate metrics collector registration attempted" {
+				s.Echo.Logger.Warn("Prometheus middleware already registered, skipping")
+			} else {
+				panic(r)
+			}
+		}
+	}()
 	s.Echo.Use(echoprometheus.NewMiddleware("renkey_backend"))
 }
 
 func (s *Server) setupMetrics() {
+	// Only register Redis metrics if Redis is available
+	if s.Redis == nil {
+		return
+	}
+
 	prometheus.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Subsystem: "redis",
@@ -249,11 +295,11 @@ func (s *Server) setupRoutes() {
 	s.Echo.Static("/static", "web/static")
 
 	// Initialize handlers
-	auth := handlers.NewAuthHandler(s.DB, s.Config, s.JwtIssuer, s.Redis)
+	auth := handlers.NewAuthHandler(s.DB, s.Config, s.JwtIssuer, s.Redis, &handlers.RealGothicProvider{})
 	billing := handlers.NewBillingHandler(s.DB, s.Config, s.JwtIssuer, s.EmailClient)
 
 	// Set the EmailClient field directly
-	auth.ServerState.EmailClient = s.EmailClient
+	auth.EmailClient = s.EmailClient
 
 	// API routes group
 	api := s.Echo.Group("/api")

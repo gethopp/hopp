@@ -10,6 +10,9 @@ jobs:
   precommit:
     uses: ./.github/workflows/lintint_reusable.yml
 
+  backend-go:
+    uses: ./.github/workflows/backend_go_reusable.yml
+
   hopp-core:
     needs: precommit
     uses: ./.github/workflows/hopp_core_reusable.yml

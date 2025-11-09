@@ -1,11 +1,14 @@
 package common
 
 import (
+	"net/http"
+
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/email"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
+	"github.com/markbates/goth"
 	"github.com/redis/go-redis/v9"
 	"github.com/wader/gormstore/v2"
 	"gorm.io/gorm"
@@ -25,6 +28,10 @@ type JWTIssuer interface {
 	GenerateToken(email string) (string, error)
 	Middleware() echo.MiddlewareFunc
 	GetUserEmail(c echo.Context) (string, error)
+}
+
+type SocialAuthProvider interface {
+	CompleteUserAuth(res http.ResponseWriter, req *http.Request) (goth.User, error)
 }
 
 type AuthHandler interface {

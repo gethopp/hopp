@@ -1,0 +1,290 @@
+//go:build integration
+// +build integration
+
+package integration
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	postgresContainer "github.com/testcontainers/testcontainers-go/modules/postgres"
+	redisContainer "github.com/testcontainers/testcontainers-go/modules/redis"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"hopp-backend/internal/common"
+	"hopp-backend/internal/config"
+	"hopp-backend/internal/models"
+	"hopp-backend/internal/server"
+
+	"gorm.io/gorm"
+)
+
+// setupTestServer creates a test server with testcontainers for DB and Redis
+// This is the full integration test setup (slower but more realistic)
+func setupTestServer(t *testing.T) (*server.Server, func()) {
+	ctx := context.Background()
+
+	// Start PostgreSQL container
+	pgContainer, err := postgresContainer.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15-alpine"),
+		postgresContainer.WithDatabase("testdb"),
+		postgresContainer.WithUsername("testuser"),
+		postgresContainer.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second),
+		),
+	)
+	require.NoError(t, err)
+
+	// Start Redis container
+	rdContainer, err := redisContainer.RunContainer(ctx,
+		testcontainers.WithImage("redis:7-alpine"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("Ready to accept connections"),
+		),
+	)
+	require.NoError(t, err)
+
+	// Get connection strings
+	dbDSN, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	redisURI, err := rdContainer.ConnectionString(ctx)
+	require.NoError(t, err)
+
+	// Create test config
+	cfg := &config.Config{}
+	cfg.Server.Port = "8080"
+	cfg.Server.Host = "localhost"
+	cfg.Server.DeployDomain = "localhost:8080"
+	cfg.Server.Debug = true
+	cfg.Database.DSN = dbDSN
+	cfg.Database.RedisURI = redisURI
+	cfg.Auth.SessionSecret = "test-secret-key-for-testing-only"
+	cfg.Resend.DefaultSender = "test@example.com"
+
+	// Initialize server
+	srv := server.New(cfg)
+	err = srv.Initialize()
+	require.NoError(t, err)
+
+	// Cleanup function
+	cleanup := func() {
+		pgContainer.Terminate(ctx)
+		rdContainer.Terminate(ctx)
+	}
+
+	return srv, cleanup
+}
+
+// createTestUser is a helper to create a user in the test database
+func createTestUser(t *testing.T, db *gorm.DB, email, firstName, lastName, password string, isAdmin bool) *models.User {
+	teamID := uint(1)
+	if !isAdmin {
+		// For non-admin, we'll create a team first
+		team := models.Team{Name: "Test Team"}
+		err := db.Create(&team).Error
+		require.NoError(t, err)
+		teamID = team.ID
+	}
+
+	user := &models.User{
+		FirstName: firstName,
+		LastName:  lastName,
+		Email:     email,
+		Password:  password,
+		TeamID:    &teamID,
+		IsAdmin:   isAdmin,
+		EmailSubscriptions: models.EmailSubscriptions{
+			MarketingEmails: true,
+		},
+	}
+
+	err := db.Create(user).Error
+	require.NoError(t, err)
+
+	return user
+}
+
+// generateTestToken generates a JWT token for testing
+func generateTestToken(t *testing.T, jwtIssuer common.JWTIssuer, email string) string {
+	token, err := jwtIssuer.GenerateToken(email)
+	require.NoError(t, err)
+	return token
+}
+
+func TestManualSignUp_NewUser(t *testing.T) {
+	srv, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Test request
+	signUpReq := map[string]interface{}{
+		"first_name": "John",
+		"last_name":  "Doe",
+		"email":      "john.doe@example.com",
+		"password":   "securepassword123",
+		"team_name":  "John's Team",
+	}
+
+	body, err := json.Marshal(signUpReq)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sign-up", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	// Execute
+	srv.Echo.ServeHTTP(rec, req)
+
+	// Assertions
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var response map[string]string
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["token"])
+
+	// Verify user was created in database
+	var user models.User
+	err = srv.DB.Where("email = ?", "john.doe@example.com").First(&user).Error
+	require.NoError(t, err)
+	assert.Equal(t, "John", user.FirstName)
+	assert.Equal(t, "Doe", user.LastName)
+	assert.NotNil(t, user.TeamID)
+	assert.True(t, user.IsAdmin) // Should be admin since they created the team
+
+	// Verify team was created
+	var team models.Team
+	err = srv.DB.Where("id = ?", *user.TeamID).First(&team).Error
+	require.NoError(t, err)
+	assert.Equal(t, "John's Team", team.Name)
+}
+
+func TestManualSignUp_DuplicateEmail(t *testing.T) {
+	srv, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create existing user
+	createTestUser(t, srv.DB, "existing@example.com", "Existing", "User", "password123", true)
+
+	// Try to sign up with same email
+	signUpReq := map[string]interface{}{
+		"first_name": "New",
+		"last_name":  "User",
+		"email":      "existing@example.com",
+		"password":   "password123",
+		"team_name":  "New Team",
+	}
+
+	body, _ := json.Marshal(signUpReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/sign-up", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Echo.ServeHTTP(rec, req)
+
+	// Should return conflict
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestManualSignUp_WithTeamInvitation(t *testing.T) {
+	srv, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create admin user and team
+	adminUser := createTestUser(t, srv.DB, "admin@example.com", "Admin", "User", "password123", true)
+
+	// Create team invitation
+	invitation := models.TeamInvitation{
+		TeamID:   int(*adminUser.TeamID),
+		UniqueID: "test-invite-uuid-123",
+	}
+	err := srv.DB.Create(&invitation).Error
+	require.NoError(t, err)
+
+	// Sign up with invitation UUID
+	signUpReq := map[string]interface{}{
+		"first_name":       "Invited",
+		"last_name":        "User",
+		"email":            "invited@example.com",
+		"password":         "password123",
+		"team_invite_uuid": "test-invite-uuid-123",
+	}
+
+	body, _ := json.Marshal(signUpReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/sign-up", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	// Verify user joined the correct team
+	var newUser models.User
+	err = srv.DB.Where("email = ?", "invited@example.com").First(&newUser).Error
+	require.NoError(t, err)
+	assert.Equal(t, *adminUser.TeamID, *newUser.TeamID)
+	assert.False(t, newUser.IsAdmin) // Should not be admin
+}
+
+func TestManualSignIn_Success(t *testing.T) {
+	srv, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create user
+	createTestUser(t, srv.DB, "test@example.com", "Test", "User", "password123", true)
+
+	// Sign in
+	signInReq := map[string]interface{}{
+		"email":    "test@example.com",
+		"password": "password123",
+	}
+
+	body, _ := json.Marshal(signInReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/sign-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var response map[string]string
+	err := json.Unmarshal(rec.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.NotEmpty(t, response["token"])
+}
+
+func TestManualSignIn_InvalidCredentials(t *testing.T) {
+	srv, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// Create user
+	createTestUser(t, srv.DB, "test@example.com", "Test", "User", "password123", true)
+
+	// Try wrong password
+	signInReq := map[string]interface{}{
+		"email":    "test@example.com",
+		"password": "wrongpassword",
+	}
+
+	body, _ := json.Marshal(signInReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/sign-in", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

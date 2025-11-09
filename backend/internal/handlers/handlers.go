@@ -18,6 +18,7 @@ import (
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"github.com/lindell/go-burner-email-providers/burner"
+	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/redis/go-redis/v9"
 	"github.com/tidwall/gjson"
@@ -26,6 +27,7 @@ import (
 
 type AuthHandler struct {
 	common.ServerState
+	SocialAuth common.SocialAuthProvider
 }
 
 type SignInRequest struct {
@@ -33,7 +35,7 @@ type SignInRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
-func NewAuthHandler(db *gorm.DB, cfg *config.Config, jwt common.JWTIssuer, redis *redis.Client) *AuthHandler {
+func NewAuthHandler(db *gorm.DB, cfg *config.Config, jwt common.JWTIssuer, redis *redis.Client, socialAuth common.SocialAuthProvider) *AuthHandler {
 	return &AuthHandler{
 		ServerState: common.ServerState{
 			DB:        db,
@@ -41,11 +43,18 @@ func NewAuthHandler(db *gorm.DB, cfg *config.Config, jwt common.JWTIssuer, redis
 			JwtIssuer: jwt,
 			Redis:     redis,
 		},
+		SocialAuth: socialAuth,
 	}
 }
 
+type RealGothicProvider struct{}
+
+func (r *RealGothicProvider) CompleteUserAuth(res http.ResponseWriter, req *http.Request) (goth.User, error) {
+	return gothic.CompleteUserAuth(res, req)
+}
+
 func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
-	user, err := gothic.CompleteUserAuth(c.Response(), c.Request())
+	user, err := h.SocialAuth.CompleteUserAuth(c.Response(), c.Request())
 	if err != nil {
 		return err
 	}
@@ -83,7 +92,7 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				sess.Save(c.Request(), c.Response())
 			}
 
-			var isAdmin bool = false
+			var isAdmin = false
 			// If no team invitation, we need to create a new team
 			if assignedTeamID == nil {
 				isAdmin = true
@@ -153,6 +162,49 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				u.SocialMetadata = result
 				if err := tx.Save(&u).Error; err != nil {
 					return fmt.Errorf("failed to update user: %w", err)
+				}
+			}
+		} else {
+			// User already exists, check if they have a team invite UUID in session
+			// This handles the case where an existing user clicks an invite link and logs in via social auth
+			sess, err := session.Get("session", c)
+			if err == nil {
+				inviteUUID := sess.Values["team_invite_uuid"]
+				if inviteUUID != nil {
+					var invitation models.TeamInvitation
+					if err := tx.Where("unique_id = ?", inviteUUID).Preload("Team").First(&invitation).Error; err == nil {
+						// Check if user is already in this team
+						if u.TeamID == nil || int(*u.TeamID) != invitation.TeamID {
+							// Check if user has teammates (similar to ChangeTeam logic)
+							teammates, err := u.GetTeammates(tx)
+							if err != nil {
+								return fmt.Errorf("failed to get user teammates: %w", err)
+							}
+
+							teammateCount := len(teammates)
+							if teammateCount > 0 {
+								message := fmt.Sprintf("🚨 User %s attempted to change teams but has %d teammate(s). Invitation UUID: %s",
+									u.ID,
+									teammateCount,
+									inviteUUID)
+								c.Logger().Warnf("User %s attempted to change teams via social auth but has %d teammate(s). Invitation UUID: %s",
+									u.ID, teammateCount, inviteUUID)
+								_ = notifications.SendTelegramNotification(message, h.Config)
+							} else {
+								teamID := uint(invitation.TeamID)
+								u.TeamID = &teamID
+								u.Team = &invitation.Team
+								u.IsAdmin = false
+								if err := tx.Save(&u).Error; err != nil {
+									return fmt.Errorf("failed to update user team: %w", err)
+								}
+								c.Logger().Infof("Changed user %s team to %d via social auth with invite", u.ID, invitation.TeamID)
+							}
+						}
+					}
+					// Clean up the session
+					delete(sess.Values, "team_invite_uuid")
+					sess.Save(c.Request(), c.Response())
 				}
 			}
 		}
