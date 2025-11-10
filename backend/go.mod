@@ -1,6 +1,6 @@
 module hopp-backend
 
-go 1.25.1
+go 1.25.0
 
 require (
 	github.com/getsentry/sentry-go v0.31.1
