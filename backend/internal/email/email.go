@@ -81,7 +81,7 @@ func (c *ResendEmailClient) SendWelcomeEmail(user *models.User) {
 		return
 	}
 
-	htmlBody := strings.Replace(string(templateBytes), "{first_name}", user.FirstName, -1)
+	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 	subject := "Welcome to Hopp " + user.FirstName
 
 	c.SendAsync(user.Email, subject, htmlBody)
@@ -102,9 +102,9 @@ func (c *ResendEmailClient) SendTeamInvitationEmail(inviterName, teamName, invit
 	}
 
 	htmlBody := string(templateBytes)
-	htmlBody = strings.Replace(htmlBody, "{inviter_name}", inviterName, -1)
-	htmlBody = strings.Replace(htmlBody, "{team_name}", teamName, -1)
-	htmlBody = strings.Replace(htmlBody, "{invite_url}", inviteLink, -1)
+	htmlBody = strings.ReplaceAll(htmlBody, "{inviter_name}", inviterName)
+	htmlBody = strings.ReplaceAll(htmlBody, "{team_name}", teamName)
+	htmlBody = strings.ReplaceAll(htmlBody, "{invite_url}", inviteLink)
 
 	subject := fmt.Sprintf("%s has invited you to join %s team - join the team", inviterName, teamName)
 
@@ -151,7 +151,7 @@ func (c *ResendEmailClient) SendSubscriptionConfirmationEmail(user *models.User)
 		return
 	}
 
-	htmlBody := strings.Replace(string(templateBytes), "{first_name}", user.FirstName, -1)
+	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
 	subject := "Welcome to Hopp Pro! 🎉"
 
@@ -172,7 +172,7 @@ func (c *ResendEmailClient) SendSubscriptionCancellationEmail(user *models.User)
 		return
 	}
 
-	htmlBody := strings.Replace(string(templateBytes), "{first_name}", user.FirstName, -1)
+	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
 	subject := "We're sorry to see you go 😢"
 

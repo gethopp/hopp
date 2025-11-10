@@ -1,12 +1,16 @@
+version: "2"
+
 run:
-  go: "1.24"
+  go: "1.25.1"
 
 linters:
-  disable-all: true
+  default: none
   enable:
-    - gofmt
-    - gosimple
     - govet
     - ineffassign
     - unused
     - staticcheck
+
+formatters:
+  enable:
+    - gofmt
