@@ -124,3 +124,45 @@ pub fn stop_screenshare_session(socket: &mut CursorSocket) -> io::Result<()> {
     println!("Screenshare stopped.");
     Ok(())
 }
+
+/// Tests that get_available_content returns consistent results across multiple calls.
+pub fn test_available_content_consistency() -> io::Result<()> {
+    println!("Testing available content consistency...");
+    let mut socket = connect_socket()?;
+    println!("Connected to socket.");
+
+    let livekit_server_url =
+        env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+
+    let mut content_lengths = Vec::new();
+
+    // Request available content 10 times
+    for i in 1..=10 {
+        let available_content = match get_available_content(&mut socket)? {
+            Message::AvailableContent(available_content) => available_content,
+            _ => return Err(io::Error::other("Failed to get available content")),
+        };
+
+        let content_len = available_content.content.len();
+        content_lengths.push(content_len);
+        println!("Request {}: got {} content items", i, content_len);
+    }
+
+    // Verify all lengths are the same
+    let first_len = content_lengths[0];
+    let all_same = content_lengths.iter().all(|&len| len == first_len);
+
+    if all_same {
+        println!(
+            "✓ Success: All 10 requests returned {} content items",
+            first_len
+        );
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "Content length inconsistency detected. Lengths: {:?}",
+            content_lengths
+        )))
+    }
+}

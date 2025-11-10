@@ -32,7 +32,11 @@ enum Commands {
         test_type: ClipboardTest,
     },
     /// Test screenshare functionality
-    Screenshare,
+    Screenshare {
+        /// Type of screenshare test to run
+        #[arg(value_enum)]
+        test_type: ScreenshareTest,
+    },
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -85,6 +89,14 @@ enum ClipboardTest {
     AddCopy,
     /// Test add to clipboard (cut)
     AddCut,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum ScreenshareTest {
+    /// Run basic screenshare test
+    Basic,
+    /// Test available content consistency across multiple requests
+    AvailableContent,
 }
 
 #[tokio::main]
@@ -197,9 +209,18 @@ async fn main() -> io::Result<()> {
             }
             println!("Clipboard test finished.");
         }
-        Commands::Screenshare => {
-            println!("Running screenshare test...");
-            screenshare_client::screenshare_test()?;
+        Commands::Screenshare { test_type } => {
+            match test_type {
+                ScreenshareTest::Basic => {
+                    println!("Running basic screenshare test...");
+                    screenshare_client::screenshare_test()?;
+                }
+                ScreenshareTest::AvailableContent => {
+                    println!("Running available content test...");
+                    screenshare_client::test_available_content_consistency()?;
+                }
+            }
+            println!("Screenshare test finished.");
         }
     }
 
