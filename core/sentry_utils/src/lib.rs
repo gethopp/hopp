@@ -146,7 +146,8 @@ pub fn simple_event(message: String) {
         tags,
         ..Default::default()
     };
-    client.capture_event(event, None);
+    let envelope: Envelope = event.into();
+    client.send_envelope(envelope);
 }
 
 pub fn init_sentry(failure_reason: String, dsn: Option<String>) -> Option<ClientInitGuard> {
