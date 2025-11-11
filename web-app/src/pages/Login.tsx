@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
-import { FaSlack, FaGoogle } from "react-icons/fa";
+import { FaGoogle } from "react-icons/fa";
+import { GrGithub } from "react-icons/gr";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -194,16 +195,16 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     }
   };
 
-  const handleSlackLogin = () => {
-    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/slack`);
+  const handleGoogleLogin = () => {
+    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/google`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
     }
     window.location.href = url.toString();
   };
 
-  const handleGoogleLogin = () => {
-    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/google`);
+  const handleGitHubLogin = () => {
+    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/github`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
     }
@@ -248,14 +249,19 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <form onSubmit={handleEmailAuth}>
                   <div className="grid gap-6">
                     <div className="flex flex-col gap-4">
-                      <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
-                        <FaSlack className="size-5 mr-2" />
-                        {isSignUp ? "Sign up with Slack" : "Login with Slack"}
-                      </Button>
                       <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
                       </Button>
+                      <Button type="button" variant="outline" className="w-full" onClick={handleGitHubLogin}>
+                        <GrGithub className="size-5 mr-2" />
+                        {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
+                      </Button>
+                      {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
+                      {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
+                        <FaSlack className="size-5 mr-2" />
+                        {isSignUp ? "Sign up with Slack" : "Login with Slack"}
+                      </Button> */}
                     </div>
                     {!isSignUp && (
                       <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">

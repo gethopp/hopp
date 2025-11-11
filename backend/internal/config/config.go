@@ -27,6 +27,9 @@ type Config struct {
 		SlackKey       string
 		SlackSecret    string
 		SlackRedirect  string
+		GitHubKey      string
+		GitHubSecret   string
+		GitHubRedirect string
 		CallbackURL    string
 		SessionSecret  string
 	}
@@ -119,6 +122,10 @@ func Load() (*Config, error) {
 	c.Auth.SlackKey = os.Getenv("SLACK_KEY")
 	c.Auth.SlackSecret = os.Getenv("SLACK_SECRET")
 	c.Auth.SlackRedirect = fmt.Sprintf("https://%s/api/auth/social/slack/callback", c.Server.DeployDomain)
+
+	c.Auth.GitHubKey = os.Getenv("GITHUB_KEY")
+	c.Auth.GitHubSecret = os.Getenv("GITHUB_SECRET")
+	c.Auth.GitHubRedirect = fmt.Sprintf("https://%s/api/auth/social/github/callback", c.Server.DeployDomain)
 
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
 	c.Database.RedisURI = os.Getenv("REDIS_URI")

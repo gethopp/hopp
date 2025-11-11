@@ -19,6 +19,9 @@ import { SubscriptionSuccessModal } from "@/components/SubscriptionSuccessModal"
 import { usePostHog } from "posthog-js/react";
 import { queryClient } from "@/App";
 import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
+import PairingBuddy from "@/assets/PairingBuddy.png";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
+import { HiOutlineQuestionMarkCircle } from "react-icons/hi2";
 
 // Create email validation schema using zod
 const emailSchema = z.string().email("Invalid email format");
@@ -355,6 +358,7 @@ export function Dashboard() {
       <SubscriptionSuccessModal open={showSubscriptionSuccess} onOpenChange={onSubscriptionSuccessOpenChange} />
 
       <h2 className="h2-section min-w-full">Dashboard</h2>
+
       <div className="flex flex-col lg:flex-row lg:flex-wrap gap-4">
         <div className="flex flex-col lg:w-1/2 gap-4">
           <section aria-labelledby="teammates">
@@ -363,26 +367,38 @@ export function Dashboard() {
               <div className="flex flex-row items-center justify-between max-w-sm">
                 <h3 className="h3-subsection">Teammates</h3>
               </div>
+              {teammates?.length === 0 && (
+                <div className="flex flex-col gap-2 items-center justify-center relative max-w-sm text-center">
+                  <img alt="hopp-pairing-buddy" src={PairingBuddy} className="z-10 size-20" />
+                  <span className="z-10 muted mx-1">
+                    Great developers pair with Hopp. But not alone 👨‍💻 <br />
+                    Be sure to invite your coding buddy
+                  </span>
+                </div>
+              )}
               <div className="flex flex-col gap-4">
                 <div className="grid gap-3 md:[grid-template-columns:repeat(2,minmax(0,180px))] lg:[grid-template-columns:repeat(4,minmax(0,180px))]">
-                  {teammates?.length === 0 && <span className="muted mx-1">No teammates yet</span>}
-                  {teammates?.map((teammate) => (
-                    <div
-                      key={teammate.id}
-                      className="flex flex-row items-center gap-2 w-fit hover:bg-muted/50 p-2 rounded-lg transition-colors"
-                    >
-                      <HoppAvatar
-                        src={teammate.avatar_url || undefined}
-                        firstName={teammate.first_name}
-                        lastName={teammate.last_name}
-                      />
-                      <span className="font-medium truncate">
-                        {teammate.first_name} {teammate.last_name.charAt(0)}.
-                      </span>
-                    </div>
-                  ))}
+                  {teammates &&
+                    teammates.length > 0 &&
+                    teammates.map((teammate) => (
+                      <div
+                        key={teammate.id}
+                        className="flex flex-row items-center gap-2 w-fit hover:bg-muted/50 p-2 rounded-lg transition-colors"
+                      >
+                        <HoppAvatar
+                          src={teammate.avatar_url || undefined}
+                          firstName={teammate.first_name}
+                          lastName={teammate.last_name}
+                        />
+                        <span className="font-medium truncate">
+                          {teammate.first_name} {teammate.last_name.charAt(0)}.
+                        </span>
+                      </div>
+                    ))}
                 </div>
-                <span className="muted ml-1">{teammates?.length || 0} team members</span>
+                {teammates && teammates?.length > 0 && (
+                  <span className="muted ml-1">{teammates?.length || 0} team members</span>
+                )}
               </div>
             </div>
           </section>
@@ -504,8 +520,20 @@ export function Dashboard() {
             <div className="flex flex-row items-center justify-center gap-6">
               <VscTerminalLinux className="size-4 text-slate-600" />
               <div className="flex flex-col">
-                <span className="font-normal">Linux</span>
-                <span className="muted">Various Linux distributions</span>
+                <div className="flex flex-row gap-1 items-center">
+                  <span className="font-normal">Linux</span>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <HiOutlineQuestionMarkCircle className="text-slate-600 size-3" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <span className="white">
+                        Hit notify so we know that you wait for Linux so we will not spam you with updates 🙏
+                      </span>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <span className="muted">Work in progress</span>
               </div>
               <Button
                 variant="outline"

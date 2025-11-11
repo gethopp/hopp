@@ -1,85 +1,35 @@
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useAPI } from "@/hooks/useQueryClients";
-
-// Extend the Window interface to include TallyConfig
-declare global {
-  interface Window {
-    TallyConfig?: {
-      formId: string;
-      popup: {
-        width: number;
-        layout: string;
-        autoClose: number;
-        showOnce: boolean;
-        doNotShowAfterSubmit: boolean;
-        hiddenFields?: Record<string, string>;
-      };
-    };
-  }
-}
+import { OnboardingModal } from "@/components/OnboardingModal";
 
 export function SignInSuccessModal() {
-  const { useQuery, useMutation } = useAPI();
+  const { useQuery } = useAPI();
+  const [isOpen, setIsOpen] = useState(false);
 
   const { data: user } = useQuery("get", "/api/auth/user", undefined, {
     select: (data) => data,
   });
 
-  const { mutateAsync: updateOnboardingFormStatus } = useMutation("post", "/api/auth/metadata/onboarding-form");
+  const { data: teammates } = useQuery("get", "/api/auth/teammates", undefined, {
+    select: (data) => data,
+  });
 
   const hasFilledForm = user?.metadata?.hasFilledOnboardingForm || false;
+  const hasNoTeammates = teammates?.length === 0;
 
   useEffect(() => {
-    if (import.meta.env.MODE === "development") return;
-
-    if (user && !hasFilledForm) {
-      // Load Tally script if not already loaded
-      if (!document.querySelector('script[src="https://tally.so/widgets/embed.js"]')) {
-        const script = document.createElement("script");
-        script.src = "https://tally.so/widgets/embed.js";
-        script.async = true;
-        document.head.appendChild(script);
-      }
-
-      // Configure Tally with user's email as hidden field
-      window.TallyConfig = {
-        formId: "nGMylz",
-        popup: {
-          width: 700,
-          layout: "modal",
-          autoClose: 0,
-          showOnce: false,
-          doNotShowAfterSubmit: true,
-          hiddenFields: {
-            email: user.email,
-          },
-        },
-      };
-
-      // Set up form submission handler to update onboarding status
-      const handleFormSubmit = async () => {
-        await updateOnboardingFormStatus({});
-      };
-
-      const messageHandler = (event: MessageEvent) => {
-        // Odd way to check but cool:
-        // https://tally.so/help/developer-resources#b4334b72c8424397a0e4fc2098d54c07
-        if (event?.data?.includes("Tally.FormSubmitted")) {
-          handleFormSubmit();
-        }
-      };
-
-      window.addEventListener("message", messageHandler);
-
-      return () => {
-        window.removeEventListener("message", messageHandler);
-      };
+    // Only show onboarding modal if:
+    // 1. User is loaded
+    // 2. User hasn't filled the form
+    // 3. User has no teammates (admin sign up)
+    if (user && !hasFilledForm && hasNoTeammates) {
+      setIsOpen(true);
     }
-  }, [user, hasFilledForm, updateOnboardingFormStatus]);
+  }, [user, hasFilledForm, hasNoTeammates]);
 
-  if (!user || hasFilledForm) {
+  if (!user || hasFilledForm || !hasNoTeammates) {
     return null;
   }
 
-  return null;
+  return <OnboardingModal open={isOpen} onOpenChange={setIsOpen} />;
 }

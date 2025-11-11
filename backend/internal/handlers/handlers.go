@@ -11,6 +11,7 @@ import (
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -57,6 +58,11 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	user, err := h.SocialAuth.CompleteUserAuth(c.Response(), c.Request())
 	if err != nil {
 		return err
+	}
+
+	if user.Email == "" {
+		c.Logger().Error("User email is empty from provider")
+		return echo.NewHTTPError(http.StatusBadRequest, "Email is required but not provided by the authentication provider")
 	}
 
 	var u models.User
@@ -111,6 +117,24 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 					}
 				case "google":
 					c.Logger().Infof("Received Google auth request")
+				case "github":
+					c.Logger().Infof("Received GitHub auth request")
+					// Get the company from GitHub user data
+					if user.RawData != nil {
+						rawData, err := json.Marshal(user.RawData)
+						if err != nil {
+							c.Logger().Warnf("Failed to marshal GitHub RawData: %v", err)
+						} else {
+							company := gjson.Get(string(rawData), "company")
+							if company.Exists() && company.String() != "" {
+								// Remove @ symbol if present
+								companyStr := strings.TrimPrefix(company.String(), "@")
+								teamName = companyStr + "-Team"
+							}
+						}
+					} else {
+						c.Logger().Warn("GitHub RawData is nil")
+					}
 				}
 
 				// Use fallback team name if none provided
@@ -162,6 +186,27 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				u.SocialMetadata = result
 				if err := tx.Save(&u).Error; err != nil {
 					return fmt.Errorf("failed to update user: %w", err)
+				}
+			case "github":
+				// Store GitHub user data in SocialMetadata
+				if user.RawData != nil {
+					rawData, err := json.Marshal(user.RawData)
+					if err != nil {
+						c.Logger().Warnf("Failed to marshal GitHub RawData for metadata: %v", err)
+					} else {
+						var result map[string]interface{}
+						if err := json.Unmarshal(rawData, &result); err != nil {
+							c.Logger().Warnf("Failed to parse GitHub user data: %v", err)
+						} else {
+							u.SocialMetadata = result
+							if err := tx.Save(&u).Error; err != nil {
+								c.Logger().Errorf("Failed to save GitHub metadata: %v", err)
+								return fmt.Errorf("failed to update user: %w", err)
+							}
+						}
+					}
+				} else {
+					c.Logger().Warn("GitHub RawData is nil, skipping metadata storage")
 				}
 			}
 		} else {
@@ -684,13 +729,26 @@ func (h *AuthHandler) UpdateOnboardingFormStatus(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
 	}
 
+	type OnboardingRequest struct {
+		Onboarding map[string]interface{} `json:"onboarding"`
+	}
+
+	req := new(OnboardingRequest)
+	if err := c.Bind(req); err != nil {
+		c.Logger().Error("Failed to bind request:", err)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
 	// Initialize metadata if it doesn't exist
 	if user.Metadata == nil {
 		user.Metadata = make(map[string]interface{})
 	}
 
-	// Set the onboarding form as completed
+	// Set the onboarding form data
 	user.Metadata["hasFilledOnboardingForm"] = true
+	if req.Onboarding != nil {
+		user.Metadata["onboarding"] = req.Onboarding
+	}
 
 	// Save the updated user
 	if err := h.DB.Save(user).Error; err != nil {
