@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { FaSlack, FaGoogle } from "react-icons/fa";
+import { FaSlack, FaGoogle, FaGithub } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -210,6 +210,14 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     window.location.href = url.toString();
   };
 
+  const handleGithubLogin = () => {
+    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/github`);
+    if (formData.teamInviteUUID) {
+      url.searchParams.set("invite_uuid", formData.teamInviteUUID);
+    }
+    window.location.href = url.toString();
+  };
+
   if (isLoadingInvitation) {
     return (
       <div className="flex flex-row items-center justify-center min-w-screen min-h-screen">
@@ -255,6 +263,10 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                       <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
+                      </Button>
+                      <Button type="button" variant="outline" className="w-full" onClick={handleGithubLogin}>
+                        <FaGithub className="size-5 mr-2" />
+                        {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
                       </Button>
                     </div>
                     {!isSignUp && (

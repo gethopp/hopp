@@ -24,6 +24,9 @@ type Config struct {
 		GoogleKey      string
 		GoogleSecret   string
 		GoogleRedirect string
+		GithubKey      string
+		GithubSecret   string
+		GithubRedirect string
 		SlackKey       string
 		SlackSecret    string
 		SlackRedirect  string
@@ -115,6 +118,10 @@ func Load() (*Config, error) {
 	c.Auth.GoogleKey = os.Getenv("GOOGLE_KEY")
 	c.Auth.GoogleSecret = os.Getenv("GOOGLE_SECRET")
 	c.Auth.GoogleRedirect = fmt.Sprintf("https://%s/api/auth/social/google/callback", c.Server.DeployDomain)
+
+	c.Auth.GithubKey = os.Getenv("GITHUB_KEY")
+	c.Auth.GithubSecret = os.Getenv("GITHUB_SECRET")
+	c.Auth.GithubRedirect = fmt.Sprintf("https://%s/api/auth/social/github/callback", c.Server.DeployDomain)
 
 	c.Auth.SlackKey = os.Getenv("SLACK_KEY")
 	c.Auth.SlackSecret = os.Getenv("SLACK_SECRET")

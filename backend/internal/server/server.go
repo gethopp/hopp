@@ -26,6 +26,7 @@ import (
 	"github.com/labstack/gommon/log"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
+	"github.com/markbates/goth/providers/github"
 	"github.com/markbates/goth/providers/google"
 	"github.com/markbates/goth/providers/slack"
 	"github.com/prometheus/client_golang/prometheus"
@@ -272,6 +273,7 @@ func (s *Server) setupGothProviders() {
 	goth.UseProviders(
 		google.New(s.Config.Auth.GoogleKey, s.Config.Auth.GoogleSecret, s.Config.Auth.GoogleRedirect, "email", "profile", "openid"),
 		slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"),
+		github.New(s.Config.Auth.GithubKey, s.Config.Auth.GithubSecret, s.Config.Auth.GithubRedirect, "user:email", "read:user"),
 	)
 }
 
