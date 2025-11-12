@@ -5,6 +5,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle, Description } from "@
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Send, ChevronsUpDownIcon, XIcon, CheckIcon } from "lucide-react";
 import CreatableSelect from "react-select/creatable";
 import { z } from "zod";
@@ -26,6 +27,8 @@ interface OnboardingFormData {
   companySize: string;
   pairingTool: string[];
   signUpReason: string;
+  hearAboutHopp: string;
+  hearAboutHoppOther: string;
 }
 
 const companySizes = [
@@ -41,6 +44,17 @@ const pairingTools = [
   { value: "google-meet", label: "Google Meet" },
   { value: "zoom", label: "Zoom" },
   { value: "tuple", label: "Tuple, Co-screen etc." },
+];
+
+const referralSources = [
+  { value: "recommendations", label: "Recommendations (friends, colleague)" },
+  { value: "internet-search", label: "Internet search (Google, Bing, etc)" },
+  { value: "reddit", label: "Reddit" },
+  { value: "hackernews", label: "Hackernews" },
+  { value: "ai-chatbots", label: "AI Chatbots (ChatGPT, Claude, Perplexity, etc.)" },
+  { value: "blog-post", label: "Blog post" },
+  { value: "github", label: "Github" },
+  { value: "other", label: "Other" },
 ];
 
 interface OnboardingModalProps {
@@ -214,6 +228,102 @@ function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: b
   );
 }
 
+function ReferralSourceSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <form.Field name="hearAboutHopp">
+        {(field: any) => {
+          const selectedOption = referralSources.find((s) => s.value === field.state.value);
+          const hasError = showErrors && field.state.value === "";
+
+          return (
+            <div className="space-y-2">
+              <Label htmlFor={id}>
+                How did you hear about Hopp? <span className="text-red-500">*</span>
+              </Label>
+              <DialogTrigger isOpen={open} onOpenChange={setOpen}>
+                <Pressable>
+                  <Button
+                    type="button"
+                    id={id}
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    className="h-10 w-full justify-between hover:bg-transparent"
+                  >
+                    <span className={selectedOption ? "" : "text-muted-foreground font-normal"}>
+                      {selectedOption ? selectedOption.label : "Select an option..."}
+                    </span>
+                    <ChevronsUpDownIcon size={16} className="text-muted-foreground/80 shrink-0" aria-hidden="true" />
+                  </Button>
+                </Pressable>
+                <Popover
+                  placement="bottom start"
+                  offset={8}
+                  className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"
+                >
+                  <AriaDialog>
+                    <Command>
+                      <CommandList>
+                        <CommandEmpty>No referral source found.</CommandEmpty>
+                        <CommandGroup>
+                          {referralSources.map((source) => (
+                            <CommandItem
+                              key={source.value}
+                              value={source.value}
+                              onSelect={() => {
+                                field.handleChange(source.value);
+                                setOpen(false);
+                              }}
+                            >
+                              <span className="truncate">{source.label}</span>
+                              {field.state.value === source.value && <CheckIcon size={16} className="ml-auto" />}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </AriaDialog>
+                </Popover>
+              </DialogTrigger>
+              {hasError && <p className="text-sm text-red-500">This field is required</p>}
+            </div>
+          );
+        }}
+      </form.Field>
+
+      <form.Field name="hearAboutHopp">
+        {(field: any) => {
+          if (field.state.value !== "other") return null;
+
+          return (
+            <form.Field name="hearAboutHoppOther">
+              {(otherField: any) => {
+                const hasError = showErrors && otherField.state.value === "";
+                return (
+                  <div className="space-y-2">
+                    <Label htmlFor="hearAboutHoppOther">Please specify</Label>
+                    <Input
+                      id="hearAboutHoppOther"
+                      value={otherField.state.value}
+                      onChange={(e) => otherField.handleChange(e.target.value)}
+                      placeholder="How did you hear about Hopp?"
+                    />
+                    {hasError && <p className="text-sm text-red-500">Please specify how you heard about us</p>}
+                  </div>
+                );
+              }}
+            </form.Field>
+          );
+        }}
+      </form.Field>
+    </>
+  );
+}
+
 export function OnboardingModal({ open, onOpenChange }: OnboardingModalProps) {
   const { useMutation } = useAPI();
   const [emailOptions, setEmailOptions] = useState<EmailOption[]>([]);
@@ -235,9 +345,16 @@ export function OnboardingModal({ open, onOpenChange }: OnboardingModalProps) {
       companySize: "",
       pairingTool: [] as string[],
       signUpReason: "",
+      hearAboutHopp: "",
+      hearAboutHoppOther: "",
     },
     onSubmit: async ({ value }: { value: OnboardingFormData }) => {
-      if (value.companySize === "" || value.pairingTool.length === 0) {
+      if (
+        value.companySize === "" ||
+        value.pairingTool.length === 0 ||
+        value.hearAboutHopp === "" ||
+        (value.hearAboutHopp === "other" && value.hearAboutHoppOther === "")
+      ) {
         setShowValidationErrors(true);
         toast.error("Please fill in all required fields");
         return;
@@ -251,6 +368,8 @@ export function OnboardingModal({ open, onOpenChange }: OnboardingModalProps) {
               companySize: value.companySize,
               pairingTool: value.pairingTool,
               signUpReason: value.signUpReason,
+              hearAboutHopp: value.hearAboutHopp,
+              hearAboutHoppOther: value.hearAboutHoppOther,
               invited: hasInvited,
             },
           },
@@ -341,6 +460,8 @@ export function OnboardingModal({ open, onOpenChange }: OnboardingModalProps) {
               }}
               className="space-y-6 mt-6"
             >
+              <ReferralSourceSelect form={form} showErrors={showValidationErrors} />
+
               <CompanySizeSelect form={form} showErrors={showValidationErrors} />
 
               <PairingToolMultiSelect form={form} showErrors={showValidationErrors} />
@@ -412,10 +533,16 @@ export function OnboardingModal({ open, onOpenChange }: OnboardingModalProps) {
                 selector={(state) => ({
                   companySize: state.values.companySize,
                   pairingTool: state.values.pairingTool,
+                  hearAboutHopp: state.values.hearAboutHopp,
+                  hearAboutHoppOther: state.values.hearAboutHoppOther,
                 })}
               >
-                {({ companySize, pairingTool }) => {
-                  const isPartiallyFilled = companySize !== "" && pairingTool.length > 0;
+                {({ companySize, pairingTool, hearAboutHopp, hearAboutHoppOther }) => {
+                  const isPartiallyFilled =
+                    companySize !== "" &&
+                    pairingTool.length > 0 &&
+                    hearAboutHopp !== "" &&
+                    (hearAboutHopp !== "other" || hearAboutHoppOther !== "");
 
                   return (
                     <div className="w-full flex items-start justify-end ml-auto pt-4 mt-4 gap-2">
