@@ -1,7 +1,9 @@
 use base64::prelude::*;
-use image::{codecs::jpeg::JpegEncoder, ImageBuffer, Rgba};
+use image::codecs::jpeg::JpegEncoder;
 use livekit::webrtc::{
     desktop_capturer::{CaptureResult, DesktopCapturer, DesktopFrame},
+    native::yuv_helper,
+    video_frame::{native::VideoFrameBufferExt, NV12Buffer},
     video_source::native::NativeVideoSource,
 };
 
@@ -21,10 +23,11 @@ use stream::{Stream, StreamRuntimeMessage};
 
 // Constants for magic numbers
 const JPEG_QUALITY: u8 = 70;
-const THUMBNAIL_WIDTH: f64 = 480.0;
-const THUMBNAIL_HEIGHT: f64 = 360.0;
+const THUMBNAIL_WIDTH: f64 = 960.0;
+const THUMBNAIL_HEIGHT: f64 = 720.0;
 const SCREENSHOT_CAPTURE_SLEEP_MS: u64 = 33;
-const MAX_SCREENSHOT_RETRY_ATTEMPTS: u32 = 100;
+const SCREENSHOT_CAPTURE_RATE_SLEEP_MS: u64 = 16;
+const SCREENSHOT_TIMEOUT: u64 = 10;
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
@@ -51,7 +54,7 @@ pub enum CapturerError {
     /// Failed to capture screenshot frames within the expected timeout.
     ///
     /// This error occurs when the screenshot capture process cannot complete
-    /// successfully within the retry limit ({MAX_SCREENSHOT_RETRY_ATTEMPTS} attempts).
+    /// successfully within the retry limit ({SCREENSHOT_TIMEOUT} attempts).
     /// Common causes include:
     #[error("Failed to capture frames")]
     FailedToCaptureFrames,
@@ -171,31 +174,49 @@ fn screenshot_capture_callback(
         );
 
         /* Remove extra padding */
-        let raw_image: Vec<u8> = frame_data
-            .chunks(frame_stride as usize)
-            .flat_map(|chunk| &chunk[0..(frame_width as usize * 4)])
-            .copied()
-            .collect();
+        let stride = 4 * frame_width;
+        let mut raw_image: Vec<u8> = Vec::with_capacity((stride * frame_height) as usize);
+        for i in 0..(frame_height as usize) {
+            let start = i * (frame_stride as usize);
+            let end = start + (stride as usize);
+            raw_image.extend_from_slice(&frame_data[start..end]);
+        }
 
-        let image = match ImageBuffer::<Rgba<u8>, _>::from_vec(
-            frame_width as u32,
-            frame_height as u32,
-            raw_image,
-        ) {
-            Some(image) => image,
-            None => {
-                log::error!("screenshot_capture_callback: Failed to create image");
-                return;
-            }
-        };
+        let mut framebuffer = NV12Buffer::new(frame_width as u32, frame_height as u32);
+        let (stride_y, stride_uv) = framebuffer.strides();
+        let (data_y, data_uv) = framebuffer.data_mut();
+        yuv_helper::argb_to_nv12(
+            &raw_image,
+            stride as u32,
+            data_y,
+            stride_y,
+            data_uv,
+            stride_uv,
+            frame_width,
+            frame_height,
+        );
 
-        let resized_image =
-            image::imageops::resize(&image, width, height, image::imageops::FilterType::Nearest);
-        let raw_image: Vec<u8> = resized_image
-            .pixels()
-            .flat_map(|p| [p[2], p[1], p[0]])
-            .collect();
+        let scaled_framebuffer = framebuffer.scale(width as i32, height as i32);
+        let capacity = width * 4 * height;
+        let mut raw_image_rgba: Vec<u8> = Vec::with_capacity((capacity) as usize);
+        for _ in 0..(capacity) {
+            raw_image_rgba.extend_from_slice(&[0]);
+        }
+        scaled_framebuffer.to_argb(
+            livekit::webrtc::prelude::VideoFormatType::BGRA,
+            &mut raw_image_rgba,
+            width * 4,
+            width as i32,
+            height as i32,
+        );
+
+        let mut raw_image: Vec<u8> = Vec::with_capacity((width * 3 * height) as usize);
+        for chunk in raw_image_rgba.chunks_exact(4) {
+            raw_image.extend_from_slice(&chunk[1..4]);
+        }
+
         let buffer = raw_image_to_jpeg(raw_image, width, height);
+
         let base64 = BASE64_STANDARD.encode(&buffer);
         let base64 = format!("data:image/{};base64,{}", "jpeg", base64);
 
@@ -281,7 +302,7 @@ impl Capturer {
     /// - Creates temporary capturers for each available display/window
     /// - Captures a single frame from each source at THUMBNAIL_WIDTH x THUMBNAIL_HEIGHT resolution
     /// - Converts frames to base64-encoded JPEG thumbnails for display in UI
-    /// - Times out after MAX_SCREENSHOT_RETRY_ATTEMPTS if sources don't respond
+    /// - Times out after SCREENSHOT_TIMEOUT if sources don't respond
     ///
     /// # Notes
     /// This method assumes that source list IDs match the display IDs from winit.
@@ -299,57 +320,92 @@ impl Capturer {
             let displays = first_capturer.get_source_list();
             log::info!("get_available_content: displays: {}", displays.len());
 
-            let mut capturers = vec![];
+            let mut handles = vec![];
             let result = Arc::new(Mutex::new(vec![]));
             let target_dims = Extent {
                 width: THUMBNAIL_WIDTH,
                 height: THUMBNAIL_HEIGHT,
             };
             for display in displays.iter() {
-                let callback = screenshot_capture_callback(
-                    target_dims,
-                    display.id() as u32,
-                    if display.title() != "" {
-                        display.title()
-                    } else {
-                        format!("Display {}", display.id())
-                    },
-                    result.clone(),
-                );
-                let capturer = DesktopCapturer::new(callback, false, false);
-                if capturer.is_none() {
-                    log::error!(
-                        "Failed to create DesktopCapturer for display: {}",
-                        display.id()
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let display_clone = display.clone();
+                let result_clone = result.clone();
+                let handle = std::thread::spawn(move || {
+                    let callback = screenshot_capture_callback(
+                        target_dims,
+                        display_clone.id() as u32,
+                        if display_clone.title() != "" {
+                            display_clone.title()
+                        } else {
+                            format!("Display {}", display_clone.id())
+                        },
+                        result_clone,
                     );
-                    continue;
-                }
-                let mut capturer = capturer.unwrap();
-                capturer.start_capture(display.clone());
-                capturers.push(capturer);
+                    let capturer = DesktopCapturer::new(callback, false, false);
+                    if capturer.is_none() {
+                        log::error!(
+                            "Failed to create DesktopCapturer for display: {}",
+                            display_clone.id()
+                        );
+                        return;
+                    }
+                    let mut capturer = capturer.unwrap();
+                    capturer.start_capture(display_clone);
+
+                    loop {
+                        match receiver.recv_timeout(std::time::Duration::from_millis(
+                            SCREENSHOT_CAPTURE_RATE_SLEEP_MS,
+                        )) {
+                            Ok(()) => break,
+                            Err(e) => match e {
+                                mpsc::RecvTimeoutError::Timeout => {
+                                    capturer.capture_frame();
+                                }
+                                mpsc::RecvTimeoutError::Disconnected => {
+                                    log::error!("get_available_content: capture loop disconnected");
+                                    break;
+                                }
+                            },
+                        }
+                    }
+                });
+
+                handles.push((handle, sender));
             }
 
-            let mut times = 0;
+            let now = std::time::Instant::now();
+            let mut failed = false;
             loop {
-                for capturer in capturers.iter_mut() {
-                    capturer.capture_frame();
-                }
-
-                let res = result.lock().unwrap();
-                if res.len() == displays.len() {
-                    break;
+                {
+                    let res = result.lock().unwrap();
+                    if res.len() == displays.len() {
+                        break;
+                    }
                 }
 
                 std::thread::sleep(std::time::Duration::from_millis(
                     SCREENSHOT_CAPTURE_SLEEP_MS,
                 ));
-                times += 1;
-                if times > MAX_SCREENSHOT_RETRY_ATTEMPTS {
+
+                if now.elapsed().as_secs() > SCREENSHOT_TIMEOUT {
+                    failed = true;
                     break;
                 }
             }
 
-            if times > MAX_SCREENSHOT_RETRY_ATTEMPTS {
+            while handles.len() > 0 {
+                let (handle, sender) = handles.pop().unwrap();
+                match sender.send(()) {
+                    Ok(()) => {
+                        let _ = handle.join();
+                    }
+                    Err(_) => {
+                        log::error!("failed to send stop message to screenshot capture thread")
+                    }
+                }
+            }
+
+            if failed {
                 return Err(CapturerError::FailedToCaptureFrames);
             }
 
