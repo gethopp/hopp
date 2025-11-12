@@ -23,8 +23,8 @@ use stream::{Stream, StreamRuntimeMessage};
 
 // Constants for magic numbers
 const JPEG_QUALITY: u8 = 70;
-const THUMBNAIL_WIDTH: f64 = 480.0;
-const THUMBNAIL_HEIGHT: f64 = 360.0;
+const THUMBNAIL_WIDTH: f64 = 960.0;
+const THUMBNAIL_HEIGHT: f64 = 720.0;
 const SCREENSHOT_CAPTURE_SLEEP_MS: u64 = 33;
 const SCREENSHOT_CAPTURE_RATE_SLEEP_MS: u64 = 16;
 const SCREENSHOT_TIMEOUT: u64 = 10;
