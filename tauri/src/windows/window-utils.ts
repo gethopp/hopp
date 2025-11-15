@@ -26,6 +26,9 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
       height: 450,
       url: URL,
       hiddenTitle: true,
+      decorations: false,
+      transparent: true,
+      shadow: true,
       titleBarStyle: "overlay",
       resizable: true,
       // alwaysOnTop: true,
@@ -233,6 +236,15 @@ const setDockIconVisible = async (visible: boolean) => {
   await invoke("set_dock_icon_visible", { visible });
 };
 
+const styleScreenshareWindow = async () => {
+  if (!isTauri) return;
+  try {
+    await invoke("style_screenshare_window");
+  } catch (error) {
+    console.error("Failed to style screenshare window:", error);
+  }
+};
+
 const getLastUsedMic = async () => {
   return await invoke<string | null>("get_last_used_mic");
 };
@@ -288,6 +300,7 @@ export const tauriUtils = {
   getScreenSharePermission,
   getCameraPermission,
   setDockIconVisible,
+  styleScreenshareWindow,
   getLastUsedMic,
   setLastUsedMic,
   minimizeMainWindow,

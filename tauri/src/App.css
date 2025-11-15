@@ -407,8 +407,16 @@ body {
 }
 
 .screenshare-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
   overflow: hidden;
-  background-color: var(--color-slate-900);
+  background-color: transparent;
+}
+
+.screenshare-body #root {
+  height: 100%;
+  width: 100%;
 }
 
 .screenshare-video-focus,

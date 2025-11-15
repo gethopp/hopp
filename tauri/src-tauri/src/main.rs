@@ -500,6 +500,44 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
+fn style_screenshare_window(app: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("screenshare") else {
+        return Err("screenshare window not found".to_string());
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+        if let Err(e) = apply_vibrancy(
+            &window,
+            NSVisualEffectMaterial::HudWindow,
+            Some(NSVisualEffectState::Active),
+            Some(16.0),
+        ) {
+            log::warn!("Failed to apply vibrancy to screenshare window: {}", e);
+        }
+
+        set_window_corner_radius(&window, 16.0);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::apply_blur;
+
+        if let Err(e) = apply_blur(&window, Some((18, 18, 18, 125))) {
+            log::warn!("Failed to apply blur to screenshare window: {}", e);
+        }
+    }
+
+    if let Err(e) = window.set_shadow(true) {
+        log::warn!("Failed to set shadow for screenshare window: {}", e);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
     log::info!("create_camera_window with token: {}", camera_token);
 
@@ -934,6 +972,7 @@ fn main() {
             get_camera_permission,
             open_camera_settings,
             create_camera_window,
+            style_screenshare_window,
             set_sentry_metadata,
             call_started,
         ])
