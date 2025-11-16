@@ -14,6 +14,7 @@ import (
 type EmailClient interface {
 	SendAsync(toEmail, subject, htmlBody string)
 	SendWelcomeEmail(user *models.User)
+	SendPasswordResetEmail(toEmail, resetToken string)
 	SendTeamInvitationEmail(inviterName, teamName, inviteLink, toEmail string)
 	SendTeamRemovalEmail(user *models.User, oldTeamName, newTeamName string)
 	SendSubscriptionConfirmationEmail(user *models.User)
@@ -85,6 +86,30 @@ func (c *ResendEmailClient) SendWelcomeEmail(user *models.User) {
 	subject := "Welcome to Hopp " + user.FirstName
 
 	c.SendAsync(user.Email, subject, htmlBody)
+}
+
+func (c *ResendEmailClient) SendPasswordResetEmail(toEmail, resetLink string) {
+	if toEmail == "" || resetLink == "" {
+		c.logger.Error("Cannot send password reset email with empty email or link")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-password-reset.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read password reset email template: %v", err)
+		return
+	}
+
+	htmlBody := strings.ReplaceAll(string(templateBytes), "{reset_link}", resetLink)
+
+	if err := os.WriteFile("testing.html", []byte(htmlBody), 0644); err != nil {
+		c.logger.Errorf("Failed to write testing.html: %v", err)
+	}
+
+	subject := "Hopp Password Reset Request"
+
+	c.SendAsync(toEmail, subject, htmlBody)
 }
 
 // SendTeamInvitationEmail sends an invitation email to join a team
