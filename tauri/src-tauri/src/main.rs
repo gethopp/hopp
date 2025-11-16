@@ -500,39 +500,80 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-fn style_screenshare_window(app: tauri::AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("screenshare") else {
-        return Err("screenshare window not found".to_string());
-    };
+async fn create_screenshare_window(
+    app: tauri::AppHandle,
+    video_token: String,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("screenshare") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let url = format!("screenshare.html?videoToken={}", video_token);
+
+    #[allow(unused_mut)]
+    let mut window_builder =
+        WebviewWindowBuilder::new(&app, "screenshare", WebviewUrl::App(url.into()))
+            .title("Screen sharing")
+            .inner_size(800.0, 450.0)
+            .resizable(true)
+            .visible(false)
+            .transparent(true)
+            .decorations(false)
+            .shadow(true)
+            .always_on_top(false)
+            .maximizable(false);
 
     #[cfg(target_os = "macos")]
     {
-        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
-
-        if let Err(e) = apply_vibrancy(
-            &window,
-            NSVisualEffectMaterial::HudWindow,
-            Some(NSVisualEffectState::Active),
-            Some(16.0),
-        ) {
-            log::warn!("Failed to apply vibrancy to screenshare window: {}", e);
-        }
-
-        set_window_corner_radius(&window, 16.0);
+        window_builder = window_builder.hidden_title(true)
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use window_vibrancy::apply_blur;
+    let screenshare_window = window_builder
+        .build()
+        .map_err(|e| format!("Failed to create screenshare window: {}", e))?;
 
-        if let Err(e) = apply_blur(&window, Some((18, 18, 18, 125))) {
-            log::warn!("Failed to apply blur to screenshare window: {}", e);
-        }
-    }
+    let window_clone = screenshare_window.clone();
 
-    if let Err(e) = window.set_shadow(true) {
-        log::warn!("Failed to set shadow for screenshare window: {}", e);
-    }
+    screenshare_window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "macos")]
+            {
+                use window_vibrancy::{
+                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                };
+
+                if let Err(e) = apply_vibrancy(
+                    &window_clone,
+                    NSVisualEffectMaterial::HudWindow,
+                    Some(NSVisualEffectState::Active),
+                    Some(16.0),
+                ) {
+                    log::warn!("Failed to apply vibrancy to screenshare window: {}", e);
+                }
+
+                set_window_corner_radius(&window_clone, 16.0);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use window_vibrancy::apply_blur;
+
+                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
+                    log::warn!("Failed to apply blur to screenshare window: {}", e);
+                }
+            }
+
+            if let Err(e) = window_clone.show() {
+                log::error!("Failed to show screenshare window: {}", e);
+            }
+
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus screenshare window: {}", e);
+            }
+        })
+        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
 
     Ok(())
 }
@@ -557,9 +598,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 
     #[cfg(target_os = "macos")]
     {
-        window_builder = window_builder
-            .hidden_title(true)
-            .title_bar_style(tauri::TitleBarStyle::Overlay);
+        window_builder = window_builder.hidden_title(true)
     }
 
     let camera_window = window_builder
@@ -599,6 +638,10 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 
             if let Err(e) = window_clone.show() {
                 log::error!("Failed to show camera window: {}", e);
+            }
+
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus camera window: {}", e);
             }
         })
         .map_err(|e| format!("Failed to run on main thread: {}", e))?;
@@ -972,7 +1015,7 @@ fn main() {
             get_camera_permission,
             open_camera_settings,
             create_camera_window,
-            style_screenshare_window,
+            create_screenshare_window,
             set_sentry_metadata,
             call_started,
         ])

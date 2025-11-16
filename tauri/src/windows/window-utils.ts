@@ -10,8 +10,6 @@ getVersion().then((version) => {
 });
 
 const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
-  const URL = `screenshare.html?videoToken=${videoToken}`;
-
   // Check if there is already a window open,
   // then focus on it and bring it to the front
   const isWindowOpen = await WebviewWindow.getByLabel("screenshare");
@@ -21,26 +19,17 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 
   if (isTauri) {
-    const newWindow = new WebviewWindow("screenshare", {
-      width: 800,
-      height: 450,
-      url: URL,
-      hiddenTitle: true,
-      decorations: false,
-      transparent: true,
-      shadow: true,
-      titleBarStyle: "overlay",
-      resizable: true,
-      // alwaysOnTop: true,
-      maximizable: false,
-      alwaysOnTop: false,
-      visible: true,
-      title: "Screen sharing",
-    });
-    newWindow.once("tauri://window-created", () => {
-      newWindow.setFocus();
-    });
+    try {
+      await invoke("create_screenshare_window", { videoToken });
+      const windowHandle = await WebviewWindow.getByLabel("screenshare");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to create screenshare window:", error);
+    }
   } else {
+    const URL = `screenshare.html?videoToken=${videoToken}`;
     window.open(URL);
   }
 };
@@ -236,15 +225,6 @@ const setDockIconVisible = async (visible: boolean) => {
   await invoke("set_dock_icon_visible", { visible });
 };
 
-const styleScreenshareWindow = async () => {
-  if (!isTauri) return;
-  try {
-    await invoke("style_screenshare_window");
-  } catch (error) {
-    console.error("Failed to style screenshare window:", error);
-  }
-};
-
 const getLastUsedMic = async () => {
   return await invoke<string | null>("get_last_used_mic");
 };
@@ -300,7 +280,6 @@ export const tauriUtils = {
   getScreenSharePermission,
   getCameraPermission,
   setDockIconVisible,
-  styleScreenshareWindow,
   getLastUsedMic,
   setLastUsedMic,
   minimizeMainWindow,

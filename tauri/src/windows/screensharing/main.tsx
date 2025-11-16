@@ -80,8 +80,6 @@ function Window() {
     }
 
     enableDock();
-
-    tauriUtils.styleScreenshareWindow();
   }, []);
 
   const handleClose = useCallback(() => {
