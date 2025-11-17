@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -13,8 +14,18 @@ const ResetTokenExpirationDuration = 30 * time.Minute
 type ResetToken struct {
 	gorm.Model
 	UserID string     `gorm:"not null" json:"user_id" validate:"required"`
-	Token  string     `json:"token" gorm:"type:uuid;not null;unique;index;default:gen_random_uuid()" validate:"required"`
+	Token  string     `json:"token" gorm:"type:uuid;not null;unique;index" validate:"required"`
 	UsedAt *time.Time `json:"used_at,omitempty"`
+}
+
+func (t *ResetToken) BeforeCreate(tx *gorm.DB) (err error) {
+	// Using uuid v7 to be indexable with B-tree
+	uuidV7, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	t.Token = uuidV7.String()
+	return
 }
 
 // CreateResetToken creates a new reset token record in the database
