@@ -1,25 +1,32 @@
 name: Backend Go CI
 
 on:
-    workflow_call:
+  workflow_call:
 
 jobs:
-    test-backend-go:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+  test-backend-go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            - name: Set up Go
-              uses: actions/setup-go@v5
-              with:
-                  go-version: "1.25"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
 
-            - name: Install dependencies
-              working-directory: backend
-              run: |
-                  go mod download
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          go mod download
 
-            - name: Run integration tests
-              working-directory: backend
-              run: go test -tags=integration ./test/integration/... -v
+      # Implicit install from pre-commit breaks the workflow
+      # https://golangci-lint.run/docs/welcome/install/#other-ci
+      - name: Ensure golangci-lint is the latest
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/0be943d5db68934ccbb92146e3c50a3704aaee22/install.sh | sh -s v2.6.2
+          golangci-lint --version
+
+      - name: Run integration tests
+        working-directory: backend
+        run: go test -tags=integration ./test/integration/... -v
