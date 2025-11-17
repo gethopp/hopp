@@ -427,73 +427,34 @@ func (h *AuthHandler) ForgotPassword(c echo.Context) error {
 
 	// Check if the user exists
 	u := &models.User{}
-	result := h.DB.Where("email = ?", req.Email).First(u)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "User not found")
+	user := h.DB.Where("email = ?", req.Email).First(u)
+	// Always return success message to avoid user enumeration
+	// https://ux.stackexchange.com/questions/87079/reset-password-appropriate-response-if-email-doesnt-exist/87093#87093
+	if errors.Is(user.Error, gorm.ErrRecordNotFound) {
+		return c.JSON(http.StatusOK, map[string]string{"message": "If the email you specified exists in our system, we've sent a password reset link to it."})
+	}
+
+	// Check if the token for the user exists and is still valid
+	resetPasswordToken := &models.Token{}
+	token := h.DB.Where("user_id = ? AND token_type = ?", u.ID, models.TokenTypePasswordReset).
+		Order("created_at DESC").First(resetPasswordToken)
+
+	// Create a new token if none exists or if the existing one is invalid/used
+	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() || resetPasswordToken.Used() {
+		resetToken := &models.Token{UserID: u.ID}
+		if err := resetToken.CreateToken(h.DB, models.TokenTypePasswordReset); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create password reset token")
+		}
+		resetPasswordToken = resetToken
+
 	}
 
 	baseURL := "https://" + h.Config.Server.DeployDomain
-
-	// Check if a valid unused reset token already exists for this user
-	var existingToken models.Token
-	tokenResult := h.DB.Where("user_id = ? AND token_type = ? AND is_used = ?", u.ID, models.TokenTypePasswordReset, false).
-		Order("created_at DESC").First(&existingToken)
-
-	// If we found an unused token, verify it's still valid
-	if tokenResult.Error == nil {
-		token, err := jwt.ParseWithClaims(existingToken.Token, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
-			jwtAuth, ok := h.JwtIssuer.(*JwtAuth)
-			if !ok {
-				return nil, fmt.Errorf("failed to access JWT configuration")
-			}
-			return []byte(jwtAuth.Secret), nil
-		})
-
-		// If token is valid, resend the existing reset email
-		if err == nil && token.Valid {
-			if h.EmailClient != nil {
-				resetLink := fmt.Sprintf("%s/reset-password?token=%s", baseURL, existingToken.Token)
-				h.EmailClient.SendPasswordResetEmail(u.Email, resetLink)
-			}
-			return c.JSON(http.StatusOK, map[string]string{"message": "Password reset token sent"})
-		}
-	}
-
-	// Create custom claims for anonymous room access
-	claims := jwt.MapClaims{
-		"email_id": u.Email,
-		"exp":      jwt.NewNumericDate(time.Now().Add(30 * time.Minute)), // 30-minute expiration
-		"iat":      jwt.NewNumericDate(time.Now()),                       // Issued at
-		"purpose":  "password_reset",                                     // Purpose of the token
-	}
-
-	// Create password reset token (JWT) with claims
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	// Get the JWT secret from the handler's state
-	jwtAuth, ok := h.JwtIssuer.(*JwtAuth)
-	if !ok {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to access JWT configuration")
-	}
-	// Generate encoded token
-	tokenString, err := token.SignedString([]byte(jwtAuth.Secret))
-	if err != nil {
-		c.Logger().Error("Failed to generate anonymous room token:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate token")
-	}
-
-	// Persist password reset token in the database
-	resetToken := &models.Token{UserID: u.ID}
-	if err := resetToken.CreateToken(h.DB, models.TokenTypePasswordReset, tokenString); err != nil {
-		c.Logger().Error("Failed to persist password reset token:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create password reset token")
-	}
-
 	if h.EmailClient != nil {
-		resetLink := fmt.Sprintf("%s/reset-password?token=%s", baseURL, existingToken.Token)
+		resetLink := fmt.Sprintf("%s/reset-password?token=%s", baseURL, resetPasswordToken.Token)
 		h.EmailClient.SendPasswordResetEmail(u.Email, resetLink)
 	}
-	c.Logger().Infof("Password reset token %s", tokenString)
-	return c.JSON(http.StatusOK, map[string]string{"message": "Password reset token sent"})
+	return c.JSON(http.StatusOK, map[string]string{"message": "If the email you specified exists in our system, we've sent a password reset link to it."})
 }
 
 func (h *AuthHandler) ResetPassword(c echo.Context) error {
@@ -510,51 +471,20 @@ func (h *AuthHandler) ResetPassword(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Missing token")
 	}
 
-	// Check if the token exists in the database and is not used
-	var existingToken models.Token
-	if err := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).First(&existingToken).Error; err != nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+	// Check if the token for the user exists and is still valid
+	resetPasswordToken := &models.Token{}
+	token := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).
+		Order("created_at DESC").First(resetPasswordToken)
+	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired token")
 	}
-	if existingToken.IsUsed {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Token already used. Request a new password reset.")
-	}
-
-	// Parse and validate the JWT token
-	token, err := jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Get the JWT secret from the handler's state
-		jwtAuth, ok := h.JwtIssuer.(*JwtAuth)
-		if !ok {
-			return nil, fmt.Errorf("failed to access JWT configuration")
-		}
-
-		return []byte(jwtAuth.Secret), nil
-	})
-
-	if err != nil {
-		c.Logger().Error("Failed to parse reset password token:", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+	if resetPasswordToken.Used() {
+		return echo.NewHTTPError(http.StatusBadRequest, "This password reset link has already been used")
 	}
 
-	// Validate claims
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token claims")
-	}
-
-	// Check token purpose
-	purpose, ok := claims["purpose"].(string)
-	if !ok || purpose != "password_reset" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token purpose")
-	}
-
-	// Extract email ID
-	email, ok := claims["email_id"].(string)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid email ID in token")
-	}
-	// Find the user by email
+	// Find the user by user ID from the token
 	u := &models.User{}
-	result := h.DB.Where("email = ?", email).First(u)
+	result := h.DB.Where("id = ?", resetPasswordToken.UserID).First(u)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "User not found")
 	}
@@ -570,12 +500,11 @@ func (h *AuthHandler) ResetPassword(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to reset password")
 	}
 
-	// Mark the password reset token as used (best-effort)
-	if err := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).First(&existingToken).Error; err == nil {
-		existingToken.IsUsed = true
+	// Mark the password reset token as used
+	if err := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).First(&resetPasswordToken).Error; err == nil {
 		now := time.Now()
-		existingToken.UsedAt = &now
-		if err := h.DB.Save(&existingToken).Error; err != nil {
+		resetPasswordToken.UsedAt = &now
+		if err := h.DB.Save(&resetPasswordToken).Error; err != nil {
 			c.Logger().Warn("Failed to mark password reset token as used:", err)
 		}
 	}

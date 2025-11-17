@@ -26,8 +26,6 @@ export function ResetPassword() {
       if (extractFormData.password != extractFormData.reEnterPassword) {
         throw new Error("Passwords do not match. Please try again.");
       }
-      console.log(extractFormData.password);
-      console.log(extractFormData.reEnterPassword);
       const endpoint = `/api/reset-password/${token}`;
       const response = await fetch(`${BACKEND_URLS.BASE}${endpoint}`, {
         method: "PATCH",
