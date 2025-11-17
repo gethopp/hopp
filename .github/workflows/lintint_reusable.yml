@@ -17,4 +17,8 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: yarn install
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
       - uses: pre-commit/action@v3.0.1
