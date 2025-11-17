@@ -3,6 +3,8 @@ import { createBrowserRouter, Outlet, RouterProvider, redirect } from "react-rou
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useHoppStore, useHydration } from "./store/store";
 import { LoginForm } from "@/pages/Login";
+import { ForgotPassword } from "@/pages/ForgotPassword";
+import { ResetPassword } from "@/pages/ResetPassword";
 import { Dashboard } from "@/pages/Dashboard";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "react-hot-toast";
@@ -78,6 +80,26 @@ const router = createBrowserRouter([
       {
         path: "",
         element: <LoginForm />,
+      },
+    ],
+  },
+  {
+    path: "/forgot-password",
+    element: <Providers requireAuth={false} />,
+    children: [
+      {
+        path: "",
+        element: <ForgotPassword />,
+      },
+    ],
+  },
+  {
+    path: "/reset-password/:token",
+    element: <Providers requireAuth={false} />,
+    children: [
+      {
+        path: "",
+        element: <ResetPassword />,
       },
     ],
   },

@@ -213,6 +213,7 @@ func (s *Server) runMigrations() {
 		&models.User{},
 		&models.Team{},
 		&models.Room{},
+		&models.ResetToken{},
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
 		&models.Subscription{},
@@ -326,6 +327,8 @@ func (s *Server) setupRoutes() {
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
 	api.POST("/sign-up", auth.ManualSignUp)
 	api.POST("/sign-in", auth.ManualSignIn)
+	api.POST("/forgot-password", auth.ForgotPassword)
+	api.PATCH("/reset-password/:token", auth.ResetPassword)
 	api.GET("/room/meet-redirect", auth.RoomMeetRedirect)
 
 	// Protected API routes group

@@ -82,16 +82,24 @@ func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
 
 	// Hash password if it's set
 	if u.Password != "" {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+		hashedPassword, err := HashPassword(u.Password)
 		if err != nil {
 			return err
 		}
-		u.HashedPassword = string(hashedPassword)
+		u.HashedPassword = hashedPassword
 		// Clear the plain text password
 		u.Password = ""
 	}
 
 	return
+}
+
+func HashPassword(password string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
 }
 
 func (u *User) CheckPassword(password string) bool {

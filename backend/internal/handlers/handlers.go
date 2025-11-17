@@ -36,6 +36,14 @@ type SignInRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+type ResetPasswordRequest struct {
+	Password string `json:"password" validate:"required"`
+}
+
 func NewAuthHandler(db *gorm.DB, cfg *config.Config, jwt common.JWTIssuer, redis *redis.Client, socialAuth common.SocialAuthProvider) *AuthHandler {
 	return &AuthHandler{
 		ServerState: common.ServerState{
@@ -405,6 +413,103 @@ func (h *AuthHandler) ManualSignIn(c echo.Context) error {
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("New sign-in: %s", u.ID), h.Config)
 
 	return c.JSON(http.StatusOK, map[string]string{"token": token})
+}
+
+func (h *AuthHandler) ForgotPassword(c echo.Context) error {
+	const verificationMessage = "If the email you specified exists in our system, we've sent a password reset link to it."
+	c.Logger().Info("Received forgot password request")
+	req := &ForgotPasswordRequest{}
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := c.Validate(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Check if the user exists
+	u := &models.User{}
+	user := h.DB.Where("email = ?", req.Email).First(u)
+	// Always return success message to avoid user enumeration
+	// https://ux.stackexchange.com/questions/87079/reset-password-appropriate-response-if-email-doesnt-exist/87093#87093
+	if errors.Is(user.Error, gorm.ErrRecordNotFound) {
+		return c.JSON(http.StatusOK, map[string]string{"message": verificationMessage})
+	}
+
+	// Check if the token for the user exists and is still valid
+	resetPasswordToken := &models.ResetToken{}
+	token := h.DB.Where("user_id = ?", u.ID).
+		Order("created_at DESC").First(resetPasswordToken)
+
+	// Create a new token if none exists or if the existing one is invalid/used
+	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() || resetPasswordToken.Used() {
+		resetToken := &models.ResetToken{UserID: u.ID}
+		if err := resetToken.CreateResetToken(h.DB); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create password reset token")
+		}
+		resetPasswordToken = resetToken
+
+	}
+
+	baseURL := "https://" + h.Config.Server.DeployDomain
+	if h.EmailClient != nil {
+		resetLink := fmt.Sprintf("%s/reset-password/%s", baseURL, resetPasswordToken.Token)
+		h.EmailClient.SendPasswordResetEmail(u.Email, resetLink)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": verificationMessage})
+}
+
+func (h *AuthHandler) ResetPassword(c echo.Context) error {
+	c.Logger().Info("Received reset password request")
+	req := &ResetPasswordRequest{}
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := c.Validate(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	tokenString := c.Param("token")
+	if tokenString == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Missing token")
+	}
+
+	// Check if the token for the user exists and is still valid
+	resetPasswordToken := &models.ResetToken{}
+	token := h.DB.Where("token = ?", tokenString).
+		Order("created_at DESC").First(resetPasswordToken)
+	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired token")
+	}
+	if resetPasswordToken.Used() {
+		return echo.NewHTTPError(http.StatusBadRequest, "This password reset link has already been used")
+	}
+
+	// Find the user by user ID from the token
+	u := &models.User{}
+	result := h.DB.Where("id = ?", resetPasswordToken.UserID).First(u)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "User not found")
+	}
+	// Reset the user's password
+	hashedPassword, err := models.HashPassword(req.Password)
+	if err != nil {
+		c.Logger().Error("Failed to hash password:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to reset password")
+	}
+	u.HashedPassword = hashedPassword
+	u.Password = ""
+	if err := h.DB.Save(u).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to reset password")
+	}
+
+	// Mark the password reset token as used
+	if err := h.DB.Where("token = ?", tokenString).First(&resetPasswordToken).Error; err == nil {
+		now := time.Now()
+		resetPasswordToken.UsedAt = &now
+		if err := h.DB.Save(&resetPasswordToken).Error; err != nil {
+			c.Logger().Warn("Failed to mark password reset token as used:", err)
+		}
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Your password has been changed. You can now use it to log in."})
 }
 
 func (h *AuthHandler) UserPage(c echo.Context) error {

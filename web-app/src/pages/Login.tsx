@@ -304,7 +304,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                         <div className="flex items-center">
                           <Label htmlFor="password">Password</Label>
                           {!isSignUp && (
-                            <a href="#" className="ml-auto text-sm underline-offset-4 hover:underline">
+                            <a href="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">
                               Forgot your password?
                             </a>
                           )}
