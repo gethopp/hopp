@@ -25,6 +25,8 @@ jobs:
       - name: Ensure golangci-lint is the latest
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/0be943d5db68934ccbb92146e3c50a3704aaee22/install.sh | sh -s v2.6.2
+          echo "$(pwd)/bin" >> $GITHUB_PATH
+          export PATH="$PATH:$(pwd)/bin"
           golangci-lint --version
 
       - name: Run integration tests
