@@ -5,17 +5,16 @@ import { Label } from "@/components/ui/label";
 import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Logo from "@/assets/Hopp.png";
-import { BACKEND_URLS } from "@/constants";
 import { useParams } from "react-router-dom";
-
-interface ResetPasswordResponse {
-  message: string;
-}
+import { useAPI } from "@/hooks/useQueryClients";
 
 export function ResetPassword() {
+  const { useMutation } = useAPI();
   const [isFormSubmitted, setFormSubmitted] = useState(false);
   const [message, setMessage] = useState("");
   const { token } = useParams();
+
+  const resetPasswordMutation = useMutation("patch", "/api/reset-password/{token}");
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -26,26 +25,23 @@ export function ResetPassword() {
       if (extractFormData.password != extractFormData.reEnterPassword) {
         throw new Error("Passwords do not match. Please try again.");
       }
-      const endpoint = `/api/reset-password/${token}`;
-      const response = await fetch(`${BACKEND_URLS.BASE}${endpoint}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          password: extractFormData.password,
-        }),
-      });
-
-      const data = (await response.json()) as ResetPasswordResponse;
-
-      if (!response.ok) {
-        throw new Error(data.message);
+      if (!token) {
+        throw new Error("Reset token is missing");
       }
-      setMessage(data.message);
+      const data = await resetPasswordMutation.mutateAsync({
+        params: {
+          path: {
+            token: token,
+          },
+        },
+        body: {
+          password: extractFormData.password as string,
+        },
+      });
+      setMessage(data.message || "Your password has been changed. You can now use it to log in.");
       setFormSubmitted(true);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Authentication failed";
+      const errorMessage = error instanceof Error ? error.message : "Something went wrong, please try again.";
       toast.error(errorMessage);
     }
   };

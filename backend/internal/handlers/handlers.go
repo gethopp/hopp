@@ -416,6 +416,7 @@ func (h *AuthHandler) ManualSignIn(c echo.Context) error {
 }
 
 func (h *AuthHandler) ForgotPassword(c echo.Context) error {
+	const verificationMessage = "If the email you specified exists in our system, we've sent a password reset link to it."
 	c.Logger().Info("Received forgot password request")
 	req := &ForgotPasswordRequest{}
 	if err := c.Bind(req); err != nil {
@@ -431,18 +432,18 @@ func (h *AuthHandler) ForgotPassword(c echo.Context) error {
 	// Always return success message to avoid user enumeration
 	// https://ux.stackexchange.com/questions/87079/reset-password-appropriate-response-if-email-doesnt-exist/87093#87093
 	if errors.Is(user.Error, gorm.ErrRecordNotFound) {
-		return c.JSON(http.StatusOK, map[string]string{"message": "If the email you specified exists in our system, we've sent a password reset link to it."})
+		return c.JSON(http.StatusOK, map[string]string{"message": verificationMessage})
 	}
 
 	// Check if the token for the user exists and is still valid
-	resetPasswordToken := &models.Token{}
-	token := h.DB.Where("user_id = ? AND token_type = ?", u.ID, models.TokenTypePasswordReset).
+	resetPasswordToken := &models.ResetToken{}
+	token := h.DB.Where("user_id = ?", u.ID).
 		Order("created_at DESC").First(resetPasswordToken)
 
 	// Create a new token if none exists or if the existing one is invalid/used
 	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() || resetPasswordToken.Used() {
-		resetToken := &models.Token{UserID: u.ID}
-		if err := resetToken.CreateToken(h.DB, models.TokenTypePasswordReset); err != nil {
+		resetToken := &models.ResetToken{UserID: u.ID}
+		if err := resetToken.CreateResetToken(h.DB); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create password reset token")
 		}
 		resetPasswordToken = resetToken
@@ -451,10 +452,10 @@ func (h *AuthHandler) ForgotPassword(c echo.Context) error {
 
 	baseURL := "https://" + h.Config.Server.DeployDomain
 	if h.EmailClient != nil {
-		resetLink := fmt.Sprintf("%s/reset-password?token=%s", baseURL, resetPasswordToken.Token)
+		resetLink := fmt.Sprintf("%s/reset-password/%s", baseURL, resetPasswordToken.Token)
 		h.EmailClient.SendPasswordResetEmail(u.Email, resetLink)
 	}
-	return c.JSON(http.StatusOK, map[string]string{"message": "If the email you specified exists in our system, we've sent a password reset link to it."})
+	return c.JSON(http.StatusOK, map[string]string{"message": verificationMessage})
 }
 
 func (h *AuthHandler) ResetPassword(c echo.Context) error {
@@ -472,8 +473,8 @@ func (h *AuthHandler) ResetPassword(c echo.Context) error {
 	}
 
 	// Check if the token for the user exists and is still valid
-	resetPasswordToken := &models.Token{}
-	token := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).
+	resetPasswordToken := &models.ResetToken{}
+	token := h.DB.Where("token = ?", tokenString).
 		Order("created_at DESC").First(resetPasswordToken)
 	if errors.Is(token.Error, gorm.ErrRecordNotFound) || !resetPasswordToken.IsValid() {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired token")
@@ -501,7 +502,7 @@ func (h *AuthHandler) ResetPassword(c echo.Context) error {
 	}
 
 	// Mark the password reset token as used
-	if err := h.DB.Where("token = ? AND token_type = ?", tokenString, models.TokenTypePasswordReset).First(&resetPasswordToken).Error; err == nil {
+	if err := h.DB.Where("token = ?", tokenString).First(&resetPasswordToken).Error; err == nil {
 		now := time.Now()
 		resetPasswordToken.UsedAt = &now
 		if err := h.DB.Save(&resetPasswordToken).Error; err != nil {

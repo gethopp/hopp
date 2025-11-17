@@ -213,7 +213,7 @@ func (s *Server) runMigrations() {
 		&models.User{},
 		&models.Team{},
 		&models.Room{},
-		&models.Token{},
+		&models.ResetToken{},
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
 		&models.Subscription{},

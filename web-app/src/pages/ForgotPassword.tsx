@@ -5,40 +5,30 @@ import { Label } from "@/components/ui/label";
 import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Logo from "@/assets/Hopp.png";
-import { BACKEND_URLS } from "@/constants";
-
-interface ForgotPasswordResponse {
-  message: string;
-}
+import { useAPI } from "@/hooks/useQueryClients";
 
 export function ForgotPassword() {
+  const { useMutation } = useAPI();
   const [isFormSubmitted, setFormSubmitted] = useState(false);
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
 
+  const forgotPasswordMutation = useMutation("post", "/api/forgot-password");
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const endpoint = "/api/forgot-password";
-      const response = await fetch(`${BACKEND_URLS.BASE}${endpoint}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const data = await forgotPasswordMutation.mutateAsync({
+        body: {
           email: email,
-        }),
+        },
       });
-
-      const data = (await response.json()) as ForgotPasswordResponse;
-
-      if (!response.ok) {
-        throw new Error(data.message);
-      }
-      setMessage(data.message);
+      setMessage(
+        data.message || "If the email you specified exists in our system, we've sent a password reset link to it.",
+      );
       setFormSubmitted(true);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Authentication failed";
+      const errorMessage = error instanceof Error ? error.message : "Something went wrong, please try again.";
       toast.error(errorMessage);
     }
   };

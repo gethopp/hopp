@@ -257,6 +257,95 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/forgot-password:
+    post:
+      summary: Request password reset email
+      description: Sends a password reset link to the specified email address if it exists in the system. Always returns success to avoid user enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: User's email address
+      responses:
+        "200":
+          description: Success message (always returned regardless of whether email exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "If the email you specified exists in our system, we've sent a password reset link to it."
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/reset-password/{token}:
+    patch:
+      summary: Reset password using token
+      description: Resets the user's password using a valid password reset token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Password reset token received via email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: New password
+      responses:
+        "200":
+          description: Password reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Your password has been changed. You can now use it to log in."
+        "400":
+          description: Invalid input, missing token, invalid/expired token, or token already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/authenticate-app:
     get:
       summary: Create JWT token for desktop app
