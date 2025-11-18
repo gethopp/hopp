@@ -421,7 +421,7 @@ body {
 
 .screenshare-video-focus,
 .screenshare-video:focus {
-  outline: 3px solid var(--color-yellow-300);
+  outline: 2px solid var(--color-yellow-300);
   outline-offset: -2px;
 }
 

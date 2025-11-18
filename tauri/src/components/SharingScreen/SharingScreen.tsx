@@ -636,10 +636,13 @@ const ConsumerComponent = React.memo(() => {
   return (
     <div
       ref={wrapperRef}
-      className={cn("w-full screenshare-video rounded-lg overflow-hidden border-solid border-2 relative", {
-        "screenshare-video-focus": isMouseInside,
-        "border-slate-200": !isMouseInside,
-      })}
+      className={cn(
+        "w-full screenshare-video rounded-t-lg rounded-b-xl overflow-hidden border-solid border-2 relative",
+        {
+          "screenshare-video-focus": isMouseInside,
+          "border-slate-200": !isMouseInside,
+        },
+      )}
       tabIndex={-1}
     >
       {DEBUGGING_VIDEO_TRACK && (
