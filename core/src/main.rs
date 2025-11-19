@@ -21,6 +21,7 @@ struct Args {
     socket_path: Option<String>,
 }
 
+// test
 fn main() -> Result<(), impl std::error::Error> {
     let args = Args::parse();
 

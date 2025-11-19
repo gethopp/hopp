@@ -114,6 +114,10 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
 
+      - name: test
+        run: |
+          echo test
+
       - name: Cache Cargo builds
         uses: Swatinem/rust-cache@v2
 
