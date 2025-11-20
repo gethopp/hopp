@@ -8,7 +8,7 @@ use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
-    Emitter, WebviewUrl, WebviewWindowBuilder,
+    Emitter,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
@@ -23,9 +23,6 @@ use std::sync::Mutex;
 use std::{env, sync::Arc};
 
 use std::time::Duration;
-
-#[cfg(target_os = "macos")]
-use hopp::set_window_corner_radius;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
@@ -504,78 +501,21 @@ async fn create_screenshare_window(
     app: tauri::AppHandle,
     video_token: String,
 ) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("screenshare") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-
     let url = format!("screenshare.html?videoToken={}", video_token);
-
-    #[allow(unused_mut)]
-    let mut window_builder =
-        WebviewWindowBuilder::new(&app, "screenshare", WebviewUrl::App(url.into()))
-            .title("Screen sharing")
-            .inner_size(800.0, 450.0)
-            .resizable(true)
-            .visible(false)
-            .transparent(true)
-            .decorations(false)
-            .shadow(true)
-            .always_on_top(false)
-            .maximizable(false);
-
-    #[cfg(target_os = "macos")]
-    {
-        window_builder = window_builder.hidden_title(true)
-    }
-
-    let screenshare_window = window_builder
-        .build()
-        .map_err(|e| format!("Failed to create screenshare window: {}", e))?;
-
-    let window_clone = screenshare_window.clone();
-
-    screenshare_window
-        .run_on_main_thread(move || {
-            #[cfg(target_os = "macos")]
-            {
-                use window_vibrancy::{
-                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-                };
-
-                if let Err(e) = apply_vibrancy(
-                    &window_clone,
-                    NSVisualEffectMaterial::HudWindow,
-                    Some(NSVisualEffectState::Active),
-                    Some(16.0),
-                ) {
-                    log::warn!("Failed to apply vibrancy to screenshare window: {}", e);
-                }
-
-                set_window_corner_radius(&window_clone, 16.0);
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                use window_vibrancy::apply_blur;
-
-                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
-                    log::warn!("Failed to apply blur to screenshare window: {}", e);
-                }
-            }
-
-            if let Err(e) = window_clone.show() {
-                log::error!("Failed to show screenshare window: {}", e);
-            }
-
-            if let Err(e) = window_clone.set_focus() {
-                log::error!("Failed to focus screenshare window: {}", e);
-            }
-        })
-        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
-
-    Ok(())
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "screenshare",
+            title: "Screen sharing",
+            url: &url,
+            width: 800.0,
+            height: 450.0,
+            resizable: true,
+            always_on_top: false,
+            content_protected: false,
+            maximizable: false,
+        },
+    )
 }
 
 #[tauri::command]
@@ -583,70 +523,20 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
     log::info!("create_camera_window with token: {}", camera_token);
 
     let url = format!("camera.html?cameraToken={}", camera_token);
-
-    #[allow(unused_mut)]
-    let mut window_builder = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
-        .title("Camera")
-        .inner_size(160.0, 365.0)
-        .resizable(false)
-        .visible(false)
-        .transparent(true)
-        .always_on_top(true)
-        .decorations(false)
-        .content_protected(true)
-        .shadow(true);
-
-    #[cfg(target_os = "macos")]
-    {
-        window_builder = window_builder.hidden_title(true)
-    }
-
-    let camera_window = window_builder
-        .build()
-        .map_err(|e| format!("Failed to create camera window: {}", e))?;
-
-    let window_clone = camera_window.clone();
-
-    camera_window
-        .run_on_main_thread(move || {
-            #[cfg(target_os = "macos")]
-            {
-                use window_vibrancy::{
-                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-                };
-
-                if let Err(e) = apply_vibrancy(
-                    &window_clone,
-                    NSVisualEffectMaterial::HudWindow,
-                    Some(NSVisualEffectState::Active),
-                    Some(16.0),
-                ) {
-                    log::warn!("Failed to apply vibrancy to camera window: {}", e);
-                }
-
-                set_window_corner_radius(&window_clone, 16.0);
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                use window_vibrancy::apply_blur;
-
-                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
-                    log::warn!("Failed to apply blur to camera window: {}", e);
-                }
-            }
-
-            if let Err(e) = window_clone.show() {
-                log::error!("Failed to show camera window: {}", e);
-            }
-
-            if let Err(e) = window_clone.set_focus() {
-                log::error!("Failed to focus camera window: {}", e);
-            }
-        })
-        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
-
-    Ok(())
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "camera",
+            title: "Camera",
+            url: &url,
+            width: 160.0,
+            height: 365.0,
+            resizable: false,
+            always_on_top: true,
+            content_protected: true,
+            maximizable: true,
+        },
+    )
 }
 
 #[tauri::command]

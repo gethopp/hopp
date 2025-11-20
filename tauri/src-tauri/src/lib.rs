@@ -14,7 +14,7 @@ use tauri::async_runtime::Receiver;
 use tauri::path::BaseDirectory;
 #[cfg(target_os = "macos")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, Wry};
+use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 #[cfg(target_os = "macos")]
 use tauri::{Rect, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
@@ -543,7 +543,7 @@ pub fn get_sentry_dsn() -> String {
 }
 
 #[cfg(target_os = "macos")]
-pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
+fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
     let ns_window: &objc2_app_kit::NSWindow = match window.ns_window() {
         Ok(ns_window) => unsafe { &*ns_window.cast() },
         Err(e) => {
@@ -572,4 +572,91 @@ fn create_random_suffix() -> String {
         .take(10)
         .map(char::from)
         .collect()
+}
+
+pub struct MediaWindowConfig<'a> {
+    pub label: &'a str,
+    pub title: &'a str,
+    pub url: &'a str,
+    pub width: f64,
+    pub height: f64,
+    pub resizable: bool,
+    pub always_on_top: bool,
+    pub content_protected: bool,
+    pub maximizable: bool,
+}
+
+pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(config.label) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    #[allow(unused_mut)]
+    let mut window_builder =
+        WebviewWindowBuilder::new(app, config.label, WebviewUrl::App(config.url.into()))
+            .title(config.title)
+            .inner_size(config.width, config.height)
+            .resizable(config.resizable)
+            .visible(false)
+            .transparent(true)
+            .decorations(false)
+            .shadow(true)
+            .always_on_top(config.always_on_top)
+            .maximizable(config.maximizable)
+            .content_protected(config.content_protected);
+
+    #[cfg(target_os = "macos")]
+    {
+        window_builder = window_builder.hidden_title(true)
+    }
+
+    let window = window_builder
+        .build()
+        .map_err(|e| format!("Failed to create {} window: {}", config.label, e))?;
+
+    let window_clone = window.clone();
+    let label_clone = config.label.to_string();
+
+    window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "macos")]
+            {
+                use window_vibrancy::{
+                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                };
+
+                if let Err(e) = apply_vibrancy(
+                    &window_clone,
+                    NSVisualEffectMaterial::HudWindow,
+                    Some(NSVisualEffectState::Active),
+                    Some(16.0),
+                ) {
+                    log::warn!("Failed to apply vibrancy to {} window: {}", label_clone, e);
+                }
+
+                set_window_corner_radius(&window_clone, 16.0);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use window_vibrancy::apply_blur;
+
+                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
+                    log::warn!("Failed to apply blur to {} window: {}", label_clone, e);
+                }
+            }
+
+            if let Err(e) = window_clone.show() {
+                log::error!("Failed to show {} window: {}", label_clone, e);
+            }
+
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus {} window: {}", label_clone, e);
+            }
+        })
+        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
 }

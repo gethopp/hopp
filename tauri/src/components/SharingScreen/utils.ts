@@ -21,7 +21,7 @@ const calculateWindowSizing = async (streamWidth: number, streamHeight: number):
   const aspectRatio = streamWidth / streamHeight;
   const factor = await appWindow.scaleFactor();
 
-  // TODO: We can get the menubar heigth from tauri and the core process
+  // TODO: We can get the menubar height from the core process
   // for now we will use reasonable defaults
   // Windows 40px for taskbar and 30px for title bar = 70px
   // macos 22px for menubar
