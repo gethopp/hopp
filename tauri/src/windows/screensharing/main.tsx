@@ -192,7 +192,7 @@ function Window() {
 
   return (
     <div
-      className="h-full w-full bg-transparent text-white rounded-[18px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden"
+      className="h-full w-full bg-transparent text-white rounded-[18px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden group"
       tabIndex={0}
       ref={(ref) => ref && setParentKeyTrap(ref)}
     >
@@ -201,7 +201,7 @@ function Window() {
         data-tauri-drag-region
         className="title-panel flex items-center h-[40px] px-3 titlebar w-full border-b border-slate-800/20"
       >
-        <div className="flex items-center gap-2 min-w-[120px] group" data-tauri-drag-region="no-drag">
+        <div className="flex items-center gap-2 min-w-[120px]" data-tauri-drag-region="no-drag">
           <TitlebarButton onClick={handleClose} label="Close window" className="group-hover:bg-red-500">
             <LuX className="size-[10px] stroke-[3px]" />
           </TitlebarButton>
