@@ -10,8 +10,6 @@ getVersion().then((version) => {
 });
 
 const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
-  const URL = `screenshare.html?videoToken=${videoToken}`;
-
   // Check if there is already a window open,
   // then focus on it and bring it to the front
   const isWindowOpen = await WebviewWindow.getByLabel("screenshare");
@@ -21,23 +19,17 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 
   if (isTauri) {
-    const newWindow = new WebviewWindow("screenshare", {
-      width: 800,
-      height: 450,
-      url: URL,
-      hiddenTitle: true,
-      titleBarStyle: "overlay",
-      resizable: true,
-      // alwaysOnTop: true,
-      maximizable: false,
-      alwaysOnTop: false,
-      visible: true,
-      title: "Screen sharing",
-    });
-    newWindow.once("tauri://window-created", () => {
-      newWindow.setFocus();
-    });
+    try {
+      await invoke("create_screenshare_window", { videoToken });
+      const windowHandle = await WebviewWindow.getByLabel("screenshare");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to create screenshare window:", error);
+    }
   } else {
+    const URL = `screenshare.html?videoToken=${videoToken}`;
     window.open(URL);
   }
 };
@@ -54,24 +46,18 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
     return;
   }
 
-  const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
-
   if (isTauri) {
-    const newWindow = new WebviewWindow("contentPicker", {
-      width: 800,
-      height: 450,
-      url: URL,
-      hiddenTitle: true,
-      titleBarStyle: "overlay",
-      resizable: true,
-      alwaysOnTop: true,
-      visible: true,
-      title: "Content picker",
-    });
-    newWindow.once("tauri://window-created", () => {
-      newWindow.setFocus();
-    });
+    try {
+      await invoke("create_content_picker_window", { videoToken, useAv1 });
+      const windowHandle = await WebviewWindow.getByLabel("contentPicker");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to create content picker window:", error);
+    }
   } else {
+    const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
     window.open(URL);
   }
 };

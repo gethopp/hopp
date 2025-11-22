@@ -82,7 +82,7 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  let { isSharingMouse, isSharingKeyEvents, parentKeyTrap } = useSharingContext();
+  const { isSharingMouse, isSharingKeyEvents, parentKeyTrap, setStreamDimensions } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
   const [mouse, mouseRef] = useMouse();
@@ -262,6 +262,14 @@ const ConsumerComponent = React.memo(() => {
       resizeWindow(streamWidth, streamHeight, videoRef);
     }
   }, [track, streamWidth, streamHeight]);
+
+  useEffect(() => {
+    if (track) {
+      setStreamDimensions({ width: streamWidth, height: streamHeight });
+    } else {
+      setStreamDimensions(null);
+    }
+  }, [track, streamWidth, streamHeight, setStreamDimensions]);
 
   /*
    * We do this because we need a way to retrigger the useEffect below,
@@ -525,7 +533,7 @@ const ConsumerComponent = React.memo(() => {
   }, [isMouseInside, isSharingKeyEvents, parentKeyTrap]);
 
   const clearClipboard = useCallback(async () => {
-      await writeText("");
+    await writeText("");
   }, []);
 
   useEffect(() => {
@@ -628,10 +636,13 @@ const ConsumerComponent = React.memo(() => {
   return (
     <div
       ref={wrapperRef}
-      className={cn("w-full screenshare-video rounded-lg overflow-hidden border-solid border-2 relative", {
-        "screenshare-video-focus": isMouseInside,
-        "border-slate-200": !isMouseInside,
-      })}
+      className={cn(
+        "w-full screenshare-video rounded-t-lg rounded-b-xl overflow-hidden border-solid border-2 relative",
+        {
+          "screenshare-video-focus": isMouseInside,
+          "border-slate-200": !isMouseInside,
+        },
+      )}
       tabIndex={-1}
     >
       {DEBUGGING_VIDEO_TRACK && (

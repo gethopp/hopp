@@ -407,13 +407,21 @@ body {
 }
 
 .screenshare-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
   overflow: hidden;
-  background-color: var(--color-slate-900);
+  background-color: transparent;
+}
+
+.screenshare-body #root {
+  height: 100%;
+  width: 100%;
 }
 
 .screenshare-video-focus,
 .screenshare-video:focus {
-  outline: 3px solid var(--color-yellow-300);
+  outline: 2px solid var(--color-yellow-300);
   outline-offset: -2px;
 }
 
@@ -526,4 +534,8 @@ button {
 
 .camera-body {
   overflow: hidden;
+}
+
+.contentPicker-body {
+  background-color: rgba(0 0 0/0.3);
 }

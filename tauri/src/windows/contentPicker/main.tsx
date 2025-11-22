@@ -154,7 +154,7 @@ function Window() {
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
-        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
+        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-transparent flex flex-row justify-end pr-4"
       ></div>
       {!accessibilityPermission && (
         <div className="flex flex-row items-center justify-center gap-2 px-4 py-2 mt-2">
