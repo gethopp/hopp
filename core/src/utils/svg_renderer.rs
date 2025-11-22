@@ -102,65 +102,84 @@ pub fn render_user_badge_to_png(
     };
 
     // Calculate text x position with left padding
-    // For pointer template: rect starts at x=25, original text at x=31 (6px padding)
-    // For regular template: rect starts at x=27.3704, original text at x=33.4 (6.0296px padding)
-    let text_x_pointer = 25.0 + 6.0;
-    let text_x_regular = 27.3704 + 6.0296;
+    // For pointer template: rect starts at x=16.5317, original text at x=22.5317 (6px padding)
+    // For regular template: rect starts at x=18.6445, original text at x=24.6445 (6px padding)
+    let text_x_pointer = 16.5317 + 6.0;
+    let text_x_regular = 18.6445 + 6.0;
 
     // Calculate dynamic SVG dimensions based on box_width
-    // Original: box_width=70, viewBox width=112 (pointer) or 114 (regular)
+    // Original: box_width=70, viewBox width=104 (pointer) or 106 (regular)
     // The difference accounts for the rect x position + padding on the right
-    let svg_width_pointer = box_width + 42.0; // 25 (left margin) + 70 (original box) + 17 (right margin) = 112
-    let svg_width_regular = box_width + 44.0; // 27.3704 (left margin) + 70 (original box) + 16.6296 (right margin) ≈ 114
+    let svg_width_pointer = box_width + 34.0; // 16.5317 (left margin) + 70 (original box) + 17.4683 (right margin) ≈ 104
+    let svg_width_regular = box_width + 36.0; // 18.6445 (left margin) + 70 (original box) + 17.3555 (right margin) ≈ 106
 
     // Choose SVG template based on pointer flag
     let svg_template = if pointer {
         // Pointer template with hand cursor
         format!(
-            r#"<svg width="{svg_width}" height="83" viewBox="0 0 {svg_width} 83" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g filter="url(#filter0_di_3991_4626)">
-<path d="M6.27136 21.4178L6.67935 23.8862L8.12589 25.035L9.76073 25.6614L18.5464 34.4471L29.7005 30.483L29.9283 26.8257L29.8092 22.2086L26.9229 12.8857L24.4731 11.7369L21.9631 11.5066L16.2023 11.7369L13.7304 12.0362L10.0361 6.10558L7.29421 7.09688L12.1631 21.9036L8.42991 20.153L6.27136 21.4178Z" fill="{color}"/>
+            r##"<svg width="{svg_width}" height="74" viewBox="0 0 {svg_width} 74" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g filter="url(#filter0_i_3994_1008)">
+<g filter="url(#filter1_d_3994_1008)">
+<g filter="url(#filter2_i_3994_1008)">
+<path d="M2.40749 13.6518L2.7247 15.5709L3.84935 16.464L5.12039 16.951L11.9511 23.7817L20.6231 20.6997L20.8002 17.8562L20.7076 14.2666L18.4636 7.01823L16.5589 6.12507L14.6074 5.94603L10.1285 6.12507L8.20668 6.35776L5.33446 1.74688L3.20274 2.51759L6.98815 14.0294L4.08571 12.6684L2.40749 13.6518Z" fill="#0040FF"/>
 </g>
-<path d="M5.97937 7.81435L7.3503 7.3187L12.8025 22.3989L11.4315 22.8946L10.9359 21.5236L9.56495 22.0193L9.0693 20.6484L10.4402 20.1527L5.97937 7.81435ZM26.3957 12.834L29.8653 22.4305L31.2362 21.9348L27.7667 12.3383L26.3957 12.834ZM4.46086 20.7644L5.94782 24.8772L7.31875 24.3815L6.32744 21.6397L9.0693 20.6484L8.57365 19.2774L4.46086 20.7644ZM11.5476 27.503L10.5563 24.7611L9.18533 25.2568L10.1766 27.9987L11.5476 27.503ZM13.9098 29.7492L12.9185 27.0074L11.5476 27.503L12.5389 30.2449L13.9098 29.7492ZM16.272 31.9954L17.759 36.1082L31.4683 31.1517L29.9844 27.0475L28.6135 27.5431L29.6017 30.2764L18.6343 34.2416L17.6429 31.4998L16.272 31.9954L15.2807 29.2536L13.9098 29.7492L14.9011 32.4911L16.272 31.9954ZM29.9813 27.0389L31.3522 26.5432L29.8653 22.4305L28.4944 22.9261L29.9813 27.0389ZM9.18533 25.2568L8.68967 23.8859L7.31875 24.3815L7.8144 25.7524L9.18533 25.2568ZM24.5291 11.9587L25.0248 13.3296L26.3957 12.834L25.9001 11.463L24.5291 11.9587ZM21.2916 11.5791L23.2742 17.0628L24.6452 16.5671L23.1582 12.4543L24.5291 11.9587L24.0335 10.5878L21.2916 11.5791ZM16.6832 11.6951L18.6658 17.1788L20.0367 16.6831L18.5498 12.5704L21.2916 11.5791L20.796 10.2081L16.6832 11.6951ZM13.4457 11.3155L11.4631 5.83174L10.0922 6.32739L14.553 18.6658L15.9239 18.1701L13.9413 12.6864L16.6832 11.6951L16.1875 10.3242L13.4457 11.3155ZM6.85464 5.94777L7.3503 7.3187L10.0922 6.32739L9.5965 4.95647L6.85464 5.94777Z" fill="white"/>
-<g filter="url(#filter1_di_3991_4626)">
-<rect x="25" y="30.5864" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
-<rect x="25.5503" y="31.1367" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
-<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="52.3264">{name}</tspan></text>
+<path d="M2.18055 3.07546L3.24641 2.6901L7.48533 14.4146L6.41947 14.8L6.03411 13.7341L4.96825 14.1194L4.58289 13.0536L5.64876 12.6682L2.18055 3.07546ZM18.0538 6.97809L20.7513 14.4391L21.8171 14.0538L19.1196 6.59273L18.0538 6.97809ZM0.999948 13.1438L2.15602 16.3414L3.22188 15.956L2.45117 13.8243L4.58289 13.0536L4.19754 11.9877L0.999948 13.1438ZM6.50968 18.3829L5.73896 16.2512L4.6731 16.6365L5.44381 18.7683L6.50968 18.3829ZM8.34625 20.1293L7.57554 17.9975L6.50968 18.3829L7.28039 20.5146L8.34625 20.1293ZM10.1828 21.8756L11.3389 25.0732L21.9975 21.2197L20.8439 18.0287L19.778 18.4141L20.5463 20.5392L12.0194 23.622L11.2487 21.4903L10.1828 21.8756L9.41212 19.7439L8.34625 20.1293L9.11697 22.261L10.1828 21.8756ZM20.8415 18.0221L21.9073 17.6367L20.7513 14.4391L19.6854 14.8245L20.8415 18.0221ZM4.6731 16.6365L4.28774 15.5707L3.22188 15.956L3.60724 17.0219L4.6731 16.6365ZM16.6025 6.29758L16.9879 7.36344L18.0538 6.97809L17.6684 5.91222L16.6025 6.29758ZM14.0855 6.00243L15.6269 10.2659L16.6927 9.88053L15.5367 6.68294L16.6025 6.29758L16.2172 5.23172L14.0855 6.00243ZM10.5025 6.09264L12.0439 10.3561L13.1098 9.97073L11.9537 6.77314L14.0855 6.00243L13.7001 4.93657L10.5025 6.09264ZM7.98543 5.79749L6.444 1.53403L5.37814 1.91939L8.84635 11.5122L9.91221 11.1268L8.37078 6.86335L10.5025 6.09264L10.1172 5.02677L7.98543 5.79749ZM2.86105 1.62424L3.24641 2.6901L5.37814 1.91939L4.99278 0.853529L2.86105 1.62424Z" fill="white"/>
+</g>
+</g>
+<g filter="url(#filter3_di_3994_1008)">
+<rect x="16.5317" y="22" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
+<rect x="17.0821" y="22.5503" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
+<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="43.74">{name}</tspan></text>
 </g>
 <defs>
-<filter id="filter0_di_3991_4626" x="2.9693" y="3.90417" width="30.2609" height="34.9454" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<filter id="filter0_i_3994_1008" x="0.531738" y="0" width="30.3736" height="33.1648" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
 <feFlood flood-opacity="0" result="BackgroundImageFix"/>
-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-<feOffset dy="1.10065"/>
-<feGaussianBlur stdDeviation="1.65097"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0"/>
-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3991_4626"/>
-<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3991_4626" result="shape"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
 <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
 <feOffset dx="2.37363" dy="3.16484"/>
 <feGaussianBlur stdDeviation="3.95604"/>
 <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
 <feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
-<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3991_4626"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_3994_1008"/>
 </filter>
-<filter id="filter1_di_3991_4626" x="8.49028" y="14.0767" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<filter id="filter1_d_3994_1008" x="-0.468262" y="0" width="30" height="32" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1"/>
+<feGaussianBlur stdDeviation="0.5"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3994_1008"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3994_1008" result="shape"/>
+</filter>
+<filter id="filter2_i_3994_1008" x="2.40747" y="1.74683" width="20.2383" height="24.4955" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="1.84544" dy="2.46058"/>
+<feGaussianBlur stdDeviation="3.07573"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_3994_1008"/>
+</filter>
+<filter id="filter3_di_3994_1008" x="0.0220203" y="5.49028" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
 <feFlood flood-opacity="0" result="BackgroundImageFix"/>
 <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
 <feOffset/>
 <feGaussianBlur stdDeviation="8.25486"/>
 <feComposite in2="hardAlpha" operator="out"/>
 <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3991_4626"/>
-<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3991_4626" result="shape"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3994_1008"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3994_1008" result="shape"/>
 <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
 <feOffset dy="3.16484"/>
 <feGaussianBlur stdDeviation="4.35165"/>
 <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
 <feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.75 0"/>
-<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3991_4626"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3994_1008"/>
 </filter>
 </defs>
-</svg>"#,
+</svg>"##,
             color = color,
             name = name,
             box_width = box_width,
@@ -172,18 +191,18 @@ pub fn render_user_badge_to_png(
     } else {
         // Regular cursor template
         format!(
-            r#"<svg width="{svg_width}" height="87" viewBox="0 0 {svg_width} 87" fill="none" xmlns="http://www.w3.org/2000/svg">
+            r##"<svg width="{svg_width}" height="75" viewBox="0 0 {svg_width} 75" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g filter="url(#filter0_di_3982_4518)">
-<path d="M14.3677 38.986C13.2653 40.5665 10.8079 40.068 10.4086 38.1828L3.35233 4.86443C2.96427 3.0321 4.89624 1.58308 6.54664 2.46863L37.3879 19.017C39.1564 19.9659 38.8364 22.5929 36.8918 23.0895L23.7692 26.4409C23.2578 26.5715 22.8103 26.8815 22.5084 27.3144L14.3677 38.986Z" fill="{color}"/>
-<path d="M3.89087 4.75024C3.59995 3.3761 5.04864 2.28938 6.28638 2.95337L37.1282 19.5022C38.4539 20.214 38.2139 22.1831 36.7561 22.5559L23.6331 25.9075C22.9939 26.0707 22.4343 26.4582 22.0569 26.9993L13.9163 38.6711C13.0895 39.8565 11.247 39.4825 10.9475 38.0686L3.89087 4.75024Z" stroke="white" stroke-opacity="0.7" stroke-width="1.10065"/>
+<path d="M11.1115 28.1619C10.3335 29.2773 8.59925 28.9255 8.31748 27.595L3.33755 4.08087C3.06368 2.78771 4.42715 1.76508 5.59191 2.39005L27.3579 14.0689C28.606 14.7386 28.3801 16.5926 27.0078 16.9431L17.7466 19.3083C17.3856 19.4004 17.0699 19.6192 16.8568 19.9248L11.1115 28.1619Z" fill="{color}"/>
+<path d="M3.71777 4C3.51267 3.03029 4.53473 2.26375 5.4082 2.73242L27.1738 14.4111C28.1097 14.9133 27.9409 16.3032 26.9121 16.5664L17.6504 18.9316C17.1993 19.0468 16.8045 19.3204 16.5381 19.7021L10.793 27.9395C10.2095 28.776 8.90864 28.5124 8.69727 27.5146L3.71777 4Z" stroke="white" stroke-opacity="0.7" stroke-width="0.776773"/>
 </g>
 <g filter="url(#filter1_di_3982_4518)">
-<rect x="27.3704" y="35.1531" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
-<rect x="27.9207" y="35.7034" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
-<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="56.8931">{name}</tspan></text>
+<rect x="18.6445" y="22.8086" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
+<rect x="19.1949" y="23.3589" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
+<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="44.5486">{name}</tspan></text>
 </g>
 <defs>
-<filter id="filter0_di_3982_4518" x="5.8651e-05" y="0.00012064" width="41.851" height="44.3319" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<filter id="filter0_di_3982_4518" x="-0.657412" y="-1.3927" width="34.6039" height="36.6039" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
 <feFlood flood-opacity="0" result="BackgroundImageFix"/>
 <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
 <feOffset dy="1.10065"/>
@@ -198,7 +217,7 @@ pub fn render_user_badge_to_png(
 <feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
 <feBlend mode="normal" in2="shape" result="effect2_innerShadow_3982_4518"/>
 </filter>
-<filter id="filter1_di_3982_4518" x="10.8606" y="18.6434" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<filter id="filter1_di_3982_4518" x="2.13481" y="6.29888" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
 <feFlood flood-opacity="0" result="BackgroundImageFix"/>
 <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
 <feOffset/>
@@ -215,7 +234,7 @@ pub fn render_user_badge_to_png(
 <feBlend mode="normal" in2="shape" result="effect2_innerShadow_3982_4518"/>
 </filter>
 </defs>
-</svg>"#,
+</svg>"##,
             color = color,
             name = name,
             box_width = box_width,
