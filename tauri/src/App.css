@@ -535,3 +535,7 @@ button {
 .camera-body {
   overflow: hidden;
 }
+
+.contentPicker-body {
+  background-color: rgba(0 0 0/0.3);
+}

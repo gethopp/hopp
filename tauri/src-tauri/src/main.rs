@@ -514,6 +514,7 @@ async fn create_screenshare_window(
             always_on_top: false,
             content_protected: false,
             maximizable: false,
+            decorations: false,
         },
     )
 }
@@ -535,6 +536,40 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
             always_on_top: true,
             content_protected: true,
             maximizable: true,
+            decorations: false,
+        },
+    )
+}
+
+#[tauri::command]
+async fn create_content_picker_window(
+    app: tauri::AppHandle,
+    video_token: String,
+    use_av1: bool,
+) -> Result<(), String> {
+    log::info!(
+        "create_content_picker_window with token: {}, use_av1: {}",
+        video_token,
+        use_av1
+    );
+
+    let url = format!(
+        "contentPicker.html?videoToken={}&useAv1={}",
+        video_token, use_av1
+    );
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "contentPicker",
+            title: "Content picker",
+            url: &url,
+            width: 800.0,
+            height: 450.0,
+            resizable: true,
+            always_on_top: true,
+            content_protected: false,
+            maximizable: false,
+            decorations: true,
         },
     )
 }
@@ -906,6 +941,7 @@ fn main() {
             open_camera_settings,
             create_camera_window,
             create_screenshare_window,
+            create_content_picker_window,
             set_sentry_metadata,
             call_started,
         ])

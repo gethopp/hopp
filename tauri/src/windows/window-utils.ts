@@ -46,24 +46,18 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
     return;
   }
 
-  const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
-
   if (isTauri) {
-    const newWindow = new WebviewWindow("contentPicker", {
-      width: 800,
-      height: 450,
-      url: URL,
-      hiddenTitle: true,
-      titleBarStyle: "overlay",
-      resizable: true,
-      alwaysOnTop: true,
-      visible: true,
-      title: "Content picker",
-    });
-    newWindow.once("tauri://window-created", () => {
-      newWindow.setFocus();
-    });
+    try {
+      await invoke("create_content_picker_window", { videoToken, useAv1 });
+      const windowHandle = await WebviewWindow.getByLabel("contentPicker");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to create content picker window:", error);
+    }
   } else {
+    const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
     window.open(URL);
   }
 };

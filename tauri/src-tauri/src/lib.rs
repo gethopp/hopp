@@ -16,7 +16,7 @@ use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 #[cfg(target_os = "macos")]
-use tauri::{Rect, WebviewWindow};
+use tauri::{Rect, TitleBarStyle, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
@@ -584,6 +584,7 @@ pub struct MediaWindowConfig<'a> {
     pub always_on_top: bool,
     pub content_protected: bool,
     pub maximizable: bool,
+    pub decorations: bool,
 }
 
 pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Result<(), String> {
@@ -601,7 +602,7 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
             .resizable(config.resizable)
             .visible(false)
             .transparent(true)
-            .decorations(false)
+            .decorations(config.decorations)
             .shadow(true)
             .always_on_top(config.always_on_top)
             .maximizable(config.maximizable)
@@ -609,7 +610,8 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
 
     #[cfg(target_os = "macos")]
     {
-        window_builder = window_builder.hidden_title(true)
+        window_builder = window_builder.hidden_title(true);
+        window_builder = window_builder.title_bar_style(TitleBarStyle::Overlay);
     }
 
     let window = window_builder
