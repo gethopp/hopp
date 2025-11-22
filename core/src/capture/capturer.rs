@@ -393,7 +393,7 @@ impl Capturer {
                 }
             }
 
-            while handles.len() > 0 {
+            while !handles.is_empty() {
                 let (handle, sender) = handles.pop().unwrap();
                 match sender.send(()) {
                     Ok(()) => {
