@@ -497,7 +497,7 @@ function CameraIcon() {
       // If participant is anonymous and the video track is muted or not shared, return false
       for (const trackPublication of track.participant.trackPublications) {
         console.log("--- Track publication: ", trackPublication);
-        const pub: RemoteTrackPublication = trackPublication[1];
+        const pub: RemoteTrackPublication = trackPublication[1] as RemoteTrackPublication;
         if (pub.source === Track.Source.Camera && pub.isMuted) {
           return false;
         }
