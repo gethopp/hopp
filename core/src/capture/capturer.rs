@@ -393,8 +393,7 @@ impl Capturer {
                 }
             }
 
-            while !handles.is_empty() {
-                let (handle, sender) = handles.pop().unwrap();
+            while let Some((handle, sender)) = handles.pop() {
                 match sender.send(()) {
                     Ok(()) => {
                         let _ = handle.join();

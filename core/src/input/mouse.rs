@@ -657,12 +657,10 @@ fn redraw_thread(
                     last_redraw_time = Instant::now();
                 }
             },
-            Err(e) => match e {
-                _ => {
-                    log::error!("redraw_thread: error receiving command: {e:?}");
-                    break;
-                }
-            },
+            Err(e) => {
+                log::error!("redraw_thread: error receiving command: {e:?}");
+                break;
+            }
         }
     }
 }
