@@ -273,21 +273,21 @@ impl CursorWrapper {
                 .command_sender
                 .send(CursorWrapperCommands::Show(local_position))
             {
-                log::error!("cursor_wrapper_thread: error sending show command: {e:?}");
+                log::error!("set_position: error sending show command: {e:?}");
             }
 
             if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+                log::error!("set_position: error sending redraw event: {e:?}");
             }
         }
     }
 
     fn hide(&mut self) {
         if let Err(e) = self.command_sender.send(CursorWrapperCommands::Hide) {
-            log::error!("cursor_wrapper_thread: error sending hide command: {e:?}");
+            log::error!("hide: error sending hide command: {e:?}");
         }
         if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+            log::error!("hide: error sending redraw event: {e:?}");
         }
     }
 
@@ -296,10 +296,10 @@ impl CursorWrapper {
             .command_sender
             .send(CursorWrapperCommands::Show(self.local_position))
         {
-            log::error!("cursor_wrapper_thread: error sending show command: {e:?}");
+            log::error!("show: error sending show command: {e:?}");
         }
         if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+            log::error!("show: error sending redraw event: {e:?}");
         }
     }
 
