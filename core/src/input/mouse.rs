@@ -203,7 +203,11 @@ enum CursorWrapperCommands {
 
 /// This thread is used for updating the virtual cursor's position,
 /// when there isn't any events for 5 seconds, we hide the cursor.
-fn cursor_wrapper_thread(cursor: Arc<Mutex<Cursor>>, receiver: Receiver<CursorWrapperCommands>) {
+fn cursor_wrapper_thread(
+    cursor: Arc<Mutex<Cursor>>,
+    receiver: Receiver<CursorWrapperCommands>,
+    redraw_thread_sender: Sender<RedrawThreadCommands>,
+) {
     let timeout = Duration::from_secs(5);
     loop {
         match receiver.recv_timeout(timeout) {
@@ -211,10 +215,16 @@ fn cursor_wrapper_thread(cursor: Arc<Mutex<Cursor>>, receiver: Receiver<CursorWr
                 CursorWrapperCommands::Hide => {
                     let mut cursor = cursor.lock().unwrap();
                     cursor.set_position(-100., -100.);
+                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+                    }
                 }
                 CursorWrapperCommands::Show(position) => {
                     let mut cursor = cursor.lock().unwrap();
                     cursor.set_position(position.x, position.y);
+                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+                    }
                 }
                 CursorWrapperCommands::Terminate => {
                     break;
@@ -224,6 +234,9 @@ fn cursor_wrapper_thread(cursor: Arc<Mutex<Cursor>>, receiver: Receiver<CursorWr
                 RecvTimeoutError::Timeout => {
                     let mut cursor = cursor.lock().unwrap();
                     cursor.set_position(-100., -100.);
+                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
+                    }
                 }
                 _ => {
                     log::error!("cursor_wrapper_thread: error receiving command: {e:?}");
@@ -243,7 +256,6 @@ struct CursorWrapper {
     /// Handle for the thread that updates the cursor's position
     hide_handle: Option<JoinHandle<()>>,
     command_sender: Sender<CursorWrapperCommands>,
-    redraw_thread_sender: Sender<RedrawThreadCommands>,
 }
 
 impl CursorWrapper {
@@ -255,10 +267,9 @@ impl CursorWrapper {
             global_position: Position::default(),
             local_position: Position::default(),
             hide_handle: Some(std::thread::spawn(move || {
-                cursor_wrapper_thread(cursor, rx)
+                cursor_wrapper_thread(cursor, rx, redraw_thread_sender)
             })),
             command_sender: tx,
-            redraw_thread_sender,
         }
     }
 
@@ -275,19 +286,12 @@ impl CursorWrapper {
             {
                 log::error!("set_position: error sending show command: {e:?}");
             }
-
-            if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                log::error!("set_position: error sending redraw event: {e:?}");
-            }
         }
     }
 
     fn hide(&mut self) {
         if let Err(e) = self.command_sender.send(CursorWrapperCommands::Hide) {
             log::error!("hide: error sending hide command: {e:?}");
-        }
-        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("hide: error sending redraw event: {e:?}");
         }
     }
 
@@ -297,9 +301,6 @@ impl CursorWrapper {
             .send(CursorWrapperCommands::Show(self.local_position))
         {
             log::error!("show: error sending show command: {e:?}");
-        }
-        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("show: error sending redraw event: {e:?}");
         }
     }
 
@@ -632,7 +633,7 @@ fn redraw_thread(
     receiver: Receiver<RedrawThreadCommands>,
 ) {
     let mut last_redraw_time = Instant::now();
-    let redraw_interval = std::time::Duration::from_millis(20);
+    let redraw_interval = std::time::Duration::from_millis(16);
     let animation_duration = (ANIMATION_DURATION + 500) as u128;
     loop {
         match receiver.recv() {
