@@ -421,10 +421,17 @@ impl<'a> Application<'a> {
         }
 
         window.set_visible(true);
+
         let monitor_position = selected_monitor.position();
+        let mut monitor_scale = 1.0;
+        if let Some(active_monitor) = window.current_monitor() {
+            monitor_scale = active_monitor.scale_factor();
+        }
+        let monitor_position_x = (monitor_position.x as f64) * monitor_scale;
+        let monitor_position_y = (monitor_position.y as f64) * monitor_scale;
         window.set_outer_position(PhysicalPosition::new(
-            monitor_position.x,
-            monitor_position.y,
+            monitor_position_x,
+            monitor_position_y,
         ));
 
         let res = set_fullscreen(&window, selected_monitor.clone());
