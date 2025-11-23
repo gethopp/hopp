@@ -87,7 +87,7 @@ pub fn render_user_badge_to_png(
     fontdb.load_system_fonts();
     let fontdb = std::sync::Arc::new(fontdb);
 
-    let scale_factor = 4.0;
+    let scale_factor = 2.0;
 
     let mut box_width = if let Ok(width) = get_box_width(name, fontdb.clone()) {
         width
