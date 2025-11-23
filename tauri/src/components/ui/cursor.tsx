@@ -53,12 +53,12 @@ const Cursor = (props: CursorProps) => {
       <div className="relative flex flex-col justify-start max-w-[120px]">
         <SvgComponent {...props} />
         <div
-          className="outline outline-slate-200/50 -outline-offset-1 shadow-xs font-mono text-ellipsis overflow-hidden text-[10px] max-w-min text-white whitespace-nowrap px-2 py-0 leading-[22px] rounded-xl"
+          className="outline outline-slate-200/50 -outline-offset-1 shadow-xs font-mono text-ellipsis overflow-hidden text-[14px] max-w-min text-white whitespace-nowrap px-2 py-0 leading-[22px] rounded-xl antialiased"
           style={{
             background: props.color,
             marginLeft: "14px",
             marginTop: "-6px",
-            border: "1px solid rgba(255, 255, 255, 0.7)",
+            border: "1px solid rgba(255, 255, 255, 1)",
             boxShadow: "0px 0px 16.5097px rgba(0, 0, 0, 0.1), inset 0px 3.16484px 8.7033px rgba(255, 255, 255, 0.7)",
           }}
         >

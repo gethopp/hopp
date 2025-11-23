@@ -389,8 +389,8 @@ impl CursorsRenderer {
 
         // Calculate cursor size in clip space, maintaining aspect ratio
         let clip_extent = Extent {
-            width: (texture.extent.width / window_size.width) * 2.0 * scale / 2.5,
-            height: (texture.extent.height / window_size.height) * 2.0 * scale / 2.5,
+            width: (texture.extent.width / window_size.width) * 2.0 * scale / 4.5,
+            height: (texture.extent.height / window_size.height) * 2.0 * scale / 4.5,
         };
 
         // Create quad vertices with texture coordinates

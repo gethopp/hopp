@@ -87,6 +87,8 @@ pub fn render_user_badge_to_png(
     fontdb.load_system_fonts();
     let fontdb = std::sync::Arc::new(fontdb);
 
+    let scale_factor = 4.0;
+
     let mut box_width = if let Ok(width) = get_box_width(name, fontdb.clone()) {
         width
     } else {
@@ -110,14 +112,17 @@ pub fn render_user_badge_to_png(
     // Calculate dynamic SVG dimensions based on box_width
     // Original: box_width=70, viewBox width=104 (pointer) or 106 (regular)
     // The difference accounts for the rect x position + padding on the right
-    let svg_width_pointer = box_width + 34.0; // 16.5317 (left margin) + 70 (original box) + 17.4683 (right margin) ≈ 104
-    let svg_width_regular = box_width + 36.0; // 18.6445 (left margin) + 70 (original box) + 17.3555 (right margin) ≈ 106
+    let svg_width_pointer = (box_width + 34.0) * scale_factor; // 16.5317 (left margin) + 70 (original box) + 17.4683 (right margin) ≈ 104
+    let svg_width_regular = (box_width + 36.0) * scale_factor; // 18.6445 (left margin) + 70 (original box) + 17.3555 (right margin) ≈ 106
+    let svg_height_pointer = 74.0 * scale_factor;
+    let svg_height_regular = 75.0 * scale_factor;
 
     // Choose SVG template based on pointer flag
     let svg_template = if pointer {
         // Pointer template with hand cursor
         format!(
-            r##"<svg width="{svg_width}" height="74" viewBox="0 0 {svg_width} 74" fill="none" xmlns="http://www.w3.org/2000/svg">
+            r##"<svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g transform="scale({scale_factor})">
 <g filter="url(#filter0_i_3994_1008)">
 <g filter="url(#filter1_d_3994_1008)">
 <g filter="url(#filter2_i_3994_1008)">
@@ -127,9 +132,10 @@ pub fn render_user_badge_to_png(
 </g>
 </g>
 <g filter="url(#filter3_di_3994_1008)">
-<rect x="16.5317" y="22" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
-<rect x="17.0821" y="22.5503" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
+<rect x="16.5317" y="22" width="{box_width}" height="35" rx="17.5" fill="{color}"/>
+<rect x="17.0821" y="22.5503" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065"/>
 <text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="43.74">{name}</tspan></text>
+</g>
 </g>
 <defs>
 <filter id="filter0_i_3994_1008" x="0.531738" y="0" width="30.3736" height="33.1648" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
@@ -187,19 +193,23 @@ pub fn render_user_badge_to_png(
             filter_width = box_width + 16.5097 * 2.0,
             text_x = text_x_pointer,
             svg_width = svg_width_pointer,
+            svg_height = svg_height_pointer,
+            scale_factor = scale_factor,
         )
     } else {
         // Regular cursor template
         format!(
-            r##"<svg width="{svg_width}" height="75" viewBox="0 0 {svg_width} 75" fill="none" xmlns="http://www.w3.org/2000/svg">
+            r##"<svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g transform="scale({scale_factor})">
 <g filter="url(#filter0_di_3982_4518)">
 <path d="M11.1115 28.1619C10.3335 29.2773 8.59925 28.9255 8.31748 27.595L3.33755 4.08087C3.06368 2.78771 4.42715 1.76508 5.59191 2.39005L27.3579 14.0689C28.606 14.7386 28.3801 16.5926 27.0078 16.9431L17.7466 19.3083C17.3856 19.4004 17.0699 19.6192 16.8568 19.9248L11.1115 28.1619Z" fill="{color}"/>
-<path d="M3.71777 4C3.51267 3.03029 4.53473 2.26375 5.4082 2.73242L27.1738 14.4111C28.1097 14.9133 27.9409 16.3032 26.9121 16.5664L17.6504 18.9316C17.1993 19.0468 16.8045 19.3204 16.5381 19.7021L10.793 27.9395C10.2095 28.776 8.90864 28.5124 8.69727 27.5146L3.71777 4Z" stroke="white" stroke-opacity="0.7" stroke-width="0.776773"/>
+<path d="M3.71777 4C3.51267 3.03029 4.53473 2.26375 5.4082 2.73242L27.1738 14.4111C28.1097 14.9133 27.9409 16.3032 26.9121 16.5664L17.6504 18.9316C17.1993 19.0468 16.8045 19.3204 16.5381 19.7021L10.793 27.9395C10.2095 28.776 8.90864 28.5124 8.69727 27.5146L3.71777 4Z" stroke="white" stroke-opacity="1" stroke-width="1"/>
 </g>
 <g filter="url(#filter1_di_3982_4518)">
-<rect x="18.6445" y="22.8086" width="{box_width}" height="35" rx="17.5" fill="{color}" shape-rendering="crispEdges"/>
-<rect x="19.1949" y="23.3589" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065" shape-rendering="crispEdges"/>
+<rect x="18.6445" y="22.8086" width="{box_width}" height="35" rx="17.5" fill="{color}"/>
+<rect x="19.1949" y="23.3589" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="1" stroke-width="1"/>
 <text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="44.5486">{name}</tspan></text>
+</g>
 </g>
 <defs>
 <filter id="filter0_di_3982_4518" x="-0.657412" y="-1.3927" width="34.6039" height="36.6039" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
@@ -242,6 +252,8 @@ pub fn render_user_badge_to_png(
             filter_width = box_width + 16.5097 * 2.0,
             text_x = text_x_regular,
             svg_width = svg_width_regular,
+            svg_height = svg_height_regular,
+            scale_factor = scale_factor,
         )
     };
 
@@ -253,19 +265,19 @@ pub fn render_user_badge_to_png(
     let tree = usvg::Tree::from_str(&svg_template, &usvg_options)
         .map_err(|e| SvgRenderError::SvgParseError(e.to_string()))?;
 
-    // Get the SVG size and apply scale factor for higher resolution output
-    let scale_factor = 2.0; // Scale up for better quality
+    // Get the SVG size (which is now already scaled by the SVG attributes)
     let svg_size = tree.size();
     let width = (svg_size.width() * scale_factor) as u32;
     let height = (svg_size.height() * scale_factor) as u32;
+    // Print the size that it will render
+    println!("SVG size: {}x{}", width, height);
 
     // Create a pixmap to render into
     let mut pixmap =
         tiny_skia::Pixmap::new(width, height).ok_or(SvgRenderError::PixmapCreationError)?;
 
-    // Render the SVG with scale transform
-    let transform = tiny_skia::Transform::from_scale(scale_factor, scale_factor);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    // Render the SVG (no need for extra scale transform as it's in the SVG)
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
     // Encode as PNG and return the data
     pixmap
