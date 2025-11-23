@@ -632,7 +632,7 @@ fn redraw_thread(
     receiver: Receiver<RedrawThreadCommands>,
 ) {
     let mut last_redraw_time = Instant::now();
-    let redraw_interval = std::time::Duration::from_millis(33);
+    let redraw_interval = std::time::Duration::from_millis(20);
     let animation_duration = (ANIMATION_DURATION + 500) as u128;
     loop {
         match receiver.recv() {
