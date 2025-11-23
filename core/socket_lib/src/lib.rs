@@ -161,8 +161,9 @@ impl CursorSocket {
             let listener = UnixListener::bind(socket_path)?;
             listener.set_nonblocking(true)?;
             let mut stream = None;
-            for i in 0..10 {
-                log::info!("Waiting for client {i}/10");
+            let times = if cfg!(debug_assertions) { 100 } else { 10 };
+            for i in 0..times {
+                log::info!("Waiting for client {i}/{times}");
                 match listener.accept() {
                     Ok((s, _)) => {
                         stream = Some(s);
