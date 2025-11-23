@@ -9,7 +9,9 @@ use std::{
 };
 
 use crate::{
-    graphics::graphics_context::{cursor::Cursor, GraphicsContext},
+    graphics::graphics_context::{
+        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
+    },
     overlay_window::OverlayWindow,
     utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
     MouseClickData, ScrollDelta, UserEvent,
@@ -241,10 +243,11 @@ struct CursorWrapper {
     /// Handle for the thread that updates the cursor's position
     hide_handle: Option<JoinHandle<()>>,
     command_sender: Sender<CursorWrapperCommands>,
+    redraw_thread_sender: Sender<RedrawThreadCommands>,
 }
 
 impl CursorWrapper {
-    fn new(cursor: Cursor) -> Self {
+    fn new(cursor: Cursor, redraw_thread_sender: Sender<RedrawThreadCommands>) -> Self {
         let cursor = Arc::new(Mutex::new(cursor));
         let (tx, rx) = std::sync::mpsc::channel();
         Self {
@@ -255,6 +258,7 @@ impl CursorWrapper {
                 cursor_wrapper_thread(cursor, rx)
             })),
             command_sender: tx,
+            redraw_thread_sender,
         }
     }
 
@@ -269,14 +273,21 @@ impl CursorWrapper {
                 .command_sender
                 .send(CursorWrapperCommands::Show(local_position))
             {
-                log::error!("cursor_wrapper_thread: error sending show command: {e:?}");
+                log::error!("set_position: error sending show command: {e:?}");
+            }
+
+            if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+                log::error!("set_position: error sending redraw event: {e:?}");
             }
         }
     }
 
     fn hide(&mut self) {
         if let Err(e) = self.command_sender.send(CursorWrapperCommands::Hide) {
-            log::error!("cursor_wrapper_thread: error sending hide command: {e:?}");
+            log::error!("hide: error sending hide command: {e:?}");
+        }
+        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            log::error!("hide: error sending redraw event: {e:?}");
         }
     }
 
@@ -285,7 +296,10 @@ impl CursorWrapper {
             .command_sender
             .send(CursorWrapperCommands::Show(self.local_position))
         {
-            log::error!("cursor_wrapper_thread: error sending show command: {e:?}");
+            log::error!("show: error sending show command: {e:?}");
+        }
+        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            log::error!("show: error sending redraw event: {e:?}");
         }
     }
 
@@ -608,33 +622,45 @@ impl SharerCursor {
 }
 
 enum RedrawThreadCommands {
+    Redraw,
+    ClickAnimation,
     Stop,
 }
 
-/*
- * Instead of sending a redraw request after each mouse event, control
- * the redraws to happen in 60fps.
- */
 fn redraw_thread(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     receiver: Receiver<RedrawThreadCommands>,
 ) {
+    let mut last_redraw_time = Instant::now();
+    let redraw_interval = std::time::Duration::from_millis(33);
+    let animation_duration = (ANIMATION_DURATION + 500) as u128;
     loop {
-        match receiver.recv_timeout(std::time::Duration::from_millis(12)) {
+        match receiver.recv() {
             Ok(command) => match command {
                 RedrawThreadCommands::Stop => break,
-            },
-            Err(e) => match e {
-                RecvTimeoutError::Timeout => {
-                    if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                        log::error!("redraw_thread: error sending redraw event: {e:?}");
+                RedrawThreadCommands::Redraw => {
+                    if last_redraw_time.elapsed() > redraw_interval {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        last_redraw_time = Instant::now();
                     }
                 }
-                _ => {
-                    log::error!("redraw_thread: error receiving command: {e:?}");
-                    break;
+                RedrawThreadCommands::ClickAnimation => {
+                    let now = Instant::now();
+                    while now.elapsed().as_millis() < animation_duration {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(16));
+                    }
+                    last_redraw_time = Instant::now();
                 }
             },
+            Err(e) => {
+                log::error!("redraw_thread: error receiving command: {e:?}");
+                break;
+            }
         }
     }
 }
@@ -727,6 +753,7 @@ impl CursorController {
 
         let event_loop_proxy_clone = event_loop_proxy.clone();
 
+        let (sender, receiver) = std::sync::mpsc::channel();
         let remote_control = if accessibility_permission {
             let scale_factor = overlay_window.get_display_scale();
             let color = SHARER_COLOR;
@@ -739,7 +766,7 @@ impl CursorController {
 
             let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
             let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
-                CursorWrapper::new(sharer_cursor),
+                CursorWrapper::new(sharer_cursor, sender.clone()),
                 event_loop_proxy.clone(),
                 overlay_window.clone(),
                 cursor_simulator.clone(),
@@ -762,7 +789,6 @@ impl CursorController {
             None
         };
 
-        let (sender, receiver) = std::sync::mpsc::channel();
         let available = VecDeque::from([
             "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040", "#E49500", "#B80088",
             "#FF5BFF", "#00D091",
@@ -855,8 +881,8 @@ impl CursorController {
         };
 
         controllers_cursors.push(ControllerCursor::new(
-            CursorWrapper::new(controller_cursor),
-            CursorWrapper::new(controller_pointer_cursor),
+            CursorWrapper::new(controller_cursor, self.redraw_thread_sender.clone()),
+            CursorWrapper::new(controller_pointer_cursor, self.redraw_thread_sender.clone()),
             sid,
             visible_name,
             self.controllers_cursors_enabled,
@@ -892,6 +918,9 @@ impl CursorController {
             // take ownership so we can recover color
             let controller = controllers_cursors.remove(pos);
             self.available_colors.push_back(controller.color);
+            if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+                log::error!("remove_controller: error sending redraw event: {e:?}");
+            }
         } else {
             // no-op if not present
             log::info!("remove_controller: controller with sid {} not found", sid);
@@ -972,6 +1001,14 @@ impl CursorController {
                     {
                         error!(
                             "mouse_click_controller: error sending enable click animation: {e:?}"
+                        );
+                    }
+                    if let Err(e) = self
+                        .redraw_thread_sender
+                        .send(RedrawThreadCommands::ClickAnimation)
+                    {
+                        log::error!(
+                            "mouse_click_controller: error sending click animation event: {e:?}"
                         );
                     }
                 }
