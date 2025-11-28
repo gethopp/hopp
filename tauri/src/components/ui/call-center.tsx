@@ -21,6 +21,9 @@ import {
   LocalTrack,
   RemoteTrackPublication,
   AudioPresets,
+  LocalVideoTrack,
+  VideoQuality,
+  videoCodecs,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
@@ -614,13 +617,16 @@ function MediaDevicesSettings() {
       console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
       localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled);
 
+      let cameraResolution =
+        callTokens?.role === ParticipantRole.NONE ? VideoPresets.h720.resolution : VideoPresets.h216.resolution;
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
         {
-          resolution: VideoPresets.h216.resolution,
+          resolution: cameraResolution,
         },
         {
           videoCodec: "h264",
+          simulcast: false,
         },
       );
 
@@ -642,6 +648,20 @@ function MediaDevicesSettings() {
     callTokens?.hasCameraEnabled,
     callTokens?.krispToggle,
   ]);
+
+  // Replace the camera track if the role changes
+  useEffect(() => {
+    if (!localParticipant || !callTokens) return;
+
+    const cameraTrack = localParticipant.getTrackPublication(Track.Source.Camera);
+    if (cameraTrack && cameraTrack.track && callTokens?.hasCameraEnabled) {
+      let resolution =
+        callTokens?.role === ParticipantRole.NONE ? VideoPresets.h720.resolution : VideoPresets.h216.resolution;
+      cameraTrack.track.restartTrack({
+        resolution: resolution,
+      });
+    }
+  }, [callTokens?.role, localParticipant, callTokens?.hasCameraEnabled]);
 
   const remoteParticipants = useRemoteParticipants();
   const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
