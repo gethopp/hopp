@@ -10,13 +10,12 @@ import { Track } from "livekit-client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
-import { HiOutlineEye, HiOutlineEyeSlash } from "react-icons/hi2";
+import { HiOutlineEye, HiOutlineEyeSlash, HiMinus } from "react-icons/hi2";
 import { RiExpandDiagonalLine, RiCollapseDiagonalLine } from "react-icons/ri";
 import { WindowActions } from "@/components/ui/window-buttons";
 import { CustomIcons } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import useStore from "@/store/store";
-import clsx from "clsx";
 import ListenToRemoteAudio from "@/components/ui/listen-to-remote-audio";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
@@ -230,14 +229,16 @@ function CameraWindow() {
         <WindowActions.Empty onClick={() => putWindowCorner()} className=" justify-self-start">
           <CustomIcons.Corner />
         </WindowActions.Empty>
-        <CustomIcons.Drag
-          className={clsx(
-            "absolute left-1/2 -translate-x-1/2 pointer-events-none",
-            isSelfHidden ? "left-[33%] -translate-x-[33%]" : "left-1/2 -translate-x-1/2",
-          )}
-        />
-        {/* <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div> */}
         <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-white/80 hover:text-white hover:bg-white/10"
+            onClick={() => getCurrentWebviewWindow().minimize()}
+            title="Minimize window"
+          >
+            <HiMinus className="size-4" />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"

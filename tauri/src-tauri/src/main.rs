@@ -534,7 +534,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
             height: 365.0,
             resizable: false,
             always_on_top: true,
-            content_protected: true,
+            content_protected: false,
             maximizable: true,
             decorations: false,
         },
