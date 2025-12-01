@@ -36,7 +36,7 @@ import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
-import { useScreenShareListener } from "@/lib/hooks";
+import { useScreenShareListener, useCameraBandwidthMonitor } from "@/lib/hooks";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -596,6 +596,9 @@ function MediaDevicesSettings() {
     },
   });
 
+  // Monitor camera bandwidth usage
+  //useCameraBandwidthMonitor();
+
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
   useEffect(() => {
@@ -617,10 +620,16 @@ function MediaDevicesSettings() {
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
         {
-          resolution: VideoPresets.h216.resolution,
+          resolution: VideoPresets.h720.resolution,
+          frameRate: 20,
         },
         {
           videoCodec: "h264",
+          simulcast: true,
+          videoEncoding: {
+            maxBitrate: 1_300_000,
+          },
+          videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
         },
       );
 

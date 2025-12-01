@@ -1,9 +1,9 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import hotkeys from "hotkeys-js";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useLocalParticipant, useRoomContext, useTracks } from "@livekit/components-react";
-import { Track } from "livekit-client";
+import { Track, LocalVideoTrack } from "livekit-client";
 import { tauriUtils } from "@/windows/window-utils";
 
 const appWindow = getCurrentWebviewWindow();
@@ -126,4 +126,103 @@ export const useScreenShareListener = () => {
       });
     }
   }, [tracks, room.remoteParticipants, callTokens, setCallTokens]);
+};
+
+/**
+ * Hook to monitor and log camera publication bandwidth usage.
+ * Logs bandwidth stats every 5 seconds using LiveKit WebRTC stats API.
+ * Reference: https://docs.livekit.io/reference/client-sdk-js/interfaces/VideoSenderStats.html
+ */
+export const useCameraBandwidthMonitor = () => {
+  const { localParticipant } = useLocalParticipant();
+  const { callTokens } = useStore();
+  const previousStatsRef = useRef<{ timestamp: number; bytesSent: number } | null>(null);
+
+  useEffect(() => {
+    if (!callTokens?.hasCameraEnabled || !localParticipant) {
+      return;
+    }
+
+    const logBandwidthStats = async () => {
+      try {
+        // Find the camera track publication
+        const cameraPublication = localParticipant
+          .getTrackPublications()
+          .find((pub) => pub.source === Track.Source.Camera);
+
+        if (!cameraPublication?.track) {
+          return;
+        }
+
+        // Cast to LocalVideoTrack to access getSenderStats
+        const videoTrack = cameraPublication.track as LocalVideoTrack;
+
+        if (!videoTrack.getSenderStats) {
+          console.warn("getSenderStats not available on track");
+          return;
+        }
+
+        // Get video sender stats using LiveKit's API
+        const stats = await videoTrack.getSenderStats();
+
+        if (!stats || stats.length === 0) {
+          return;
+        }
+
+        // Aggregate stats from all layers (handles simulcast)
+        let totalBytesSent = 0;
+        let totalPacketsSent = 0;
+        let totalFramesSent = 0;
+        let maxTargetBitrate = 0;
+        const currentTimestamp = Date.now();
+
+        stats.forEach((stat) => {
+          totalBytesSent += stat.bytesSent || 0;
+          totalPacketsSent += stat.packetsSent || 0;
+          totalFramesSent += stat.framesSent || 0;
+          maxTargetBitrate = Math.max(maxTargetBitrate, stat.targetBitrate || 0);
+        });
+
+        // Calculate bandwidth if we have previous stats
+        if (previousStatsRef.current && totalBytesSent > 0) {
+          const timeDiffSeconds = (currentTimestamp - previousStatsRef.current.timestamp) / 1000;
+          const bytesDiff = totalBytesSent - previousStatsRef.current.bytesSent;
+          const bandwidthBps = (bytesDiff * 8) / timeDiffSeconds; // bits per second
+          const bandwidthKbps = (bandwidthBps / 1024).toFixed(2);
+          const bandwidthMbps = (bandwidthBps / 1024 / 1024).toFixed(2);
+          const targetBitrateKbps = (maxTargetBitrate / 1024).toFixed(2);
+
+          console.log(
+            `[Camera Bandwidth] ${bandwidthKbps} Kbps (${bandwidthMbps} Mbps) | ` +
+              `Target: ${targetBitrateKbps} Kbps | ` +
+              `Total sent: ${(totalBytesSent / 1024 / 1024).toFixed(2)} MB | ` +
+              `Packets: ${totalPacketsSent} | ` +
+              `Frames: ${totalFramesSent}` +
+              (stats.length > 1 ? ` | Layers: ${stats.length}` : ""),
+          );
+        }
+
+        // Store current stats for next calculation
+        if (totalBytesSent > 0) {
+          previousStatsRef.current = {
+            timestamp: currentTimestamp,
+            bytesSent: totalBytesSent,
+          };
+        }
+      } catch (error) {
+        console.error("Error fetching camera bandwidth stats:", error);
+      }
+    };
+
+    // Log immediately
+    logBandwidthStats();
+
+    // Set up interval to log every 5 seconds
+    const intervalId = setInterval(logBandwidthStats, 5000);
+
+    return () => {
+      clearInterval(intervalId);
+      previousStatsRef.current = null;
+    };
+  }, [localParticipant, callTokens?.hasCameraEnabled]);
 };
