@@ -1,6 +1,6 @@
 import "@/services/sentry";
 import "../../App.css";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
@@ -67,6 +67,7 @@ function clampVideoSizeToMonitor({
   padding,
   gap,
   logicalMonitorHeight,
+  modeLabel,
 }: {
   baseSize: number;
   rows: number;
@@ -74,6 +75,7 @@ function clampVideoSizeToMonitor({
   padding: number;
   gap: number;
   logicalMonitorHeight: number;
+  modeLabel: SizeMode;
 }): number {
   const maxAvailableHeight = logicalMonitorHeight * 0.9;
   const calculatedHeight = headerHeight + rows * baseSize + (rows - 1) * gap + padding * 2;
@@ -86,7 +88,7 @@ function clampVideoSizeToMonitor({
   const resizedSize = Math.floor(availableForVideos / rows);
 
   console.log(
-    `Big mode - Scaling down from ${baseSize}px to ${resizedSize}px to fit screen`,
+    `${modeLabel} mode - Scaling down from ${baseSize}px to ${resizedSize}px to fit screen`,
     `Monitor height: ${logicalMonitorHeight}px, Max available: ${maxAvailableHeight}px`,
   );
 
@@ -119,10 +121,11 @@ async function CameraWindowSize({
   let totalHeight: number;
   let totalWidth: number;
   let actualVideoSize: number;
+  const isGridMode = sizeMode !== "small";
 
-  if (sizeMode === "big") {
-    // For big mode: grid layout with 2 columns max (or 1 column if only 1 track)
-    let videoSize: number = SIZE_CONFIG.big.videoSize;
+  if (isGridMode) {
+    // For medium and big modes: grid layout with 2 columns max (or 1 column if only 1 track)
+    let videoSize: number = SIZE_CONFIG[sizeMode].videoSize;
 
     if (trackLength === 1) {
       // Single track: use full width (same as small/medium modes)
@@ -130,7 +133,7 @@ async function CameraWindowSize({
       totalWidth = videoSize + VideoCardPadding * 2;
       totalHeight = HeaderHeight + videoSize + VideoCardPadding * 2;
       console.log(
-        `Big mode (Single) - Tracks: 1, Video size: ${videoSize}px`,
+        `${sizeMode} mode (Single) - Tracks: 1, Video size: ${videoSize}px`,
         `Height: ${totalHeight}px, Width: ${totalWidth}px`,
       );
     } else {
@@ -147,6 +150,7 @@ async function CameraWindowSize({
           padding: VideoCardPadding,
           gap: FlexGap,
           logicalMonitorHeight,
+          modeLabel: sizeMode,
         });
       }
 
@@ -159,13 +163,13 @@ async function CameraWindowSize({
       totalHeight = HeaderHeight + rows * videoSize + (rows - 1) * FlexGap + VideoCardPadding * 2;
 
       console.log(
-        `Big mode (Grid) - Tracks: ${trackLength}, Cols: ${cols}, Rows: ${rows}, Video size: ${videoSize}px`,
+        `${sizeMode} mode (Grid) - Tracks: ${trackLength}, Cols: ${cols}, Rows: ${rows}, Video size: ${videoSize}px`,
         `Height: ${totalHeight}px, Width: ${totalWidth}px`,
       );
     }
   } else {
-    // For small and medium modes: vertical stack with all same size
-    const videoSize = sizeMode === "small" ? SIZE_CONFIG.small.videoSize : SIZE_CONFIG.medium.videoSize;
+    // For small mode: vertical stack with all same size
+    const videoSize = SIZE_CONFIG.small.videoSize;
     actualVideoSize = videoSize;
     totalHeight = HeaderHeight + videoSize * trackLength + FlexGap * (trackLength - 1) + VideoCardPadding * 2;
     totalWidth = videoSize + VideoCardPadding * 2;
@@ -233,8 +237,8 @@ function ConsumerComponent({
   const videoSize = actualVideoSize;
   const quality = SIZE_CONFIG[sizeMode].quality;
 
-  // For big mode, use grid layout (2 per row) only when there are 2+ tracks, otherwise vertical stack
-  const isGridLayout = sizeMode === "big" && visibleTracks.length >= 2;
+  // For medium and big modes, use grid layout (2 per row) when there are 2+ tracks
+  const isGridLayout = sizeMode !== "small" && visibleTracks.length >= 2;
 
   return (
     <div className="content px-2 py-4">
@@ -403,11 +407,12 @@ function SizeModeSelector({
                     </div>
                   )}
                   {mode === "medium" && (
-                    // Medium: 3 equal medium squares vertically
-                    <div className="flex flex-col gap-0.5">
-                      <div className="w-3.5 h-3.5 bg-white/60 rounded-sm" />
-                      <div className="w-3.5 h-3.5 bg-white/60 rounded-sm" />
-                      <div className="w-3.5 h-3.5 bg-white/60 rounded-sm" />
+                    // Medium: grid layout with slightly smaller squares
+                    <div className="grid grid-cols-2 gap-0.5">
+                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
                     </div>
                   )}
                   {mode === "big" && (
@@ -471,6 +476,7 @@ function CameraWindow() {
   const [isSelfHidden, setIsSelfHidden] = useState(false);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
   const [sizeMode, setSizeMode] = useState<SizeMode>("small");
+  const initialSizeModeRef = useRef<SizeMode>(sizeMode);
 
   useEffect(() => {
     const cameraTokenFromUrl = tauriUtils.getTokenParam("cameraToken");
@@ -490,14 +496,11 @@ function CameraWindow() {
     }
 
     enableDock();
-  }, []);
 
-  useEffect(() => {
-    // Set correct window size whenever the mode changes
-    CameraWindowSize({ numOfTracks: 0, sizeMode }).catch((err) => {
-      console.error("Error setting camera window size:", err);
+    CameraWindowSize({ numOfTracks: 0, sizeMode: initialSizeModeRef.current }).catch((err) => {
+      console.error("Error setting initial camera window size:", err);
     });
-  }, [sizeMode]);
+  }, []);
 
   return (
     <div className="h-full min-h-full overflow-hidden bg-transparent text-white">
