@@ -196,6 +196,14 @@ function ConsumerComponent({
     onlySubscribed: true,
   });
 
+  const selfTrackSid = callTokens?.cameraTrackId;
+  const selfTrack = useMemo(() => {
+    if (!selfTrackSid) {
+      return undefined;
+    }
+    return tracks.find((track) => track?.publication?.trackSid === selfTrackSid);
+  }, [tracks, selfTrackSid]);
+
   const visibleTracks = useMemo(() => {
     return tracks.filter((track) => {
       const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
@@ -203,6 +211,16 @@ function ConsumerComponent({
     });
   }, [tracks, hideSelf, callTokens?.cameraTrackId]);
   const visibleTrackCount = visibleTracks.length;
+
+  useEffect(() => {
+    const publication = selfTrack?.publication as { setVideoQuality?: (quality: VideoQuality) => void } | undefined;
+    if (!publication?.setVideoQuality) {
+      return;
+    }
+
+    const targetQuality = hideSelf ? VideoQuality.LOW : SIZE_CONFIG[sizeMode].quality;
+    publication.setVideoQuality(targetQuality);
+  }, [selfTrack, hideSelf, sizeMode]);
 
   useEffect(() => {
     // Set window size appropriately and get the actual video size used
