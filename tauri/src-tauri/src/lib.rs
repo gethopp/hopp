@@ -418,21 +418,6 @@ fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: b
     }
 }
 
-/// Returns the name for file that stores the token.
-pub fn get_token_filename() -> String {
-    /*
-     * Initialize the token filename based on debug/release mode.
-     * The suffix is added on debug when starting the replica app in the
-     * same machine for faster debugging.
-     */
-    if cfg!(debug_assertions) {
-        let random_suffix = env::var("HOPP_SUFFIX").unwrap_or_default();
-        format!("user_token_{random_suffix}.txt")
-    } else {
-        "user_token.txt".to_string()
-    }
-}
-
 /// Add a tray icon to the app on macos, on windows we don't use it.
 #[allow(unused_variables)]
 pub fn setup_tray_icon(
