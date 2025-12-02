@@ -16,8 +16,7 @@ use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
     app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    get_token_filename, permissions, ping_frontend, setup_start_on_launch, setup_tray_icon,
-    AppData,
+    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
 };
 use std::sync::Mutex;
 use std::{env, sync::Arc};
@@ -235,65 +234,28 @@ fn reset_core_process(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn store_token_cmd(app: tauri::AppHandle, token: String) {
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    log::debug!("Storing token to: {}", token_file.display());
-    match std::fs::write(token_file, token.clone()) {
-        Ok(_) => {
-            log::info!("Stored token");
-            if let Err(e) = app.emit("token_changed", token) {
-                log::error!("Failed to emit token_changed event: {e:?}");
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to store token: {e:?}");
-        }
-    }
+    log::info!("store_token_cmd");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_user_jwt(Some(token));
 }
 
 #[tauri::command]
 fn get_stored_token(app: tauri::AppHandle) -> Option<String> {
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return None;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    log::debug!("Reading token from: {}", token_file.display());
-    match std::fs::read_to_string(token_file) {
-        Ok(token) => Some(token),
-        Err(e) => {
-            log::error!("Failed to read token: {e:?}");
-            None
-        }
-    }
+    log::info!("get_stored_token");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let token = data.app_state.user_jwt().clone();
+    log::debug!("get_stored_token: {token:?}");
+    token
 }
 
 #[tauri::command]
 fn delete_stored_token(app: tauri::AppHandle) {
     log::info!("Deleting stored token");
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    if let Err(e) = std::fs::remove_file(token_file) {
-        log::error!("Failed to delete token file: {e:?}");
-    }
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_user_jwt(None);
 
     if let Err(e) = app.emit("token_changed", "".to_string()) {
         log::error!("Failed to emit token_changed event: {e:?}");
