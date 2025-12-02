@@ -41,8 +41,8 @@ struct AppStateInternal {
     /// User JWT
     pub user_jwt: Option<String>,
 
-    /// Livekit server URL
-    pub livekit_server_url: Option<String>,
+    /// Hopp server URL
+    pub hopp_server_url: Option<String>,
 }
 
 /// Legacy version of the application state structure.
@@ -61,14 +61,14 @@ impl Default for AppStateInternal {
     /// - Last used microphone: none
     /// - First run: true
     /// - User JWT: none
-    /// - Livekit server URL: none
+    /// - Hopp server URL: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
             last_used_mic: None,
             first_run: true,
             user_jwt: None,
-            livekit_server_url: None,
+            hopp_server_url: None,
         }
     }
 }
