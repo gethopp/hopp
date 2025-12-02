@@ -12,6 +12,44 @@ import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
+  const textRef = useRef<HTMLDivElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  useEffect(() => {
+    const checkTruncation = () => {
+      const element = textRef.current;
+      if (element) {
+        setIsTruncated(element.scrollWidth > element.clientWidth);
+      }
+    };
+
+    checkTruncation();
+    window.addEventListener("resize", checkTruncation);
+    return () => window.removeEventListener("resize", checkTruncation);
+  }, [text]);
+
+  const content = (
+    <div ref={textRef} className={clsx("truncate cursor-default", className)}>
+      {text}
+    </div>
+  );
+
+  if (!isTruncated) return content;
+
+  return (
+    <TooltipProvider>
+      <Tooltip delayDuration={100}>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="top">
+          <p>{text}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
 
 export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] }) => {
   const posthog = usePostHog();
@@ -122,7 +160,6 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
 
     return () => {
       if (!isCalling) return;
-
       console.debug("Unsubscribing from call response for user:", props.user.id);
       if (callbackIdRef.current) {
         socketService.removeHandler(callbackIdRef.current);
@@ -134,25 +171,21 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   }, [isCalling]);
 
   return (
-    <div className="flex flex-row gap-2 w-full items-center">
+    <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] gap-2 w-full items-center">
       <HoppAvatar
         src={props.user.avatar_url || undefined}
         firstName={props.user.first_name}
         lastName={props.user.last_name}
         status={props.user.is_active ? "online" : "offline"}
       />
-      <div
-        className="h-10 flex flex-col w-full"
-        style={{
-          maxWidth: "calc(100% - 90px)",
-        }}
-      >
-        <span className="medium whitespace-nowrap overflow-hidden text-ellipsis">
-          {props.user.first_name} {props.user.last_name}
-        </span>
-        <span className="muted text-xs text-slate-500">{props.user.is_active ? "Online" : "Offline"}</span>
+
+      <div className="flex flex-col justify-center h-10 overflow-hidden">
+        <TruncatedName text={`${props.user.first_name} ${props.user.last_name}`} className="medium" />
+
+        <div className="muted truncate text-xs text-slate-500">{props.user.is_active ? "Online" : "Offline"}</div>
       </div>
-      <div className="ml-auto mr-4">
+
+      <div className="mr-4">
         <Button
           variant="gradient-white"
           onClick={() => {
