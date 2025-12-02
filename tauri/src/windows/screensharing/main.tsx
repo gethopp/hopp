@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { SharingScreen } from "@/components/SharingScreen/SharingScreen";
 import { SharingProvider, useSharingContext } from "./context";
-import { ScreenSharingControls } from "@/components/SharingScreen/Controls";
+import { ScreenSharingControls, RemoteControlDisabledIndicator } from "@/components/SharingScreen/Controls";
 import { Toaster } from "react-hot-toast";
 import { useDisableNativeContextMenu, useResizeListener } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
@@ -199,9 +199,9 @@ function Window() {
       <Toaster position="bottom-center" />
       <div
         data-tauri-drag-region
-        className="title-panel flex items-center h-[40px] px-3 titlebar w-full border-b border-slate-800/20"
+        className="title-panel grid grid-cols-[1fr_auto_1fr] items-center h-[40px] px-3 titlebar w-full border-b border-slate-800/20"
       >
-        <div className="flex items-center gap-2 min-w-[120px]" data-tauri-drag-region="no-drag">
+        <div className="flex items-center justify-start gap-2" data-tauri-drag-region="no-drag">
           <TitlebarButton onClick={handleClose} label="Close window" className="group-hover:bg-red-500">
             <LuX className="size-[10px] stroke-[3px]" />
           </TitlebarButton>
@@ -219,10 +219,12 @@ function Window() {
             : <LuMaximize2 className="size-[10px] stroke-[3px]" />}
           </TitlebarButton>
         </div>
-        <div data-tauri-drag-region="no-drag" className="flex-1 flex justify-center pointer-events-none">
+        <div data-tauri-drag-region="no-drag" className="flex items-center justify-center pointer-events-none">
           <ScreenSharingControls className="pt-0" />
         </div>
-        <div className="min-w-[120px]" aria-hidden="true" />
+        <div className="flex items-center justify-end" data-tauri-drag-region="no-drag">
+          <RemoteControlDisabledIndicator />
+        </div>
       </div>
       <div className="content px-1 pb-0.5 pt-[10px] overflow-hidden">
         {videoToken && <SharingScreen serverURL={livekitUrl} token={videoToken} />}
