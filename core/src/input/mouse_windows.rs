@@ -116,14 +116,18 @@ fn event_processing_thread(
                             let dy = location.y - last_location.y;
 
                             let global_position = sharer_cursor.global_position();
-                            sharer_cursor.set_position(Position {
+                            let sharer_left_monitor = sharer_cursor.set_position(Position {
                                 x: global_position.x + dx,
                                 y: global_position.y + dy,
                             });
 
-                            unsafe {
-                                let _ =
-                                    SetCursorPos(last_location.x as i32, last_location.y as i32);
+                            if !sharer_left_monitor {
+                                unsafe {
+                                    let _ = SetCursorPos(
+                                        last_location.x as i32,
+                                        last_location.y as i32,
+                                    );
+                                }
                             }
                         }
                     } else if event_type == WM_MOUSEWHEEL {
