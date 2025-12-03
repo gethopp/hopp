@@ -11,7 +11,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, LogicalPosition, currentMonitor } from "@tauri-apps/api/window";
 import { CgSpinner } from "react-icons/cg";
 import { HiOutlineEye, HiOutlineEyeSlash } from "react-icons/hi2";
-import { MdOutlineViewCompact } from "react-icons/md";
 import { VscChromeMinimize } from "react-icons/vsc";
 import { WindowActions } from "@/components/ui/window-buttons";
 import { CustomIcons } from "@/components/ui/icons";
@@ -19,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import useStore from "@/store/store";
 import clsx from "clsx";
 import ListenToRemoteAudio from "@/components/ui/listen-to-remote-audio";
+import { IoGridOutline } from "react-icons/io5";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -332,7 +332,6 @@ function VideoTrackComponent({
             variant="secondary"
             size="icon-sm"
             className="bg-white/20 hover:bg-white/30 text-white border-white/20"
-            title="Hide participant"
             onClick={() => setHideSelf(true)}
           >
             <HiOutlineEyeSlash className="w-4 h-4" />
@@ -366,9 +365,8 @@ function SizeModeSelector({
         size="icon-sm"
         className="text-white/80 hover:text-white hover:bg-white/10"
         onClick={() => setIsOpen(!isOpen)}
-        title="Change window size"
       >
-        <MdOutlineViewCompact className="size-4" />
+        <IoGridOutline className="size-4" />
       </Button>
 
       {isOpen && (
@@ -518,7 +516,6 @@ function CameraWindow() {
             size="icon-sm"
             className="text-white/80 hover:text-white hover:bg-white/10"
             onClick={() => getCurrentWebviewWindow().minimize()}
-            title="Minimize"
           >
             <VscChromeMinimize className="size-4" />
           </Button>
@@ -529,7 +526,6 @@ function CameraWindow() {
               size="icon-sm"
               className="text-white/80 hover:text-white hover:bg-white/10"
               onClick={() => setIsSelfHidden(false)}
-              title="Show self"
             >
               <HiOutlineEye className="w-4 h-4" />
             </Button>
