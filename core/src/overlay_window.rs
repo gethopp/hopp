@@ -218,12 +218,7 @@ impl OverlayWindow {
         let x = ((x * scale) - self.position.x as f64) / self.extent.width;
         let y = ((y * scale) - self.position.y as f64) / self.extent.height;
 
-        let (checked_x, checked_y) = out_of_bounds(x, y);
-
-        Position {
-            x: checked_x,
-            y: checked_y,
-        }
+        Position { x, y }
     }
 
     /// Converts global coordinates to global display percentage coordinates.
@@ -254,12 +249,7 @@ impl OverlayWindow {
         let y = ((y * scale) - (self.display_info.display_position.y as f64))
             / self.display_info.display_extent.height;
 
-        let (checked_x, checked_y) = out_of_bounds(x, y);
-
-        Position {
-            x: checked_x,
-            y: checked_y,
-        }
+        Position { x, y }
     }
 
     pub fn get_display_scale(&self) -> f64 {
@@ -280,22 +270,4 @@ impl fmt::Display for OverlayWindow {
             self.display_info.display_scale,
         )
     }
-}
-
-fn out_of_bounds(mut x: f64, mut y: f64) -> (f64, f64) {
-    if !(0.0..=1.0).contains(&x) {
-        if x < 0.0 {
-            x = 0.0;
-        } else if x > 1.0 {
-            x = 0.997;
-        }
-    }
-    if !(0.0..=1.0).contains(&y) {
-        if y < 0.0 {
-            y = 0.0;
-        } else if y > 1.0 {
-            y = 0.995;
-        }
-    }
-    (x, y)
 }

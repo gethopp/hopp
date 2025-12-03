@@ -468,6 +468,16 @@ impl ControllerCursor {
     }
 }
 
+fn is_out_of_bounds(position: Position) -> bool {
+    if !(0.0..=1.0).contains(&position.x) {
+        return true;
+    }
+    if !(0.0..=1.0).contains(&position.y) {
+        return true;
+    }
+    false
+}
+
 pub struct SharerCursor {
     cursor: CursorWrapper,
     has_control: bool,
@@ -500,7 +510,8 @@ impl SharerCursor {
         }
     }
 
-    fn set_position(&mut self, global_position: Position) {
+    // The result is whether or not the sharer left the monitor.
+    fn set_position(&mut self, global_position: Position) -> bool {
         log::debug!("sharer_cursor: set_position: global_position: {global_position:?}");
 
         let local_position = self
@@ -513,6 +524,15 @@ impl SharerCursor {
         self.cursor
             .set_position(global_position, local_position, !self.has_control);
 
+        // This needs to be after we have set the position in order to use the correct global position
+        // when hiding the virtual cursor.
+        let mut left_monitor = false;
+        if is_out_of_bounds(local_position) && !self.has_control {
+            log::info!("sharer_cursor: set_position: sharer left monitor");
+            self.hide(true);
+            left_monitor = true;
+        }
+
         if self.last_event_position_time.elapsed() > SHARER_POSITION_UPDATE_INTERVAL {
             let res = self.event_loop_proxy.send_event(UserEvent::SharerPosition(
                 display_percentage.x,
@@ -523,6 +543,8 @@ impl SharerCursor {
             }
             self.last_event_position_time = Instant::now();
         }
+
+        left_monitor
     }
 
     fn click(&mut self) {
@@ -532,13 +554,7 @@ impl SharerCursor {
             return;
         }
 
-        self.hide();
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.has_control() {
-                controller.show();
-            }
-        }
+        self.hide(true);
 
         /*
          * When the sharer takes back control with with a click, we need to move
@@ -567,13 +583,7 @@ impl SharerCursor {
             return;
         }
 
-        self.hide();
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.has_control() {
-                controller.show();
-            }
-        }
+        self.hide(true);
     }
 
     fn has_control(&self) -> bool {
@@ -595,19 +605,31 @@ impl SharerCursor {
         self.cursor.show();
     }
 
-    fn hide(&mut self) {
+    // show_controller needs to be false when this is called from another object.
+    fn hide(&mut self, show_controller: bool) {
         self.has_control = true;
         self.cursor.hide();
 
-        let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
-        let global_position = self.global_position();
-        cursor_simulator.simulate_cursor_movement(global_position, false);
+        {
+            let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
+            let global_position = self.global_position();
+            cursor_simulator.simulate_cursor_movement(global_position, false);
+        }
 
         let res = self
             .event_loop_proxy
             .send_event(UserEvent::ParticipantInControl("sharer".to_string()));
         if let Err(e) = res {
             error!("sharer_cursor: click: error sending participant in control: {e:?}");
+        }
+
+        if show_controller {
+            let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+            for controller in controllers_cursors.iter_mut() {
+                if controller.has_control() {
+                    controller.show();
+                }
+            }
         }
     }
 
@@ -1189,7 +1211,9 @@ impl CursorController {
                     .sharer_cursor
                     .lock()
                     .unwrap();
-                sharer_cursor.hide();
+                // We are setting show_controller to false because we have the controllers_cursors locked.
+                // If we set it to true, it will deadlock.
+                sharer_cursor.hide(false);
             }
         }
     }
@@ -1221,7 +1245,9 @@ impl CursorController {
                     .sharer_cursor
                     .lock()
                     .unwrap();
-                sharer_cursor.hide();
+                // We are setting show_controller to false because we have the controllers_cursors locked.
+                // If we set it to true, it will deadlock.
+                sharer_cursor.hide(false);
             }
 
             controller.set_pointer_enabled(enabled);
