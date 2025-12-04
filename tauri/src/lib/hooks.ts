@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import hotkeys from "hotkeys-js";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useLocalParticipant, useRoomContext, useTracks } from "@livekit/components-react";
-import { Track, LocalVideoTrack } from "livekit-client";
+import { Track, LocalVideoTrack, RemoteVideoTrack } from "livekit-client";
 import { tauriUtils } from "@/windows/window-utils";
 
 const appWindow = getCurrentWebviewWindow();
@@ -225,4 +225,83 @@ export const useCameraBandwidthMonitor = () => {
       previousStatsRef.current = null;
     };
   }, [localParticipant, callTokens?.hasCameraEnabled]);
+};
+
+/**
+ * Hook to monitor and log inbound camera bandwidth usage.
+ * Adds bytes from all subscribed camera tracks.
+ */
+export const useInboundCameraBandwidthMonitor = () => {
+  const room = useRoomContext();
+  const previousStatsRef = useRef<{ timestamp: number; bytesReceived: number } | null>(null);
+
+  useEffect(() => {
+    const logBandwidthStats = async () => {
+      try {
+        let totalBytesReceived = 0;
+        let totalPacketsLost = 0;
+        const promises: Promise<void>[] = [];
+
+        for (const participant of room.remoteParticipants.values()) {
+          for (const publication of participant.getTrackPublications()) {
+            if (publication.source === Track.Source.Camera && publication.track) {
+              const track = publication.track as RemoteVideoTrack;
+              if (track.getReceiverStats) {
+                promises.push(
+                  track
+                    .getReceiverStats()
+                    .then((stats) => {
+                      if (!stats) return;
+                      totalBytesReceived += stats.bytesReceived || 0;
+                      totalPacketsLost += stats.packetsLost || 0;
+                    })
+                    .catch((e) => {
+                      console.warn("Failed to get stats for track", track.sid, e);
+                    }),
+                );
+              }
+            }
+          }
+        }
+
+        await Promise.all(promises);
+
+        const currentTimestamp = Date.now();
+
+        if (previousStatsRef.current && totalBytesReceived > 0) {
+          const timeDiffSeconds = (currentTimestamp - previousStatsRef.current.timestamp) / 1000;
+          const bytesDiff = totalBytesReceived - previousStatsRef.current.bytesReceived;
+
+          if (bytesDiff >= 0) {
+            const bandwidthBps = (bytesDiff * 8) / timeDiffSeconds;
+            const bandwidthKbps = (bandwidthBps / 1024).toFixed(2);
+            const bandwidthMbps = (bandwidthBps / 1024 / 1024).toFixed(2);
+
+            console.log(
+              `[Inbound Camera Bandwidth] ${bandwidthKbps} Kbps (${bandwidthMbps} Mbps) | ` +
+                `Total received: ${(totalBytesReceived / 1024 / 1024).toFixed(2)} MB | ` +
+                `Packets Lost: ${totalPacketsLost}`,
+            );
+          }
+        }
+
+        if (totalBytesReceived > 0) {
+          previousStatsRef.current = {
+            timestamp: currentTimestamp,
+            bytesReceived: totalBytesReceived,
+          };
+        }
+      } catch (error) {
+        console.error("Error fetching inbound bandwidth stats:", error);
+      }
+    };
+
+    logBandwidthStats();
+    const intervalId = setInterval(logBandwidthStats, 5000);
+
+    return () => {
+      clearInterval(intervalId);
+      previousStatsRef.current = null;
+    };
+  }, [room]);
 };
