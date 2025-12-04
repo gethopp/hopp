@@ -1,5 +1,5 @@
 import * as React from "react";
-import { SVGProps } from "react";
+import { SVGProps, useState, useRef, useEffect } from "react";
 
 const DragIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={29} height={29} fill="none" {...props}>
@@ -54,10 +54,97 @@ const PointerClickIcon = (props: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/**
+ * A microphone icon that fills from bottom to top based on audio level.
+ * Uses smoothing for nice eased animation.
+ */
+const MicWithLevel = ({ level, className }: { level: number; className?: string }) => {
+  const [smoothedLevel, setSmoothedLevel] = useState(0);
+  const targetLevelRef = useRef(level);
+  const animationRef = useRef<number>();
+
+  useEffect(() => {
+    targetLevelRef.current = level;
+
+    const animate = () => {
+      setSmoothedLevel((prev) => {
+        const target = targetLevelRef.current;
+        const diff = target - prev;
+        // Ease towards target - faster when going up, slower when going down
+        const speed = diff > 0 ? 0.3 : 0.15;
+        const newValue = prev + diff * speed;
+        // Stop animating when close enough
+        if (Math.abs(diff) < 0.001) return target;
+        return newValue;
+      });
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [level]);
+
+  // Clamp level between 0 and 1, then boost it for visual effect
+  const fillPercent = Math.min(1, Math.max(0, smoothedLevel * 3)) * 100;
+  // Gradient goes from top (0%) to bottom (100%), so we invert
+  const gradientStop = 100 - fillPercent;
+
+  return (
+    <svg
+      className={className}
+      width="1em"
+      height="1em"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <defs>
+        <linearGradient id="micFillGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          {/* Top part - transparent (unfilled) */}
+          <stop offset={`${gradientStop}%`} stopColor="currentColor" stopOpacity="0.15" />
+          {/* Bottom part - filled */}
+          <stop offset={`${gradientStop}%`} stopColor="currentColor" stopOpacity="1" />
+        </linearGradient>
+      </defs>
+      {/* Filled mic body */}
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" fill="url(#micFillGradient)" />
+      {/* Outline strokes */}
+      <path
+        d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <path
+        d="M19 10v2a7 7 0 0 1-14 0v-2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <line
+        x1="12"
+        x2="12"
+        y1="19"
+        y2="22"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+};
+
 const CustomIcons = {
   Drag: DragIcon,
   Corner: CornerIcon,
   PointerClick: PointerClickIcon,
+  MicWithLevel: MicWithLevel,
 };
 
 export { CustomIcons };
