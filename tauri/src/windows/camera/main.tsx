@@ -3,7 +3,7 @@ import "../../App.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
-import { useDisableNativeContextMenu } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useInboundCameraBandwidthMonitor } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { LiveKitRoom, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track, VideoQuality } from "livekit-client";
@@ -193,6 +193,7 @@ function ConsumerComponent({
   setHideSelf: (value: boolean) => void;
   sizeMode: SizeMode;
 }) {
+  //useInboundCameraBandwidthMonitor();
   const { callTokens } = useStore();
   const [actualVideoSize, setActualVideoSize] = useState<number>(SIZE_CONFIG[sizeMode].videoSize);
 
@@ -222,7 +223,15 @@ function ConsumerComponent({
       return;
     }
 
-    const targetQuality = hideSelf ? VideoQuality.LOW : SIZE_CONFIG[sizeMode].quality;
+    // Limit self track quality to MEDIUM to save bandwidth
+    let targetQuality = SIZE_CONFIG[sizeMode].quality;
+    if (targetQuality === VideoQuality.HIGH) {
+      targetQuality = VideoQuality.MEDIUM;
+    }
+
+    if (hideSelf) {
+      targetQuality = VideoQuality.LOW;
+    }
     publication.setVideoQuality(targetQuality);
   }, [selfTrack, hideSelf, sizeMode]);
 
@@ -295,6 +304,7 @@ function VideoTrackComponent({
   callTokens: any;
   setHideSelf: (value: boolean) => void;
 }) {
+  //useInboundCameraBandwidthMonitor();
   const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
   const sid = track?.publication?.trackSid;
 
