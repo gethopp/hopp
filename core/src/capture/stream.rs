@@ -16,7 +16,7 @@ use sysinfo::System;
 
 use super::CapturerError;
 
-const FRAME_CAPTURE_INTERVAL_MS: u64 = 22;
+const FRAME_CAPTURE_INTERVAL_MS: u64 = 18;
 
 /// Messages used for inter-thread communication in the stream capture system.
 ///

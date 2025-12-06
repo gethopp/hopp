@@ -20,7 +20,7 @@ const TOPIC_REMOTE_CONTROL_ENABLED: &str = "remote_control_enabled";
 const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
-const MAX_FRAMERATE: f64 = 30.0;
+const MAX_FRAMERATE: f64 = 40.0;
 
 // Bitrate constants (in bits per second)
 const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
