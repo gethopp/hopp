@@ -1,6 +1,9 @@
 use crate::utils::geometry::{aspect_fit, Extent, Frame};
 use livekit::webrtc::{
-    desktop_capturer::{CaptureResult, DesktopCapturer, DesktopFrame},
+    desktop_capturer::{
+        CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
+        DesktopFrame,
+    },
     native::yuv_helper,
     prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
@@ -13,7 +16,7 @@ use sysinfo::System;
 
 use super::CapturerError;
 
-const FRAME_CAPTURE_INTERVAL_MS: u64 = 22;
+const FRAME_CAPTURE_INTERVAL_MS: u64 = 18;
 
 /// Messages used for inter-thread communication in the stream capture system.
 ///
@@ -99,20 +102,20 @@ fn create_capture_callback(
     desktop_frame: Arc<Mutex<Frame>>,
     tx: mpsc::Sender<StreamRuntimeMessage>,
     failures_count: Arc<Mutex<u64>>,
-) -> impl Fn(CaptureResult, DesktopFrame) {
-    let capture_buffer = Arc::new(Mutex::new(NV12Buffer::new(0, 0)));
-    let stream_failed = Arc::new(Mutex::new(false));
-    move |result: CaptureResult, frame: DesktopFrame| {
-        match result {
-            CaptureResult::ErrorTemporary => {
+) -> impl FnMut(Result<DesktopFrame, CaptureError>) {
+    let mut capture_buffer = NV12Buffer::new(1, 1);
+    let mut stream_failed = false;
+    move |result: Result<DesktopFrame, CaptureError>| {
+        let frame = match result {
+            Ok(frame) => frame,
+            Err(CaptureError::Temporary) => {
                 log::warn!("Capture frame, temporary error");
                 return;
             }
-            CaptureResult::ErrorPermanent => {
+            Err(CaptureError::Permanent) => {
                 log::info!("Capture frame, permanent error");
 
-                let mut stream_failed = stream_failed.lock().unwrap();
-                if *stream_failed {
+                if stream_failed {
                     return;
                 }
 
@@ -120,14 +123,14 @@ fn create_capture_callback(
 
                 let mut failures_count = failures_count.lock().unwrap();
                 *failures_count += 1;
-                *stream_failed = true;
+                stream_failed = true;
                 let res = tx.send(StreamRuntimeMessage::Failed);
                 if let Err(e) = res {
                     log::error!("Failed to send Failed message: {e}");
                 }
                 return;
             }
-            CaptureResult::ErrorUserStopped => {
+            Err(CaptureError::UserStopped) => {
                 log::info!("Capture frame, user stopped");
                 let res = tx.send(StreamRuntimeMessage::UserStoppedCapture);
                 if let Err(e) = res {
@@ -135,11 +138,12 @@ fn create_capture_callback(
                 }
                 return;
             }
-            _ => {
-                let mut failures_count = failures_count.lock().unwrap();
-                *failures_count = 0;
-            }
+        };
+        {
+            let mut failures_count = failures_count.lock().unwrap();
+            *failures_count = 0;
         }
+
         let frame_height = frame.height();
         let frame_width = frame.width();
         let frame_stride = frame.stride();
@@ -169,13 +173,12 @@ fn create_capture_callback(
         }
 
         // Copy DesktopFrame to framebuffer
-        let mut framebuffer = capture_buffer.lock().unwrap();
-        let framebuffer_width = framebuffer.width();
-        let framebuffer_height = framebuffer.height();
+        let framebuffer_width = capture_buffer.width();
+        let framebuffer_height = capture_buffer.height();
         if (framebuffer_width != (frame_width as u32))
             || (framebuffer_height != (frame_height as u32))
         {
-            *framebuffer = NV12Buffer::new(frame_width as u32, frame_height as u32);
+            capture_buffer = NV12Buffer::new(frame_width as u32, frame_height as u32);
             let (stream_width, stream_height) = aspect_fit(
                 frame_width as u32,
                 frame_height as u32,
@@ -185,10 +188,10 @@ fn create_capture_callback(
             log::info!("capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}");
             let mut stream_buffer = stream_buffer.lock().unwrap();
             *stream_buffer = StreamBuffer::new(stream_width, stream_height);
-        }
+        };
 
-        let (stride_y, stride_uv) = framebuffer.strides();
-        let (data_y, data_uv) = framebuffer.data_mut();
+        let (stride_y, stride_uv) = capture_buffer.strides();
+        let (data_y, data_uv) = capture_buffer.data_mut();
         yuv_helper::argb_to_nv12(
             frame_data,
             frame_stride,
@@ -205,8 +208,7 @@ fn create_capture_callback(
         let stream_width = stream_buffer.video_frame.buffer.width();
         let stream_height = stream_buffer.video_frame.buffer.height();
         if frame_width != (stream_width as i32) || frame_height != (stream_height as i32) {
-            let mut scaled_buffer = framebuffer.scale(stream_width as i32, stream_height as i32);
-            drop(framebuffer);
+            let mut scaled_buffer = capture_buffer.scale(stream_width as i32, stream_height as i32);
 
             // Copy scaled buffer to stream buffer
             let (data_y, data_uv) = scaled_buffer.data_mut();
@@ -335,7 +337,7 @@ impl Stream {
         include_cursor: bool,
     ) -> Result<Self, CapturerError> {
         let buffer_source = Arc::new(Mutex::new(None));
-        let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(0, 0)));
+        let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
         let frame = Arc::new(Mutex::new(Frame {
             origin_x: 0.,
             origin_y: 0.,
@@ -346,15 +348,15 @@ impl Stream {
         }));
         let failures_count = Arc::new(Mutex::new(0));
 
-        let callback = create_capture_callback(
-            buffer_source.clone(),
-            stream_resolution,
-            stream_buffer.clone(),
-            frame.clone(),
-            tx.clone(),
-            failures_count.clone(),
-        );
-        let capturer = DesktopCapturer::new(callback, false, include_cursor);
+        #[allow(unused_mut)]
+        let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+        #[cfg(target_os = "macos")]
+        {
+            options.set_sck_system_picker(false);
+        }
+        // We can't clone options because it doesn't implement Clone in the current version
+        // so we have to pass it by value. We don't store it in Stream anymore.
+        let capturer = DesktopCapturer::new(options);
         if capturer.is_none() {
             return Err(CapturerError::DesktopCapturerCreationError);
         }
@@ -393,6 +395,14 @@ impl Stream {
     /// The capture thread will run until `stop_capture()` is called.
     pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
         log::info!("stream::start_capture: Starting capture for id: {id}");
+        let callback = create_capture_callback(
+            self.buffer_source.clone(),
+            self.stream_resolution,
+            self.stream_buffer.clone(),
+            self.frame.clone(),
+            self.permanent_error_tx.clone(),
+            self.failures_count.clone(),
+        );
         let mut capturer = self.capturer.lock().unwrap();
         let sources = capturer.get_source_list();
         if sources.is_empty() {
@@ -409,7 +419,7 @@ impl Stream {
             return Err(CapturerError::SelectedSourceNotFound);
         }
         self.source_id = id;
-        capturer.start_capture(source);
+        capturer.start_capture(Some(source), callback);
         let (tx, rx) = mpsc::channel();
         let capturer_clone = self.capturer.clone();
         self.capture_frame_handle = Some(std::thread::spawn(move || {
@@ -473,15 +483,14 @@ impl Stream {
             self.stop_capture();
         }
 
-        let callback = create_capture_callback(
-            self.buffer_source.clone(),
-            self.stream_resolution,
-            self.stream_buffer.clone(),
-            self.frame.clone(),
-            self.permanent_error_tx.clone(),
-            self.failures_count.clone(),
-        );
-        let capturer = DesktopCapturer::new(callback, false, self.include_cursor);
+        #[allow(unused_mut)]
+        let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+        #[cfg(target_os = "macos")]
+        {
+            options.set_sck_system_picker(false);
+        }
+
+        let capturer = DesktopCapturer::new(options);
         if capturer.is_none() {
             log::error!("Stream::copy: Failed to create DesktopCapturer");
             return Err(());

@@ -1,7 +1,7 @@
 use base64::prelude::*;
 use image::codecs::jpeg::JpegEncoder;
 use livekit::webrtc::{
-    desktop_capturer::{CaptureResult, DesktopCapturer, DesktopFrame},
+    desktop_capturer::{CaptureError, DesktopCapturer, DesktopCapturerOptions, DesktopFrame},
     native::yuv_helper,
     video_frame::{native::VideoFrameBufferExt, NV12Buffer},
     video_source::native::NativeVideoSource,
@@ -118,20 +118,19 @@ fn screenshot_capture_callback(
     display_id: u32,
     display_title: String,
     content: Arc<Mutex<Vec<CaptureContent>>>,
-) -> impl Fn(CaptureResult, DesktopFrame) {
+) -> impl Fn(Result<DesktopFrame, CaptureError>) {
     log::debug!(
         "screenshot_capture_callback: display_id: {display_id}, display_title: {display_title}"
     );
-    move |result: CaptureResult, frame: DesktopFrame| {
-        match result {
-            CaptureResult::ErrorTemporary => {
+    move |result: Result<DesktopFrame, CaptureError>| {
+        let frame = match result {
+            Ok(frame) => frame,
+            Err(CaptureError::Temporary) => {
                 log::warn!("Capture frame, temporary error");
                 return;
             }
-            CaptureResult::ErrorPermanent => {
-                log::info!(
-                    "Capture frame, permanent error for display: {display_id}, title: {display_title}"
-                );
+            Err(CaptureError::Permanent) => {
+                log::info!("Capture frame, permanent error for display: {display_id}, title: {display_title}");
                 let mut content = content.lock().unwrap();
                 content.push(CaptureContent {
                     content: Content {
@@ -143,8 +142,14 @@ fn screenshot_capture_callback(
                 });
                 return;
             }
-            _ => {}
-        }
+            Err(CaptureError::UserStopped) => {
+                log::info!(
+                    "Capture frame, user stopped for display: {display_id}, title: {display_title}"
+                );
+                return;
+            }
+        };
+
         /* Skip processing if there is content for this display */
         {
             let content = content.lock().unwrap();
@@ -310,7 +315,17 @@ impl Capturer {
     pub fn get_available_content(&mut self) -> Result<Vec<CaptureContent>, CapturerError> {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            let first_capturer = DesktopCapturer::new(|_, _| {}, false, false);
+            use livekit::webrtc::desktop_capturer::DesktopCaptureSourceType;
+
+            #[allow(unused_mut)]
+            let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+            #[cfg(target_os = "macos")]
+            {
+                options.set_sck_system_picker(false);
+            }
+            // We can't clone options so we pass it by value.
+            // For subsequent usages we need to recreate it.
+            let first_capturer = DesktopCapturer::new(options);
             if first_capturer.is_none() {
                 return Err(CapturerError::DesktopCapturerCreationError);
             }
@@ -341,7 +356,13 @@ impl Capturer {
                         },
                         result_clone,
                     );
-                    let capturer = DesktopCapturer::new(callback, false, false);
+                    #[allow(unused_mut)]
+                    let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+                    #[cfg(target_os = "macos")]
+                    {
+                        options.set_sck_system_picker(false);
+                    }
+                    let capturer = DesktopCapturer::new(options);
                     if capturer.is_none() {
                         log::error!(
                             "Failed to create DesktopCapturer for display: {}",
@@ -350,7 +371,7 @@ impl Capturer {
                         return;
                     }
                     let mut capturer = capturer.unwrap();
-                    capturer.start_capture(display_clone);
+                    capturer.start_capture(Some(display_clone), callback);
 
                     loop {
                         match receiver.recv_timeout(std::time::Duration::from_millis(
@@ -677,7 +698,7 @@ impl Capturer {
         let stream = self.active_stream.as_ref().unwrap();
         for i in 0..150 {
             let extent = stream.get_stream_extent();
-            if extent.width > 0. && extent.height > 0. {
+            if extent.width > 1. && extent.height > 1. {
                 log::info!("get_stream_extent: got extent in try {i}");
                 return extent;
             }
