@@ -65,7 +65,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   const navigate = useNavigate();
   const { uuid } = useParams<{ uuid: string }>();
   const { useQuery } = useAPI();
-  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app"], {
+  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app", "lastUsedLogin"], {
     doNotParse: true,
   });
   const setAuthToken = useHoppStore((state) => state.setAuthToken);
@@ -196,6 +196,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGoogleLogin = () => {
+    setCookie('lastUsedLogin', 'google', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/google`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
@@ -204,6 +205,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGitHubLogin = () => {
+    setCookie('lastUsedLogin', 'github', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/github`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
@@ -247,12 +249,20 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleEmailAuth}>
-                  <div className="grid gap-6">
-                    <div className="flex flex-col gap-4">
+                  <div className="grid gap-6 relative">
+                    <div className="flex flex-col gap-4 relative z-0">
+                      {cookies.lastUsedLogin === 'google' && (
+                        <div className="absolute z-20 translate-y-0 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 rounded-md right-1/8 top rotate-[20deg] font-medium text-center whitespace-nowrap bg-white text-black shadow-md">Last Used!</div>
+                      )}
                       <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
                       </Button>
+                      {cookies.lastUsedLogin === 'github' && (
+                        <div className="absolute z-20 translate-y-12 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 rounded-md right-1/8 top rotate-[20deg] font-medium text-center whitespace-nowrap bg-white text-black shadow-md">
+                          Last Used!
+                        </div>
+                      )}
                       <Button type="button" variant="outline" className="w-full" onClick={handleGitHubLogin}>
                         <GrGithub className="size-5 mr-2" />
                         {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
