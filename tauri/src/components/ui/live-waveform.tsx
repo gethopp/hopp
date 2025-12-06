@@ -312,13 +312,13 @@ export const LiveWaveform = ({
             // Mirror the data for symmetric display
             for (let i = halfCount - 1; i >= 0; i--) {
               const dataIndex = Math.floor((i / halfCount) * relevantData.length);
-              const value = Math.min(1, (relevantData[dataIndex] / 255) * sensitivity);
+              const value = Math.min(1, ((relevantData[dataIndex] ?? 0) / 255) * sensitivity);
               newBars.push(Math.max(0.05, value));
             }
 
             for (let i = 0; i < halfCount; i++) {
               const dataIndex = Math.floor((i / halfCount) * relevantData.length);
-              const value = Math.min(1, (relevantData[dataIndex] / 255) * sensitivity);
+              const value = Math.min(1, ((relevantData[dataIndex] ?? 0) / 255) * sensitivity);
               newBars.push(Math.max(0.05, value));
             }
 
@@ -332,7 +332,7 @@ export const LiveWaveform = ({
             const relevantData = dataArray.slice(startFreq, endFreq);
 
             for (let i = 0; i < relevantData.length; i++) {
-              sum += relevantData[i];
+              sum += relevantData[i] ?? 0;
             }
             const average = (sum / relevantData.length / 255) * sensitivity;
 
