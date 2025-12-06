@@ -317,6 +317,7 @@ impl Capturer {
         {
             use livekit::webrtc::desktop_capturer::DesktopCaptureSourceType;
 
+            #[allow(unused_mut)]
             let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
             #[cfg(target_os = "macos")]
             {
@@ -355,6 +356,7 @@ impl Capturer {
                         },
                         result_clone,
                     );
+                    #[allow(unused_mut)]
                     let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
                     #[cfg(target_os = "macos")]
                     {

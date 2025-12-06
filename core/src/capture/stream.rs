@@ -348,6 +348,7 @@ impl Stream {
         }));
         let failures_count = Arc::new(Mutex::new(0));
 
+        #[allow(unused_mut)]
         let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
         #[cfg(target_os = "macos")]
         {
@@ -482,6 +483,7 @@ impl Stream {
             self.stop_capture();
         }
 
+        #[allow(unused_mut)]
         let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
         #[cfg(target_os = "macos")]
         {
