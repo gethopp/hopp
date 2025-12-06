@@ -1,6 +1,6 @@
 [package]
 name = "hopp_core"
-version = "0.0.38"
+version = "0.0.39"
 edition = "2021"
 authors = ["Iason Paraskevopoulos <iaswnparaskev@gmail.com>"]
 
