@@ -65,8 +65,9 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 
 	// Parse request body
 	var req struct {
-		PriceID string `json:"price_id,omitempty"`
-		Tier    string `json:"tier" validate:"required"`
+		PriceID  string `json:"price_id,omitempty"`
+		Tier     string `json:"tier" validate:"required"`
+		Referral string `json:"referral,omitempty"` // Rewardful referral ID for affiliate tracking
 	}
 
 	if err := c.Bind(&req); err != nil {
@@ -171,6 +172,12 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
 			Enabled: stripe.Bool(true),
 		},
+	}
+
+	// Pass Rewardful referral ID for affiliate tracking (only if present)
+	// Stripe raises an error if client_reference_id is blank
+	if req.Referral != "" {
+		params.ClientReferenceID = stripe.String(req.Referral)
 	}
 
 	session, err := checkoutsession.New(params)

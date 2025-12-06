@@ -12,6 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import clsx from "clsx";
 import { FaCheck } from "react-icons/fa";
 import { PrimaryCTA } from "@/components/ui/atomic/Buttons";
+import { getRewardfulReferral } from "@/lib/rewardful";
 
 type SubscriptionResponse = components["schemas"]["SubscriptionResponse"];
 
@@ -65,9 +66,12 @@ export function Subscription() {
 
     setActionLoading(tier);
     try {
+      const referral = getRewardfulReferral();
+
       const response = await createCheckoutSessionMutation.mutateAsync({
         body: {
           tier: tier as "paid",
+          ...(referral && { referral }),
         },
       });
 

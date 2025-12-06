@@ -138,6 +138,9 @@ components:
         price_id:
           type: string
           description: Optional Stripe price ID (uses environment default if not provided)
+        referral:
+          type: string
+          description: Optional Rewardful referral ID for affiliate tracking
 
   securitySchemes:
     BearerAuth:
