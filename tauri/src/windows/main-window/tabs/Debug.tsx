@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { soundUtils } from "@/lib/sound_utils";
-import { tauriUtils } from "@/windows/window-utils.ts";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
 
 export const Debug = () => {
@@ -106,6 +105,17 @@ export const Debug = () => {
           variant={callTokens?.krispToggle === false ? "destructive" : "default"}
         >
           Krisp: {callTokens?.krispToggle === false ? "Disabled" : "Enabled"}
+        </Button>
+        <Button
+          onClick={() => {
+            updateCallTokens({
+              av1Enabled: !(callTokens?.av1Enabled ?? false),
+            });
+          }}
+          disabled={!(callTokens?.controllerSupportsAv1 && !callTokens?.isRoomCall)}
+          variant={callTokens?.av1Enabled ? "default" : "destructive"}
+        >
+          AV1: {callTokens?.av1Enabled ? "Enabled" : "Disabled"}
         </Button>
       </div>
     </div>

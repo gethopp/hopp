@@ -14,7 +14,7 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
 import clsx from "clsx";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import useStore from "@/store/store";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -68,12 +68,11 @@ async function screenshare(
 
 function Window() {
   useDisableNativeContextMenu();
+  const { callTokens } = useStore();
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getTokenParam("videoToken");
-  const canUseAv1 = tauriUtils.getTokenParam("useAv1") === "true";
-  const [av1Enabled, setAv1Enabled] = useState(false);
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
@@ -107,7 +106,13 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(content, resolution, videoToken, accessibilityPermission, av1Enabled);
+      const success = await screenshare(
+        content,
+        resolution,
+        videoToken,
+        accessibilityPermission,
+        callTokens?.av1Enabled ?? false,
+      );
       if (success) {
         await appWindow.close();
       }
@@ -183,27 +188,6 @@ function Window() {
               <SelectItem value="4K">4K</SelectItem>
             </SelectContent>
           </Select>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  {canUseAv1 && (
-                    <Button
-                      variant={av1Enabled ? "default" : "secondary"}
-                      disabled={!canUseAv1}
-                      onClick={() => setAv1Enabled(!av1Enabled)}
-                      className={clsx("w-[100px] opacity-50")}
-                    >
-                      {av1Enabled ? "AV1 On" : "AV1 Off"}
-                    </Button>
-                  )}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Enable AV1 encoding for higher quality video at lower bandwidth.</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
         </div>
       </div>
       <div

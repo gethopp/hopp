@@ -30,6 +30,8 @@ export type CallState = {
   room?: components["schemas"]["Room"];
   cameraWindowOpen?: boolean;
   krispToggle?: boolean;
+  controllerSupportsAv1?: boolean;
+  av1Enabled?: boolean;
 } & TCallTokensMessage["payload"];
 
 type State = {

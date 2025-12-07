@@ -747,6 +747,20 @@ function MediaDevicesSettings() {
     );
   }, [localParticipant, room?.state, remoteParticipants]);
 
+  const callTokensRef = useRef(callTokens);
+  useEffect(() => {
+    if (!callTokens) return;
+    callTokensRef.current = callTokens;
+  }, [callTokens]);
+
+  useEffect(() => {
+    if (!callTokensRef.current) return;
+    setCallTokens({
+      ...callTokensRef.current,
+      controllerSupportsAv1: controllerSupportsAv1,
+    });
+  }, [controllerSupportsAv1]);
+
   return (
     <div className="flex flex-row gap-1 w-full">
       <MicrophoneIcon />
