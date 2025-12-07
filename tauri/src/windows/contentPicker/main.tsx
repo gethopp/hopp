@@ -175,20 +175,18 @@ function Window() {
       )}
       <div className="flex flex-col items-start gap-2 px-4 py-2 mt-2">
         <span className="mr-2 small">Choose resolution:</span>
-        <div className="flex flex-row gap-2 items-center">
-          <Select onValueChange={updateResolution} value={resolution}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select resolution" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1080p">1080p</SelectItem>
-              <SelectItem value="2K">2K</SelectItem>
-              <SelectItem value="1440p">1440p</SelectItem>
-              <SelectItem value="2160p">2160p</SelectItem>
-              <SelectItem value="4K">4K</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <Select onValueChange={updateResolution} value={resolution}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Select resolution" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="1080p">1080p</SelectItem>
+            <SelectItem value="2K">2K</SelectItem>
+            <SelectItem value="1440p">1440p</SelectItem>
+            <SelectItem value="2160p">2160p</SelectItem>
+            <SelectItem value="4K">4K</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div
         className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
