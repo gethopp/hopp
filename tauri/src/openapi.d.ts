@@ -1737,6 +1737,8 @@ export interface components {
       tier: "paid";
       /** @description Optional Stripe price ID (uses environment default if not provided) */
       price_id?: string;
+      /** @description Optional Rewardful referral ID for affiliate tracking */
+      referral?: string;
     };
   };
   responses: never;
