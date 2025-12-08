@@ -3,7 +3,7 @@ import "../../App.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
-import { useDisableNativeContextMenu, useInboundCameraBandwidthMonitor } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useInboundCameraBandwidthMonitor, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { LiveKitRoom, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track, VideoQuality } from "livekit-client";
@@ -268,10 +268,10 @@ function ConsumerComponent({
               maxHeight: `${videoSize}px`,
               maxWidth: `${videoSize}px`,
             }}
-            className="flex flex-col rounded-lg items-center justify-center border border-slate-600/20 bg-slate-600/30"
+            className="flex flex-col rounded-lg items-center justify-center border border-slate-400/30 dark:border-slate-600/20 bg-slate-400/30 dark:bg-slate-600/30"
           >
             <CgSpinner className="animate-spin" />
-            <span className="text-sm text-white/80">Loading</span>
+            <span className="text-sm text-black/80 dark:text-white/80">Loading</span>
           </div>
         )}
         {visibleTracks.map((track) => (
@@ -373,7 +373,7 @@ function SizeModeSelector({
       <Button
         variant="ghost"
         size="icon-sm"
-        className="text-white/80 hover:text-white hover:bg-white/10"
+        className="text-black/80 dark:text-white/80 hover:text-black dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10"
         onClick={() => setIsOpen(!isOpen)}
       >
         <IoGridOutline className="size-4" />
@@ -385,7 +385,7 @@ function SizeModeSelector({
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
 
           {/* Modal - positioned below the button */}
-          <div className="absolute right-0 top-full mt-1 z-50 bg-gray-500/40 backdrop-blur-sm rounded-md shadow-lg border border-white/10 p-1.5 flex gap-1 w-max">
+          <div className="absolute right-0 top-full mt-1 z-50 bg-white/40 dark:bg-gray-500/40 backdrop-blur-sm rounded-md shadow-lg border border-black/10 dark:border-white/10 p-1.5 flex gap-1 w-max">
             {modes.map(({ mode }) => (
               <button
                 key={mode}
@@ -394,8 +394,10 @@ function SizeModeSelector({
                   setIsOpen(false);
                 }}
                 className={clsx(
-                  "p-1.5 rounded transition-all hover:bg-white/20 shrink-0",
-                  currentMode === mode ? "bg-white/20 ring-1 ring-white/40" : "bg-transparent",
+                  "p-1.5 rounded transition-all hover:bg-black/20 dark:hover:bg-white/20 shrink-0",
+                  currentMode === mode ?
+                    "bg-white/40 dark:bg-white/20 ring-1 ring-black/40 dark:ring-white/40"
+                  : "bg-transparent",
                 )}
                 title={
                   mode === "small" ? "Small (216p)"
@@ -409,27 +411,27 @@ function SizeModeSelector({
                   {mode === "small" && (
                     // Small: 3 equal small squares vertically
                     <div className="flex flex-col gap-0.5">
-                      <div className="w-2.5 h-2.5 bg-white/60 rounded-sm" />
-                      <div className="w-2.5 h-2.5 bg-white/60 rounded-sm" />
-                      <div className="w-2.5 h-2.5 bg-white/60 rounded-sm" />
+                      <div className="w-2.5 h-2.5 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-2.5 h-2.5 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-2.5 h-2.5 bg-white/60 dark:bg-white/60 rounded-sm" />
                     </div>
                   )}
                   {mode === "medium" && (
                     // Medium: grid layout with slightly smaller squares
                     <div className="grid grid-cols-2 gap-0.5">
-                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
-                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
-                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
-                      <div className="w-3 h-3 bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-3 h-3 bg-white/60 dark:bg-white/60 rounded-sm" />
                     </div>
                   )}
                   {mode === "big" && (
                     // Big: Grid with 2 columns
                     <div className="grid grid-cols-2 gap-0.5">
-                      <div className="w-4 h-4 bg-white/60 rounded-sm" />
-                      <div className="w-4 h-4 bg-white/60 rounded-sm" />
-                      <div className="w-4 h-4 bg-white/60 rounded-sm" />
-                      <div className="w-4 h-4 bg-white/60 rounded-sm" />
+                      <div className="w-4 h-4 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-4 h-4 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-4 h-4 bg-white/60 dark:bg-white/60 rounded-sm" />
+                      <div className="w-4 h-4 bg-white/60 dark:bg-white/60 rounded-sm" />
                     </div>
                   )}
                 </div>
@@ -480,6 +482,7 @@ const putWindowCorner = async () => {
 
 function CameraWindow() {
   useDisableNativeContextMenu();
+  useSystemTheme();
   const [cameraToken, setCameraToken] = useState<string | null>(null);
   const [isSelfHidden, setIsSelfHidden] = useState(false);
   const [livekitUrl, setLivekitUrl] = useState<string>("");
@@ -511,20 +514,20 @@ function CameraWindow() {
   }, []);
 
   return (
-    <div className="h-full min-h-full overflow-hidden bg-transparent text-white">
+    <div className="h-full min-h-full overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px]">
       <div
         data-tauri-drag-region
-        className="h-[36px] min-w-full bg-gray-500/40 rounded-none titlebar w-full flex flex-row items-center justify-start px-3 relative overflow-visible"
+        className="h-[36px] min-w-full bg-black/10 dark:bg-white/10 rounded-t-[26px] titlebar w-full flex flex-row items-center justify-start px-3 relative overflow-visible"
       >
         <WindowActions.Empty onClick={() => putWindowCorner()} className=" justify-self-start">
           <CustomIcons.Corner />
         </WindowActions.Empty>
-        {/* <div className="pointer-events-none ml-auto font-medium text-white/80 text-[12px]">+2 more users</div> */}
+        {/* <div className="pointer-events-none ml-auto font-medium text-black/80 dark:text-white/80 text-[12px]">+2 more users</div> */}
         <div className="ml-auto flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon-sm"
-            className="text-white/80 hover:text-white hover:bg-white/10"
+            className="text-black/80 dark:text-white/80 hover:text-black dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10"
             onClick={() => getCurrentWebviewWindow().minimize()}
           >
             <VscChromeMinimize className="size-4" />
@@ -534,7 +537,7 @@ function CameraWindow() {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="text-white/80 hover:text-white hover:bg-white/10"
+              className="text-black/80 dark:text-white/80 hover:text-black dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10"
               onClick={() => setIsSelfHidden(false)}
             >
               <HiOutlineEye className="w-4 h-4" />

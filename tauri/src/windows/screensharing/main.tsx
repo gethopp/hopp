@@ -6,7 +6,7 @@ import { SharingScreen } from "@/components/SharingScreen/SharingScreen";
 import { SharingProvider, useSharingContext } from "./context";
 import { ScreenSharingControls, RemoteControlDisabledIndicator } from "@/components/SharingScreen/Controls";
 import { Toaster } from "react-hot-toast";
-import { useDisableNativeContextMenu, useResizeListener } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useResizeListener, useSystemTheme } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import { tauriUtils } from "../window-utils";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -45,7 +45,7 @@ const TitlebarButton = ({
       disabled={disabled}
       aria-label={label}
       className={cn(
-        "group relative size-[16px] border border-white/20 bg-white/10 text-black/50 pointer-events-auto backdrop-blur-md rounded-full",
+        "group relative size-[16px] border border-black/20 dark:border-white/20 bg-black/10 dark:bg-white/10 text-black/50 dark:text-slate-700/80 pointer-events-auto backdrop-blur-md rounded-full",
         disabled ? "opacity-35 cursor-not-allowed" : "active:translate-y-0",
         className,
       )}
@@ -57,6 +57,7 @@ const TitlebarButton = ({
 
 function Window() {
   useDisableNativeContextMenu();
+  useSystemTheme(); // Listen for system theme changes
   const { setParentKeyTrap, setVideoToken, videoToken, streamDimensions } = useSharingContext();
   const [livekitUrl, setLivekitUrl] = useState<string>("");
   const previousSizeRef = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
@@ -192,27 +193,35 @@ function Window() {
 
   return (
     <div
-      className="h-full w-full bg-transparent text-white rounded-[18px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden group"
+      className="h-full w-full bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden group"
       tabIndex={0}
       ref={(ref) => ref && setParentKeyTrap(ref)}
     >
       <Toaster position="bottom-center" />
       <div
         data-tauri-drag-region
-        className="title-panel grid grid-cols-[1fr_auto_1fr] items-center h-[40px] px-3 titlebar w-full border-b border-slate-800/20"
+        className="title-panel grid grid-cols-[1fr_auto_1fr] items-center h-[40px] px-3 titlebar w-full border-b border-slate-700/20 dark:border-slate-200/20"
       >
         <div className="flex items-center justify-start gap-2" data-tauri-drag-region="no-drag">
-          <TitlebarButton onClick={handleClose} label="Close window" className="group-hover:bg-red-500">
+          <TitlebarButton
+            onClick={handleClose}
+            label="Close window"
+            className="group-hover:bg-red-500 dark:group-hover:bg-red-500"
+          >
             <LuX className="size-[10px] stroke-[3px]" />
           </TitlebarButton>
-          <TitlebarButton onClick={handleMinimize} label="Minimize window" className="group-hover:bg-yellow-500">
+          <TitlebarButton
+            onClick={handleMinimize}
+            label="Minimize window"
+            className="group-hover:bg-yellow-500 dark:group-hover:bg-yellow-500"
+          >
             <LuMinus className="size-[10px] stroke-[3px]" />
           </TitlebarButton>
           <TitlebarButton
             onClick={fullscreenDisabled ? undefined : handleFullscreen}
             disabled={fullscreenDisabled}
             label={isMaximized ? "Restore window size" : "Fit window to stream"}
-            className="group-hover:bg-green-500"
+            className="group-hover:bg-green-500 dark:group-hover:bg-green-500"
           >
             {isMaximized ?
               <LuMinimize2 className="size-[10px] stroke-[3px]" />
