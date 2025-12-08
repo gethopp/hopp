@@ -213,6 +213,13 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     window.location.href = url.toString();
   };
 
+  const LastUsedPill = () => (
+    <div
+      className="absolute z-20 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 right-[30px] top-[-15px] font-medium text-center whitespace-nowrap bg-white shadow-md text-slate-700 text-xs rounded-md">
+      Last Used
+    </div>
+  );
+
   if (isLoadingInvitation) {
     return (
       <div className="flex flex-row items-center justify-center min-w-screen min-h-screen">
@@ -251,21 +258,20 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <form onSubmit={handleEmailAuth}>
                   <div className="grid gap-6 relative">
                     <div className="flex flex-col gap-4 relative z-0">
-                      {cookies.lastUsedLogin === 'google' && (
-                        <div className="absolute z-20 translate-y-0 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 rounded-md right-1/8 top rotate-[20deg] font-medium text-center whitespace-nowrap bg-white text-black shadow-md">Last Used!</div>
-                      )}
-                      <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
+
+                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
+                        {cookies.lastUsedLogin === 'google' && (
+                        <LastUsedPill/>
+                        )}
                       </Button>
-                      {cookies.lastUsedLogin === 'github' && (
-                        <div className="absolute z-20 translate-y-12 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 rounded-md right-1/8 top rotate-[20deg] font-medium text-center whitespace-nowrap bg-white text-black shadow-md">
-                          Last Used!
-                        </div>
-                      )}
-                      <Button type="button" variant="outline" className="w-full" onClick={handleGitHubLogin}>
+                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGitHubLogin}>
                         <GrGithub className="size-5 mr-2" />
                         {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
+                        {cookies.lastUsedLogin === 'github' && (
+                        <LastUsedPill/>
+                        )}
                       </Button>
                       {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
                       {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
