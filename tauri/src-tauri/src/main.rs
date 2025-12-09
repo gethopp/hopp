@@ -539,27 +539,6 @@ async fn create_content_picker_window(
 }
 
 #[tauri::command]
-async fn create_permissions_window(app: tauri::AppHandle) -> Result<(), String> {
-    log::info!("create_permissions_window");
-
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "permissions",
-            title: "Permissions Configuration",
-            url: "permissions.html",
-            width: 900.0,
-            height: 730.0,
-            resizable: false,
-            always_on_top: false,
-            content_protected: false,
-            maximizable: false,
-            decorations: true,
-        },
-    )
-}
-
-#[tauri::command]
 fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: String) {
     log::info!("set_sentry_metadata");
     sentry_utils::init_metadata(user_email.clone(), app_version.clone());
@@ -936,7 +915,6 @@ fn main() {
             create_camera_window,
             create_screenshare_window,
             create_content_picker_window,
-            create_permissions_window,
             set_sentry_metadata,
             call_started,
         ])
