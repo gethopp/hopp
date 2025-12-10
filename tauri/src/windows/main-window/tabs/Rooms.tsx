@@ -1,5 +1,5 @@
-import { BACKEND_URLS } from "@/constants";
 import { components } from "@/openapi";
+import { Constants } from "@/constants";
 import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
 import { Input } from "@/components/ui/input";
@@ -382,7 +382,7 @@ const SelectedRoom = ({ room }: { room: Room }) => {
       toast.error("Error generating link");
       return;
     }
-    const link = `${BACKEND_URLS.BASE}${redirectURL.redirect_url}`;
+    const link = `${Constants.backendUrl}${redirectURL.redirect_url}`;
     await writeText(link);
     toast.success("Link copied to clipboard");
   }, [getRoomAnonymous, room.id]);

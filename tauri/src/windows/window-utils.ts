@@ -249,6 +249,34 @@ const callStarted = async (callerId: string) => {
   return await invoke("call_started", { callerId });
 };
 
+/**
+ * Loads the custom server URL from Tauri backend.
+ */
+const loadCustomServerUrl = async (): Promise<string | null> => {
+  try {
+    return await invoke<string | null>("get_hopp_server_url");
+  } catch (error) {
+    console.error("Failed to load custom server url from backend:", error);
+  }
+  return null;
+};
+
+/**
+ * Sets a custom Hopp server URL.
+ * Pass null to clear the custom URL and use the default.
+ * Signs out the user when the URL changes.
+ */
+const setHoppServerUrl = async (url: string | null): Promise<void> => {
+  try {
+    await invoke("set_hopp_server_url", { url });
+    // Sign out the user when changing the server URL
+    await deleteStoredToken();
+  } catch (error) {
+    console.error("Failed to set hopp server url:", error);
+    throw error;
+  }
+};
+
 export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
@@ -281,4 +309,6 @@ export const tauriUtils = {
   getLivekitUrl,
   setSentryMetadata,
   callStarted,
+  loadCustomServerUrl,
+  setHoppServerUrl,
 };

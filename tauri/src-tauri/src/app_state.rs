@@ -275,6 +275,22 @@ impl AppState {
         }
     }
 
+    /// Gets the hopp server URL override.
+    pub fn hopp_server_url(&self) -> Option<String> {
+        let _lock = self.lock.lock().unwrap();
+        self.state.hopp_server_url.clone()
+    }
+
+    /// Updates the hopp server URL override and saves to disk.
+    pub fn set_hopp_server_url(&mut self, url: Option<String>) {
+        log::info!("set_hopp_server_url: {url:?}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.hopp_server_url = url;
+        if !self.save() {
+            log::error!("set_hopp_server_url: Failed to save app state");
+        }
+    }
+
     /// Saves the current state to disk.
     ///
     /// # Returns
