@@ -3,7 +3,7 @@ import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { tauriUtils } from "@/windows/window-utils";
 import { paths } from "@/openapi";
-import { getBackendBaseUrl } from "@/constants";
+import { Constants } from "@/constants";
 
 /**
  * Validates an authentication token by fetching user details.
@@ -18,7 +18,7 @@ export const validateAndSetAuthToken = async (token: string) => {
   }
 
   const tempFetchClient = createFetchClient<paths>({
-    baseUrl: getBackendBaseUrl(),
+    baseUrl: Constants.backendUrl,
     headers: {
       Authorization: `Bearer ${token}`,
     },

@@ -13,56 +13,29 @@ export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN_JS as string;
 export const POSTHOG_API_KEY = import.meta.env.VITE_POSTHOG_API_KEY as string;
 export const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST as string;
 
-export const BACKEND_URLS = {
-  BASE: `https://${URLS.API_BASE_URL}`,
-  LOGIN_JWT: `https://${URLS.API_BASE_URL}/login-app`,
-} as const;
-
 /**
- * Gets the API base URL (custom or default).
- * Non-reactive - use for non-React code or when you don't need reactivity.
+ * Constants class providing access to URLs with custom server URL support.
+ * Uses static getters to always return the current value from the store.
  */
-export const getApiBaseUrl = (): string => {
-  const customUrl = useStore.getState().customServerUrl;
-  return customUrl || URLS.API_BASE_URL;
-};
+export class Constants {
+  /** The API base URL (custom or default, without protocol). */
+  static get apiBaseUrl(): string {
+    const customUrl = useStore.getState().customServerUrl;
+    return customUrl || URLS.API_BASE_URL;
+  }
 
-/**
- * Gets the full backend base URL (with https://).
- */
-export const getBackendBaseUrl = (): string => {
-  return `https://${getApiBaseUrl()}`;
-};
+  /** The full backend base URL with https:// protocol. */
+  static get backendUrl(): string {
+    return `https://${this.apiBaseUrl}`;
+  }
 
-/**
- * Gets the websocket URL.
- */
-export const getWebsocketUrl = (): string => {
-  return `wss://${getApiBaseUrl()}/api/auth/websocket`;
-};
+  /** The WebSocket URL for the auth websocket. */
+  static get websocketUrl(): string {
+    return `wss://${this.apiBaseUrl}/api/auth/websocket`;
+  }
 
-// ============ React Hooks (reactive) ============
-
-/**
- * Hook that returns the API base URL and re-renders when it changes.
- */
-export const useApiBaseUrl = (): string => {
-  const customUrl = useStore((state) => state.customServerUrl);
-  return customUrl || URLS.API_BASE_URL;
-};
-
-/**
- * Hook that returns the backend base URL and re-renders when it changes.
- */
-export const useBackendBaseUrl = (): string => {
-  const baseUrl = useApiBaseUrl();
-  return `https://${baseUrl}`;
-};
-
-/**
- * Hook that returns the login JWT URL and re-renders when it changes.
- */
-export const useLoginJwtUrl = (): string => {
-  const baseUrl = useApiBaseUrl();
-  return `https://${baseUrl}/login-app`;
-};
+  /** The login JWT URL. */
+  static get loginJwtUrl(): string {
+    return `https://${this.apiBaseUrl}/login-app`;
+  }
+}

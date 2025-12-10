@@ -1,7 +1,7 @@
 import useStore from "../store/store";
 import { WebSocket } from "partysocket";
 import { tauriUtils } from "@/windows/window-utils";
-import { getWebsocketUrl } from "@/constants";
+import { Constants } from "@/constants";
 
 class SocketService {
   private socket: WebSocket | null = null;
@@ -48,8 +48,7 @@ class SocketService {
     console.log("Connecting 📶:", token);
 
     try {
-      const wsUrl = getWebsocketUrl();
-      this.socket = new WebSocket(`${wsUrl}?token=${token}`, [], {
+      this.socket = new WebSocket(`${Constants.websocketUrl}?token=${token}`, [], {
         minReconnectionDelay: 200,
         maxReconnectionDelay: 1000,
       });

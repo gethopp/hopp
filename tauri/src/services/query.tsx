@@ -3,7 +3,7 @@ import createFetchClient from "openapi-fetch";
 import createClient, { type OpenapiQueryClient } from "openapi-react-query";
 import type { paths } from "../openapi";
 import useStore from "../store/store";
-import { getBackendBaseUrl } from "@/constants";
+import { Constants } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -60,7 +60,7 @@ export function QueryProvider({ children }: QueryProviderProps) {
   const fetchClient = useMemo(
     () =>
       createFetchClient<paths>({
-        baseUrl: getBackendBaseUrl(),
+        baseUrl: Constants.backendUrl,
         headers:
           authToken ?
             {
