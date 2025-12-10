@@ -686,7 +686,6 @@ function MediaDevicesSettings() {
         callTokens?.hasCameraEnabled,
         {
           resolution: VideoPresets.h720.resolution,
-          frameRate: 20,
         },
         {
           videoCodec: "h264",

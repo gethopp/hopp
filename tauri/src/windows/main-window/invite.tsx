@@ -1,5 +1,5 @@
 import { CopiableInput } from "@/components/ui/copiable-input";
-import { BACKEND_URLS } from "@/constants";
+import { useBackendBaseUrl } from "@/constants";
 import { useAPI } from "@/services/query";
 import { usePostHog } from "posthog-js/react";
 import headerBackground from "../../assets/header-invite.png";
@@ -7,6 +7,7 @@ import headerBackground from "../../assets/header-invite.png";
 function Invite() {
   const posthog = usePostHog();
   const { useQuery } = useAPI();
+  const backendBaseUrl = useBackendBaseUrl();
 
   const { data: inviteData, error } = useQuery("get", "/api/auth/get-invite-uuid", undefined, {
     queryHash: `invite`,
@@ -40,7 +41,7 @@ function Invite() {
       {inviteData && (
         <div className="w-full">
           <CopiableInput
-            value={inviteData?.invite_uuid ? `${BACKEND_URLS.BASE}/invitation/${inviteData.invite_uuid}` : ""}
+            value={inviteData?.invite_uuid ? `${backendBaseUrl}/invitation/${inviteData.invite_uuid}` : ""}
             readOnly
             className="text-slate-600 mt-4 w-full"
             onCopy={() => {

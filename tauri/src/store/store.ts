@@ -46,6 +46,7 @@ type State = {
   calling: string | null;
   // Call tokens for LiveKit
   callTokens: CallState | null;
+  customServerUrl: string | null;
 };
 
 type Actions = {
@@ -61,6 +62,7 @@ type Actions = {
   setCalling: (calling: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
   updateCallTokens: (tokens: Partial<CallState>) => void;
+  setCustomServerUrl: (url: string | null) => void;
 };
 
 const initialState: State = {
@@ -73,6 +75,7 @@ const initialState: State = {
   teammates: null,
   calling: null,
   callTokens: null,
+  customServerUrl: null,
 };
 
 /**
@@ -123,6 +126,10 @@ const useStore = create<State & Actions>()(
     getStoredToken: async () => {
       return await invoke<string | null>("get_stored_token");
     },
+    setCustomServerUrl: (url) =>
+      set((state) => {
+        state.customServerUrl = url;
+      }),
     setTab: (tab) =>
       set((state) => {
         state.tab = tab;

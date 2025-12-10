@@ -1,11 +1,10 @@
-import { URLS } from "@/constants";
 import useStore from "../store/store";
 import { WebSocket } from "partysocket";
 import { tauriUtils } from "@/windows/window-utils";
+import { getWebsocketUrl } from "@/constants";
 
 class SocketService {
   private socket: WebSocket | null = null;
-  private baseUrl = `wss://${URLS.API_BASE_URL}/api/auth/websocket`;
   private pingTimeout: NodeJS.Timeout | null = null;
   private messageHandlers = new Map<string, (data: any) => void>();
   private currentToken: string | null = null;
@@ -49,7 +48,8 @@ class SocketService {
     console.log("Connecting 📶:", token);
 
     try {
-      this.socket = new WebSocket(`${this.baseUrl}?token=${token}`, [], {
+      const wsUrl = getWebsocketUrl();
+      this.socket = new WebSocket(`${wsUrl}?token=${token}`, [], {
         minReconnectionDelay: 200,
         maxReconnectionDelay: 1000,
       });

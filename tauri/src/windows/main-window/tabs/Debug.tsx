@@ -7,10 +7,13 @@ import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { soundUtils } from "@/lib/sound_utils";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
+import { URLS } from "@/constants";
+import { tauriUtils } from "@/windows/window-utils";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, updateCallTokens, authToken } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
+  const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
 
   useEffect(() => {
@@ -58,6 +61,25 @@ export const Debug = () => {
             onChange={async (e) => {
               const newToken = e.target.value;
               await validateAndSetAuthToken(newToken);
+            }}
+          />
+        </div>
+
+        <div className="grid w-full max-w-sm items-center gap-1.5">
+          <Label htmlFor="customServerUrl">Custom Backend URL</Label>
+          <span className="muted">
+            Override the default backend URL. Leave empty to use default ({URLS.API_BASE_URL}).
+          </span>
+          <Input
+            type="text"
+            placeholder={URLS.API_BASE_URL}
+            value={localServerUrl}
+            onChange={async (e) => {
+              const newUrl = e.target.value;
+              setLocalServerUrl(newUrl);
+              const urlToSet = newUrl.trim() || null;
+              setCustomServerUrl(urlToSet);
+              await tauriUtils.setHoppServerUrl(urlToSet);
             }}
           />
         </div>

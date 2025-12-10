@@ -558,6 +558,24 @@ fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
 }
 
+#[tauri::command]
+fn get_hopp_server_url(app: tauri::AppHandle) -> Option<String> {
+    log::info!("get_hopp_server_url");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let url = data.app_state.hopp_server_url();
+    log::debug!("get_hopp_server_url: {url:?}");
+    url
+}
+
+#[tauri::command]
+fn set_hopp_server_url(app: tauri::AppHandle, url: Option<String>) {
+    log::info!("set_hopp_server_url: {url:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_hopp_server_url(url);
+}
+
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -906,6 +924,8 @@ fn main() {
             create_content_picker_window,
             set_sentry_metadata,
             call_started,
+            get_hopp_server_url,
+            set_hopp_server_url,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
