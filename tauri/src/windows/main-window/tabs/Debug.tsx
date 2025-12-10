@@ -9,12 +9,14 @@ import { soundUtils } from "@/lib/sound_utils";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
 import { URLS } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";
+import { usePostHog } from "posthog-js/react";
 
 export const Debug = () => {
   const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
+  const posthog = usePostHog();
 
   useEffect(() => {
     return () => {
@@ -80,6 +82,7 @@ export const Debug = () => {
               const urlToSet = newUrl.trim() || null;
               setCustomServerUrl(urlToSet);
               await tauriUtils.setHoppServerUrl(urlToSet);
+              posthog.capture("custom_backend_url_changed");
             }}
           />
         </div>

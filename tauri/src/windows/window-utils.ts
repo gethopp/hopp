@@ -251,7 +251,6 @@ const callStarted = async (callerId: string) => {
 
 /**
  * Loads the custom server URL from Tauri backend.
- * Should be called once at app startup.
  */
 const loadCustomServerUrl = async (): Promise<string | null> => {
   try {
