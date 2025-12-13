@@ -4,10 +4,18 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Hopp - Remote pairing app</title>
+    <script>
+      // Initialize theme before page renders to prevent flash
+      (function () {
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.classList.toggle("dark", prefersDark);
+      })();
+    </script>
   </head>
 
-  <body class="permissions-body bg-slate-900 dark">
+  <body class="permissions-body overflow-clip">
     <div id="root"></div>
     <script type="module" src="/src/windows/permissions/main.tsx"></script>
   </body>

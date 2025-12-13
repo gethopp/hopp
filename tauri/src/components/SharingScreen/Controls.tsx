@@ -67,7 +67,7 @@ export function RemoteControlDisabledIndicator() {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger>
-          <div className="flex flex-row gap-1 items-center muted border border-slate-600 text-white bg-slate-700 px-1.5 py-0.5 rounded-md">
+          <div className="flex flex-row gap-1 items-center muted border text-white bg-gray-500/80 dark:border-slate-600 dark:text-white dark:bg-slate-700 px-1.5 py-0.5 rounded-md rounded-tr-xl">
             <BiSolidJoystick className="size-4" /> Remote control is disabled
           </div>
         </TooltipTrigger>

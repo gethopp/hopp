@@ -528,7 +528,7 @@ pub fn get_sentry_dsn() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
+pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
     let ns_window: &objc2_app_kit::NSWindow = match window.ns_window() {
         Ok(ns_window) => unsafe { &*ns_window.cast() },
         Err(e) => {
@@ -610,20 +610,7 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
         .run_on_main_thread(move || {
             #[cfg(target_os = "macos")]
             {
-                use window_vibrancy::{
-                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-                };
-
-                if let Err(e) = apply_vibrancy(
-                    &window_clone,
-                    NSVisualEffectMaterial::HudWindow,
-                    Some(NSVisualEffectState::Active),
-                    Some(16.0),
-                ) {
-                    log::warn!("Failed to apply vibrancy to {} window: {}", label_clone, e);
-                }
-
-                set_window_corner_radius(&window_clone, 16.0);
+                set_window_corner_radius(&window_clone, 26.0);
             }
 
             #[cfg(target_os = "windows")]

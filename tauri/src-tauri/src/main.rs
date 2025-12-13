@@ -14,6 +14,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tauri_plugin_log::{Target, TargetKind};
 
+#[cfg(target_os = "macos")]
+use hopp::set_window_corner_radius;
 use hopp::{
     app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
     permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
@@ -828,17 +830,26 @@ fn main() {
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .title("Permissions Configuration")
                     .inner_size(900., 730.)
+                    .transparent(true)
+                    .shadow(true)
                     .build();
                     if let Err(e) = permissions_window {
                         log::error!("Failed to create permissions window: {e:?}");
                     } else {
+                        let permissions_window = permissions_window.unwrap();
+
+                        // Apply native styling on macOS
+                        #[cfg(target_os = "macos")]
+                        {
+                            set_window_corner_radius(&permissions_window, 26.0);
+                        }
+
                         /*
                          * Focus the window only if the notification window is not shown.
                          * When the notification window is shown we open the permissions window
                          * when it's closed.
                          */
                         if !show_dock {
-                            let permissions_window = permissions_window.unwrap();
                             let _ = permissions_window.show();
                             let _ = permissions_window.set_focus();
                         }

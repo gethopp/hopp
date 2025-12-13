@@ -5,7 +5,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { toast, Toaster } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
-import { useDisableNativeContextMenu } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import {
   PiMicrophoneDuotone,
@@ -30,6 +30,7 @@ interface PermissionStatus {
 
 function Window() {
   useDisableNativeContextMenu();
+  useSystemTheme();
   const [permissions, setPermissions] = useState<PermissionStatus>({
     mic: false,
     screenShare: false,
@@ -207,25 +208,25 @@ function Window() {
   }, [allPermissionsGranted]);
 
   return (
-    <div className="h-full overflow-hidden dark" tabIndex={0}>
+    <div className="h-full overflow-hidden text-black dark:text-white rounded-[26px] flex flex-col" tabIndex={0}>
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
-        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
+        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-black/5 dark:bg-white/5 flex flex-row justify-end pr-4 shrink-0"
       ></div>
 
-      <div className="flex flex-col items-start gap-4 px-4 py-6 mt-2">
+      <div className="flex flex-col items-start gap-4 px-4 py-6 mt-2 shrink-0">
         <div className="w-full">
-          <h1 className="h3 text-slate-100">Grant permissions</h1>
-          <p className="text-slate-400 text-sm leading-relaxed">
+          <h1 className="h3 text-slate-900 dark:text-slate-100">Grant permissions</h1>
+          <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">
             We need the following permissions to have been granted for Hopp to work properly. You can change these
             settings later in your system preferences.
           </p>
         </div>
 
         {allPermissionsGranted && (
-          <div className="w-full p-3 bg-green-900 bg-opacity-30 border border-green-700 rounded-md">
-            <div className="flex items-center gap-2 text-green-400 text-sm font-medium">
+          <div className="w-full p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-md">
+            <div className="flex items-center gap-2 text-green-700 dark:text-green-400 text-sm font-medium">
               <PiCheckCircleDuotone className="size-4" />
               All permissions granted! You can now use all features of Hopp.
             </div>
@@ -233,25 +234,29 @@ function Window() {
         )}
       </div>
 
-      <div className="content px-4 pb-4 overflow-auto flex flex-col gap-4">
+      <div className="content px-4 pb-4 overflow-y-auto overflow-x-clip flex-1 min-h-0 flex flex-col gap-4">
         {(["mic", "camera", "accessibility", "screenShare"] as Array<keyof PermissionStatus>).map((permission) => (
           <div
             key={permission}
-            className="flex items-center justify-between group p-4 rounded-md transition-all duration-300 hover:bg-slate-800 border border-slate-700"
+            className="flex items-center justify-between group p-4 rounded-md transition-all duration-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700"
           >
             <div className="flex items-center gap-4 flex-1">
-              <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-2xl">
+              <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-2xl">
                 {getPermissionIcon(permission)}
               </div>
 
               <div className="flex-1">
-                <h4 className="h4 font-semibold text-slate-100 mb-1">{getPermissionTitle(permission)}</h4>
-                <p className="text-sm mt-0 text-slate-400 leading-relaxed">{getPermissionDescription(permission)}</p>
+                <h4 className="h4 font-semibold text-slate-900 dark:text-slate-100 mb-1">
+                  {getPermissionTitle(permission)}
+                </h4>
+                <p className="text-sm mt-0 text-slate-600 dark:text-slate-400 leading-relaxed">
+                  {getPermissionDescription(permission)}
+                </p>
               </div>
             </div>
             <div className="ml-4">
               {permissions[permission] ?
-                <div className="flex flex-row items-center gap-1 text-green-400 font-medium text-md">
+                <div className="flex flex-row items-center gap-1 text-green-600 dark:text-green-400 font-medium text-md">
                   <PiCheckCircleDuotone className="size-4" />
                   <span>Granted</span>
                 </div>

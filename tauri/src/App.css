@@ -406,17 +406,31 @@ body {
   position: relative;
 }
 
+/*
+ * Centralized window background colors
+ * Used by all windows except main
+ */
+:root {
+  --bg-gray-light: #ececec;
+  --bg-gray-dark: #1d2220;
+}
+
 .screenshare-body {
   margin: 0;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: transparent;
+  border-radius: 26px;
 }
 
 .screenshare-body #root {
   height: 100%;
   width: 100%;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .screenshare-body #root {
+  background-color: var(--bg-gray-dark);
 }
 
 .screenshare-video-focus,
@@ -534,8 +548,43 @@ button {
 
 .camera-body {
   overflow: hidden;
+  border-radius: 26px;
+}
+
+.camera-body #root {
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .camera-body #root {
+  background-color: var(--bg-gray-dark);
 }
 
 .contentPicker-body {
-  background-color: rgba(0 0 0/0.3);
+  border-radius: 26px;
+}
+
+.contentPicker-body #root {
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .contentPicker-body #root {
+  background-color: var(--bg-gray-dark);
+}
+
+.permissions-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  border-radius: 26px;
+}
+
+.permissions-body #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .permissions-body #root {
+  background-color: var(--bg-gray-dark);
 }
