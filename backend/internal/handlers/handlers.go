@@ -1405,3 +1405,45 @@ func (h *AuthHandler) UnsubscribeUser(c echo.Context) error {
 
 	return echo.NewHTTPError(http.StatusMethodNotAllowed, "Method not allowed")
 }
+
+// SubmitFeedback handles post-call feedback submissions
+func (h *AuthHandler) SubmitFeedback(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
+	}
+
+	feedback := new(models.Feedback)
+	if err := c.Bind(feedback); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	if err := c.Validate(feedback); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Set the participant ID from the authenticated user
+	feedback.ParticipantID = user.ID
+
+	if err := h.DB.Create(feedback).Error; err != nil {
+		c.Logger().Error("Failed to create feedback:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save feedback")
+	}
+
+	// Send Telegram notification
+	var message string
+	scoreEmojis := []string{"😡", "😕", "😐", "😊", "🤩"}
+	scoreEmoji := scoreEmojis[feedback.Score-1]
+
+	if feedback.Feedback != "" {
+		message = fmt.Sprintf("📝 Call Feedback\nUser: %s\nScore: %d/5 %s\nFeedback: %s",
+			user.ID, feedback.Score, scoreEmoji, feedback.Feedback)
+	} else {
+		message = fmt.Sprintf("📝 Call Feedback\nUser: %s\nScore: %d/5 %s",
+			user.ID, feedback.Score, scoreEmoji)
+	}
+
+	_ = notifications.SendTelegramNotification(message, h.Config)
+
+	return c.NoContent(http.StatusCreated)
+}

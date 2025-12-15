@@ -277,6 +277,44 @@ const setHoppServerUrl = async (url: string | null): Promise<void> => {
   }
 };
 
+const getFeedbackDisabled = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_feedback_disabled");
+};
+
+const setFeedbackDisabled = async (disabled: boolean): Promise<void> => {
+  await invoke("set_feedback_disabled", { disabled });
+};
+
+const createFeedbackWindow = async (teamId: string, roomId: string, participantId: string): Promise<void> => {
+  if (isTauri) {
+    try {
+      await invoke("create_feedback_window", { teamId, roomId, participantId });
+      const windowHandle = await WebviewWindow.getByLabel("feedback");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to create feedback window:", error);
+    }
+  } else {
+    const URL = `feedback.html?teamId=${teamId}&roomId=${roomId}&participantId=${participantId}`;
+    window.open(URL);
+  }
+};
+
+const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, participantId: string): Promise<void> => {
+  if (!isTauri) return;
+
+  try {
+    const disabled = await getFeedbackDisabled();
+    if (!disabled) {
+      await createFeedbackWindow(teamId, roomId, participantId);
+    }
+  } catch (error) {
+    console.error("Failed to check/show feedback window:", error);
+  }
+};
+
 export const tauriUtils = {
   createScreenShareWindow,
   closeScreenShareWindow,
@@ -311,4 +349,8 @@ export const tauriUtils = {
   callStarted,
   loadCustomServerUrl,
   setHoppServerUrl,
+  getFeedbackDisabled,
+  setFeedbackDisabled,
+  createFeedbackWindow,
+  showFeedbackWindowIfEnabled,
 };

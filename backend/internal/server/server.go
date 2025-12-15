@@ -217,6 +217,7 @@ func (s *Server) runMigrations() {
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
 		&models.Subscription{},
+		&models.Feedback{},
 	)
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
@@ -356,6 +357,9 @@ func (s *Server) setupRoutes() {
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)
+
+	// Feedback endpoint
+	protectedAPI.POST("/feedback", auth.SubmitFeedback)
 
 	// Protected billing endpoints
 	protectedAPI.GET("/billing/subscription", billing.GetSubscriptionStatus)

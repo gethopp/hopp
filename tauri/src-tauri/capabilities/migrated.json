@@ -2,7 +2,7 @@
   "identifier": "migrated",
   "description": "permissions that were migrated from v1",
   "local": true,
-  "windows": ["main", "contentPicker", "screenshare", "permissions", "trayNotification", "camera"],
+  "windows": ["main", "contentPicker", "screenshare", "permissions", "trayNotification", "camera", "feedback"],
   "permissions": [
     "core:default",
     "fs:allow-read-file",

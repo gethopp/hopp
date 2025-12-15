@@ -80,7 +80,7 @@ export function CallCenter() {
 }
 
 export function ConnectedActions() {
-  const { callTokens, teammates, setCallTokens } = useStore();
+  const { callTokens, teammates, setCallTokens, user } = useStore();
   const posthog = usePostHog();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
@@ -109,7 +109,12 @@ export function ConnectedActions() {
   const handleEndCall = useCallback(() => {
     if (!callTokens) return;
 
-    const { timeStarted, participant } = callTokens;
+    const { timeStarted, participant, room } = callTokens;
+
+    // Capture call info before clearing tokens for feedback
+    const teamId = user?.team_id?.toString() || "";
+    const roomId = room?.id || "";
+    const participantId = user?.id || "";
 
     // Send websocket message to end call
     socketService.send({
@@ -130,6 +135,11 @@ export function ConnectedActions() {
 
     setCallTokens(null);
 
+    // Show feedback window for the person ending the call
+    if (participantId && teamId) {
+      tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+    }
+
     // Send posthog event on how much
     // time in seconds the call lasted.
     // Time is serialized as a string in store
@@ -139,7 +149,7 @@ export function ConnectedActions() {
       duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
       participant,
     });
-  }, [callTokens, setCallTokens]);
+  }, [callTokens, setCallTokens, user]);
 
   // Stop call when teammate disconnects
   useEffect(() => {

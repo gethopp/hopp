@@ -569,6 +569,7 @@ pub struct MediaWindowConfig<'a> {
     pub always_on_top: bool,
     pub content_protected: bool,
     pub maximizable: bool,
+    pub minimizable: bool,
     pub decorations: bool,
 }
 
@@ -591,6 +592,7 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
             .shadow(true)
             .always_on_top(config.always_on_top)
             .maximizable(config.maximizable)
+            .minimizable(config.minimizable)
             .content_protected(config.content_protected);
 
     #[cfg(target_os = "macos")]

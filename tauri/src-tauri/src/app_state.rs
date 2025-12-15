@@ -43,6 +43,9 @@ struct AppStateInternal {
 
     /// Hopp server URL
     pub hopp_server_url: Option<String>,
+
+    /// Whether the post-call feedback dialog is disabled
+    pub feedback_disabled: bool,
 }
 
 /// Legacy version of the application state structure.
@@ -62,6 +65,7 @@ impl Default for AppStateInternal {
     /// - First run: true
     /// - User JWT: none
     /// - Hopp server URL: none
+    /// - Feedback disabled: false
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -69,6 +73,7 @@ impl Default for AppStateInternal {
             first_run: true,
             user_jwt: None,
             hopp_server_url: None,
+            feedback_disabled: false,
         }
     }
 }
@@ -288,6 +293,22 @@ impl AppState {
         self.state.hopp_server_url = url;
         if !self.save() {
             log::error!("set_hopp_server_url: Failed to save app state");
+        }
+    }
+
+    /// Gets whether post-call feedback dialog is disabled.
+    pub fn feedback_disabled(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.feedback_disabled
+    }
+
+    /// Updates the feedback disabled setting and saves to disk.
+    pub fn set_feedback_disabled(&mut self, disabled: bool) {
+        log::info!("set_feedback_disabled: {disabled}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.feedback_disabled = disabled;
+        if !self.save() {
+            log::error!("set_feedback_disabled: Failed to save app state");
         }
     }
 
