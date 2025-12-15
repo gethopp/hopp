@@ -47,6 +47,7 @@ export default defineConfig(async (config) => {
           permissions: resolve(__dirname, "permissions.html"),
           trayNotification: resolve(__dirname, "trayNotification.html"),
           camera: resolve(__dirname, "camera.html"),
+          feedback: resolve(__dirname, "feedback.html"),
         },
       },
     },

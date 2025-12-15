@@ -186,6 +186,9 @@ func (s *Server) setupRedis() {
 func (s *Server) setupSessionStore() {
 	store := gormstore.New(s.DB, []byte(s.Config.Auth.SessionSecret))
 	store.SessionOpts.MaxAge = 60 * 60 * 24 * 30 // 30 days
+	store.SessionOpts.SameSite = http.SameSiteLaxMode
+	store.SessionOpts.HttpOnly = true
+
 	quit := make(chan struct{})
 	go store.PeriodicCleanup(1*time.Hour, quit)
 

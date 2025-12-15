@@ -296,7 +296,10 @@ func (h *AuthHandler) SocialLogin(c echo.Context) error {
 		sess, err := session.Get("session", c)
 		if err == nil {
 			sess.Values["team_invite_uuid"] = inviteUUID
-			sess.Save(c.Request(), c.Response())
+			err := sess.Save(c.Request(), c.Response())
+			if err != nil {
+				c.Logger().Errorf("Failed to save team invite in social login session: %v", err)
+			}
 		}
 	}
 
