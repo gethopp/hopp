@@ -54,6 +54,7 @@ struct OldAppStateInternal {
     pub tray_notification: bool,
     pub last_used_mic: Option<String>,
     pub first_run: bool,
+    pub user_jwt: Option<String>,
 }
 
 impl Default for AppStateInternal {
@@ -187,6 +188,9 @@ impl AppState {
                                 ..Default::default()
                             };
                             new_state.user_jwt = retrieve_old_jwt(root_folder);
+                            if new_state.user_jwt.is_none() {
+                                new_state.user_jwt = state.user_jwt;
+                            }
 
                             let app_state_path = root_folder.join(app_state_filename);
                             if !Self::write_file(&app_state_path, &new_state) {
