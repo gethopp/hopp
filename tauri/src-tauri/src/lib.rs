@@ -14,9 +14,9 @@ use tauri::async_runtime::Receiver;
 use tauri::path::BaseDirectory;
 #[cfg(target_os = "macos")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, Wry};
+use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 #[cfg(target_os = "macos")]
-use tauri::{Rect, WebviewWindow};
+use tauri::{Rect, TitleBarStyle, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
@@ -418,21 +418,6 @@ fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: b
     }
 }
 
-/// Returns the name for file that stores the token.
-pub fn get_token_filename() -> String {
-    /*
-     * Initialize the token filename based on debug/release mode.
-     * The suffix is added on debug when starting the replica app in the
-     * same machine for faster debugging.
-     */
-    if cfg!(debug_assertions) {
-        let random_suffix = env::var("HOPP_SUFFIX").unwrap_or_default();
-        format!("user_token_{random_suffix}.txt")
-    } else {
-        "user_token.txt".to_string()
-    }
-}
-
 /// Add a tray icon to the app on macos, on windows we don't use it.
 #[allow(unused_variables)]
 pub fn setup_tray_icon(
@@ -572,4 +557,82 @@ fn create_random_suffix() -> String {
         .take(10)
         .map(char::from)
         .collect()
+}
+
+pub struct MediaWindowConfig<'a> {
+    pub label: &'a str,
+    pub title: &'a str,
+    pub url: &'a str,
+    pub width: f64,
+    pub height: f64,
+    pub resizable: bool,
+    pub always_on_top: bool,
+    pub content_protected: bool,
+    pub maximizable: bool,
+    pub minimizable: bool,
+    pub decorations: bool,
+}
+
+pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(config.label) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    #[allow(unused_mut)]
+    let mut window_builder =
+        WebviewWindowBuilder::new(app, config.label, WebviewUrl::App(config.url.into()))
+            .title(config.title)
+            .inner_size(config.width, config.height)
+            .resizable(config.resizable)
+            .visible(false)
+            .transparent(true)
+            .decorations(config.decorations)
+            .shadow(true)
+            .always_on_top(config.always_on_top)
+            .maximizable(config.maximizable)
+            .minimizable(config.minimizable)
+            .content_protected(config.content_protected);
+
+    #[cfg(target_os = "macos")]
+    {
+        window_builder = window_builder.hidden_title(true);
+        window_builder = window_builder.title_bar_style(TitleBarStyle::Overlay);
+    }
+
+    let window = window_builder
+        .build()
+        .map_err(|e| format!("Failed to create {} window: {}", config.label, e))?;
+
+    let window_clone = window.clone();
+    let label_clone = config.label.to_string();
+
+    window
+        .run_on_main_thread(move || {
+            #[cfg(target_os = "macos")]
+            {
+                set_window_corner_radius(&window_clone, 26.0);
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use window_vibrancy::apply_blur;
+
+                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
+                    log::warn!("Failed to apply blur to {} window: {}", label_clone, e);
+                }
+            }
+
+            if let Err(e) = window_clone.show() {
+                log::error!("Failed to show {} window: {}", label_clone, e);
+            }
+
+            if let Err(e) = window_clone.set_focus() {
+                log::error!("Failed to focus {} window: {}", label_clone, e);
+            }
+        })
+        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
+
+    Ok(())
 }

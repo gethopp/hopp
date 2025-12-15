@@ -6,13 +6,17 @@ import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { soundUtils } from "@/lib/sound_utils";
-import { tauriUtils } from "@/windows/window-utils.ts";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
+import { URLS } from "@/constants";
+import { tauriUtils } from "@/windows/window-utils";
+import { usePostHog } from "posthog-js/react";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, updateCallTokens, authToken } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
+  const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
+  const posthog = usePostHog();
 
   useEffect(() => {
     return () => {
@@ -64,6 +68,26 @@ export const Debug = () => {
         </div>
 
         <div className="grid w-full max-w-sm items-center gap-1.5">
+          <Label htmlFor="customServerUrl">Custom Backend URL</Label>
+          <span className="muted">
+            Override the default backend URL. Leave empty to use default ({URLS.API_BASE_URL}).
+          </span>
+          <Input
+            type="text"
+            placeholder={URLS.API_BASE_URL}
+            value={localServerUrl}
+            onChange={async (e) => {
+              const newUrl = e.target.value;
+              setLocalServerUrl(newUrl);
+              const urlToSet = newUrl.trim() || null;
+              setCustomServerUrl(urlToSet);
+              await tauriUtils.setHoppServerUrl(urlToSet);
+              posthog.capture("custom_backend_url_changed");
+            }}
+          />
+        </div>
+
+        <div className="grid w-full max-w-sm items-center gap-1.5">
           <Label htmlFor="callToken">Call Tokens</Label>
           <span className="muted">A field that you hopefully will never need to use 🫡</span>
           <Textarea
@@ -106,6 +130,17 @@ export const Debug = () => {
           variant={callTokens?.krispToggle === false ? "destructive" : "default"}
         >
           Krisp: {callTokens?.krispToggle === false ? "Disabled" : "Enabled"}
+        </Button>
+        <Button
+          onClick={() => {
+            updateCallTokens({
+              av1Enabled: !(callTokens?.av1Enabled ?? false),
+            });
+          }}
+          disabled={!(callTokens?.controllerSupportsAv1 && !callTokens?.isRoomCall)}
+          variant={callTokens?.av1Enabled ? "default" : "destructive"}
+        >
+          AV1: {callTokens?.av1Enabled ? "Enabled" : "Disabled"}
         </Button>
       </div>
     </div>

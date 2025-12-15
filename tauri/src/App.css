@@ -406,14 +406,45 @@ body {
   position: relative;
 }
 
+/*
+ * Centralized window background colors
+ * Used by all windows except main
+ */
+:root {
+  --bg-gray-light: #ececec;
+  --bg-gray-dark: #1d2220;
+}
+
+/* Window background utility class */
+.window-bg {
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .window-bg {
+  background-color: var(--bg-gray-dark);
+}
+
 .screenshare-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
   overflow: hidden;
-  background-color: var(--color-slate-900);
+  border-radius: 26px;
+}
+
+.screenshare-body #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .screenshare-body #root {
+  background-color: var(--bg-gray-dark);
 }
 
 .screenshare-video-focus,
 .screenshare-video:focus {
-  outline: 3px solid var(--color-yellow-300);
+  outline: 2px solid var(--color-yellow-300);
   outline-offset: -2px;
 }
 
@@ -526,4 +557,66 @@ button {
 
 .camera-body {
   overflow: hidden;
+  border-radius: 26px;
+}
+
+.camera-body #root {
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .camera-body #root {
+  background-color: var(--bg-gray-dark);
+}
+
+.contentPicker-body {
+  border-radius: 26px;
+}
+
+.contentPicker-body #root {
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .contentPicker-body #root {
+  background-color: var(--bg-gray-dark);
+}
+
+.permissions-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  border-radius: 26px;
+}
+
+.permissions-body #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .permissions-body #root {
+  background-color: var(--bg-gray-dark);
+}
+
+.trayNotification-body {
+  margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  border-radius: 12px;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .trayNotification-body {
+  background-color: var(--bg-gray-dark);
+}
+
+.trayNotification-body #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--bg-gray-light);
+}
+
+html.dark .trayNotification-body #root {
+  background-color: var(--bg-gray-dark);
 }

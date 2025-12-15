@@ -1,5 +1,5 @@
 import { CopiableInput } from "@/components/ui/copiable-input";
-import { BACKEND_URLS } from "@/constants";
+import { Constants } from "@/constants";
 import { useAPI } from "@/services/query";
 import { usePostHog } from "posthog-js/react";
 import headerBackground from "../../assets/header-invite.png";
@@ -40,7 +40,7 @@ function Invite() {
       {inviteData && (
         <div className="w-full">
           <CopiableInput
-            value={inviteData?.invite_uuid ? `${BACKEND_URLS.BASE}/invitation/${inviteData.invite_uuid}` : ""}
+            value={inviteData?.invite_uuid ? `${Constants.backendUrl}/invitation/${inviteData.invite_uuid}` : ""}
             readOnly
             className="text-slate-600 mt-4 w-full"
             onCopy={() => {

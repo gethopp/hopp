@@ -107,10 +107,16 @@ function App() {
     sendLivekitUrlToBackend();
   }, [livekitUrlData]);
 
-  // Load stored token on app start
+  // Load stored token and custom server URL on app start
   useEffect(() => {
     (async () => {
       if (!isTauri()) return;
+      // Load custom server URL first (before auth token, since auth uses the URL)
+      const customUrl = await tauriUtils.loadCustomServerUrl();
+      if (customUrl) {
+        useStore.getState().setCustomServerUrl(customUrl);
+      }
+      // Then load auth token
       const token = await tauriUtils.getStoredToken();
       if (token) {
         setAuthToken(token);
@@ -256,9 +262,20 @@ function App() {
 
     socketService.on("call_end", (data: TWebSocketMessage) => {
       if (data.type === "call_end") {
+        // Get call info before clearing tokens
+        const { callTokens: currentCallTokens, user } = useStore.getState();
+        const participantId = currentCallTokens?.participant || "";
+        const roomId = currentCallTokens?.room?.id || data.payload.call_id || "";
+        const teamId = user?.team_id?.toString() || "";
+
         setCallTokens(null);
         // Close screen share window
         tauriUtils.endCallCleanup();
+
+        // Show feedback window if not disabled
+        if (participantId && teamId) {
+          tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+        }
       }
     });
 
@@ -315,6 +332,13 @@ function App() {
         const token = event.payload as string;
         if (token) {
           setAuthToken(token);
+        } else {
+          // Token was deleted (e.g., when changing server URL)
+          // Clear auth-related state but preserve customServerUrl
+          setAuthToken(null);
+          setUser(null);
+          setTeammates(null);
+          setCallTokens(null);
         }
       });
 

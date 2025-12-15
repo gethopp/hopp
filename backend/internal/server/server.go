@@ -213,9 +213,11 @@ func (s *Server) runMigrations() {
 		&models.User{},
 		&models.Team{},
 		&models.Room{},
+		&models.ResetToken{},
 		&models.TeamInvitation{},
 		&models.EmailInvitation{},
 		&models.Subscription{},
+		&models.Feedback{},
 	)
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
@@ -326,6 +328,8 @@ func (s *Server) setupRoutes() {
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
 	api.POST("/sign-up", auth.ManualSignUp)
 	api.POST("/sign-in", auth.ManualSignIn)
+	api.POST("/forgot-password", auth.ForgotPassword)
+	api.PATCH("/reset-password/:token", auth.ResetPassword)
 	api.GET("/room/meet-redirect", auth.RoomMeetRedirect)
 
 	// Protected API routes group
@@ -353,6 +357,9 @@ func (s *Server) setupRoutes() {
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)
+
+	// Feedback endpoint
+	protectedAPI.POST("/feedback", auth.SubmitFeedback)
 
 	// Protected billing endpoints
 	protectedAPI.GET("/billing/subscription", billing.GetSubscriptionStatus)

@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
+import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
@@ -20,7 +20,7 @@ import {
   VideoPresets,
   LocalTrack,
   RemoteTrackPublication,
-  AudioPresets,
+  ParticipantEvent,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
@@ -30,6 +30,7 @@ import { tauriUtils } from "@/windows/window-utils";
 import { HoppAvatar } from "./hopp-avatar";
 import { HiOutlineCursorClick, HiOutlineEye } from "react-icons/hi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
@@ -37,6 +38,8 @@ import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
 import { useScreenShareListener } from "@/lib/hooks";
+import { useAudioVolume } from "@/components/ui/bar-visualizer";
+import { LiveWaveform } from "@/components/ui/live-waveform";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -77,7 +80,7 @@ export function CallCenter() {
 }
 
 export function ConnectedActions() {
-  const { callTokens, teammates, setCallTokens } = useStore();
+  const { callTokens, teammates, setCallTokens, user } = useStore();
   const posthog = usePostHog();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
@@ -106,7 +109,12 @@ export function ConnectedActions() {
   const handleEndCall = useCallback(() => {
     if (!callTokens) return;
 
-    const { timeStarted, participant } = callTokens;
+    const { timeStarted, participant, room } = callTokens;
+
+    // Capture call info before clearing tokens for feedback
+    const teamId = user?.team_id?.toString() || "";
+    const roomId = room?.id || "";
+    const participantId = user?.id || "";
 
     // Send websocket message to end call
     socketService.send({
@@ -127,6 +135,11 @@ export function ConnectedActions() {
 
     setCallTokens(null);
 
+    // Show feedback window for the person ending the call
+    if (participantId && teamId) {
+      tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+    }
+
     // Send posthog event on how much
     // time in seconds the call lasted.
     // Time is serialized as a string in store
@@ -136,7 +149,7 @@ export function ConnectedActions() {
       duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
       participant,
     });
-  }, [callTokens, setCallTokens]);
+  }, [callTokens, setCallTokens, user]);
 
   // Stop call when teammate disconnects
   useEffect(() => {
@@ -253,6 +266,42 @@ function MicrophoneIcon() {
   const [retry, setRetry] = useState(0);
   const { updateCallTokens, callTokens } = useStore();
   const hasAudioEnabled = callTokens?.hasAudioEnabled || false;
+  const { localParticipant } = useLocalParticipant();
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+
+  // Use the useAudioVolume hook from bar-visualizer for the mic button
+  const audioLevel = useAudioVolume(audioStream, { fftSize: 32, smoothingTimeConstant: 0.3 });
+
+  useEffect(() => {
+    if (!localParticipant) return;
+
+    const updateStream = () => {
+      const trackPub = localParticipant.getTrackPublications().find((p) => p.kind === Track.Kind.Audio);
+      if (trackPub?.track?.mediaStreamTrack) {
+        setAudioStream(new MediaStream([trackPub.track.mediaStreamTrack]));
+      } else {
+        setAudioStream(null);
+      }
+    };
+
+    updateStream();
+    const onLocalTrackPublished = () => updateStream();
+    const onLocalTrackUnpublished = () => updateStream();
+    const onTrackMuted = () => updateStream();
+    const onTrackUnmuted = () => updateStream();
+
+    localParticipant.on(ParticipantEvent.LocalTrackPublished, onLocalTrackPublished);
+    localParticipant.on(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
+    localParticipant.on(ParticipantEvent.TrackMuted, onTrackMuted);
+    localParticipant.on(ParticipantEvent.TrackUnmuted, onTrackUnmuted);
+
+    return () => {
+      localParticipant.off(ParticipantEvent.LocalTrackPublished, onLocalTrackPublished);
+      localParticipant.off(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
+      localParticipant.off(ParticipantEvent.TrackMuted, onTrackMuted);
+      localParticipant.off(ParticipantEvent.TrackUnmuted, onTrackUnmuted);
+    };
+  }, [localParticipant]);
 
   /* Force re enumeration of mic devices on dropdown open */
   const errorCallback = useCallback(
@@ -317,9 +366,11 @@ function MicrophoneIcon() {
         });
       }}
       icon={
-        hasAudioEnabled ?
-          <LuMic className={`size-4 ${Colors.mic.icon}`} />
-        : <LuMicOff className={`size-4 ${Colors.deactivatedIcon}`} />
+        <div className="relative flex items-center justify-center">
+          {hasAudioEnabled ?
+            <CustomIcons.MicWithLevel level={audioLevel} className={`size-4 ${Colors.mic.icon} relative z-10`} />
+          : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
+        </div>
       }
       state={hasAudioEnabled ? "active" : "neutral"}
       size="unsized"
@@ -351,6 +402,30 @@ function MicrophoneIcon() {
                   </SelectItem>
                 );
               })}
+              {hasAudioEnabled && (
+                <>
+                  <div className="my-2 border-t border-slate-100" />
+                  <div className="flex flex-row justify-between items-center gap-2">
+                    <span className="text-xs font-medium ml-2 text-slate-500">Input</span>
+                    <div className="relative flex h-8 max-w-[120px] items-center rounded-md bg-slate-100 overflow-hidden px-3">
+                      <LiveWaveform
+                        active={hasAudioEnabled}
+                        deviceId={activeMicrophoneDeviceId}
+                        barWidth={3}
+                        barGap={1}
+                        barRadius={4}
+                        fadeEdges={true}
+                        fadeWidth={24}
+                        sensitivity={1.4}
+                        smoothingTimeConstant={0.85}
+                        height={24}
+                        mode="static"
+                        className="h-full w-full"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
             </SelectContent>
           </SelectPortal>
         </Select>
@@ -497,7 +572,7 @@ function CameraIcon() {
       // If participant is anonymous and the video track is muted or not shared, return false
       for (const trackPublication of track.participant.trackPublications) {
         console.log("--- Track publication: ", trackPublication);
-        const pub: RemoteTrackPublication = trackPublication[1];
+        const pub: RemoteTrackPublication = trackPublication[1] as RemoteTrackPublication;
         if (pub.source === Track.Source.Camera && pub.isMuted) {
           return false;
         }
@@ -559,7 +634,7 @@ function CameraIcon() {
               [Colors.camera.text]: cameraEnabled,
               [Colors.deactivatedIcon]: !cameraEnabled,
             })}
-            className="hover:outline hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+            className="hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
           />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
@@ -596,6 +671,9 @@ function MediaDevicesSettings() {
     },
   });
 
+  // Monitor camera bandwidth usage
+  //useCameraBandwidthMonitor();
+
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
   useEffect(() => {
@@ -617,10 +695,15 @@ function MediaDevicesSettings() {
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
         {
-          resolution: VideoPresets.h216.resolution,
+          resolution: VideoPresets.h720.resolution,
         },
         {
           videoCodec: "h264",
+          simulcast: true,
+          videoEncoding: {
+            maxBitrate: 1_300_000,
+          },
+          videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
         },
       );
 
@@ -672,6 +755,17 @@ function MediaDevicesSettings() {
         .every((p) => p.attributes["av1Support"] === "true"),
     );
   }, [localParticipant, room?.state, remoteParticipants]);
+
+  useEffect(() => {
+    if (!callTokens) return;
+
+    if (callTokens.controllerSupportsAv1 !== controllerSupportsAv1) {
+      setCallTokens({
+        ...callTokens,
+        controllerSupportsAv1,
+      });
+    }
+  }, [controllerSupportsAv1, callTokens, setCallTokens]);
 
   return (
     <div className="flex flex-row gap-1 w-full">

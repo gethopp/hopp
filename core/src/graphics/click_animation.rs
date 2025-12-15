@@ -23,6 +23,8 @@ const BASE_OFFSET_X: f32 = 0.007;
 /// Base vertical offset for click animation positioning (as a fraction of screen space)
 const BASE_OFFSET_Y: f32 = 0.015;
 
+pub const ANIMATION_DURATION: u64 = 1000;
+
 /// Represents a single click animation with its texture, geometry, and position data.
 ///
 /// Each click animation maintains its own vertex and index buffers for geometry,
@@ -148,7 +150,7 @@ impl ClickAnimation {
             let radius = radius_start + (elapsed - time_offset) as f32 / 2333.0;
             self.update_radius(queue, radius_buffer, radius);
         }
-        if elapsed > 1000 {
+        if elapsed > ANIMATION_DURATION.into() {
             self.disable(queue, radius_buffer);
         }
         render_pass.set_bind_group(0, &self.texture.bind_group, &[]);

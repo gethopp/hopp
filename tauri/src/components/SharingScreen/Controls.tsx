@@ -1,5 +1,4 @@
 import { HiOutlineCursorClick } from "react-icons/hi";
-import { LiaHandPointerSolid } from "react-icons/lia";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { TooltipContent, TooltipTrigger, Tooltip, TooltipProvider } from "../ui/tooltip";
 import { BiSolidJoystick } from "react-icons/bi";
@@ -7,10 +6,14 @@ import useStore from "@/store/store";
 import { SegmentedControl } from "../ui/segmented-control";
 import { useState } from "react";
 import { CustomIcons } from "../ui/icons";
+import { cn } from "@/lib/utils";
 
-export function ScreenSharingControls() {
+type ScreenSharingControlsProps = {
+  className?: string;
+};
+
+export function ScreenSharingControls({ className }: ScreenSharingControlsProps = {}) {
   const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
-  const isRemoteControlEnabled = useStore((state) => state.callTokens?.isRemoteControlEnabled);
   const [remoteControlStatus, setRemoteControlStatus] = useState<string>("controlling");
 
   const handleRemoteControlChange = (value: string) => {
@@ -26,7 +29,7 @@ export function ScreenSharingControls() {
 
   return (
     <TooltipProvider>
-      <div className="w-full pt-2 flex flex-row items-center relative pointer-events-none">
+      <div className={cn("w-full pt-2 flex flex-row items-center relative pointer-events-none", className)}>
         <div className="w-full flex justify-center">
           <div className="flex flex-row gap-1 items-center">
             <SegmentedControl
@@ -48,21 +51,30 @@ export function ScreenSharingControls() {
             />
           </div>
         </div>
-        {isRemoteControlEnabled === false && (
-          <div className="absolute right-0">
-            <Tooltip>
-              <TooltipTrigger>
-                <div className="flex flex-row gap-1 items-center muted border border-slate-600 text-white bg-slate-700 px-1.5 py-0.5 rounded-md">
-                  <BiSolidJoystick className="size-4" /> Remote control is disabled
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <div>Ask the sharer to enable remote control.</div>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
       </div>
+    </TooltipProvider>
+  );
+}
+
+export function RemoteControlDisabledIndicator() {
+  const isRemoteControlEnabled = useStore((state) => state.callTokens?.isRemoteControlEnabled);
+
+  if (isRemoteControlEnabled !== false) {
+    return null;
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger>
+          <div className="flex flex-row gap-1 items-center muted border text-white bg-gray-500/80 dark:border-slate-600 dark:text-white dark:bg-slate-700 px-1.5 py-0.5 rounded-md rounded-tr-xl">
+            <BiSolidJoystick className="size-4" /> Remote control is disabled
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>
+          <div>Ask the sharer to enable remote control.</div>
+        </TooltipContent>
+      </Tooltip>
     </TooltipProvider>
   );
 }

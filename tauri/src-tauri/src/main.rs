@@ -8,24 +8,22 @@ use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     path::BaseDirectory,
-    Emitter, WebviewUrl, WebviewWindowBuilder,
+    Emitter,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tauri_plugin_log::{Target, TargetKind};
 
+#[cfg(target_os = "macos")]
+use hopp::set_window_corner_radius;
 use hopp::{
     app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    get_token_filename, permissions, ping_frontend, setup_start_on_launch, setup_tray_icon,
-    AppData,
+    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
 };
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
 use std::time::Duration;
-
-#[cfg(target_os = "macos")]
-use hopp::set_window_corner_radius;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
@@ -66,7 +64,7 @@ async fn screenshare(
             token: token.clone(),
             resolution,
             accessibility_permission,
-            use_av1: false, // Hardcode this to false to check if we have a performance regression
+            use_av1,
         }));
     if let Err(e) = res {
         log::error!("screenshare: failed to send message: {e:?}");
@@ -238,65 +236,28 @@ fn reset_core_process(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn store_token_cmd(app: tauri::AppHandle, token: String) {
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    log::debug!("Storing token to: {}", token_file.display());
-    match std::fs::write(token_file, token.clone()) {
-        Ok(_) => {
-            log::info!("Stored token");
-            if let Err(e) = app.emit("token_changed", token) {
-                log::error!("Failed to emit token_changed event: {e:?}");
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to store token: {e:?}");
-        }
-    }
+    log::info!("store_token_cmd");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_user_jwt(Some(token));
 }
 
 #[tauri::command]
 fn get_stored_token(app: tauri::AppHandle) -> Option<String> {
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return None;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    log::debug!("Reading token from: {}", token_file.display());
-    match std::fs::read_to_string(token_file) {
-        Ok(token) => Some(token),
-        Err(e) => {
-            log::error!("Failed to read token: {e:?}");
-            None
-        }
-    }
+    log::info!("get_stored_token");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let token = data.app_state.user_jwt().clone();
+    log::debug!("get_stored_token: {token:?}");
+    token
 }
 
 #[tauri::command]
 fn delete_stored_token(app: tauri::AppHandle) {
     log::info!("Deleting stored token");
-    let app_data_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Failed to get app data dir: {e:?}");
-            return;
-        }
-    };
-
-    let token_file = app_data_dir.join(get_token_filename());
-    if let Err(e) = std::fs::remove_file(token_file) {
-        log::error!("Failed to delete token file: {e:?}");
-    }
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_user_jwt(None);
 
     if let Err(e) = app.emit("token_changed", "".to_string()) {
         log::error!("Failed to emit token_changed event: {e:?}");
@@ -500,72 +461,84 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
+async fn create_screenshare_window(
+    app: tauri::AppHandle,
+    video_token: String,
+) -> Result<(), String> {
+    let url = format!("screenshare.html?videoToken={}", video_token);
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "screenshare",
+            title: "Screen sharing",
+            url: &url,
+            width: 800.0,
+            height: 450.0,
+            resizable: true,
+            always_on_top: false,
+            content_protected: false,
+            maximizable: false,
+            minimizable: true,
+            decorations: false,
+        },
+    )
+}
+
+#[tauri::command]
 async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
     log::info!("create_camera_window with token: {}", camera_token);
 
     let url = format!("camera.html?cameraToken={}", camera_token);
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "camera",
+            title: "Camera",
+            url: &url,
+            width: 160.0,
+            height: 365.0,
+            resizable: false,
+            always_on_top: true,
+            content_protected: true,
+            maximizable: true,
+            minimizable: true,
+            decorations: false,
+        },
+    )
+}
 
-    #[allow(unused_mut)]
-    let mut window_builder = WebviewWindowBuilder::new(&app, "camera", WebviewUrl::App(url.into()))
-        .title("Camera")
-        .inner_size(160.0, 365.0)
-        .resizable(false)
-        .visible(false)
-        .transparent(true)
-        .always_on_top(true)
-        .decorations(false)
-        .content_protected(true)
-        .shadow(true);
+#[tauri::command]
+async fn create_content_picker_window(
+    app: tauri::AppHandle,
+    video_token: String,
+    use_av1: bool,
+) -> Result<(), String> {
+    log::info!(
+        "create_content_picker_window with token: {}, use_av1: {}",
+        video_token,
+        use_av1
+    );
 
-    #[cfg(target_os = "macos")]
-    {
-        window_builder = window_builder
-            .hidden_title(true)
-            .title_bar_style(tauri::TitleBarStyle::Overlay);
-    }
-
-    let camera_window = window_builder
-        .build()
-        .map_err(|e| format!("Failed to create camera window: {}", e))?;
-
-    let window_clone = camera_window.clone();
-
-    camera_window
-        .run_on_main_thread(move || {
-            #[cfg(target_os = "macos")]
-            {
-                use window_vibrancy::{
-                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-                };
-
-                if let Err(e) = apply_vibrancy(
-                    &window_clone,
-                    NSVisualEffectMaterial::HudWindow,
-                    Some(NSVisualEffectState::Active),
-                    Some(16.0),
-                ) {
-                    log::warn!("Failed to apply vibrancy to camera window: {}", e);
-                }
-
-                set_window_corner_radius(&window_clone, 16.0);
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                use window_vibrancy::apply_blur;
-
-                if let Err(e) = apply_blur(&window_clone, Some((18, 18, 18, 125))) {
-                    log::warn!("Failed to apply blur to camera window: {}", e);
-                }
-            }
-
-            if let Err(e) = window_clone.show() {
-                log::error!("Failed to show camera window: {}", e);
-            }
-        })
-        .map_err(|e| format!("Failed to run on main thread: {}", e))?;
-
-    Ok(())
+    let url = format!(
+        "contentPicker.html?videoToken={}&useAv1={}",
+        video_token, use_av1
+    );
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "contentPicker",
+            title: "Content picker",
+            url: &url,
+            width: 800.0,
+            height: 450.0,
+            resizable: true,
+            always_on_top: true,
+            content_protected: false,
+            maximizable: false,
+            minimizable: true,
+            decorations: true,
+        },
+    )
 }
 
 #[tauri::command]
@@ -588,6 +561,71 @@ fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: S
 #[tauri::command]
 fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
+}
+
+#[tauri::command]
+fn get_hopp_server_url(app: tauri::AppHandle) -> Option<String> {
+    log::info!("get_hopp_server_url");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let url = data.app_state.hopp_server_url();
+    log::debug!("get_hopp_server_url: {url:?}");
+    url
+}
+
+#[tauri::command]
+fn set_hopp_server_url(app: tauri::AppHandle, url: Option<String>) {
+    log::info!("set_hopp_server_url: {url:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_hopp_server_url(url);
+}
+
+#[tauri::command]
+fn get_feedback_disabled(app: tauri::AppHandle) -> bool {
+    log::info!("get_feedback_disabled");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    data.app_state.feedback_disabled()
+}
+
+#[tauri::command]
+fn set_feedback_disabled(app: tauri::AppHandle, disabled: bool) {
+    log::info!("set_feedback_disabled: {disabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_feedback_disabled(disabled);
+}
+
+#[tauri::command]
+async fn create_feedback_window(
+    app: tauri::AppHandle,
+    team_id: String,
+    room_id: String,
+    participant_id: String,
+) -> Result<(), String> {
+    log::info!("create_feedback_window");
+
+    let url = format!(
+        "feedback.html?teamId={}&roomId={}&participantId={}",
+        team_id, room_id, participant_id
+    );
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "feedback",
+            title: "Call Feedback",
+            url: &url,
+            width: 500.0,
+            height: 420.0,
+            resizable: false,
+            always_on_top: true,
+            content_protected: false,
+            maximizable: false,
+            minimizable: false,
+            decorations: true,
+        },
+    )
 }
 
 fn main() {
@@ -842,17 +880,26 @@ fn main() {
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .title("Permissions Configuration")
                     .inner_size(900., 730.)
+                    .transparent(true)
+                    .shadow(true)
                     .build();
                     if let Err(e) = permissions_window {
                         log::error!("Failed to create permissions window: {e:?}");
                     } else {
+                        let permissions_window = permissions_window.unwrap();
+
+                        // Apply native styling on macOS
+                        #[cfg(target_os = "macos")]
+                        {
+                            set_window_corner_radius(&permissions_window, 26.0);
+                        }
+
                         /*
                          * Focus the window only if the notification window is not shown.
                          * When the notification window is shown we open the permissions window
                          * when it's closed.
                          */
                         if !show_dock {
-                            let permissions_window = permissions_window.unwrap();
                             let _ = permissions_window.show();
                             let _ = permissions_window.set_focus();
                         }
@@ -934,8 +981,15 @@ fn main() {
             get_camera_permission,
             open_camera_settings,
             create_camera_window,
+            create_screenshare_window,
+            create_content_picker_window,
             set_sentry_metadata,
             call_started,
+            get_hopp_server_url,
+            set_hopp_server_url,
+            get_feedback_disabled,
+            set_feedback_disabled,
+            create_feedback_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

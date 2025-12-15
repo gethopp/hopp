@@ -1,9 +1,9 @@
 import createFetchClient from "openapi-fetch";
 import toast from "react-hot-toast";
-import { BACKEND_URLS } from "@/constants";
 import useStore from "@/store/store";
 import { tauriUtils } from "@/windows/window-utils";
 import { paths } from "@/openapi";
+import { Constants } from "@/constants";
 
 /**
  * Validates an authentication token by fetching user details.
@@ -18,7 +18,7 @@ export const validateAndSetAuthToken = async (token: string) => {
   }
 
   const tempFetchClient = createFetchClient<paths>({
-    baseUrl: BACKEND_URLS.BASE,
+    baseUrl: Constants.backendUrl,
     headers: {
       Authorization: `Bearer ${token}`,
     },

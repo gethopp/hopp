@@ -4,7 +4,7 @@ import dotsBackground from "../../assets/dots.svg";
 import logo from "../../assets/Hopp.png";
 import { BlurIn } from "@/components/ui/text-effects";
 import { motion } from "framer-motion";
-import { BACKEND_URLS } from "@/constants";
+import { Constants } from "@/constants";
 import { CopiableInput } from "@/components/ui/copiable-input";
 import { Separator } from "@/components/ui/separator";
 import { usePostHog } from "posthog-js/react";
@@ -57,7 +57,7 @@ export const Login = () => {
               // 1. Redirect to "/login-app" inside the web app
               // 2. If the web-app is authenticated, it will fetch a JWT token and redirect to the app (deeplink)
               // 3. If the web-app is not authenticated, it will redirect to the login page, then keep track somehow of the state to redirect back to the app (deeplink)
-              open(BACKEND_URLS.LOGIN_JWT);
+              open(Constants.loginJwtUrl);
               posthog.capture("user_click_jwt_sign");
             }}
           >
@@ -67,7 +67,7 @@ export const Login = () => {
             <Separator className="w-[20px]" /> or <Separator className="w-[20px]" />
           </div>
           <CopiableInput
-            value={BACKEND_URLS.LOGIN_JWT}
+            value={Constants.loginJwtUrl}
             readOnly
             className="text-slate-600"
             onCopy={() => {

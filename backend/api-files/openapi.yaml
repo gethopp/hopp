@@ -138,6 +138,9 @@ components:
         price_id:
           type: string
           description: Optional Stripe price ID (uses environment default if not provided)
+        referral:
+          type: string
+          description: Optional Rewardful referral ID for affiliate tracking
 
   securitySchemes:
     BearerAuth:
@@ -252,6 +255,95 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: User with this email already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/forgot-password:
+    post:
+      summary: Request password reset email
+      description: Sends a password reset link to the specified email address if it exists in the system. Always returns success to avoid user enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: User's email address
+      responses:
+        "200":
+          description: Success message (always returned regardless of whether email exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "If the email you specified exists in our system, we've sent a password reset link to it."
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/reset-password/{token}:
+    patch:
+      summary: Reset password using token
+      description: Resets the user's password using a valid password reset token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Password reset token received via email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  format: password
+                  description: New password
+      responses:
+        "200":
+          description: Password reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Your password has been changed. You can now use it to log in."
+        "400":
+          description: Invalid input, missing token, invalid/expired token, or token already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -712,6 +804,61 @@ paths:
                   url:
                     type: string
                     description: LiveKit server url
+
+  /api/auth/feedback:
+    post:
+      summary: Submit post-call feedback
+      description: Submit feedback after a call ends including rating and optional text feedback
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - score
+              properties:
+                team_id:
+                  type: string
+                  description: ID of the team
+                room_id:
+                  type: string
+                  description: ID of the room where the call took place
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  description: Rating score from 1 (worst) to 5 (best)
+                feedback:
+                  type: string
+                  description: Optional text feedback
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: Optional unstructured metadata
+      responses:
+        "201":
+          description: Feedback submitted successfully
+        "400":
+          description: Invalid input (e.g., score out of range)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/auth/change-team/{uuid}:
     post:

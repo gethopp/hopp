@@ -55,7 +55,7 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
         <ol
           ref={ref}
           className={cn(
-            "inline-flex m-0 p-0.5 list-none bg-zinc-600 rounded-lg h-[28px] cursor-default",
+            "inline-flex m-0 p-0.5 list-none bg-gray-500/80 dark:bg-zinc-600 rounded-lg h-[28px] cursor-default",
             disabled && "opacity-50 cursor-not-allowed",
             className,
           )}
@@ -79,7 +79,6 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                   // Hide divider when it shouldn't show
                   !showDivider && "after:opacity-0",
                 )}
-                whileTap={isActive ? { scale: 0.95 } : { opacity: 0.6 }}
               >
                 {item.tooltipContent ?
                   <Tooltip>

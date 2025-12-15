@@ -1,36 +1,42 @@
 import * as React from "react";
 
 const SvgComponent = (props: any) => (
-  <svg xmlns="http://www.w3.org/2000/svg" width={26} height={30} fill="none" {...props}>
+  <svg xmlns="http://www.w3.org/2000/svg" width={43 / 2} height={45 / 2} fill="none" {...props} viewBox="0 0 43 45">
     <g filter="url(#a)">
       <path
         fill={props.color}
-        d="M9.212 25.56c-.685 1.083-2.341.77-2.583-.489L2.592 4.081c-.23-1.197 1.06-2.105 2.108-1.485l17.785 10.509c1.072.633.862 2.242-.337 2.579l-7.606 2.139c-.336.094-.625.31-.812.605L9.212 25.56Z"
+        d="M14.368 38.986c-1.103 1.58-3.56 1.082-3.96-.803L3.353 4.864c-.388-1.832 1.544-3.28 3.195-2.395l30.84 16.548c1.77.949 1.45 3.576-.495 4.073l-13.123 3.35c-.511.131-.959.441-1.26.874l-8.141 11.672Z"
       />
       <path
         stroke="#fff"
-        strokeOpacity={0.4}
-        strokeWidth={0.707}
-        d="M2.94 4.014c-.173-.898.794-1.578 1.58-1.114l17.785 10.51c.803.474.646 1.68-.252 1.933l-7.607 2.14c-.42.117-.781.387-1.014.755l-4.518 7.134c-.514.811-1.756.576-1.937-.367L2.939 4.014Z"
+        strokeOpacity={0.7}
+        strokeWidth={1.101}
+        d="M3.89 4.75C3.6 3.376 5.05 2.29 6.287 2.953l30.842 16.55c1.326.711 1.086 2.68-.372 3.053l-13.123 3.351c-.64.164-1.199.551-1.576 1.092l-8.14 11.672c-.828 1.185-2.67.812-2.97-.602L3.891 4.75Z"
       />
     </g>
     <defs>
       <filter
         id="a"
-        width={24.857}
-        height={28.066}
-        x={0.444}
-        y={0.981}
+        width={41.851}
+        height={44.332}
+        x={0}
+        y={0}
         colorInterpolationFilters="sRGB"
         filterUnits="userSpaceOnUse"
       >
         <feFlood floodOpacity={0} result="BackgroundImageFix" />
         <feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" />
-        <feOffset dy={0.707} />
-        <feGaussianBlur stdDeviation={1.061} />
+        <feOffset dy={1.101} />
+        <feGaussianBlur stdDeviation={1.651} />
         <feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0" />
-        <feBlend in2="BackgroundImageFix" result="effect1_dropShadow_3690_154" />
-        <feBlend in="SourceGraphic" in2="effect1_dropShadow_3690_154" result="shape" />
+        <feBlend in2="BackgroundImageFix" result="effect1_dropShadow_3982_4512" />
+        <feBlend in="SourceGraphic" in2="effect1_dropShadow_3982_4512" result="shape" />
+        <feColorMatrix in="SourceAlpha" result="hardAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" />
+        <feOffset dx={2.374} dy={3.165} />
+        <feGaussianBlur stdDeviation={3.956} />
+        <feComposite in2="hardAlpha" k2={-1} k3={1} operator="arithmetic" />
+        <feColorMatrix values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0" />
+        <feBlend in2="shape" result="effect2_innerShadow_3982_4512" />
       </filter>
     </defs>
   </svg>
@@ -47,11 +53,13 @@ const Cursor = (props: CursorProps) => {
       <div className="relative flex flex-col justify-start max-w-[120px]">
         <SvgComponent {...props} />
         <div
-          className="outline outline-[1px] outline-slate-200/50 -outline-offset-1 shadow-xs font-mono text-ellipsis overflow-hidden text-[10px] max-w-min text-white whitespace-nowrap px-2 py-[0px] leading-[22px] rounded-xl"
+          className="outline outline-slate-200/50 -outline-offset-1 shadow-xs font-mono text-ellipsis overflow-hidden text-[14px] max-w-min text-white whitespace-nowrap px-2 py-0 leading-[22px] rounded-xl antialiased"
           style={{
             background: props.color,
-            marginLeft: "12px",
+            marginLeft: "14px",
             marginTop: "-6px",
+            border: "1px solid rgba(255, 255, 255, 1)",
+            boxShadow: "0px 0px 16.5097px rgba(0, 0, 0, 0.1), inset 0px 3.16484px 8.7033px rgba(255, 255, 255, 0.7)",
           }}
         >
           {props.name}

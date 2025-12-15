@@ -10,10 +10,11 @@ import { toast, Toaster } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
-import { useDisableNativeContextMenu } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
 import clsx from "clsx";
+import useStore from "@/store/store";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -67,11 +68,12 @@ async function screenshare(
 
 function Window() {
   useDisableNativeContextMenu();
+  useSystemTheme();
+  const { callTokens } = useStore();
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
   const videoToken = tauriUtils.getTokenParam("videoToken");
-  const useAv1 = tauriUtils.getTokenParam("useAv1") === "true";
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
@@ -105,7 +107,13 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(content, resolution, videoToken, accessibilityPermission, useAv1);
+      const success = await screenshare(
+        content,
+        resolution,
+        videoToken,
+        accessibilityPermission,
+        callTokens?.av1Enabled ?? false,
+      );
       if (success) {
         await appWindow.close();
       }
@@ -150,11 +158,14 @@ function Window() {
   };
 
   return (
-    <div className="h-screen overflow-hidden dark flex flex-col gap-0" tabIndex={0}>
+    <div
+      className="h-screen overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px] flex flex-col gap-0"
+      tabIndex={0}
+    >
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
-        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-slate-900 flex flex-row justify-end pr-4"
+        className="title-panel h-[28px] top-0 left-0 titlebar w-full bg-transparent flex flex-row justify-end pr-4"
       ></div>
       {!accessibilityPermission && (
         <div className="flex flex-row items-center justify-center gap-2 px-4 py-2 mt-2">
@@ -201,21 +212,21 @@ function Window() {
         : hasClicked ?
           <div className="h-full w-full flex flex-col justify-center col-span-2">
             <div className="col-span-2 flex flex-row items-center justify-center gap-3">
-              <span className="text-base text-white/80">Starting screenshare...</span>
-              <CgSpinner className="animate-spin text-white/80 h-6 w-6" />
+              <span className="text-base text-black/80 dark:text-white/80">Starting screenshare...</span>
+              <CgSpinner className="animate-spin text-black/80 dark:text-white/80 h-6 w-6" />
             </div>
           </div>
         : content.map((item) => (
             <div
               key={item.content.id}
-              className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-500 p-2 rounded-md"
+              className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-300 dark:hover:bg-slate-500 p-2 rounded-md"
               onClick={() => handleItemClick(item.content)}
             >
               <AspectRatio ratio={16 / 9}>
                 <img
                   src={item.base64}
                   alt={`Content ${item.content.id}`}
-                  className="w-full max-h-full object-contain rounded-md group-hover:scale-[100.5%] transition-all duration-300 overflow-hidden bg-slate-600 bg-opacity-40"
+                  className="w-full max-h-full object-contain rounded-md group-hover:scale-[100.5%] transition-all duration-300 overflow-hidden bg-slate-400/40 dark:bg-slate-600/40"
                 />
               </AspectRatio>
               <span className="text-center small ml-0.5">{`${item.title}`}</span>

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
+use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
@@ -19,7 +20,7 @@ const TOPIC_REMOTE_CONTROL_ENABLED: &str = "remote_control_enabled";
 const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
-const MAX_FRAMERATE: f64 = 30.0;
+const MAX_FRAMERATE: f64 = 40.0;
 
 // Bitrate constants (in bits per second)
 const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
@@ -383,6 +384,8 @@ async fn room_service_commands(
     livekit_server_url: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
 ) {
+    let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
+
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
         match command {
@@ -417,6 +420,13 @@ async fn room_service_commands(
                         continue;
                     }
                 };
+
+                if cfg!(debug_assertions) {
+                    if let Some(task) = stats_task.take() {
+                        task.abort();
+                    }
+                    stats_task = Some(tokio::spawn(stats_loop(inner.clone())));
+                }
 
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 // TODO: Check if this will need cleanup
@@ -502,6 +512,10 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::DestroyRoom => {
+                if let Some(task) = stats_task.take() {
+                    task.abort();
+                }
+
                 let room = {
                     let mut inner_room = inner.room.lock().await;
                     if inner_room.is_none() {
@@ -972,4 +986,53 @@ async fn handle_room_events(
             _ => {}
         }
     }
+}
+
+async fn stats_loop(inner: Arc<RoomServiceInner>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    let mut prev_bytes = 0;
+
+    // Initial tick
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+        let current_bytes = {
+            let room_guard = inner.room.lock().await;
+            if let Some(room) = room_guard.as_ref() {
+                get_rtc_stats(room).await
+            } else {
+                0
+            }
+        };
+
+        if prev_bytes > 0 && current_bytes > prev_bytes {
+            let bitrate = ((current_bytes - prev_bytes) * 8) / 5; // bits per second
+            log::debug!("WebRTC Bandwidth: {:.2} Mbps", bitrate as f64 / 1_000_000.0);
+        }
+        prev_bytes = current_bytes;
+    }
+}
+
+async fn get_rtc_stats(room: &Room) -> u64 {
+    let mut total_bytes_sent = 0;
+    let local_participant = room.local_participant();
+
+    for (_, publication) in local_participant.track_publications() {
+        let track = publication.track();
+        if track.is_none() {
+            continue;
+        }
+        let track = track.unwrap();
+        if let LocalTrack::Video(track) = track {
+            if let Ok(stats) = track.get_stats().await {
+                for stat in stats {
+                    if let RtcStats::OutboundRtp(stats) = stat {
+                        total_bytes_sent += stats.sent.bytes_sent;
+                    }
+                }
+            }
+        }
+    }
+    total_bytes_sent
 }

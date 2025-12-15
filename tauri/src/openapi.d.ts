@@ -237,6 +237,149 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/forgot-password": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Request password reset email
+     * @description Sends a password reset link to the specified email address if it exists in the system. Always returns success to avoid user enumeration.
+     */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /**
+             * Format: email
+             * @description User's email address
+             */
+            email: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Success message (always returned regardless of whether email exists) */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @example If the email you specified exists in our system, we've sent a password reset link to it. */
+              message?: string;
+            };
+          };
+        };
+        /** @description Invalid input */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/reset-password/{token}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Reset password using token
+     * @description Resets the user's password using a valid password reset token
+     */
+    patch: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description Password reset token received via email */
+          token: string;
+        };
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /**
+             * Format: password
+             * @description New password
+             */
+            password: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Password reset successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @example Your password has been changed. You can now use it to log in. */
+              message?: string;
+            };
+          };
+        };
+        /** @description Invalid input, missing token, invalid/expired token, or token already used */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description User not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    trace?: never;
+  };
   "/api/auth/authenticate-app": {
     parameters: {
       query?: never;
@@ -1048,6 +1191,87 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/feedback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit post-call feedback
+     * @description Submit feedback after a call ends including rating and optional text feedback
+     */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** @description ID of the team */
+            team_id?: string;
+            /** @description ID of the room where the call took place */
+            room_id?: string;
+            /** @description Rating score from 1 (worst) to 5 (best) */
+            score: number;
+            /** @description Optional text feedback */
+            feedback?: string;
+            /** @description Optional unstructured metadata */
+            metadata?: {
+              [key: string]: unknown;
+            };
+          };
+        };
+      };
+      responses: {
+        /** @description Feedback submitted successfully */
+        201: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Invalid input (e.g., score out of range) */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/change-team/{uuid}": {
     parameters: {
       query?: never;
@@ -1594,6 +1818,8 @@ export interface components {
       tier: "paid";
       /** @description Optional Stripe price ID (uses environment default if not provided) */
       price_id?: string;
+      /** @description Optional Rewardful referral ID for affiliate tracking */
+      referral?: string;
     };
   };
   responses: never;
