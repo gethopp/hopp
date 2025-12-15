@@ -805,6 +805,61 @@ paths:
                     type: string
                     description: LiveKit server url
 
+  /api/auth/feedback:
+    post:
+      summary: Submit post-call feedback
+      description: Submit feedback after a call ends including rating and optional text feedback
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - score
+              properties:
+                team_id:
+                  type: string
+                  description: ID of the team
+                room_id:
+                  type: string
+                  description: ID of the room where the call took place
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  description: Rating score from 1 (worst) to 5 (best)
+                feedback:
+                  type: string
+                  description: Optional text feedback
+                metadata:
+                  type: object
+                  additionalProperties: true
+                  description: Optional unstructured metadata
+      responses:
+        "201":
+          description: Feedback submitted successfully
+        "400":
+          description: Invalid input (e.g., score out of range)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/change-team/{uuid}:
     post:
       summary: Change user's team using invitation UUID

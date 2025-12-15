@@ -262,9 +262,20 @@ function App() {
 
     socketService.on("call_end", (data: TWebSocketMessage) => {
       if (data.type === "call_end") {
+        // Get call info before clearing tokens
+        const { callTokens: currentCallTokens, user } = useStore.getState();
+        const participantId = currentCallTokens?.participant || "";
+        const roomId = currentCallTokens?.room?.id || data.payload.call_id || "";
+        const teamId = user?.team_id?.toString() || "";
+
         setCallTokens(null);
         // Close screen share window
         tauriUtils.endCallCleanup();
+
+        // Show feedback window if not disabled
+        if (participantId && teamId) {
+          tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+        }
       }
     });
 

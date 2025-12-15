@@ -478,6 +478,7 @@ async fn create_screenshare_window(
             always_on_top: false,
             content_protected: false,
             maximizable: false,
+            minimizable: true,
             decorations: false,
         },
     )
@@ -500,6 +501,7 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
             always_on_top: true,
             content_protected: true,
             maximizable: true,
+            minimizable: true,
             decorations: false,
         },
     )
@@ -533,6 +535,7 @@ async fn create_content_picker_window(
             always_on_top: true,
             content_protected: false,
             maximizable: false,
+            minimizable: true,
             decorations: true,
         },
     )
@@ -576,6 +579,53 @@ fn set_hopp_server_url(app: tauri::AppHandle, url: Option<String>) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_hopp_server_url(url);
+}
+
+#[tauri::command]
+fn get_feedback_disabled(app: tauri::AppHandle) -> bool {
+    log::info!("get_feedback_disabled");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    data.app_state.feedback_disabled()
+}
+
+#[tauri::command]
+fn set_feedback_disabled(app: tauri::AppHandle, disabled: bool) {
+    log::info!("set_feedback_disabled: {disabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_feedback_disabled(disabled);
+}
+
+#[tauri::command]
+async fn create_feedback_window(
+    app: tauri::AppHandle,
+    team_id: String,
+    room_id: String,
+    participant_id: String,
+) -> Result<(), String> {
+    log::info!("create_feedback_window");
+
+    let url = format!(
+        "feedback.html?teamId={}&roomId={}&participantId={}",
+        team_id, room_id, participant_id
+    );
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "feedback",
+            title: "Call Feedback",
+            url: &url,
+            width: 500.0,
+            height: 420.0,
+            resizable: false,
+            always_on_top: true,
+            content_protected: false,
+            maximizable: false,
+            minimizable: false,
+            decorations: true,
+        },
+    )
 }
 
 fn main() {
@@ -937,6 +987,9 @@ fn main() {
             call_started,
             get_hopp_server_url,
             set_hopp_server_url,
+            get_feedback_disabled,
+            set_feedback_disabled,
+            create_feedback_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
