@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1022,68 +1021,6 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
-}
-
-// RoomAnonymous generates a LiveKit access token for an anonymous user to join a room.
-// It creates an anonymous user with a random 4-character identifier and generates
-// a LiveKit token valid for 3 hours. The function returns a redirect URL in the format:
-// /room?liveKitUrl=<LIVEKIT_SERVER_URL>&token=<LIVEKIT_ACCESS_TOKEN>
-// The token allows the anonymous user to join the specified room without authentication.
-func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
-	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
-	if !isAuthenticated {
-		return c.String(http.StatusUnauthorized, "Unauthorized request")
-	}
-
-	// Check if user has a team
-	if user.TeamID == nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
-	}
-
-	// Get room ID from query parameter
-	roomID := c.QueryParam("room_id")
-	if roomID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Missing room_id parameter")
-	}
-
-	// Verify the room exists and user has access to it
-	var room models.Room
-	result := h.DB.Where("id = ?", roomID).First(&room)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
-	}
-
-	// Check if user can access the room (same team)
-	if room.TeamID == nil || *room.TeamID != *user.TeamID {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized access to room")
-	}
-
-	// Use the specific room ID as the room name
-	roomName := roomID
-
-	// Generate 4 random characters for anonymous user
-	randomChars := rand.Text()[:4]
-	anonymousUserID := fmt.Sprintf("anonymous-%s", randomChars)
-
-	// Create a mock user object for token generation
-	anonymousUser := &models.User{
-		ID:     anonymousUserID,
-		TeamID: user.TeamID,
-	}
-
-	// Generate a token for the anonymous user to join the room
-	livekitToken, err := generateMeetRedirectToken(&h.ServerState, roomName, anonymousUser)
-	if err != nil {
-		c.Logger().Error("Failed to generate room tokens:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
-	}
-
-	// Return the redirect URL
-	redirectURL := fmt.Sprintf("/room?liveKitUrl=%s&token=%s", h.Config.Livekit.ServerURL, livekitToken)
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"redirect_url": redirectURL,
-	})
 }
 
 func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {

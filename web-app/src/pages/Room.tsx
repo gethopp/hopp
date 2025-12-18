@@ -1,4 +1,4 @@
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   LiveKitRoom,
   useLocalParticipant,
@@ -8,16 +8,20 @@ import {
   useRoomContext,
   VideoTrack,
   AudioTrack,
-  ParticipantTile,
+  TrackReference,
   StartAudio,
 } from "@livekit/components-react";
+import "@livekit/components-styles";
+import { HiMiniUser } from "react-icons/hi2";
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
+import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare } from "react-icons/lu";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import { Button } from "@/components/ui/button";
 import clsx from "clsx";
-import { VideoPresets, Track, LocalTrack } from "livekit-client";
+import { VideoPresets, Track, LocalTrack, Participant } from "livekit-client";
+import { useAPI } from "@/hooks/useQueryClients";
+import { useHoppStore } from "@/store/store";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -48,49 +52,99 @@ function getGridCols(count: number): string {
 }
 
 export function Room() {
-  const [searchParams] = useSearchParams();
-  const [liveKitUrl, setLiveKitUrl] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const { roomId } = useParams<{ roomId: string }>();
+  const navigate = useNavigate();
   const [hasAudioEnabled, setHasAudioEnabled] = useState(false);
   const [hasCameraEnabled, setHasCameraEnabled] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
-  useEffect(() => {
-    const url = searchParams.get("liveKitUrl");
-    const tokenParam = searchParams.get("token");
+  const { useQuery } = useAPI();
 
-    setLiveKitUrl(url);
-    setToken(tokenParam);
-  }, [searchParams]);
+  // Fetch room tokens using the same endpoint the app uses
+  const {
+    data: roomTokens,
+    isLoading: isLoadingTokens,
+    error: tokensError,
+  } = useQuery("get", "/api/auth/room/{id}", {
+    params: {
+      path: {
+        id: roomId || "",
+      },
+    },
+  });
 
-  if (!liveKitUrl || !token) {
+  const {
+    data: livekitServer,
+    isLoading: isLoadingServer,
+    error: serverError,
+  } = useQuery("get", "/api/auth/livekit/server-url", undefined);
+
+  const isLoading = isLoadingTokens || isLoadingServer;
+  const error = tokensError || serverError;
+
+  if (!roomId) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
-          <h1 className="text-2xl font-semibold mb-2">Missing Room Parameters</h1>
-          <p className="text-gray-600">
-            {!liveKitUrl && "LiveKitUrl is missing. "}
-            {!token && "Token is missing."}
+          <h1 className="text-2xl font-semibold mb-2">Room Not Found</h1>
+          <p className="text-gray-600 mb-4">No room ID was provided.</p>
+          <Button onClick={() => navigate("/dashboard")}>Go to Dashboard</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold mb-2">Joining Room...</h1>
+          <p className="text-gray-600">Please wait while we connect you to the room.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !roomTokens || !livekitServer) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold mb-2">Unable to Join Room</h1>
+          <p className="text-gray-600 mb-4">
+            {error ? "You don't have access to this room or the room doesn't exist." : "Failed to get room access."}
           </p>
+          <Button onClick={() => navigate("/dashboard")}>Go to Dashboard</Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-screen h-screen flex flex-col">
-      <LiveKitRoom token={token} serverUrl={liveKitUrl} connect={true}>
-        <div className="flex-1 p-8 overflow-auto">
+    <div
+      className="w-full h-full flex flex-col overflow-hidden"
+      style={{
+        maxHeight: "calc(100vh - var(--spacing)*16)",
+      }}
+    >
+      <LiveKitRoom
+        className="relative flex flex-col"
+        token={roomTokens.audioToken}
+        serverUrl={livekitServer.url}
+        connect={true}
+      >
+        {/* TODO: Add a prop for on-render on this component, if there is an issue to maybe fire-off a toast to the user */}
+        {/* to ask them to "unmute" or something explicit as an action for sound to play */}
+        <StartAudio label="Click to allow audio playback" />
+        {/* Main content area - takes remaining space, no overflow */}
+        <div className="flex-1 min-h-0 p-4">
           <ParticipantsGrid />
         </div>
-        <div className="border-t border-slate-200 p-4">
+        {/* Fixed controls at bottom */}
+        <div className="justify-end grow-0 w-full border-t border-slate-200 bg-white pt-4">
           <MediaControls
             hasAudioEnabled={hasAudioEnabled}
             setHasAudioEnabled={setHasAudioEnabled}
             hasCameraEnabled={hasCameraEnabled}
             setHasCameraEnabled={setHasCameraEnabled}
-            isScreenSharing={isScreenSharing}
-            setIsScreenSharing={setIsScreenSharing}
           />
         </div>
       </LiveKitRoom>
@@ -101,14 +155,16 @@ export function Room() {
 function ParticipantsGrid() {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+  const user = useHoppStore((state) => state.user);
+
   const cameraTracks = useTracks([Track.Source.Camera], {
-    onlySubscribed: true,
+    onlySubscribed: false, // Include local tracks too
   });
   const audioTracks = useTracks([Track.Source.Microphone], {
-    onlySubscribed: true,
+    onlySubscribed: false,
   });
   const screenShareTracks = useTracks([Track.Source.ScreenShare], {
-    onlySubscribed: true,
+    onlySubscribed: false,
   });
 
   // Filter out participants whose name contains "video" or "camera"
@@ -127,11 +183,30 @@ function ParticipantsGrid() {
     });
   }, [audioTracks]);
 
-  // Get unique participants from camera tracks, but include all remote participants for audio
+  // Build participants list - always include local participant first, then remote participants
   const participants = useMemo(() => {
-    const participantMap = new Map();
+    const participantMap = new Map<
+      string,
+      { participant: Participant; cameraTrack?: TrackReference; audioTrack?: TrackReference; isLocal: boolean }
+    >();
 
-    // First, add participants with camera tracks
+    // Always add local participant first
+    if (localParticipant) {
+      const localCameraTrack = visibleCameraTracks.find(
+        (track) => track.participant.identity === localParticipant.identity,
+      );
+      const localAudioTrack = visibleAudioTracks.find(
+        (track) => track.participant.identity === localParticipant.identity,
+      );
+      participantMap.set(localParticipant.identity, {
+        participant: localParticipant,
+        cameraTrack: localCameraTrack,
+        audioTrack: localAudioTrack,
+        isLocal: true,
+      });
+    }
+
+    // Add participants with camera tracks
     visibleCameraTracks.forEach((track) => {
       const participantId = track.participant.identity;
       if (!participantMap.has(participantId)) {
@@ -139,11 +214,12 @@ function ParticipantsGrid() {
           participant: track.participant,
           cameraTrack: track,
           audioTrack: visibleAudioTracks.find((audioTrack) => audioTrack.participant.identity === participantId),
+          isLocal: false,
         });
       }
     });
 
-    // Then, add all remote participants (for audio) that don't have camera tracks
+    // Add all remote participants that don't have camera tracks
     remoteParticipants.forEach((participant) => {
       const participantName = participant.name || participant.identity || "";
       if (!shouldFilterParticipant(participantName)) {
@@ -153,72 +229,72 @@ function ParticipantsGrid() {
             participant: participant,
             cameraTrack: undefined,
             audioTrack: visibleAudioTracks.find((audioTrack) => audioTrack.participant.identity === participantId),
+            isLocal: false,
           });
         }
       }
     });
 
     return Array.from(participantMap.values());
-  }, [visibleCameraTracks, visibleAudioTracks, remoteParticipants]);
+  }, [visibleCameraTracks, visibleAudioTracks, remoteParticipants, localParticipant]);
 
-  // Get the first screen share track (if any), but exclude local participant's screen share
-  const screenShareTrack = useMemo(() => {
-    const remoteScreenShare = screenShareTracks.find((track) => {
-      if (!localParticipant) return true;
-      return track.participant.identity !== localParticipant.identity;
-    });
-    return remoteScreenShare || null;
-  }, [screenShareTracks, localParticipant]);
+  // Get screen share tracks (including local) - don't filter by participant name for screen shares
+  const activeScreenShare = useMemo(() => {
+    // Screen shares might come from any participant, don't filter them
+    return screenShareTracks.length > 0 ? screenShareTracks[0] : null;
+  }, [screenShareTracks]);
 
-  if (participants.length === 0 && !screenShareTrack) {
-    return (
-      <div className="flex items-center justify-center h-64 border border-slate-200 rounded-lg bg-slate-50">
-        <p className="text-slate-500">No other participants in the room</p>
-      </div>
-    );
-  }
+  // Get the user's display name for local participant
+  const localUserName = user ? `${user.first_name} ${user.last_name}` : "You";
 
-  // If there's a screen share, show it in the center with participants on the side
-  if (screenShareTrack) {
+  // If there's a screen share, show focus layout (screen share center, participants on side)
+  if (activeScreenShare) {
+    const screenShareOwnerName =
+      activeScreenShare.participant.identity === localParticipant?.identity ?
+        localUserName
+      : cleanParticipantName(activeScreenShare.participant.name || activeScreenShare.participant.identity);
+
     return (
       <div className="flex flex-row gap-4 h-full">
-        {/* Participants column on the side */}
-        {participants.length > 0 && (
-          <div className="flex flex-col gap-4 w-64 flex-shrink-0 overflow-y-auto">
-            {participants.map(({ participant, cameraTrack, audioTrack }) => (
-              <ParticipantCard
-                key={participant.identity}
-                participant={participant}
-                cameraTrack={cameraTrack}
-                audioTrack={audioTrack}
-                allAudioTracks={visibleAudioTracks}
-                localParticipant={localParticipant}
-              />
-            ))}
-          </div>
-        )}
-        {/* Screen share in the center */}
-        <div className="flex-1 flex items-center justify-center min-w-0">
-          <div className="w-full h-full rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
-            <VideoTrack trackRef={screenShareTrack} className="w-full h-full object-contain" />
+        {/* Participants carousel on the side */}
+        <aside className="flex flex-col gap-3 w-52 shrink-0 overflow-visible">
+          {participants.map(({ participant, cameraTrack, isLocal }) => (
+            <ParticipantCard
+              key={participant.identity}
+              participant={participant}
+              cameraTrack={cameraTrack}
+              isLocal={isLocal}
+              localUserName={localUserName}
+              compact={true}
+            />
+          ))}
+        </aside>
+        {/* Screen share takes focus - contained with max height */}
+        <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
+          <div className="w-full h-full max-h-full rounded-lg overflow-hidden bg-slate-600 relative flex items-center justify-center">
+            <VideoTrack trackRef={activeScreenShare} className="max-w-full max-h-full object-contain" />
+            <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded flex items-center gap-2">
+              <LuScreenShare className="size-3" />
+              <span>{screenShareOwnerName}&apos;s screen</span>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  // No screen share - show participants in grid
+  // No screen share - show participants in grid, centered
   return (
-    <div>
-      <div className={`grid ${getGridCols(participants.length)} gap-4`}>
-        {participants.map(({ participant, cameraTrack, audioTrack }) => (
+    <div className="h-full flex items-center justify-center">
+      <div className={`grid ${getGridCols(participants.length)} gap-4 w-full max-w-5xl`}>
+        {participants.map(({ participant, cameraTrack, isLocal }) => (
           <ParticipantCard
             key={participant.identity}
             participant={participant}
             cameraTrack={cameraTrack}
-            audioTrack={audioTrack}
-            allAudioTracks={visibleAudioTracks}
-            localParticipant={localParticipant}
+            isLocal={isLocal}
+            localUserName={localUserName}
+            compact={false}
           />
         ))}
       </div>
@@ -229,56 +305,57 @@ function ParticipantsGrid() {
 function ParticipantCard({
   participant,
   cameraTrack,
-  audioTrack,
-  allAudioTracks,
-  localParticipant,
+  isLocal,
+  localUserName,
+  compact = false,
 }: {
-  participant: any;
-  cameraTrack: any;
-  audioTrack?: any;
-  allAudioTracks?: any[];
-  localParticipant?: any;
+  participant: Participant;
+  cameraTrack?: TrackReference;
+  isLocal: boolean;
+  localUserName: string;
+  compact?: boolean;
 }) {
   const rawParticipantName = participant.name || participant.identity || "Unknown";
-  const participantName = cleanParticipantName(rawParticipantName);
+  const participantName = isLocal ? localUserName : cleanParticipantName(rawParticipantName);
 
-  // Check if this is the local participant
-  const isLocalParticipant = localParticipant && participant.identity === localParticipant.identity;
-
-  // Always try to find an audio track for this participant
-  const participantAudioTrack =
-    audioTrack || allAudioTracks?.find((t: any) => t.participant.identity === participant.identity);
+  // Check if participant is muted
+  const isMicMuted = !participant.isMicrophoneEnabled;
 
   return (
-    <div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-50 aspect-video">
+    <div
+      className={clsx("relative rounded-lg bg-slate-400 aspect-video overflow-hidden", {
+        "outline-2 outline-green-500 -outline-offset-1": participant.isSpeaking,
+      })}
+    >
       {cameraTrack ?
-        <VideoTrack
-          trackRef={cameraTrack}
-          className="w-full h-full object-cover"
-          style={{
-            border: participant.isSpeaking ? "2px solid rgba(34, 197, 94, 0.8)" : "none",
-          }}
-        />
-      : <div className="w-full h-full flex items-center justify-center bg-slate-200">
-          <div className="text-center">
-            <div className="w-16 h-16 rounded-full bg-slate-400 mx-auto mb-2 flex items-center justify-center text-white text-2xl font-semibold">
-              {participantName.charAt(0).toUpperCase()}
-            </div>
-            {!isLocalParticipant && <p className="text-sm text-slate-600">{participantName}</p>}
-          </div>
+        <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover" />
+      : <div className="w-full h-full flex items-center justify-center bg-slate-600">
+          <HiMiniUser className="size-10 text-white/80" />
         </div>
       }
-      {participantAudioTrack && (
-        <ParticipantTile trackRef={participantAudioTrack}>
-          <StartAudio label="Click to allow audio playback" />
-          <AudioTrack volume={1.0} />
-        </ParticipantTile>
+      {/* Audio playback for remote participants */}
+      {!isLocal && participant.audioTrackPublications.size > 0 && (
+        <AudioTrack
+          trackRef={{
+            participant,
+            source: Track.Source.Microphone,
+            publication: Array.from(participant.audioTrackPublications.values())[0],
+          }}
+          volume={1.0}
+        />
       )}
-      {!isLocalParticipant && (
-        <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
-          {participantName}
+      {/* Participant metadata bar */}
+      <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/80 to-transparent p-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {isMicMuted && <LuMicOff className="size-3 text-red-400" />}
+            <span className={clsx("text-white text-xs font-medium", { "text-[10px]": compact })}>
+              {participantName}
+              {isLocal && " (You)"}
+            </span>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -314,7 +391,6 @@ function AudioButton({
   return (
     <ToggleIconButton
       onClick={() => {
-        // Action will be implemented later
         setHasAudioEnabled(!hasAudioEnabled);
       }}
       icon={
@@ -439,21 +515,29 @@ function MediaControls({
   setHasAudioEnabled,
   hasCameraEnabled,
   setHasCameraEnabled,
-  isScreenSharing,
-  setIsScreenSharing,
 }: {
   hasAudioEnabled: boolean;
   setHasAudioEnabled: (enabled: boolean) => void;
   hasCameraEnabled: boolean;
   setHasCameraEnabled: (enabled: boolean) => void;
-  isScreenSharing: boolean;
-  setIsScreenSharing: (enabled: boolean) => void;
 }) {
   const { localParticipant } = useLocalParticipant();
   useEffect(() => {
     if (!localParticipant) return;
-    localParticipant.setMicrophoneEnabled(hasAudioEnabled);
 
+    // Handle microphone - unpublish when disabled to fully release the device
+    if (hasAudioEnabled) {
+      localParticipant.setMicrophoneEnabled(true);
+    } else {
+      const micTrack = localParticipant
+        .getTrackPublications()
+        .find((track) => track.source === Track.Source.Microphone);
+      if (micTrack && micTrack.track && micTrack.track instanceof LocalTrack) {
+        localParticipant.unpublishTrack(micTrack.track);
+      }
+    }
+
+    // Handle camera - unpublish when disabled to fully release the device
     if (hasCameraEnabled) {
       localParticipant.setCameraEnabled(
         hasCameraEnabled,
@@ -470,53 +554,21 @@ function MediaControls({
         },
       );
     } else {
-      // Unpublish the camera track when disabled
       const cameraTrack = localParticipant.getTrackPublications().find((track) => track.source === Track.Source.Camera);
       if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
         localParticipant.unpublishTrack(cameraTrack.track);
       }
     }
-
-    localParticipant.setScreenShareEnabled(isScreenSharing);
-  }, [localParticipant, hasAudioEnabled, hasCameraEnabled, isScreenSharing]);
+  }, [localParticipant, hasAudioEnabled, hasCameraEnabled]);
 
   return (
     <div className="flex flex-row gap-2 justify-center items-center flex-wrap">
       <AudioButton hasAudioEnabled={hasAudioEnabled} setHasAudioEnabled={setHasAudioEnabled} />
       <CameraButton hasCameraEnabled={hasCameraEnabled} setHasCameraEnabled={setHasCameraEnabled} />
-      <ScreenShareButton isScreenSharing={isScreenSharing} setIsScreenSharing={setIsScreenSharing} />
+      {/* Screen sharing is disabled in web-app for now - use the desktop app to share */}
+      {/* <ScreenShareButton isScreenSharing={isScreenSharing} setIsScreenSharing={setIsScreenSharing} /> */}
       <EndCallButton />
     </div>
-  );
-}
-
-function ScreenShareButton({
-  isScreenSharing,
-  setIsScreenSharing,
-}: {
-  isScreenSharing: boolean;
-  setIsScreenSharing: (enabled: boolean) => void;
-}) {
-  return (
-    <ToggleIconButton
-      onClick={() => {
-        // Action will be implemented later
-        setIsScreenSharing(!isScreenSharing);
-      }}
-      icon={
-        isScreenSharing ?
-          <LuScreenShare className={`size-4 ${Colors.screen.icon}`} />
-        : <LuScreenShareOff className={`size-4 ${Colors.deactivatedIcon}`} />
-      }
-      state={isScreenSharing ? "active" : "neutral"}
-      size="unsized"
-      className={clsx("min-w-[110px] max-w-[110px]", {
-        [Colors.deactivatedText]: !isScreenSharing,
-        [`${Colors.screen.text} ${Colors.screen.ring}`]: isScreenSharing,
-      })}
-    >
-      {isScreenSharing ? "Stop sharing" : "Share screen"}
-    </ToggleIconButton>
   );
 }
 
@@ -527,7 +579,6 @@ function EndCallButton() {
   const handleEndCall = useCallback(async () => {
     try {
       await room.disconnect();
-      // Navigate away from the room page
       navigate("/dashboard");
     } catch (error) {
       console.error("Error disconnecting from room:", error);

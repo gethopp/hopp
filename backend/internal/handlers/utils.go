@@ -137,27 +137,6 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 	}, nil
 }
 
-func generateMeetRedirectToken(s *common.ServerState, roomName string, participant *models.User) (string, error) {
-	audioID := fmt.Sprintf("room:%s:%s:audio", roomName, participant.ID)
-
-	audio := auth.
-		NewAccessToken(s.Config.Livekit.APIKey, s.Config.Livekit.Secret).
-		SetIdentity(audioID).
-		SetValidFor(3 * time.Hour).
-		SetVideoGrant(&auth.VideoGrant{
-			RoomJoin: true,
-			Room:     roomName,
-		})
-
-	audioToken, err := audio.ToJWT()
-	if err != nil {
-		return "", fmt.Errorf("creating audio token: %w", err)
-	}
-
-	// Return the tokens
-	return audioToken, nil
-}
-
 // GetAuthenticatedUser returns the authenticated user from the session
 // Returns nil and false if the user is not authenticated or not found
 func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.User, bool) {

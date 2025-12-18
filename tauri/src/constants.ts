@@ -29,6 +29,11 @@ export class Constants {
     return `https://${this.apiBaseUrl}`;
   }
 
+  /** The web app URL for sharing room links. */
+  static get webAppUrl(): string {
+    return `https://${this.apiBaseUrl}`;
+  }
+
   /** The WebSocket URL for the auth websocket. */
   static get websocketUrl(): string {
     return `wss://${this.apiBaseUrl}/api/auth/websocket`;

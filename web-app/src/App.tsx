@@ -115,8 +115,8 @@ const router = createBrowserRouter([
     ],
   },
   {
-    path: "/room",
-    element: <Providers requireAuth={false} overrideRedirect={true} />,
+    path: "/room/:roomId",
+    element: <Providers requireAuth={true} />,
     children: [
       {
         path: "",

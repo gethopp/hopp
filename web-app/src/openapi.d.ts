@@ -1104,51 +1104,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/auth/room/anonymous": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get a link that will have an encoded token that will be used
-     * @description Get a link that will have an encoded token that will be used
-     */
-    get: {
-      parameters: {
-        query: {
-          /** @description The ID of the room to generate an anonymous link for */
-          room_id: string;
-        };
-        header?: never;
-        path?: never;
-        cookie?: never;
-      };
-      requestBody?: never;
-      responses: {
-        /** @description Link with encoded token retrieved successfully */
-        200: {
-          headers: {
-            [name: string]: unknown;
-          };
-          content: {
-            "application/json": {
-              /** @description Redirect URL with encoded token */
-              redirect_url?: string;
-            };
-          };
-        };
-      };
-    };
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/auth/livekit/server-url": {
     parameters: {
       query?: never;
