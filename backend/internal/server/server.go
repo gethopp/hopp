@@ -333,7 +333,6 @@ func (s *Server) setupRoutes() {
 	api.POST("/sign-in", auth.ManualSignIn)
 	api.POST("/forgot-password", auth.ForgotPassword)
 	api.PATCH("/reset-password/:token", auth.ResetPassword)
-	api.GET("/room/meet-redirect", auth.RoomMeetRedirect)
 
 	// Protected API routes group
 	protectedAPI := api.Group("/auth", s.JwtIssuer.Middleware())

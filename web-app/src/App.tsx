@@ -14,6 +14,7 @@ import { HoppSidebar } from "./components/sidebar";
 import { Settings } from "./pages/Settings";
 import { Teammates } from "./pages/Teammates";
 import { Subscription } from "./pages/Subscription";
+import { Room } from "./pages/Room";
 import { BACKEND_URLS, META } from "./constants";
 import { PostHogProvider } from "posthog-js/react";
 import { PostHogConfig } from "posthog-js";
@@ -110,6 +111,16 @@ const router = createBrowserRouter([
       {
         path: "",
         element: <InvitationHandler />,
+      },
+    ],
+  },
+  {
+    path: "/room",
+    element: <Providers requireAuth={false} overrideRedirect={true} />,
+    children: [
+      {
+        path: "",
+        element: <Room />,
       },
     ],
   },

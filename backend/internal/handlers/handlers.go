@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
@@ -1025,12 +1024,11 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	return c.JSON(http.StatusOK, tokens)
 }
 
-// RoomAnonymous generates a link that will have an encoded token that will be used
-// in `RoomMeetRedirect` to see if an anonymous user can join the room.
-// The generated token should be in the format:
-// /api/room/meet-redirect?token=<GENERATED_TOKEN>
-// The generated token will be a JWT token valid for 10 minutes with payload
-// the team id and room id.
+// RoomAnonymous generates a LiveKit access token for an anonymous user to join a room.
+// It creates an anonymous user with a random 4-character identifier and generates
+// a LiveKit token valid for 3 hours. The function returns a redirect URL in the format:
+// /room?liveKitUrl=<LIVEKIT_SERVER_URL>&token=<LIVEKIT_ACCESS_TOKEN>
+// The token allows the anonymous user to join the specified room without authentication.
 func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
@@ -1060,104 +1058,6 @@ func (h *AuthHandler) RoomAnonymous(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized access to room")
 	}
 
-	// Create custom claims for anonymous room access
-	claims := jwt.MapClaims{
-		"team_id": *user.TeamID,
-		"room_id": roomID,
-		"exp":     jwt.NewNumericDate(time.Now().Add(10 * time.Minute)), // 10-minute expiration
-		"iat":     jwt.NewNumericDate(time.Now()),                       // Issued at
-		"purpose": "anonymous_room",                                     // Purpose of the token
-	}
-
-	// Create token with claims
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	// Get the JWT secret from the handler's state
-	jwtAuth, ok := h.JwtIssuer.(*JwtAuth)
-	if !ok {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to access JWT configuration")
-	}
-
-	// Generate encoded token
-	tokenString, err := token.SignedString([]byte(jwtAuth.Secret))
-	if err != nil {
-		c.Logger().Error("Failed to generate anonymous room token:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate token")
-	}
-
-	// Return the redirect URL
-	redirectURL := fmt.Sprintf("/api/room/meet-redirect?token=%s", tokenString)
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"redirect_url": redirectURL,
-	})
-}
-
-// RoomMeetRedirect generates LiveKit tokens
-// for joining the team's room via the meet.livekit.io/custom URL.
-// The token will be valid for 3 hours maximum, and the format of the generated URL
-// that we will redirect user to will be:
-// The encoded token will come from the `RoomAnonymous` generated link.
-func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
-	// Get the token from query parameters
-	tokenString := c.QueryParam("token")
-	if tokenString == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Missing token parameter")
-	}
-
-	// Parse and validate the JWT token
-	token, err := jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Get the JWT secret from the handler's state
-		jwtAuth, ok := h.JwtIssuer.(*JwtAuth)
-		if !ok {
-			return nil, fmt.Errorf("failed to access JWT configuration")
-		}
-
-		return []byte(jwtAuth.Secret), nil
-	})
-
-	if err != nil {
-		c.Logger().Error("Failed to parse anonymous room token:", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
-	}
-
-	// Validate claims
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token claims")
-	}
-
-	// Check token purpose
-	purpose, ok := claims["purpose"].(string)
-	if !ok || purpose != "anonymous_room" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token purpose")
-	}
-
-	// Extract team ID
-	teamIDFloat, ok := claims["team_id"].(float64)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid team ID in token")
-	}
-	teamID := uint(teamIDFloat)
-
-	// Extract room ID
-	roomID, ok := claims["room_id"].(string)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid room ID in token")
-	}
-
-	// Verify the room exists and belongs to the team
-	var room models.Room
-	result := h.DB.Where("id = ?", roomID).First(&room)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "Room not found")
-	}
-
-	// Check if room belongs to the team
-	if room.TeamID == nil || *room.TeamID != teamID {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Room does not belong to team")
-	}
-
 	// Use the specific room ID as the room name
 	roomName := roomID
 
@@ -1168,7 +1068,7 @@ func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
 	// Create a mock user object for token generation
 	anonymousUser := &models.User{
 		ID:     anonymousUserID,
-		TeamID: &teamID,
+		TeamID: user.TeamID,
 	}
 
 	// Generate a token for the anonymous user to join the room
@@ -1178,7 +1078,12 @@ func (h *AuthHandler) RoomMeetRedirect(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 
-	return c.Redirect(http.StatusFound, fmt.Sprintf("https://meet.livekit.io/custom?liveKitUrl=%s&token=%s", h.Config.Livekit.ServerURL, livekitToken))
+	// Return the redirect URL
+	redirectURL := fmt.Sprintf("/room?liveKitUrl=%s&token=%s", h.Config.Livekit.ServerURL, livekitToken)
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"redirect_url": redirectURL,
+	})
 }
 
 func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {
