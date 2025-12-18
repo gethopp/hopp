@@ -239,7 +239,11 @@ fn store_token_cmd(app: tauri::AppHandle, token: String) {
     log::info!("store_token_cmd");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_user_jwt(Some(token));
+    data.app_state.set_user_jwt(Some(token.clone()));
+
+    if let Err(e) = app.emit("token_changed", token) {
+        log::error!("Failed to emit token_changed event: {e:?}");
+    }
 }
 
 #[tauri::command]
