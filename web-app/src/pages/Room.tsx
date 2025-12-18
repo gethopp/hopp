@@ -10,10 +10,11 @@ import {
   AudioTrack,
   TrackReference,
   StartAudio,
+  useDataChannel,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { HiMiniUser } from "react-icons/hi2";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare } from "react-icons/lu";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
@@ -22,6 +23,22 @@ import clsx from "clsx";
 import { VideoPresets, Track, LocalTrack, Participant } from "livekit-client";
 import { useAPI } from "@/hooks/useQueryClients";
 import { useHoppStore } from "@/store/store";
+
+// HACK: Import shared components from tauri app for cursor rendering
+// These files use relative imports so they work across projects
+import { Cursor } from "../../../tauri/src/components/ui/cursor";
+import { TPMouseMove } from "../../../tauri/src/payloads";
+
+const CURSORS_TOPIC = "participant_location";
+
+// Cursor slot for tracking remote participant cursors
+interface CursorSlot {
+  participantId: string | null;
+  participantName: string;
+  x: number;
+  y: number;
+  lastActivity: number;
+}
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -269,16 +286,8 @@ function ParticipantsGrid() {
             />
           ))}
         </aside>
-        {/* Screen share takes focus - contained with max height */}
-        <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
-          <div className="w-full h-full max-h-full rounded-lg overflow-hidden bg-slate-600 relative flex items-center justify-center">
-            <VideoTrack trackRef={activeScreenShare} className="max-w-full max-h-full object-contain" />
-            <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded flex items-center gap-2">
-              <LuScreenShare className="size-3" />
-              <span>{screenShareOwnerName}&apos;s screen</span>
-            </div>
-          </div>
-        </div>
+        {/* Screen share takes focus with cursor overlay */}
+        <ScreenShareView screenShareTrack={activeScreenShare} ownerName={screenShareOwnerName} />
       </div>
     );
   }
@@ -297,6 +306,175 @@ function ParticipantsGrid() {
             compact={false}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+// Hand-picked colors for cursor badges (same as tauri app)
+const SVG_BADGE_COLORS = ["#0040FF", "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040"];
+
+function ScreenShareView({ screenShareTrack, ownerName }: { screenShareTrack: TrackReference; ownerName: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Cursor slots for remote participants
+  const [cursorSlots, setCursorSlots] = useState<CursorSlot[]>(() =>
+    Array.from({ length: SVG_BADGE_COLORS.length }, () => ({
+      participantId: null,
+      participantName: "Unknown",
+      x: -1000,
+      y: -1000,
+      lastActivity: Date.now(),
+    })),
+  );
+
+  // Calculate cursor position accounting for object-contain letterboxing
+  // The video element uses object-contain, so the actual video content may be
+  // smaller than the element with letterboxing (black bars)
+  const calculateCursorPosition = useCallback((payload: TPMouseMove): { x: number; y: number } | null => {
+    if (!videoRef.current || !containerRef.current) return null;
+
+    const video = videoRef.current;
+    const containerRect = containerRef.current.getBoundingClientRect();
+
+    // Get the original video dimensions (the actual video content size)
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
+
+    if (!videoWidth || !videoHeight) return null;
+
+    // Get the video element's rendered dimensions
+    const elementWidth = video.clientWidth;
+    const elementHeight = video.clientHeight;
+
+    // Calculate aspect ratios
+    const videoAspect = videoWidth / videoHeight;
+    const elementAspect = elementWidth / elementHeight;
+
+    // Calculate the actual rendered video size within the element (accounting for object-contain)
+    let renderedWidth: number, renderedHeight: number, videoOffsetX: number, videoOffsetY: number;
+
+    if (videoAspect > elementAspect) {
+      // Video is wider than element - letterboxing on top/bottom
+      renderedWidth = elementWidth;
+      renderedHeight = elementWidth / videoAspect;
+      videoOffsetX = 0;
+      videoOffsetY = (elementHeight - renderedHeight) / 2;
+    } else {
+      // Video is taller than element - letterboxing on left/right
+      renderedHeight = elementHeight;
+      renderedWidth = elementHeight * videoAspect;
+      videoOffsetX = (elementWidth - renderedWidth) / 2;
+      videoOffsetY = 0;
+    }
+
+    // Calculate video element's position within the container
+    const videoRect = video.getBoundingClientRect();
+    const containerOffsetX = videoRect.left - containerRect.left;
+    const containerOffsetY = videoRect.top - containerRect.top;
+
+    // Calculate cursor position:
+    // 1. payload.x/y are 0-1 relative coordinates within the video content
+    // 2. Multiply by rendered video size to get position within the rendered content
+    // 3. Add letterbox offset (position of content within video element)
+    // 4. Add container offset (position of video element within container)
+    const x = payload.payload.x * renderedWidth + videoOffsetX + containerOffsetX;
+    const y = payload.payload.y * renderedHeight + videoOffsetY + containerOffsetY;
+
+    return { x, y };
+  }, []);
+
+  // Listen for cursor position updates from other participants
+  useDataChannel(CURSORS_TOPIC, (msg) => {
+    const decoder = new TextDecoder();
+    const payload: TPMouseMove = JSON.parse(decoder.decode(msg.payload));
+
+    const position = calculateCursorPosition(payload);
+    if (!position) return;
+
+    const participantName = msg.from?.name ?? "Unknown";
+    const participantId = msg.from?.identity ?? "Unknown";
+
+    if (participantId === "Unknown") return;
+
+    setCursorSlots((prev) => {
+      const updated = [...prev];
+
+      // Find existing slot for this participant
+      let slotIndex = updated.findIndex((slot) => slot.participantId === participantId);
+
+      // If not found, find first available slot
+      if (slotIndex === -1) {
+        slotIndex = updated.findIndex((slot) => slot.participantId === null);
+      }
+
+      if (slotIndex === -1) return prev; // No available slots
+
+      let name = updated[slotIndex]?.participantName ?? "Unknown";
+      if (name === "Unknown") {
+        name = participantName.split(" ")[0] ?? "Unknown";
+      }
+
+      updated[slotIndex] = {
+        participantId,
+        participantName: name,
+        x: position.x,
+        y: position.y,
+        lastActivity: Date.now(),
+      };
+
+      return updated;
+    });
+  });
+
+  // Hide cursors after 5 seconds of inactivity
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setCursorSlots((prev) =>
+        prev.map((slot) => {
+          if (slot.participantId && now - slot.lastActivity > 5000) {
+            return { ...slot, x: -1000, y: -1000 };
+          }
+          return slot;
+        }),
+      );
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
+      <div
+        ref={containerRef}
+        className="w-full h-full max-h-full rounded-lg overflow-hidden bg-slate-600 relative flex items-center justify-center"
+      >
+        <VideoTrack trackRef={screenShareTrack} className="max-w-full max-h-full object-contain" ref={videoRef} />
+
+        {/* Render remote participant cursors */}
+        {cursorSlots.map((slot, index) => {
+          if (slot.x < 0 || slot.y < 0) return null;
+          const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
+          return (
+            <Cursor
+              key={index}
+              name={slot.participantName}
+              color={color}
+              style={{
+                left: `${slot.x}px`,
+                top: `${slot.y}px`,
+              }}
+            />
+          );
+        })}
+
+        {/* Screen share label */}
+        <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded flex items-center gap-2">
+          <LuScreenShare className="size-3" />
+          <span>{ownerName}&apos;s screen</span>
+        </div>
       </div>
     </div>
   );

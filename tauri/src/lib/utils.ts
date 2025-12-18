@@ -1,4 +1,6 @@
-import { TPMouseMove } from "@/payloads";
+// HACK: temp workaround to import the same component in web-app
+// Using relative import instead of @/ alias for cross-project compatibility
+import { TPMouseMove } from "../payloads";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
