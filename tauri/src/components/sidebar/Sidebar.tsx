@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { OS } from "@/constants";
+import { useQueryClient } from "@tanstack/react-query";
 
 const SidebarButton = ({
   active,
@@ -167,6 +168,7 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
 
 export const Sidebar = () => {
   const { tab, setTab, user, reset } = useStore();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     // If user is not set, show login tab
@@ -222,6 +224,7 @@ export const Sidebar = () => {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={async () => {
+                    queryClient.clear();
                     reset();
                     await invoke("delete_stored_token");
                   }}

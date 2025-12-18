@@ -41,6 +41,8 @@ export function QueryProvider({ children }: QueryProviderProps) {
         const token = event.payload as string;
         if (token) {
           setAuthToken(token);
+        } else {
+          setAuthToken(null);
         }
       });
 
