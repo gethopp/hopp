@@ -15,12 +15,12 @@ import {
 import "@livekit/components-styles";
 import { HiMiniUser } from "react-icons/hi2";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare } from "react-icons/lu";
+import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import { Button } from "@/components/ui/button";
 import clsx from "clsx";
-import { VideoPresets, Track, LocalTrack, Participant } from "livekit-client";
+import { VideoPresets, Track, LocalTrack, Participant, ParticipantEvent, LocalTrackPublication } from "livekit-client";
 import { useAPI } from "@/hooks/useQueryClients";
 import { useHoppStore } from "@/store/store";
 
@@ -73,6 +73,7 @@ export function Room() {
   const navigate = useNavigate();
   const [hasAudioEnabled, setHasAudioEnabled] = useState(false);
   const [hasCameraEnabled, setHasCameraEnabled] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   const { useQuery } = useAPI();
 
@@ -162,6 +163,8 @@ export function Room() {
             setHasAudioEnabled={setHasAudioEnabled}
             hasCameraEnabled={hasCameraEnabled}
             setHasCameraEnabled={setHasCameraEnabled}
+            isScreenSharing={isScreenSharing}
+            setIsScreenSharing={setIsScreenSharing}
           />
         </div>
       </LiveKitRoom>
@@ -688,16 +691,49 @@ function CameraButton({
   );
 }
 
+function ScreenShareButton({
+  isScreenSharing,
+  setIsScreenSharing,
+}: {
+  isScreenSharing: boolean;
+  setIsScreenSharing: (sharing: boolean) => void;
+}) {
+  return (
+    <ToggleIconButton
+      onClick={() => {
+        setIsScreenSharing(!isScreenSharing);
+      }}
+      icon={
+        isScreenSharing ?
+          <LuScreenShare className={`size-4 ${Colors.screen.icon}`} />
+        : <LuScreenShareOff className={`size-4 ${Colors.deactivatedIcon}`} />
+      }
+      state={isScreenSharing ? "active" : "neutral"}
+      size="unsized"
+      className={clsx("min-w-[110px] max-w-[110px]", {
+        [Colors.deactivatedText]: !isScreenSharing,
+        [`${Colors.screen.text} ${Colors.screen.ring}`]: isScreenSharing,
+      })}
+    >
+      {isScreenSharing ? "Stop sharing" : "Share screen"}
+    </ToggleIconButton>
+  );
+}
+
 function MediaControls({
   hasAudioEnabled,
   setHasAudioEnabled,
   hasCameraEnabled,
   setHasCameraEnabled,
+  isScreenSharing,
+  setIsScreenSharing,
 }: {
   hasAudioEnabled: boolean;
   setHasAudioEnabled: (enabled: boolean) => void;
   hasCameraEnabled: boolean;
   setHasCameraEnabled: (enabled: boolean) => void;
+  isScreenSharing: boolean;
+  setIsScreenSharing: (sharing: boolean) => void;
 }) {
   const { localParticipant } = useLocalParticipant();
   useEffect(() => {
@@ -737,14 +773,43 @@ function MediaControls({
         localParticipant.unpublishTrack(cameraTrack.track);
       }
     }
-  }, [localParticipant, hasAudioEnabled, hasCameraEnabled]);
+
+    // Handle screen sharing
+    if (isScreenSharing) {
+      localParticipant.setScreenShareEnabled(true);
+    } else {
+      localParticipant.setScreenShareEnabled(false);
+
+      const screenShareTrack = localParticipant
+        .getTrackPublications()
+        .find((track) => track.source === Track.Source.ScreenShare);
+      if (screenShareTrack && screenShareTrack.track && screenShareTrack.track instanceof LocalTrack) {
+        localParticipant.unpublishTrack(screenShareTrack.track);
+      }
+    }
+  }, [localParticipant, hasAudioEnabled, hasCameraEnabled, isScreenSharing, setIsScreenSharing]);
+
+  useEffect(() => {
+    if (!localParticipant) return;
+
+    const onLocalTrackUnpublished = (publication: LocalTrackPublication) => {
+      if (publication.source === Track.Source.ScreenShare) {
+        setIsScreenSharing(false);
+      }
+    };
+
+    localParticipant.on(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
+
+    return () => {
+      localParticipant.off(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
+    };
+  }, [localParticipant]);
 
   return (
     <div className="flex flex-row gap-2 justify-center items-center flex-wrap">
       <AudioButton hasAudioEnabled={hasAudioEnabled} setHasAudioEnabled={setHasAudioEnabled} />
       <CameraButton hasCameraEnabled={hasCameraEnabled} setHasCameraEnabled={setHasCameraEnabled} />
-      {/* Screen sharing is disabled in web-app for now - use the desktop app to share */}
-      {/* <ScreenShareButton isScreenSharing={isScreenSharing} setIsScreenSharing={setIsScreenSharing} /> */}
+      <ScreenShareButton isScreenSharing={isScreenSharing} setIsScreenSharing={setIsScreenSharing} />
       <EndCallButton />
     </div>
   );
