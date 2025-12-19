@@ -8,7 +8,7 @@ tasks:
     desc: Starts livekit local server
     cmds:
       - |
-        livekit-server --dev --logging.level info
+        livekit-server --dev --node-ip 127.0.0.1 --logging.level info
   generate-user-token:
     desc: Generates token for specified token
     cmds:

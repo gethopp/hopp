@@ -761,32 +761,6 @@ paths:
         "204":
           description: User successfully deleted (no content)
 
-  /api/auth/room/anonymous:
-    get:
-      summary: Get a link that will have an encoded token that will be used
-      description: Get a link that will have an encoded token that will be used
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: room_id
-          in: query
-          required: true
-          description: The ID of the room to generate an anonymous link for
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Link with encoded token retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  redirect_url:
-                    type: string
-                    description: Redirect URL with encoded token
-
   /api/auth/livekit/server-url:
     get:
       summary: Get the LiveKit server url

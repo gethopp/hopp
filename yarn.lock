@@ -1034,7 +1034,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@floating-ui/dom@npm:^1.0.1, @floating-ui/dom@npm:^1.7.4":
+"@floating-ui/dom@npm:1.7.4, @floating-ui/dom@npm:^1.0.1, @floating-ui/dom@npm:^1.7.4":
   version: 1.7.4
   resolution: "@floating-ui/dom@npm:1.7.4"
   dependencies:
@@ -1520,6 +1520,20 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@livekit/components-core@npm:0.12.12":
+  version: 0.12.12
+  resolution: "@livekit/components-core@npm:0.12.12"
+  dependencies:
+    "@floating-ui/dom": "npm:1.7.4"
+    loglevel: "npm:1.9.1"
+    rxjs: "npm:7.8.2"
+  peerDependencies:
+    livekit-client: ^2.15.14
+    tslib: ^2.6.2
+  checksum: 10c0/788ae01fa6c58a0edbd629f4195f2f3a7bc94660d2fb729af8b27cab2b151abe36cd0a666989811c6187e51d32c847119853010a82be55844750ab3978079c38
+  languageName: node
+  linkType: hard
+
 "@livekit/components-react@npm:^2.4.3":
   version: 2.9.15
   resolution: "@livekit/components-react@npm:2.9.15"
@@ -1537,6 +1551,35 @@ __metadata:
     "@livekit/krisp-noise-filter":
       optional: true
   checksum: 10c0/58a93d85c3b8267d0afd00eceb4f34992ce66124f93450e828a78dd825ecc20e254c3123ed22ec33061a3728f50f4f020ff896769fb3a0ff79656ed8cf452a2b
+  languageName: node
+  linkType: hard
+
+"@livekit/components-react@npm:^2.9.17":
+  version: 2.9.17
+  resolution: "@livekit/components-react@npm:2.9.17"
+  dependencies:
+    "@livekit/components-core": "npm:0.12.12"
+    clsx: "npm:2.1.1"
+    events: "npm:^3.3.0"
+    jose: "npm:^6.0.12"
+    usehooks-ts: "npm:3.1.1"
+  peerDependencies:
+    "@livekit/krisp-noise-filter": ^0.2.12 || ^0.3.0
+    livekit-client: ^2.15.14
+    react: ">=18"
+    react-dom: ">=18"
+    tslib: ^2.6.2
+  peerDependenciesMeta:
+    "@livekit/krisp-noise-filter":
+      optional: true
+  checksum: 10c0/ba64ada37d4b3ce4d5ee7c5b2a6bddbffc17c2e641e95881aac9f02b4ff7428105e0a372d364e50ff124e988b7426d322d94caabdb55b634aebf0144d7e37f99
+  languageName: node
+  linkType: hard
+
+"@livekit/components-styles@npm:^1.2.0":
+  version: 1.2.0
+  resolution: "@livekit/components-styles@npm:1.2.0"
+  checksum: 10c0/bc395cc08852cd4ce3df25958d8258602c7638143822590adfefe0e7a15fd815ec7a3acce7bb93fb1802a3de665c7820ccfd74a18617fdd80336928624298a85
   languageName: node
   linkType: hard
 
@@ -8495,6 +8538,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"jose@npm:^6.0.12":
+  version: 6.1.3
+  resolution: "jose@npm:6.1.3"
+  checksum: 10c0/b9577b4a7a5e84131011c23823db9f5951eae3ba796771a6a2401ae5dd50daf71104febc8ded9c38146aa5ebe94a92ac09c725e699e613ef26949b9f5a8bc30f
+  languageName: node
+  linkType: hard
+
 "jose@npm:^6.1.0":
   version: 6.1.1
   resolution: "jose@npm:6.1.1"
@@ -8737,6 +8787,26 @@ __metadata:
   version: 1.2.4
   resolution: "lines-and-columns@npm:1.2.4"
   checksum: 10c0/3da6ee62d4cd9f03f5dc90b4df2540fb85b352081bee77fe4bbcd12c9000ead7f35e0a38b8d09a9bb99b13223446dd8689ff3c4959807620726d788701a83d2d
+  languageName: node
+  linkType: hard
+
+"livekit-client@npm:^2.16.1":
+  version: 2.16.1
+  resolution: "livekit-client@npm:2.16.1"
+  dependencies:
+    "@livekit/mutex": "npm:1.1.1"
+    "@livekit/protocol": "npm:1.42.2"
+    events: "npm:^3.3.0"
+    jose: "npm:^6.1.0"
+    loglevel: "npm:^1.9.2"
+    sdp-transform: "npm:^2.15.0"
+    ts-debounce: "npm:^4.0.0"
+    tslib: "npm:2.8.1"
+    typed-emitter: "npm:^2.1.0"
+    webrtc-adapter: "npm:^9.0.1"
+  peerDependencies:
+    "@types/dom-mediacapture-record": ^1
+  checksum: 10c0/a16f7e603730410b640991cdb1a9d5ad3b0b06b23b8fe2e76674e6a9ba54ed4c8e7e4f6ad15fe67c8de6557da161e1265b40802c4e3701db3fe0d7ea9250b1e2
   languageName: node
   linkType: hard
 
@@ -12628,6 +12698,8 @@ __metadata:
   dependencies:
     "@eslint/js": "npm:^9.19.0"
     "@headlessui/react": "npm:^2.2.9"
+    "@livekit/components-react": "npm:^2.9.17"
+    "@livekit/components-styles": "npm:^1.2.0"
     "@radix-ui/react-dialog": "npm:1.1.15"
     "@radix-ui/react-label": "npm:^2.1.8"
     "@radix-ui/react-popover": "npm:1.1.15"
@@ -12652,6 +12724,7 @@ __metadata:
     eslint-plugin-react-hooks: "npm:^5.0.0"
     eslint-plugin-react-refresh: "npm:^0.4.18"
     globals: "npm:^15.14.0"
+    livekit-client: "npm:^2.16.1"
     lucide-react: "npm:^0.553.0"
     motion: "npm:^12.23.24"
     postcss: "npm:^8.5.2"

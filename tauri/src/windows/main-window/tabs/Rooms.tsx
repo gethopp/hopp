@@ -1,5 +1,4 @@
 import { components } from "@/openapi";
-import { Constants } from "@/constants";
 import { sounds } from "@/constants/sounds";
 import { useAPI } from "@/services/query";
 import { Input } from "@/components/ui/input";
@@ -27,7 +26,6 @@ import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useCallback, useEffect, useMemo } from "react";
 import toast from "react-hot-toast";
-import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useParticipants, useRoomContext } from "@livekit/components-react";
 import { RoomEvent } from "livekit-client";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
@@ -35,6 +33,8 @@ import { Button } from "@/components/ui/button";
 import { HiMiniLink } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Constants } from "@/constants";
 import { useState } from "react";
 import doorImage from "@/assets/door.png";
 
@@ -363,29 +363,15 @@ const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void 
 };
 
 const SelectedRoom = ({ room }: { room: Room }) => {
-  const { useMutation } = useAPI();
   const participants = useParticipants();
   const { teammates, user } = useStore();
   const roomContext = useRoomContext();
 
-  const { mutateAsync: getRoomAnonymous } = useMutation("get", "/api/auth/room/anonymous", undefined);
-
-  const handleInviteAnonymousUser = useCallback(async () => {
-    const redirectURL = await getRoomAnonymous({
-      params: {
-        query: {
-          room_id: room.id,
-        },
-      },
-    });
-    if (!redirectURL || !redirectURL.redirect_url) {
-      toast.error("Error generating link");
-      return;
-    }
-    const link = `${Constants.backendUrl}${redirectURL.redirect_url}`;
-    await writeText(link);
-    toast.success("Link copied to clipboard");
-  }, [getRoomAnonymous, room.id]);
+  const handleCopyRoomLink = async () => {
+    const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
+    await writeText(roomLink);
+    toast.success("Room link copied to clipboard");
+  };
 
   // Listen for participant connection events and play sound when someone joins
   useEffect(() => {
@@ -422,16 +408,6 @@ const SelectedRoom = ({ room }: { room: Room }) => {
           participantId = participant.identity;
         }
 
-        // Handle anonymous participants
-        if (participantId === "anonymous" || !participantId) {
-          return {
-            id: participant.identity,
-            participantId: "anonymous",
-            user: null,
-            isLocal: participant.isLocal,
-          };
-        }
-
         // Find user in teammates or current user
         let foundUser = null;
         if (user && user.id === participantId) {
@@ -457,21 +433,15 @@ const SelectedRoom = ({ room }: { room: Room }) => {
           <span className="text-xs font-medium text-slate-600 mb-2">Participants ({participantList.length})</span>
         </div>
         <div className="flex flex-row gap-2">
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={() => {
-              handleInviteAnonymousUser();
-            }}
-          >
+          <Button variant="outline" size="icon-sm" onClick={handleCopyRoomLink}>
             <TooltipProvider delayDuration={100}>
               <Tooltip>
                 <TooltipTrigger>
                   <HiMiniLink className="size-3.5" />
                 </TooltipTrigger>
                 <TooltipContent side="left" sideOffset={10} className="flex flex-col items-center gap-0">
-                  <span>Invite anonymous user</span>
-                  <span className="text-xs text-slate-400">expires in 10 mins</span>
+                  <span>Copy room link for web</span>
+                  <span className="text-xs text-slate-400">Share with teammates</span>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -503,10 +473,9 @@ const SelectedRoom = ({ room }: { room: Room }) => {
                   </div>
                   <div className="flex flex-col">
                     <span className="text-sm font-medium text-slate-600">
-                      Anonymous user
+                      Unknown user
                       {participant.isLocal && " (You)"}
                     </span>
-                    <span className="text-xs text-slate-500">Unknown participant</span>
                   </div>
                 </>
               }
