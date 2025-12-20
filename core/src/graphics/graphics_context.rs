@@ -10,10 +10,8 @@ use image::GenericImageView;
 use log::error;
 use std::sync::Arc;
 use thiserror::Error;
+use wgpu::ExperimentalFeatures;
 use winit::window::Window;
-
-#[cfg(target_os = "windows")]
-use super::direct_composition::DirectComposition;
 
 #[path = "marker.rs"]
 mod marker;
@@ -129,10 +127,6 @@ pub struct GraphicsContext<'a> {
     /// Renderer for cursor graphics with multi-cursor support
     cursor_renderer: CursorsRenderer,
 
-    /// Windows-specific DirectComposition integration for transparent overlays
-    #[cfg(target_os = "windows")]
-    _direct_composition: DirectComposition,
-
     /// Renderer for corner markers indicating overlay boundaries
     marker_renderer: MarkerRenderer,
 
@@ -173,37 +167,24 @@ impl<'a> GraphicsContext<'a> {
         log::info!("GraphicsContext::new");
         let size = window.inner_size();
         let window_arc = Arc::new(window);
+
+        let backend_options = wgpu::BackendOptions {
+            dx12: wgpu::Dx12BackendOptions {
+                presentation_system: wgpu::Dx12SwapchainKind::DxgiFromVisual,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
+            backend_options: backend_options,
             ..Default::default()
         });
 
-        #[cfg(target_os = "windows")]
-        let direct_composition =
-            DirectComposition::new(window_arc.clone()).ok_or(OverlayError::SurfaceCreationError)?;
-
-        let surface = {
-            #[cfg(target_os = "windows")]
-            {
-                direct_composition.create_surface(&instance)?
-            }
-            #[cfg(target_os = "macos")]
-            {
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {e:?}");
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-            // Add other OS targets here if needed
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
-                // Default or error for unsupported OS
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {:?}", e);
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-        };
+        let surface = instance.create_surface(window_arc.clone()).map_err(|e| {
+            log::error!("GraphicsContext::new: {e:?}");
+            OverlayError::SurfaceCreationError
+        })?;
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -222,6 +203,7 @@ impl<'a> GraphicsContext<'a> {
             label: None,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
+            experimental_features: ExperimentalFeatures::disabled(),
         }))
         .map_err(|_| OverlayError::DeviceRequestError)?;
 
@@ -256,9 +238,6 @@ impl<'a> GraphicsContext<'a> {
             desired_maximum_frame_latency: 0,
         };
         surface.configure(&device, &surface_config);
-
-        #[cfg(target_os = "windows")]
-        direct_composition.commit()?;
 
         /*
          * Workaround for resetting the default white background
@@ -303,8 +282,6 @@ impl<'a> GraphicsContext<'a> {
             queue,
             window: window_arc,
             cursor_renderer,
-            #[cfg(target_os = "windows")]
-            _direct_composition: direct_composition,
             marker_renderer,
             click_animation_renderer,
         })
@@ -398,10 +375,12 @@ impl<'a> GraphicsContext<'a> {
                     }),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None,
+            multiview_mask: None,
         });
         render_pass.set_pipeline(&self.cursor_renderer.render_pipeline);
 
@@ -522,7 +501,7 @@ fn create_texture(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
 

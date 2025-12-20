@@ -382,7 +382,7 @@ impl ClickAnimationRenderer {
                     &transform_bind_group_layout,
                     &radius_bind_group_layout,
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -434,7 +434,7 @@ impl ClickAnimationRenderer {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
