@@ -10,13 +10,10 @@ use image::GenericImageView;
 use log::error;
 use std::sync::Arc;
 use thiserror::Error;
-use wgpu::ExperimentalFeatures;
 use winit::window::Window;
 
-#[path = "marker.rs"]
-mod marker;
-use marker::MarkerRenderer;
-
+#[cfg(target_os = "windows")]
+use super::direct_composition::DirectComposition;
 #[path = "cursor.rs"]
 pub mod cursor;
 use cursor::{Cursor, CursorsRenderer};
@@ -27,6 +24,10 @@ use click_animation::ClickAnimationRenderer;
 
 #[path = "point.rs"]
 pub mod point;
+
+#[path = "iced_renderer.rs"]
+pub mod iced_renderer;
+use iced_renderer::IcedRenderer;
 
 /// Errors that can occur during overlay graphics operations.
 #[derive(Error, Debug)]
@@ -127,11 +128,15 @@ pub struct GraphicsContext<'a> {
     /// Renderer for cursor graphics with multi-cursor support
     cursor_renderer: CursorsRenderer,
 
-    /// Renderer for corner markers indicating overlay boundaries
-    marker_renderer: MarkerRenderer,
+    /// Windows-specific DirectComposition integration for transparent overlays
+    #[cfg(target_os = "windows")]
+    _direct_composition: DirectComposition,
 
     /// Renderer for click animations
     click_animation_renderer: ClickAnimationRenderer,
+
+    /// Renderer for iced graphics
+    iced_renderer: IcedRenderer,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -167,24 +172,37 @@ impl<'a> GraphicsContext<'a> {
         log::info!("GraphicsContext::new");
         let size = window.inner_size();
         let window_arc = Arc::new(window);
-
-        let backend_options = wgpu::BackendOptions {
-            dx12: wgpu::Dx12BackendOptions {
-                presentation_system: wgpu::Dx12SwapchainKind::DxgiFromVisual,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
-            backend_options: backend_options,
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window_arc.clone()).map_err(|e| {
-            log::error!("GraphicsContext::new: {e:?}");
-            OverlayError::SurfaceCreationError
-        })?;
+        #[cfg(target_os = "windows")]
+        let direct_composition =
+            DirectComposition::new(window_arc.clone()).ok_or(OverlayError::SurfaceCreationError)?;
+
+        let surface = {
+            #[cfg(target_os = "windows")]
+            {
+                direct_composition.create_surface(&instance)?
+            }
+            #[cfg(target_os = "macos")]
+            {
+                instance.create_surface(window_arc.clone()).map_err(|e| {
+                    log::error!("GraphicsContext::new: {e:?}");
+                    OverlayError::SurfaceCreationError
+                })?
+            }
+            // Add other OS targets here if needed
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            {
+                // Default or error for unsupported OS
+                instance.create_surface(window_arc.clone()).map_err(|e| {
+                    log::error!("GraphicsContext::new: {:?}", e);
+                    OverlayError::SurfaceCreationError
+                })?
+            }
+        };
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -203,7 +221,7 @@ impl<'a> GraphicsContext<'a> {
             label: None,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
-            experimental_features: ExperimentalFeatures::disabled(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
         .map_err(|_| OverlayError::DeviceRequestError)?;
 
@@ -239,6 +257,9 @@ impl<'a> GraphicsContext<'a> {
         };
         surface.configure(&device, &surface_config);
 
+        #[cfg(target_os = "windows")]
+        direct_composition.commit()?;
+
         /*
          * Workaround for resetting the default white background
          * on transparent windows on windows.
@@ -252,18 +273,6 @@ impl<'a> GraphicsContext<'a> {
 
         let cursor_renderer = CursorsRenderer::create(&device, surface_config.format);
 
-        let marker_renderer = MarkerRenderer::new(
-            &device,
-            &queue,
-            surface_config.format,
-            &texture_path,
-            Extent {
-                width: size.width as f64,
-                height: size.height as f64,
-            },
-            scale,
-        )?;
-
         let click_animation_renderer = ClickAnimationRenderer::create(
             &device,
             &queue,
@@ -276,14 +285,25 @@ impl<'a> GraphicsContext<'a> {
             scale,
         )?;
 
+        let iced_renderer = IcedRenderer::new(
+            &device,
+            &queue,
+            surface_config.format,
+            &adapter,
+            &window_arc,
+            &texture_path,
+        );
+
         Ok(Self {
             surface,
             device,
             queue,
             window: window_arc,
             cursor_renderer,
-            marker_renderer,
+            #[cfg(target_os = "windows")]
+            _direct_composition: direct_composition,
             click_animation_renderer,
+            iced_renderer,
         })
     }
 
@@ -380,19 +400,18 @@ impl<'a> GraphicsContext<'a> {
             depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None,
-            multiview_mask: None,
         });
         render_pass.set_pipeline(&self.cursor_renderer.render_pipeline);
 
         cursor_controller.draw(&mut render_pass, self);
 
-        self.marker_renderer.draw(&mut render_pass);
         self.click_animation_renderer
             .draw(&mut render_pass, &self.queue);
-
         drop(render_pass);
 
         self.queue.submit(std::iter::once(encoder.finish()));
+
+        self.iced_renderer.draw(&output, &view);
 
         self.window.pre_present_notify();
 
@@ -501,7 +520,7 @@ fn create_texture(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        mipmap_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
 
