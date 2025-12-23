@@ -57,6 +57,7 @@ use winit::platform::windows::WindowExtWindows;
 use winit::window::{WindowAttributes, WindowLevel};
 
 use crate::overlay_window::DisplayInfo;
+use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
 
 // Constants for magic numbers
@@ -899,8 +900,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none drawing mode");
                     return;
                 }
-                let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
-                gfx.set_drawing_mode(sid.as_str(), drawing_mode);
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                match &drawing_mode {
+                    DrawingMode::Disabled => {
+                        remote_control
+                            .cursor_controller
+                            .set_controller_pointer_enabled(false, sid.as_str());
+                    }
+                    _ => {
+                        remote_control
+                            .cursor_controller
+                            .set_controller_pointer_enabled(true, sid.as_str());
+                    }
+                }
+                remote_control
+                    .gfx
+                    .set_drawing_mode(sid.as_str(), drawing_mode);
             }
             UserEvent::DrawStart(point, sid) => {
                 log::debug!("user_event: DrawStart: {:?} {}", point, sid);
