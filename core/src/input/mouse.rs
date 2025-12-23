@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     graphics::graphics_context::{
-        click_animation::ANIMATION_DURATION, cursor::Cursor, draw::Draw, GraphicsContext,
+        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
     },
     overlay_window::OverlayWindow,
     utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
@@ -341,7 +341,6 @@ struct ControllerCursor {
     visible_name: String,
     sid: String,
     color: &'static str,
-    draw: Draw,
 }
 
 impl ControllerCursor {
@@ -363,7 +362,6 @@ impl ControllerCursor {
             visible_name,
             sid,
             color,
-            draw: Draw::new(),
         }
     }
 
@@ -467,25 +465,6 @@ impl ControllerCursor {
 
     fn pointer_enabled(&self) -> bool {
         self.pointer_enabled
-    }
-
-    fn set_drawing_mode(&mut self, mode: crate::room_service::DrawingMode) {
-        self.draw.set_mode(mode);
-    }
-
-    fn draw_start(&mut self, point: Position) {
-        // Starting a new path - add_point handles creating the path
-        self.draw.add_point(point);
-    }
-
-    fn draw_add_point(&mut self, point: Position) {
-        self.draw.add_point(point);
-    }
-
-    fn draw_end(&mut self, point: Position) {
-        // Add the final point and finish the path
-        self.draw.add_point(point);
-        self.draw.finish_path();
     }
 }
 
@@ -1276,92 +1255,6 @@ impl CursorController {
         }
     }
 
-    /// Sets the drawing mode for a specific controller.
-    ///
-    /// # Parameters
-    ///
-    /// * `mode` - The drawing mode to set (Disabled, Draw, or ClickAnimation)
-    /// * `sid` - Session ID identifying which controller to modify
-    pub fn set_drawing_mode(&mut self, mode: crate::room_service::DrawingMode, sid: &str) {
-        log::info!("set_drawing_mode: {:?} {}", mode, sid);
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
-                continue;
-            }
-
-            controller.set_drawing_mode(mode);
-            break;
-        }
-    }
-
-    /// Starts a new drawing path for a specific controller.
-    ///
-    /// # Parameters
-    ///
-    /// * `x` - X coordinate (0.0 to 1.0 normalized)
-    /// * `y` - Y coordinate (0.0 to 1.0 normalized)
-    /// * `sid` - Session ID identifying which controller to modify
-    pub fn draw_start(&mut self, x: f64, y: f64, sid: &str) {
-        log::debug!("draw_start: x: {} y: {} sid: {}", x, y, sid);
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
-                continue;
-            }
-
-            let pixel_position = self.overlay_window.get_pixel_position(x, y);
-            controller.draw_start(pixel_position);
-            break;
-        }
-    }
-
-    /// Adds a point to the current drawing path for a specific controller.
-    ///
-    /// # Parameters
-    ///
-    /// * `x` - X coordinate (0.0 to 1.0 normalized)
-    /// * `y` - Y coordinate (0.0 to 1.0 normalized)
-    /// * `sid` - Session ID identifying which controller to modify
-    pub fn draw_add_point(&mut self, x: f64, y: f64, sid: &str) {
-        log::debug!("draw_add_point: x: {} y: {} sid: {}", x, y, sid);
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
-                continue;
-            }
-
-            let pixel_position = self.overlay_window.get_pixel_position(x, y);
-            controller.draw_add_point(pixel_position);
-            break;
-        }
-    }
-
-    /// Ends the current drawing path for a specific controller.
-    ///
-    /// # Parameters
-    ///
-    /// * `x` - X coordinate of the final point (0.0 to 1.0 normalized)
-    /// * `y` - Y coordinate of the final point (0.0 to 1.0 normalized)
-    /// * `sid` - Session ID identifying which controller to modify
-    pub fn draw_end(&mut self, x: f64, y: f64, sid: &str) {
-        log::debug!("draw_end: x: {} y: {} sid: {}", x, y, sid);
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
-                continue;
-            }
-
-            let pixel_position = self.overlay_window.get_pixel_position(x, y);
-            controller.draw_end(pixel_position);
-            break;
-        }
-    }
-
     /// Renders all appropriate cursors to the overlay during the graphics draw cycle.
     ///
     /// This function is called during each frame rendering to draw the current cursor
@@ -1390,6 +1283,20 @@ impl CursorController {
         for controller in controllers_cursors.iter_mut() {
             controller.draw(render_pass, gfx);
         }
+    }
+
+    pub fn get_participant_color(&self, sid: &str) -> Option<&'static str> {
+        let controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter() {
+            if controller.sid == sid {
+                return Some(controller.color);
+            }
+        }
+        None
+    }
+
+    pub fn get_overlay_window(&self) -> Arc<OverlayWindow> {
+        self.overlay_window.clone()
     }
 }
 

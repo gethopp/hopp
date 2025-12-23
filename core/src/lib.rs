@@ -104,7 +104,7 @@ pub fn get_window_attributes() -> WindowAttributes {
             OVERLAY_WINDOW_INITIAL_SIZE,
             OVERLAY_WINDOW_INITIAL_SIZE,
         ))
-        .with_content_protected(true)
+        .with_content_protected(false)
 }
 
 /// Encapsulates the active remote control session components.
@@ -782,6 +782,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let sid = participant.sid.clone();
                 if let Err(e) = remote_control.cursor_controller.add_controller(
                     &mut remote_control.gfx,
                     participant.sid,
@@ -790,6 +791,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!(
                         "user_event: Participant connected: Error adding controller: {e:?}"
                     );
+                    return;
+                }
+                // Add participant to draw manager with their color
+                if let Some(color) = remote_control.cursor_controller.get_participant_color(&sid) {
+                    remote_control.gfx.add_draw_participant(sid, color);
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
@@ -802,6 +808,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 remote_control
                     .cursor_controller
                     .remove_controller(participant.sid.as_str());
+                // Remove participant from draw manager
+                remote_control
+                    .gfx
+                    .remove_draw_participant(participant.sid.as_str());
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
@@ -889,10 +899,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none drawing mode");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .set_drawing_mode(drawing_mode, sid.as_str());
+                let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
+                gfx.set_drawing_mode(sid.as_str(), drawing_mode);
             }
             UserEvent::DrawStart(point, sid) => {
                 log::debug!("user_event: DrawStart: {:?} {}", point, sid);
@@ -901,9 +909,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .draw_start(point.x, point.y, sid.as_str());
+                let gfx = &mut remote_control.gfx;
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                gfx.draw_start(sid.as_str(), pixel_position);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
             }
             UserEvent::DrawAddPoint(point, sid) => {
                 log::debug!("user_event: DrawAddPoint: {:?} {}", point, sid);
@@ -912,9 +926,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .draw_add_point(point.x, point.y, sid.as_str());
+                let gfx = &mut remote_control.gfx;
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                gfx.draw_add_point(sid.as_str(), pixel_position);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
             }
             UserEvent::DrawEnd(point, sid) => {
                 log::debug!("user_event: DrawEnd: {:?} {}", point, sid);
@@ -923,9 +943,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .draw_end(point.x, point.y, sid.as_str());
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                remote_control.gfx.draw_end(sid.as_str(), pixel_position);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
             }
             UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
                 // TODO: Handle click animation from participant

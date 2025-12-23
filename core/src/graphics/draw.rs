@@ -1,8 +1,21 @@
+use std::collections::HashMap;
 use std::time::Instant;
+
+use iced::widget::canvas::{path, stroke, Cache, Frame, Geometry, Stroke};
+use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
 
 const PATH_EXPIRATION_TIME: std::time::Duration = std::time::Duration::from_millis(5000);
+
+/// Converts a hex color string (e.g., "#7CCF00" or "7CCF00") to an iced Color.
+pub fn color_from_hex(hex: &str) -> Color {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+    Color::from_rgb8(r, g, b)
+}
 
 #[derive(Debug, Clone)]
 struct DrawPath {
@@ -19,19 +32,33 @@ impl DrawPath {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct Draw {
     in_progress_path: Option<DrawPath>,
     completed_paths: Vec<DrawPath>,
+    completed_cache: Cache,
     mode: DrawingMode,
+    color: Color,
+}
+
+impl std::fmt::Debug for Draw {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Draw")
+            .field("in_progress_path", &self.in_progress_path)
+            .field("completed_paths", &self.completed_paths)
+            .field("mode", &self.mode)
+            .field("color", &self.color)
+            .finish()
+    }
 }
 
 impl Draw {
-    pub fn new() -> Self {
+    pub fn new(color: &str) -> Self {
         Self {
             in_progress_path: None,
             completed_paths: Vec::new(),
+            completed_cache: Cache::new(),
             mode: DrawingMode::Disabled,
+            color: color_from_hex(color),
         }
     }
 
@@ -68,30 +95,174 @@ impl Draw {
                 _ => {}
             }
             self.completed_paths.push(in_progress_path);
+            self.completed_cache.clear();
         }
     }
 
     pub fn clear(&mut self) {
         self.in_progress_path = None;
         self.completed_paths.clear();
+        self.completed_cache.clear();
     }
 
+    /// Removes expired paths and clears cache if any were removed.
     pub fn update_completed_paths(&mut self) {
         if self.mode == DrawingMode::Disabled {
             log::warn!("update_completed_paths: drawing mode is disabled, skipping paths");
             return;
         }
 
+        let before = self.completed_paths.len();
         self.completed_paths.retain(|path| {
             if path.finished_at.is_none() {
                 return true;
             }
             let finished_at = path.finished_at.as_ref().unwrap();
-            if finished_at.elapsed() < PATH_EXPIRATION_TIME {
-                true
-            } else {
-                false
-            }
+            finished_at.elapsed() < PATH_EXPIRATION_TIME
         });
+
+        if self.completed_paths.len() < before {
+            self.completed_cache.clear();
+        }
+    }
+
+    /// Returns cached geometry for completed paths.
+    pub fn draw_completed(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
+        self.completed_cache.draw(renderer, bounds.size(), |frame| {
+            let stroke = self.make_stroke();
+            for draw_path in &self.completed_paths {
+                if let Some(path) = Self::build_path(&draw_path.points) {
+                    frame.stroke(&path, stroke.clone());
+                }
+            }
+        })
+    }
+
+    /// Draws in-progress path onto the provided frame.
+    pub fn draw_in_progress_to_frame(&self, frame: &mut Frame) {
+        if let Some(in_progress) = &self.in_progress_path {
+            if let Some(path) = Self::build_path(&in_progress.points) {
+                frame.stroke(&path, self.make_stroke());
+            }
+        }
+    }
+
+    fn make_stroke(&self) -> Stroke<'static> {
+        Stroke {
+            style: stroke::Style::Solid(self.color),
+            width: 5.0,
+            line_cap: stroke::LineCap::Round,
+            line_join: stroke::LineJoin::Round,
+            line_dash: stroke::LineDash::default(),
+        }
+    }
+
+    fn build_path(points: &[Position]) -> Option<path::Path> {
+        if points.is_empty() {
+            return None;
+        }
+
+        let mut builder = path::Builder::new();
+        builder.move_to(Point::new(points[0].x as f32, points[0].y as f32));
+        for point in &points[1..] {
+            builder.line_to(Point::new(point.x as f32, point.y as f32));
+        }
+        Some(builder.build())
+    }
+}
+
+/// Manager that owns Draw objects mapped by participant sid.
+/// Each participant gets their own Draw instance with their assigned color.
+pub struct DrawManager {
+    draws: HashMap<String, Draw>,
+}
+
+impl DrawManager {
+    pub fn new() -> Self {
+        Self {
+            draws: HashMap::new(),
+        }
+    }
+
+    /// Adds a new participant with their color.
+    pub fn add_participant(&mut self, sid: String, color: &str) {
+        log::info!("DrawManager::add_participant: sid={} color={}", sid, color);
+        self.draws.insert(sid, Draw::new(color));
+    }
+
+    /// Removes a participant and their drawing data.
+    pub fn remove_participant(&mut self, sid: &str) {
+        log::info!("DrawManager::remove_participant: sid={}", sid);
+        self.draws.remove(sid);
+    }
+
+    /// Sets the drawing mode for a specific participant.
+    pub fn set_drawing_mode(&mut self, sid: &str, mode: DrawingMode) {
+        log::debug!("DrawManager::set_drawing_mode: sid={} mode={:?}", sid, mode);
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.set_mode(mode);
+        } else {
+            log::warn!(
+                "DrawManager::set_drawing_mode: participant {} not found",
+                sid
+            );
+        }
+    }
+
+    /// Starts a new drawing path for a participant.
+    pub fn draw_start(&mut self, sid: &str, point: Position) {
+        log::debug!("DrawManager::draw_start: sid={} point={:?}", sid, point);
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.add_point(point);
+        } else {
+            log::warn!("DrawManager::draw_start: participant {} not found", sid);
+        }
+    }
+
+    /// Adds a point to the current drawing path for a participant.
+    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+        log::debug!("DrawManager::draw_add_point: sid={} point={:?}", sid, point);
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.add_point(point);
+        } else {
+            log::warn!("DrawManager::draw_add_point: participant {} not found", sid);
+        }
+    }
+
+    /// Ends the current drawing path for a participant.
+    pub fn draw_end(&mut self, sid: &str, point: Position) {
+        log::debug!("DrawManager::draw_end: sid={} point={:?}", sid, point);
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.add_point(point);
+            draw.finish_path();
+        } else {
+            log::warn!("DrawManager::draw_end: participant {} not found", sid);
+        }
+    }
+
+    /// Updates all draws (removes expired paths).
+    pub fn update(&mut self) {
+        for draw in self.draws.values_mut() {
+            draw.update_completed_paths();
+        }
+    }
+
+    /// Renders all draws and returns the geometries.
+    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> Vec<Geometry> {
+        let mut geometries = Vec::with_capacity(self.draws.len() + 1);
+
+        // Collect cached completed geometries from each Draw
+        for draw in self.draws.values() {
+            geometries.push(draw.draw_completed(renderer, bounds));
+        }
+
+        // Draw all in-progress paths into a single frame
+        let mut in_progress_frame = Frame::new(renderer, bounds.size());
+        for draw in self.draws.values() {
+            draw.draw_in_progress_to_frame(&mut in_progress_frame);
+        }
+        geometries.push(in_progress_frame.into_geometry());
+
+        geometries
     }
 }

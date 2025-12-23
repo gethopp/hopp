@@ -15,15 +15,18 @@ use iced_winit::{
 };
 use winit::window::Window;
 
-#[path = "iced_marker.rs"]
-mod iced_marker;
-use iced_marker::Marker;
+#[path = "iced_canvas.rs"]
+mod iced_canvas;
+use iced_canvas::OverlaySurface;
+
+use crate::graphics::graphics_context::draw::Draw;
+use crate::utils::geometry::Position;
 
 pub struct IcedRenderer {
     renderer: Renderer,
     viewport: Viewport,
     clipboard: Clipboard,
-    marker: Marker,
+    overlay_surface: OverlaySurface,
     cursor: mouse::Cursor,
 }
 
@@ -56,21 +59,21 @@ impl IcedRenderer {
             window.scale_factor() as f32,
         );
         let clipboard = Clipboard::connect(window.clone());
-        let marker = Marker::new(texture_path);
+        let overlay_surface = OverlaySurface::new(texture_path);
         let wgpu_renderer = iced_wgpu::Renderer::new(engine, Font::default(), Pixels::from(16));
         let renderer = Renderer::Primary(wgpu_renderer);
         Self {
             renderer,
             viewport,
             clipboard,
-            marker,
+            overlay_surface,
             cursor: mouse::Cursor::Unavailable,
         }
     }
 
     pub fn draw(&mut self, frame: &wgpu::SurfaceTexture, view: &wgpu::TextureView) {
         let mut interface = UserInterface::build(
-            self.marker.view(),
+            self.overlay_surface.view(),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,
@@ -97,5 +100,29 @@ impl IcedRenderer {
             _ => panic!("Expected primary renderer"),
         };
         wgpu_renderer.present(None, frame.texture.format(), view, &self.viewport);
+    }
+
+    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
+        self.overlay_surface.add_draw_participant(sid, color);
+    }
+
+    pub fn remove_draw_participant(&mut self, sid: &str) {
+        self.overlay_surface.remove_draw_participant(sid);
+    }
+
+    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
+        self.overlay_surface.set_drawing_mode(sid, mode);
+    }
+
+    pub fn draw_start(&mut self, sid: &str, point: Position) {
+        self.overlay_surface.draw_start(sid, point);
+    }
+
+    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+        self.overlay_surface.draw_add_point(sid, point);
+    }
+
+    pub fn draw_end(&mut self, sid: &str, point: Position) {
+        self.overlay_surface.draw_end(sid, point);
     }
 }

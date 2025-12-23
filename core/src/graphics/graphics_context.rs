@@ -439,6 +439,59 @@ impl<'a> GraphicsContext<'a> {
         self.click_animation_renderer
             .enable_click_animation(position);
     }
+
+    /// Adds a new participant to the draw manager with their color.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `color` - Hex color string for the participant's drawings
+    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
+        self.iced_renderer.add_draw_participant(sid, color);
+    }
+
+    /// Removes a participant from the draw manager.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant to remove
+    pub fn remove_draw_participant(&mut self, sid: &str) {
+        self.iced_renderer.remove_draw_participant(sid);
+    }
+
+    /// Sets the drawing mode for a specific participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `mode` - The drawing mode to set
+    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
+        self.iced_renderer.set_drawing_mode(sid, mode);
+    }
+
+    /// Starts a new drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Starting point of the path
+    pub fn draw_start(&mut self, sid: &str, point: Position) {
+        self.iced_renderer.draw_start(sid, point);
+    }
+
+    /// Adds a point to the current drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Point to add to the current path
+    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+        self.iced_renderer.draw_add_point(sid, point);
+    }
+
+    /// Ends the current drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Final point of the path
+    pub fn draw_end(&mut self, sid: &str, point: Position) {
+        self.iced_renderer.draw_end(sid, point);
+    }
 }
 
 impl Drop for GraphicsContext<'_> {

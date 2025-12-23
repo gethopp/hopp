@@ -258,8 +258,8 @@ impl OverlayWindow {
 
     pub fn get_pixel_position(&self, x: f64, y: f64) -> Position {
         Position {
-            x: x * self.display_info.display_extent.width,
-            y: y * self.display_info.display_extent.height,
+            x: x * self.display_info.display_extent.width / self.display_info.display_scale,
+            y: y * self.display_info.display_extent.height / self.display_info.display_scale,
         }
     }
 }
