@@ -2,6 +2,7 @@ import { HiOutlineCursorClick } from "react-icons/hi";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { TooltipContent, TooltipTrigger, Tooltip, TooltipProvider } from "../ui/tooltip";
 import { BiSolidJoystick } from "react-icons/bi";
+import { FaPencilAlt } from "react-icons/fa";
 import useStore from "@/store/store";
 import { SegmentedControl } from "../ui/segmented-control";
 import { useState } from "react";
@@ -13,7 +14,7 @@ type ScreenSharingControlsProps = {
 };
 
 export function ScreenSharingControls({ className }: ScreenSharingControlsProps = {}) {
-  const { setIsSharingKeyEvents, setIsSharingMouse } = useSharingContext();
+  const { setIsSharingKeyEvents, setIsSharingMouse, setIsDrawingMode } = useSharingContext();
   const [remoteControlStatus, setRemoteControlStatus] = useState<string>("controlling");
 
   const handleRemoteControlChange = (value: string) => {
@@ -21,9 +22,11 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     if (value === "controlling") {
       setIsSharingMouse(true);
       setIsSharingKeyEvents(true);
-    } else if (value === "pointing") {
+      setIsDrawingMode(false);
+    } else if (value === "drawing") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
+      setIsDrawingMode(true);
     }
   };
 
@@ -40,9 +43,9 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
                   tooltipContent: "Remote control",
                 },
                 {
-                  id: "pointing",
-                  content: <CustomIcons.PointerClick className="size-3.5 -rotate-12 text-white" />,
-                  tooltipContent: "Pointing",
+                  id: "drawing",
+                  content: <FaPencilAlt className="size-3.5 text-white" />,
+                  tooltipContent: "Drawing",
                 },
               ]}
               value={remoteControlStatus}

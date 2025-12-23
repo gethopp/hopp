@@ -63,7 +63,11 @@ impl Draw {
     }
 
     pub fn set_mode(&mut self, mode: DrawingMode) {
-        self.mode = mode;
+        self.mode = mode.clone();
+
+        if mode == DrawingMode::Disabled {
+            self.clear();
+        }
     }
 
     pub fn add_point(&mut self, point: Position) {
@@ -107,11 +111,6 @@ impl Draw {
 
     /// Removes expired paths and clears cache if any were removed.
     pub fn update_completed_paths(&mut self) {
-        if self.mode == DrawingMode::Disabled {
-            log::warn!("update_completed_paths: drawing mode is disabled, skipping paths");
-            return;
-        }
-
         let before = self.completed_paths.len();
         self.completed_paths.retain(|path| {
             if path.finished_at.is_none() {

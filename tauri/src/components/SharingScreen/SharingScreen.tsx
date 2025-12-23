@@ -18,6 +18,10 @@ import {
   TPPasteFromClipboard,
   TPRemoteControlEnabled,
   TPWheelEvent,
+  TPDrawStart,
+  TPDrawAddPoint,
+  TPDrawEnd,
+  TPDrawingModeEvent,
 } from "@/payloads";
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
@@ -82,7 +86,7 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  const { isSharingMouse, isSharingKeyEvents, parentKeyTrap, setStreamDimensions } = useSharingContext();
+  const { isSharingMouse, isSharingKeyEvents, isDrawingMode, parentKeyTrap, setStreamDimensions } = useSharingContext();
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
   const [mouse, mouseRef] = useMouse();
@@ -271,6 +275,30 @@ const ConsumerComponent = React.memo(() => {
     }
   }, [track, streamWidth, streamHeight, setStreamDimensions]);
 
+  // Send DrawingMode event when drawing mode changes
+  useEffect(() => {
+    if (!localParticipant.localParticipant) return;
+
+    const payload: TPDrawingModeEvent = {
+      type: "DrawingMode",
+      payload:
+        isDrawingMode ?
+          {
+            type: "Draw",
+            settings: {
+              permanent: false,
+            },
+          }
+        : {
+            type: "Disabled",
+          },
+    };
+
+    localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
+      reliable: true,
+    });
+  }, [isDrawingMode, localParticipant.localParticipant]);
+
   /*
    * We do this because we need a way to retrigger the useEffect below,
    * adding the videoRef.current to the dependency array doesn't work because
@@ -293,15 +321,27 @@ const ConsumerComponent = React.memo(() => {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
 
-        const payload: TPMouseMove = {
-          type: "MouseMove",
-          payload: { x: relativeX, y: relativeY, pointer: true },
-        };
+        // If in drawing mode and left button is pressed, send DrawAddPoint
+        if (isDrawingMode && (e.buttons & 1) === 1) {
+          const payload: TPDrawAddPoint = {
+            type: "DrawAddPoint",
+            payload: { x: relativeX, y: relativeY },
+          };
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+            reliable: true,
+          });
+        } else {
+          // Normal mouse move
+          const payload: TPMouseMove = {
+            type: "MouseMove",
+            payload: { x: relativeX, y: relativeY, pointer: true },
+          };
 
-        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-          reliable: true,
-          topic: CURSORS_TOPIC,
-        });
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+            reliable: true,
+            topic: CURSORS_TOPIC,
+          });
+        }
       }
     }, 30);
 
@@ -309,6 +349,16 @@ const ConsumerComponent = React.memo(() => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
+
+        // If in drawing mode and left button, send DrawStart
+        if (isDrawingMode && e.button === 0) {
+          const payload: TPDrawStart = {
+            type: "DrawStart",
+            payload: { x: relativeX, y: relativeY },
+          };
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+          return;
+        }
 
         // Add click pulse when NOT sharing mouse (pointing mode)
         if (!isSharingMouse) {
@@ -338,6 +388,16 @@ const ConsumerComponent = React.memo(() => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Clicking up 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
+
+        // If in drawing mode and left button was just released, send DrawEnd
+        if (isDrawingMode && e.button === 0) {
+          const payload: TPDrawEnd = {
+            type: "DrawEnd",
+            payload: { x: relativeX, y: relativeY },
+          };
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+          return;
+        }
 
         const payload: TPMouseClick = {
           type: "MouseClick",
@@ -395,11 +455,11 @@ const ConsumerComponent = React.memo(() => {
     if (videoElement) {
       videoElement.addEventListener("mousemove", handleMouseMove);
       videoElement.addEventListener("mousedown", handleMouseDown);
+      videoElement.addEventListener("mouseup", handleMouseUp);
     }
 
     if (videoElement && isSharingMouse) {
       videoElement.addEventListener("wheel", handleWheel);
-      videoElement.addEventListener("mouseup", handleMouseUp);
       videoElement.addEventListener("contextmenu", handleContextMenu);
     }
 
@@ -412,7 +472,7 @@ const ConsumerComponent = React.memo(() => {
         videoElement.removeEventListener("contextmenu", handleContextMenu);
       }
     };
-  }, [isSharingMouse, updateMouseControls]);
+  }, [isSharingMouse, isDrawingMode, updateMouseControls]);
 
   /**
    * Keyboard sharing logic

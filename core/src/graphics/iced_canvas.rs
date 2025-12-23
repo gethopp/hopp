@@ -59,6 +59,7 @@ impl OverlaySurface {
     }
 
     pub fn view(&mut self) -> Element<'_, Message, Theme, iced::Renderer> {
+        log::debug!("OverlaySurface::view");
         self.draws.update();
 
         canvas(OverlaySurfaceCanvas::new(&self.marker, &self.draws))

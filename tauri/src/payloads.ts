@@ -93,6 +93,56 @@ export const PPasteFromClipboard = z.object({
 });
 export type TPPasteFromClipboard = z.infer<typeof PPasteFromClipboard>;
 
+// Drawing event payloads
+export const PClientPoint = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+export type TPClientPoint = z.infer<typeof PClientPoint>;
+
+export const PDrawStart = z.object({
+  type: z.literal("DrawStart"),
+  payload: PClientPoint,
+});
+export type TPDrawStart = z.infer<typeof PDrawStart>;
+
+export const PDrawAddPoint = z.object({
+  type: z.literal("DrawAddPoint"),
+  payload: PClientPoint,
+});
+export type TPDrawAddPoint = z.infer<typeof PDrawAddPoint>;
+
+export const PDrawEnd = z.object({
+  type: z.literal("DrawEnd"),
+  payload: PClientPoint,
+});
+export type TPDrawEnd = z.infer<typeof PDrawEnd>;
+
+export const PDrawSettings = z.object({
+  permanent: z.boolean(),
+});
+export type TPDrawSettings = z.infer<typeof PDrawSettings>;
+
+export const PDrawingMode = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("Disabled"),
+  }),
+  z.object({
+    type: z.literal("Draw"),
+    settings: PDrawSettings,
+  }),
+  z.object({
+    type: z.literal("ClickAnimation"),
+  }),
+]);
+export type TDrawingMode = z.infer<typeof PDrawingMode>;
+
+export const PDrawingModeEvent = z.object({
+  type: z.literal("DrawingMode"),
+  payload: PDrawingMode,
+});
+export type TPDrawingModeEvent = z.infer<typeof PDrawingModeEvent>;
+
 // WebSocket Message Types
 export const MessageType = z.enum([
   "success",
