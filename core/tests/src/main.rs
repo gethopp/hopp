@@ -5,6 +5,7 @@ mod events;
 mod livekit_utils;
 mod remote_clipboard;
 mod remote_cursor;
+mod remote_drawing;
 mod remote_keyboard;
 mod screenshare_client;
 
@@ -36,6 +37,12 @@ enum Commands {
         /// Type of screenshare test to run
         #[arg(value_enum)]
         test_type: ScreenshareTest,
+    },
+    /// Test drawing functionality
+    Drawing {
+        /// Type of drawing test to run
+        #[arg(value_enum)]
+        test_type: DrawingTest,
     },
 }
 
@@ -97,6 +104,16 @@ enum ScreenshareTest {
     Basic,
     /// Test available content consistency across multiple requests
     AvailableContent,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum DrawingTest {
+    /// Test drawing with permanent mode ON (lines stay visible)
+    PermanentOn,
+    /// Test drawing with permanent mode OFF (lines fade away)
+    PermanentOff,
+    /// Test click animation mode
+    ClickAnimation,
 }
 
 #[tokio::main]
@@ -221,6 +238,23 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Screenshare test finished.");
+        }
+        Commands::Drawing { test_type } => {
+            match test_type {
+                DrawingTest::PermanentOn => {
+                    println!("Running drawing test with permanent mode ON...");
+                    remote_drawing::test_drawing_permanent_on().await?;
+                }
+                DrawingTest::PermanentOff => {
+                    println!("Running drawing test with permanent mode OFF...");
+                    remote_drawing::test_drawing_permanent_off().await?;
+                }
+                DrawingTest::ClickAnimation => {
+                    println!("Running click animation mode test...");
+                    remote_drawing::test_click_animation_mode().await?;
+                }
+            }
+            println!("Drawing test finished.");
         }
     }
 

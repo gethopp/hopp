@@ -70,6 +70,39 @@ pub struct PasteFromClipboardData {
     pub data: Option<ClipboardPayload>,
 }
 
+/// Settings specific to the Draw mode.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct DrawSettings {
+    /// Whether drawn lines should be permanent or fade away after a while
+    pub permanent: bool,
+}
+
+/// Drawing mode options - specifies the type of drawing operation.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", content = "settings")]
+pub enum DrawingModeOption {
+    /// Standard drawing mode with its settings
+    Draw(DrawSettings),
+    /// Click animation mode
+    ClickAnimation,
+}
+
+/// Contains data for drawing mode enable/disable events.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DrawingModeData {
+    /// Whether drawing mode is enabled
+    pub enabled: bool,
+    /// The drawing mode option with its settings
+    pub mode: DrawingModeOption,
+}
+
+/// A simple 2D point for drawing operations.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct DrawPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum ClientEvent {
@@ -84,4 +117,9 @@ pub enum ClientEvent {
     RemoteControlEnabled(RemoteControlEnabled),
     AddToClipboard(AddToClipboardData),
     PasteFromClipboard(PasteFromClipboardData),
+    DrawingMode(DrawingModeData),
+    DrawStart(DrawPoint),
+    DrawAddPoint(DrawPoint),
+    DrawEnd(DrawPoint),
+    ClickAnimation(DrawPoint),
 }

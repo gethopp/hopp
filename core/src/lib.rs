@@ -883,6 +883,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     paste_from_clipboard_data.data,
                 );
             }
+            UserEvent::DrawingMode(_drawing_mode_data, _sid) => {
+                // TODO: Handle drawing mode enable/disable
+                log::debug!("user_event: DrawingMode");
+            }
+            UserEvent::DrawStart(_point, _sid) => {
+                // TODO: Handle draw start
+                log::debug!("user_event: DrawStart");
+            }
+            UserEvent::DrawAddPoint(_point, _sid) => {
+                // TODO: Handle draw add point
+                log::debug!("user_event: DrawAddPoint");
+            }
+            UserEvent::DrawEnd(_point, _sid) => {
+                // TODO: Handle draw end
+                log::debug!("user_event: DrawEnd");
+            }
+            UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
+                // TODO: Handle click animation from participant
+                log::debug!("user_event: ClickAnimationFromParticipant");
+            }
         }
     }
 
@@ -971,6 +991,11 @@ pub enum UserEvent {
     SentryMetadata(SentryMetadata),
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),
+    DrawingMode(room_service::DrawingModeData, String),
+    DrawStart(room_service::ClientPoint, String),
+    DrawAddPoint(room_service::ClientPoint, String),
+    DrawEnd(room_service::ClientPoint, String),
+    ClickAnimationFromParticipant(room_service::ClientPoint, String),
 }
 
 pub struct RenderEventLoop {
