@@ -114,6 +114,8 @@ enum DrawingTest {
     PermanentOff,
     /// Test click animation mode
     ClickAnimation,
+    /// Test 4 participants drawing 3 lines each concurrently in different quarters
+    FourParticipantsConcurrent,
 }
 
 #[tokio::main]
@@ -252,6 +254,10 @@ async fn main() -> io::Result<()> {
                 DrawingTest::ClickAnimation => {
                     println!("Running click animation mode test...");
                     remote_drawing::test_click_animation_mode().await?;
+                }
+                DrawingTest::FourParticipantsConcurrent => {
+                    println!("Running 4 participants concurrent drawing test...");
+                    remote_drawing::test_four_participants_concurrent_drawing().await?;
                 }
             }
             println!("Drawing test finished.");

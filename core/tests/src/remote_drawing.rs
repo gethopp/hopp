@@ -481,3 +481,188 @@ pub async fn test_click_animation_mode() -> io::Result<()> {
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     Ok(())
 }
+
+/// Test 4 participants drawing 3 lines each simultaneously in different quarters
+/// Each participant draws in a different quarter of the screen:
+/// - Participant 1: Top-left quarter (0.0-0.5, 0.0-0.5)
+/// - Participant 2: Top-right quarter (0.5-1.0, 0.0-0.5)
+/// - Participant 3: Bottom-left quarter (0.0-0.5, 0.5-1.0)
+/// - Participant 4: Bottom-right quarter (0.5-1.0, 0.5-1.0)
+pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
+    println!("\n=== TEST: 4 Participants Concurrent Drawing ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    // Create 4 participants
+    let token_1 = livekit_utils::generate_token("Participant 1");
+    let token_2 = livekit_utils::generate_token("Participant 2");
+    let token_3 = livekit_utils::generate_token("Participant 3");
+    let token_4 = livekit_utils::generate_token("Participant 4");
+
+    let (room_1, _rx_1) = Room::connect(&url, &token_1, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_2, _rx_2) = Room::connect(&url, &token_2, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_3, _rx_3) = Room::connect(&url, &token_3, RoomOptions::default())
+        .await
+        .unwrap();
+    let (room_4, _rx_4) = Room::connect(&url, &token_4, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("All 4 participants connected. Waiting for setup...");
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Enable drawing mode for all participants with permanent = true
+    println!("Enabling drawing mode for all participants...");
+    send_drawing_mode(&room_1, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    send_drawing_mode(&room_2, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    send_drawing_mode(&room_3, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    send_drawing_mode(&room_4, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Define quarters and line coordinates for each participant
+    // Each participant will draw 3 lines in their quarter
+    // Top-left quarter (0.0-0.5, 0.0-0.5)
+    let lines_1 = vec![
+        ((0.1, 0.1), (0.4, 0.1)), // Horizontal line at top
+        ((0.1, 0.2), (0.4, 0.3)), // Diagonal line
+        ((0.1, 0.4), (0.4, 0.4)), // Horizontal line at bottom
+    ];
+
+    // Top-right quarter (0.5-1.0, 0.0-0.5)
+    let lines_2 = vec![
+        ((0.6, 0.1), (0.9, 0.1)), // Horizontal line at top
+        ((0.6, 0.2), (0.9, 0.3)), // Diagonal line
+        ((0.6, 0.4), (0.9, 0.4)), // Horizontal line at bottom
+    ];
+
+    // Bottom-left quarter (0.0-0.5, 0.5-1.0)
+    let lines_3 = vec![
+        ((0.1, 0.6), (0.4, 0.6)), // Horizontal line at top
+        ((0.1, 0.7), (0.4, 0.8)), // Diagonal line
+        ((0.1, 0.9), (0.4, 0.9)), // Horizontal line at bottom
+    ];
+
+    // Bottom-right quarter (0.5-1.0, 0.5-1.0)
+    let lines_4 = vec![
+        ((0.6, 0.6), (0.9, 0.6)), // Horizontal line at top
+        ((0.6, 0.7), (0.9, 0.8)), // Diagonal line
+        ((0.6, 0.9), (0.9, 0.9)), // Horizontal line at bottom
+    ];
+
+    println!("Starting concurrent drawing...");
+    println!("Participant 1: Drawing 3 lines in top-left quarter");
+    println!("Participant 2: Drawing 3 lines in top-right quarter");
+    println!("Participant 3: Drawing 3 lines in bottom-left quarter");
+    println!("Participant 4: Drawing 3 lines in bottom-right quarter");
+
+    // Create tasks for each participant to draw concurrently
+    let task_1 = tokio::spawn(async move {
+        for (i, ((from_x, from_y), (to_x, to_y))) in lines_1.iter().enumerate() {
+            println!(
+                "Participant 1: Drawing line {} from ({:.2}, {:.2}) to ({:.2}, {:.2})",
+                i + 1,
+                from_x,
+                from_y,
+                to_x,
+                to_y
+            );
+            draw_stroke(&room_1, *from_x, *from_y, *to_x, *to_y).await?;
+        }
+        println!("Participant 1: Completed all 3 lines");
+        Ok::<(), io::Error>(())
+    });
+
+    let task_2 = tokio::spawn(async move {
+        for (i, ((from_x, from_y), (to_x, to_y))) in lines_2.iter().enumerate() {
+            println!(
+                "Participant 2: Drawing line {} from ({:.2}, {:.2}) to ({:.2}, {:.2})",
+                i + 1,
+                from_x,
+                from_y,
+                to_x,
+                to_y
+            );
+            draw_stroke(&room_2, *from_x, *from_y, *to_x, *to_y).await?;
+        }
+        println!("Participant 2: Completed all 3 lines");
+        Ok::<(), io::Error>(())
+    });
+
+    let task_3 = tokio::spawn(async move {
+        for (i, ((from_x, from_y), (to_x, to_y))) in lines_3.iter().enumerate() {
+            println!(
+                "Participant 3: Drawing line {} from ({:.2}, {:.2}) to ({:.2}, {:.2})",
+                i + 1,
+                from_x,
+                from_y,
+                to_x,
+                to_y
+            );
+            draw_stroke(&room_3, *from_x, *from_y, *to_x, *to_y).await?;
+        }
+        println!("Participant 3: Completed all 3 lines");
+        Ok::<(), io::Error>(())
+    });
+
+    let task_4 = tokio::spawn(async move {
+        for (i, ((from_x, from_y), (to_x, to_y))) in lines_4.iter().enumerate() {
+            println!(
+                "Participant 4: Drawing line {} from ({:.2}, {:.2}) to ({:.2}, {:.2})",
+                i + 1,
+                from_x,
+                from_y,
+                to_x,
+                to_y
+            );
+            draw_stroke(&room_4, *from_x, *from_y, *to_x, *to_y).await?;
+        }
+        println!("Participant 4: Completed all 3 lines");
+        Ok::<(), io::Error>(())
+    });
+
+    // Wait for all participants to finish drawing concurrently
+    let results = tokio::try_join!(task_1, task_2, task_3, task_4);
+
+    match results {
+        Ok((res1, res2, res3, res4)) => {
+            if let Err(e) = res1 {
+                println!("Participant 1 encountered error: {e:?}");
+            } else {
+                println!("Participant 1: Successfully completed all lines");
+            }
+            if let Err(e) = res2 {
+                println!("Participant 2 encountered error: {e:?}");
+            } else {
+                println!("Participant 2: Successfully completed all lines");
+            }
+            if let Err(e) = res3 {
+                println!("Participant 3 encountered error: {e:?}");
+            } else {
+                println!("Participant 3: Successfully completed all lines");
+            }
+            if let Err(e) = res4 {
+                println!("Participant 4 encountered error: {e:?}");
+            } else {
+                println!("Participant 4: Successfully completed all lines");
+            }
+        }
+        Err(e) => {
+            println!("Task execution error: {e:?}");
+            screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+            return Err(io::Error::other(e));
+        }
+    }
+
+    println!("\nAll participants completed drawing concurrently.");
+    println!("Waiting 5 seconds to observe the drawn lines...");
+    sleep(Duration::from_secs(5)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
