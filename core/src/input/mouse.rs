@@ -10,7 +10,8 @@ use std::{
 
 use crate::{
     graphics::graphics_context::{
-        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
+        click_animation::ANIMATION_DURATION, cursor::Cursor, draw::PATH_EXPIRATION_TIME,
+        GraphicsContext,
     },
     overlay_window::OverlayWindow,
     utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
@@ -646,15 +647,19 @@ impl SharerCursor {
 
 enum RedrawThreadCommands {
     Redraw,
-    ClickAnimation,
+    ClickAnimation(bool),
+    DrawingFinished(bool),
     Stop,
 }
 
 fn redraw_thread(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     receiver: Receiver<RedrawThreadCommands>,
+    tx: Sender<RedrawThreadCommands>,
 ) {
     let mut last_redraw_time = Instant::now();
+    let mut last_click_animation_time = None;
+    let mut last_drawing_finished_time = None;
     let redraw_interval = std::time::Duration::from_millis(16);
     let animation_duration = (ANIMATION_DURATION + 500) as u128;
     loop {
@@ -669,14 +674,53 @@ fn redraw_thread(
                         last_redraw_time = Instant::now();
                     }
                 }
-                RedrawThreadCommands::ClickAnimation => {
-                    let now = Instant::now();
-                    while now.elapsed().as_millis() < animation_duration {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(16));
+                RedrawThreadCommands::ClickAnimation(extend) => {
+                    if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                        log::error!("redraw_thread: error sending redraw event: {e:?}");
                     }
+
+                    if extend || last_click_animation_time.is_none() {
+                        last_click_animation_time = Some(Instant::now());
+                    }
+
+                    if last_click_animation_time
+                        .as_ref()
+                        .unwrap()
+                        .elapsed()
+                        .as_millis()
+                        < animation_duration
+                    {
+                        if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
+                            log::error!(
+                                "redraw_thread: error sending click animation event: {e:?}"
+                            );
+                        }
+                    } else {
+                        last_click_animation_time = None;
+                    }
+
+                    last_redraw_time = Instant::now();
+                }
+                RedrawThreadCommands::DrawingFinished(extend) => {
+                    if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                        log::error!("redraw_thread: error sending redraw event: {e:?}");
+                    }
+
+                    if extend || last_drawing_finished_time.is_none() {
+                        last_drawing_finished_time = Some(Instant::now());
+                    }
+
+                    if last_drawing_finished_time.as_ref().unwrap().elapsed() < PATH_EXPIRATION_TIME
+                    {
+                        if let Err(e) = tx.send(RedrawThreadCommands::DrawingFinished(false)) {
+                            log::error!(
+                                "redraw_thread: error sending drawing finished event: {e:?}"
+                            );
+                        }
+                    } else {
+                        last_drawing_finished_time = None;
+                    }
+
                     last_redraw_time = Instant::now();
                 }
             },
@@ -817,13 +861,14 @@ impl CursorController {
             "#FF5BFF", "#00D091",
         ]);
 
+        let sender_clone = sender.clone();
         Ok(Self {
             remote_control,
             controllers_cursors,
             controllers_cursors_enabled: accessibility_permission,
             overlay_window,
             redraw_thread: Some(std::thread::spawn(move || {
-                redraw_thread(event_loop_proxy_clone, receiver);
+                redraw_thread(event_loop_proxy_clone, receiver, sender_clone);
             })),
             redraw_thread_sender: sender,
             event_loop_proxy,
@@ -1028,7 +1073,7 @@ impl CursorController {
                     }
                     if let Err(e) = self
                         .redraw_thread_sender
-                        .send(RedrawThreadCommands::ClickAnimation)
+                        .send(RedrawThreadCommands::ClickAnimation(true))
                     {
                         log::error!(
                             "mouse_click_controller: error sending click animation event: {e:?}"
@@ -1297,6 +1342,15 @@ impl CursorController {
 
     pub fn get_overlay_window(&self) -> Arc<OverlayWindow> {
         self.overlay_window.clone()
+    }
+
+    pub fn draw_path_ended(&self) {
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::DrawingFinished(true))
+        {
+            log::error!("draw_path_ended: error sending drawing finished event: {e:?}");
+        }
     }
 }
 

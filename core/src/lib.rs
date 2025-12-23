@@ -909,10 +909,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                gfx.draw_start(sid.as_str(), pixel_position);
+                remote_control.gfx.draw_start(sid.as_str(), pixel_position);
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -926,10 +925,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                gfx.draw_add_point(sid.as_str(), pixel_position);
+                remote_control
+                    .gfx
+                    .draw_add_point(sid.as_str(), pixel_position);
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -951,6 +951,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point.y,
                     sid.as_str(),
                 );
+                remote_control.cursor_controller.draw_path_ended();
             }
             UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
                 // TODO: Handle click animation from participant
@@ -980,9 +981,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
                 let cursor_controller = &mut remote_control.cursor_controller;
-                gfx.draw(cursor_controller);
+                remote_control.gfx.draw(cursor_controller);
             }
             _ => {}
         }

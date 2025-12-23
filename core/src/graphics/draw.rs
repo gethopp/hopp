@@ -6,7 +6,7 @@ use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
 
-const PATH_EXPIRATION_TIME: std::time::Duration = std::time::Duration::from_millis(5000);
+pub const PATH_EXPIRATION_TIME: std::time::Duration = std::time::Duration::from_millis(5000);
 
 /// Converts a hex color string (e.g., "#7CCF00" or "7CCF00") to an iced Color.
 pub fn color_from_hex(hex: &str) -> Color {
