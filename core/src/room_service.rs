@@ -794,23 +794,16 @@ pub struct DrawSettings {
     pub permanent: bool,
 }
 
-/// Drawing mode options - specifies the type of drawing operation.
+/// Drawing mode - specifies the type of drawing operation or disabled state.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(tag = "type", content = "settings")]
-pub enum DrawingModeOption {
+pub enum DrawingMode {
+    /// Drawing mode is disabled
+    Disabled,
     /// Standard drawing mode with its settings
     Draw(DrawSettings),
     /// Click animation mode
     ClickAnimation,
-}
-
-/// Contains data for drawing mode enable/disable events.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DrawingModeData {
-    /// Whether drawing mode is enabled
-    pub enabled: bool,
-    /// The drawing mode option with its settings
-    pub mode: DrawingModeOption,
 }
 
 /// Represents all possible client events that can be sent between room participants.
@@ -842,8 +835,8 @@ pub enum ClientEvent {
     AddToClipboard(AddToClipboardData),
     /// Paste command from a remote controller
     PasteFromClipboard(PasteFromClipboardData),
-    /// Drawing mode enable/disable event
-    DrawingMode(DrawingModeData),
+    /// Drawing mode change event (disabled, draw, or click animation)
+    DrawingMode(DrawingMode),
     /// Drawing started at a point
     DrawStart(ClientPoint),
     /// Add a point to the current drawing
@@ -946,8 +939,8 @@ async fn handle_room_events(
                         .send_event(UserEvent::AddToClipboard(add_to_clipboard_data)),
                     ClientEvent::PasteFromClipboard(paste_from_clipboard_data) => event_loop_proxy
                         .send_event(UserEvent::PasteFromClipboard(paste_from_clipboard_data)),
-                    ClientEvent::DrawingMode(drawing_mode_data) => {
-                        event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode_data, sid))
+                    ClientEvent::DrawingMode(drawing_mode) => {
+                        event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode, sid))
                     }
                     ClientEvent::DrawStart(point) => {
                         event_loop_proxy.send_event(UserEvent::DrawStart(point, sid))

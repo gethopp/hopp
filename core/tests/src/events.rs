@@ -77,23 +77,16 @@ pub struct DrawSettings {
     pub permanent: bool,
 }
 
-/// Drawing mode options - specifies the type of drawing operation.
+/// Drawing mode - specifies the type of drawing operation or disabled state.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(tag = "type", content = "settings")]
-pub enum DrawingModeOption {
+pub enum DrawingMode {
+    /// Drawing mode is disabled
+    Disabled,
     /// Standard drawing mode with its settings
     Draw(DrawSettings),
     /// Click animation mode
     ClickAnimation,
-}
-
-/// Contains data for drawing mode enable/disable events.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DrawingModeData {
-    /// Whether drawing mode is enabled
-    pub enabled: bool,
-    /// The drawing mode option with its settings
-    pub mode: DrawingModeOption,
 }
 
 /// A simple 2D point for drawing operations.
@@ -117,7 +110,7 @@ pub enum ClientEvent {
     RemoteControlEnabled(RemoteControlEnabled),
     AddToClipboard(AddToClipboardData),
     PasteFromClipboard(PasteFromClipboardData),
-    DrawingMode(DrawingModeData),
+    DrawingMode(DrawingMode),
     DrawStart(DrawPoint),
     DrawAddPoint(DrawPoint),
     DrawEnd(DrawPoint),

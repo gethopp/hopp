@@ -883,21 +883,49 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     paste_from_clipboard_data.data,
                 );
             }
-            UserEvent::DrawingMode(_drawing_mode_data, _sid) => {
-                // TODO: Handle drawing mode enable/disable
-                log::debug!("user_event: DrawingMode");
+            UserEvent::DrawingMode(drawing_mode, sid) => {
+                log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none drawing mode");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control
+                    .cursor_controller
+                    .set_drawing_mode(drawing_mode, sid.as_str());
             }
-            UserEvent::DrawStart(_point, _sid) => {
-                // TODO: Handle draw start
-                log::debug!("user_event: DrawStart");
+            UserEvent::DrawStart(point, sid) => {
+                log::debug!("user_event: DrawStart: {:?} {}", point, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw start");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control
+                    .cursor_controller
+                    .draw_start(point.x, point.y, sid.as_str());
             }
-            UserEvent::DrawAddPoint(_point, _sid) => {
-                // TODO: Handle draw add point
-                log::debug!("user_event: DrawAddPoint");
+            UserEvent::DrawAddPoint(point, sid) => {
+                log::debug!("user_event: DrawAddPoint: {:?} {}", point, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw add point");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control
+                    .cursor_controller
+                    .draw_add_point(point.x, point.y, sid.as_str());
             }
-            UserEvent::DrawEnd(_point, _sid) => {
-                // TODO: Handle draw end
-                log::debug!("user_event: DrawEnd");
+            UserEvent::DrawEnd(point, sid) => {
+                log::debug!("user_event: DrawEnd: {:?} {}", point, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw end");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control
+                    .cursor_controller
+                    .draw_end(point.x, point.y, sid.as_str());
             }
             UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
                 // TODO: Handle click animation from participant
@@ -991,7 +1019,7 @@ pub enum UserEvent {
     SentryMetadata(SentryMetadata),
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),
-    DrawingMode(room_service::DrawingModeData, String),
+    DrawingMode(room_service::DrawingMode, String),
     DrawStart(room_service::ClientPoint, String),
     DrawAddPoint(room_service::ClientPoint, String),
     DrawEnd(room_service::ClientPoint, String),

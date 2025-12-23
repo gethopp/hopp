@@ -1,14 +1,13 @@
-use crate::events::{ClientEvent, DrawPoint, DrawSettings, DrawingModeData, DrawingModeOption};
+use crate::events::{ClientEvent, DrawPoint, DrawSettings, DrawingMode};
 use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
 use std::{io, time::Duration};
 use tokio::time::sleep;
 
-/// Sends a DrawingMode event to enable/disable drawing mode
-async fn send_drawing_mode(room: &Room, enabled: bool, mode: DrawingModeOption) -> io::Result<()> {
-    let drawing_mode_data = DrawingModeData { enabled, mode };
-    let event = ClientEvent::DrawingMode(drawing_mode_data);
+/// Sends a DrawingMode event
+async fn send_drawing_mode(room: &Room, mode: DrawingMode) -> io::Result<()> {
+    let event = ClientEvent::DrawingMode(mode);
     let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
     room.local_participant()
         .publish_data(DataPacket {
@@ -365,12 +364,7 @@ pub async fn test_drawing_permanent_on() -> io::Result<()> {
 
     // Enable drawing mode with permanent = true
     println!("Enabling drawing mode with permanent=true");
-    send_drawing_mode(
-        &room,
-        true,
-        DrawingModeOption::Draw(DrawSettings { permanent: true }),
-    )
-    .await?;
+    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
     sleep(Duration::from_millis(500)).await;
 
     // Draw "Hello World!"
@@ -383,12 +377,7 @@ pub async fn test_drawing_permanent_on() -> io::Result<()> {
 
     // Disable drawing mode
     println!("Disabling drawing mode");
-    send_drawing_mode(
-        &room,
-        false,
-        DrawingModeOption::Draw(DrawSettings { permanent: true }),
-    )
-    .await?;
+    send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
@@ -412,12 +401,7 @@ pub async fn test_drawing_permanent_off() -> io::Result<()> {
 
     // Enable drawing mode with permanent = false
     println!("Enabling drawing mode with permanent=false");
-    send_drawing_mode(
-        &room,
-        true,
-        DrawingModeOption::Draw(DrawSettings { permanent: false }),
-    )
-    .await?;
+    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: false })).await?;
     sleep(Duration::from_millis(500)).await;
 
     // Draw "Hello World!"
@@ -430,12 +414,7 @@ pub async fn test_drawing_permanent_off() -> io::Result<()> {
 
     // Disable drawing mode
     println!("Disabling drawing mode");
-    send_drawing_mode(
-        &room,
-        false,
-        DrawingModeOption::Draw(DrawSettings { permanent: false }),
-    )
-    .await?;
+    send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
@@ -459,7 +438,7 @@ pub async fn test_click_animation_mode() -> io::Result<()> {
 
     // Enable click animation mode
     println!("Enabling click animation mode");
-    send_drawing_mode(&room, true, DrawingModeOption::ClickAnimation).await?;
+    send_drawing_mode(&room, DrawingMode::ClickAnimation).await?;
     sleep(Duration::from_millis(500)).await;
 
     // Trigger click animations at various positions
@@ -496,7 +475,7 @@ pub async fn test_click_animation_mode() -> io::Result<()> {
 
     // Disable drawing mode
     println!("Disabling click animation mode");
-    send_drawing_mode(&room, false, DrawingModeOption::ClickAnimation).await?;
+    send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;

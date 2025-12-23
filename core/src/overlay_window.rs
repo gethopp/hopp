@@ -255,6 +255,13 @@ impl OverlayWindow {
     pub fn get_display_scale(&self) -> f64 {
         self.display_info.display_scale
     }
+
+    pub fn get_pixel_position(&self, x: f64, y: f64) -> Position {
+        Position {
+            x: x * self.display_info.display_extent.width,
+            y: y * self.display_info.display_extent.height,
+        }
+    }
 }
 
 impl fmt::Display for OverlayWindow {

@@ -29,6 +29,9 @@ pub mod point;
 pub mod iced_renderer;
 use iced_renderer::IcedRenderer;
 
+#[path = "draw.rs"]
+pub mod draw;
+
 /// Errors that can occur during overlay graphics operations.
 #[derive(Error, Debug)]
 pub enum OverlayError {
