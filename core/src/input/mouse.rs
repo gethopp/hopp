@@ -675,8 +675,11 @@ fn redraw_thread(
                     }
                 }
                 RedrawThreadCommands::ClickAnimation(extend) => {
-                    if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                        log::error!("redraw_thread: error sending redraw event: {e:?}");
+                    if last_redraw_time.elapsed() > redraw_interval {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        last_redraw_time = Instant::now();
                     }
 
                     if extend || last_click_animation_time.is_none() {
@@ -690,6 +693,7 @@ fn redraw_thread(
                         .as_millis()
                         < animation_duration
                     {
+                        std::thread::sleep(std::time::Duration::from_millis(16));
                         if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
                             log::error!(
                                 "redraw_thread: error sending click animation event: {e:?}"
@@ -698,12 +702,13 @@ fn redraw_thread(
                     } else {
                         last_click_animation_time = None;
                     }
-
-                    last_redraw_time = Instant::now();
                 }
                 RedrawThreadCommands::DrawingFinished(extend) => {
-                    if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                        log::error!("redraw_thread: error sending redraw event: {e:?}");
+                    if last_redraw_time.elapsed() > redraw_interval {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        last_redraw_time = Instant::now();
                     }
 
                     if extend || last_drawing_finished_time.is_none() {
@@ -712,6 +717,7 @@ fn redraw_thread(
 
                     if last_drawing_finished_time.as_ref().unwrap().elapsed() < PATH_EXPIRATION_TIME
                     {
+                        std::thread::sleep(std::time::Duration::from_millis(16));
                         if let Err(e) = tx.send(RedrawThreadCommands::DrawingFinished(false)) {
                             log::error!(
                                 "redraw_thread: error sending drawing finished event: {e:?}"
@@ -720,8 +726,6 @@ fn redraw_thread(
                     } else {
                         last_drawing_finished_time = None;
                     }
-
-                    last_redraw_time = Instant::now();
                 }
             },
             Err(e) => {
