@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
+import { TDrawingMode } from "@/payloads";
 
 type SharingContextType = {
   isSharingMouse: boolean;
   isSharingKeyEvents: boolean;
-  isDrawingMode: boolean;
+  drawingMode: TDrawingMode;
   videoToken: string | null;
   setIsSharingMouse: (value: boolean) => void;
   setIsSharingKeyEvents: (value: boolean) => void;
-  setIsDrawingMode: (value: boolean) => void;
+  setDrawingMode: (value: TDrawingMode) => void;
   setVideoToken: (value: string) => void;
   parentKeyTrap?: HTMLDivElement;
   setParentKeyTrap: (value: HTMLDivElement) => void;
@@ -32,7 +33,7 @@ type SharingProviderProps = {
 export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) => {
   const [isSharingMouse, setIsSharingMouse] = useState<boolean>(true);
   const [isSharingKeyEvents, setIsSharingKeyEvents] = useState<boolean>(true);
-  const [isDrawingMode, setIsDrawingMode] = useState<boolean>(false);
+  const [drawingMode, setDrawingMode] = useState<TDrawingMode>({ type: "Disabled" });
   const [parentKeyTrap, setParentKeyTrap] = useState<HTMLDivElement | undefined>(undefined);
   const [videoToken, setVideoToken] = useState<string | null>(null);
   const [streamDimensions, setStreamDimensions] = useState<{ width: number; height: number } | null>(null);
@@ -42,10 +43,10 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
       value={{
         isSharingMouse,
         isSharingKeyEvents,
-        isDrawingMode,
+        drawingMode,
         setIsSharingMouse,
         setIsSharingKeyEvents,
-        setIsDrawingMode,
+        setDrawingMode,
         parentKeyTrap,
         setParentKeyTrap,
         videoToken,

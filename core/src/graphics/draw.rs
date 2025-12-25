@@ -79,11 +79,14 @@ impl Draw {
         if let Some(in_progress_path) = self.in_progress_path.as_mut() {
             in_progress_path.points.push(point);
         } else {
+            log::info!("add_point: adding new path");
             self.in_progress_path = Some(DrawPath::new(point));
         }
     }
 
     pub fn finish_path(&mut self) {
+        log::info!("finish_path: finishing path");
+
         if self.mode == DrawingMode::Disabled {
             log::warn!("finish_path: drawing mode is disabled, skipping path");
             return;

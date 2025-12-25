@@ -86,7 +86,8 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  const { isSharingMouse, isSharingKeyEvents, isDrawingMode, parentKeyTrap, setStreamDimensions } = useSharingContext();
+  const { isSharingMouse, isSharingKeyEvents, drawingMode, parentKeyTrap, setStreamDimensions } = useSharingContext();
+  const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens } = useStore();
   const [mouse, mouseRef] = useMouse();
@@ -281,23 +282,13 @@ const ConsumerComponent = React.memo(() => {
 
     const payload: TPDrawingModeEvent = {
       type: "DrawingMode",
-      payload:
-        isDrawingMode ?
-          {
-            type: "Draw",
-            settings: {
-              permanent: false,
-            },
-          }
-        : {
-            type: "Disabled",
-          },
+      payload: drawingMode,
     };
 
     localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
       reliable: true,
     });
-  }, [isDrawingMode, localParticipant.localParticipant]);
+  }, [drawingMode, localParticipant.localParticipant]);
 
   /*
    * We do this because we need a way to retrigger the useEffect below,

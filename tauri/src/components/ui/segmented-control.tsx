@@ -22,6 +22,9 @@ interface SegmentedControlProps {
 
 const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProps>(
   ({ items, value: valueProp, defaultValue, onValueChange, className, disabled, ...props }, ref) => {
+    const uniqueId = React.useId();
+    const layoutId = `SegmentedControlActive-${uniqueId}`;
+
     const [internalValue, setInternalValue] = React.useState(() => {
       if (defaultValue) {
         const foundItem = items.find((item) => item.id === defaultValue);
@@ -96,7 +99,7 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                       >
                         {isActive && (
                           <motion.div
-                            layoutId="SegmentedControlActive"
+                            layoutId={layoutId}
                             className="absolute inset-0 z-1 bg-slate-300/50 rounded-md"
                             style={{
                               boxShadow: "0 1px 2px rgba(0,0,0,.1)",
@@ -121,7 +124,7 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                   >
                     {isActive && (
                       <motion.div
-                        layoutId="SegmentedControlActive"
+                        layoutId={layoutId}
                         className="absolute inset-0 z-1 bg-slate-300/50 rounded-md"
                         style={{
                           boxShadow: "0 1px 2px rgba(0,0,0,.1)",
