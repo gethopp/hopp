@@ -26,6 +26,8 @@ import {
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
 import { Cursor, SvgComponent } from "../ui/cursor";
+import { Draw } from "../ui/draw";
+import { DrawParticipant } from "../ui/draw-participant";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -94,6 +96,10 @@ const ConsumerComponent = React.memo(() => {
 
   // Boolean to control when to show custom cursor
   const [showCustomCursor, setShowCustomCursor] = useState(true);
+
+  // Draw participants map - stored in ref for efficiency
+  const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(new Map());
+  const LOCAL_PARTICIPANT_ID = "local";
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -276,6 +282,23 @@ const ConsumerComponent = React.memo(() => {
     }
   }, [track, streamWidth, streamHeight, setStreamDimensions]);
 
+  // Initialize local draw participant
+  useEffect(() => {
+    if (!drawParticipantsRef.current.has(LOCAL_PARTICIPANT_ID)) {
+      // Use first color for local participant
+      const localDrawParticipant = new DrawParticipant(SVG_BADGE_COLORS[0] ?? "#0040FF", drawingMode);
+      drawParticipantsRef.current.set(LOCAL_PARTICIPANT_ID, localDrawParticipant);
+    }
+  }, [drawingMode]);
+
+  // Update local participant's drawing mode when it changes
+  useEffect(() => {
+    const localDrawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+    if (localDrawParticipant) {
+      localDrawParticipant.setDrawingMode(drawingMode);
+    }
+  }, [drawingMode]);
+
   // Send DrawingMode event when drawing mode changes
   useEffect(() => {
     if (!localParticipant.localParticipant) return;
@@ -321,6 +344,12 @@ const ConsumerComponent = React.memo(() => {
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
             reliable: true,
           });
+
+          // Update local draw participant
+          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+          if (drawParticipant) {
+            drawParticipant.handleDrawAddPoint(payload.payload);
+          }
         } else {
           // Normal mouse move
           const payload: TPMouseMove = {
@@ -348,6 +377,12 @@ const ConsumerComponent = React.memo(() => {
             payload: { x: relativeX, y: relativeY },
           };
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+
+          // Update local draw participant
+          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+          if (drawParticipant) {
+            drawParticipant.handleDrawStart(payload.payload);
+          }
           return;
         }
 
@@ -387,6 +422,12 @@ const ConsumerComponent = React.memo(() => {
             payload: { x: relativeX, y: relativeY },
           };
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+
+          // Update local draw participant
+          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+          if (drawParticipant) {
+            drawParticipant.handleDrawEnd(payload.payload);
+          }
           return;
         }
 
@@ -411,6 +452,16 @@ const ConsumerComponent = React.memo(() => {
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
+      // If in drawing mode with permanent enabled, prevent context menu (dev tools)
+      if (isDrawingMode && drawingMode.type === "Draw" && drawingMode.settings.permanent) {
+        e.stopPropagation();
+        // Clear completed paths on right-click in permanent mode
+        const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+        if (drawParticipant) {
+          drawParticipant.clear();
+        }
+        return;
+      }
     };
 
     const handleWheel = throttle((e: WheelEvent) => {
@@ -447,11 +498,14 @@ const ConsumerComponent = React.memo(() => {
       videoElement.addEventListener("mousemove", handleMouseMove);
       videoElement.addEventListener("mousedown", handleMouseDown);
       videoElement.addEventListener("mouseup", handleMouseUp);
+      // Always add contextmenu handler when in drawing mode or sharing mouse
+      if (isDrawingMode || isSharingMouse) {
+        videoElement.addEventListener("contextmenu", handleContextMenu);
+      }
     }
 
     if (videoElement && isSharingMouse) {
       videoElement.addEventListener("wheel", handleWheel);
-      videoElement.addEventListener("contextmenu", handleContextMenu);
     }
 
     return () => {
@@ -460,10 +514,12 @@ const ConsumerComponent = React.memo(() => {
         videoElement.removeEventListener("wheel", handleWheel);
         videoElement.removeEventListener("mousedown", handleMouseDown);
         videoElement.removeEventListener("mouseup", handleMouseUp);
-        videoElement.removeEventListener("contextmenu", handleContextMenu);
+        if (isDrawingMode || isSharingMouse) {
+          videoElement.removeEventListener("contextmenu", handleContextMenu);
+        }
       }
     };
-  }, [isSharingMouse, isDrawingMode, updateMouseControls]);
+  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls]);
 
   /**
    * Keyboard sharing logic
@@ -719,6 +775,8 @@ const ConsumerComponent = React.memo(() => {
           cursor: showCustomCursor ? "none" : "default",
         }}
       />
+
+      <Draw videoRef={videoRef} participants={drawParticipantsRef.current} />
 
       {cursorSlots.map((slot, index) => {
         const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
