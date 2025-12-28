@@ -100,9 +100,15 @@ export const PClientPoint = z.object({
 });
 export type TPClientPoint = z.infer<typeof PClientPoint>;
 
+export const PDrawPathPoint = z.object({
+  point: PClientPoint,
+  path_id: z.number(),
+});
+export type TPDrawPathPoint = z.infer<typeof PDrawPathPoint>;
+
 export const PDrawStart = z.object({
   type: z.literal("DrawStart"),
-  payload: PClientPoint,
+  payload: PDrawPathPoint,
 });
 export type TPDrawStart = z.infer<typeof PDrawStart>;
 
@@ -117,6 +123,19 @@ export const PDrawEnd = z.object({
   payload: PClientPoint,
 });
 export type TPDrawEnd = z.infer<typeof PDrawEnd>;
+
+export const PDrawClearPath = z.object({
+  type: z.literal("DrawClearPath"),
+  payload: z.object({
+    path_id: z.number(),
+  }),
+});
+export type TPDrawClearPath = z.infer<typeof PDrawClearPath>;
+
+export const PDrawClearAllPaths = z.object({
+  type: z.literal("DrawClearAllPaths"),
+});
+export type TPDrawClearAllPaths = z.infer<typeof PDrawClearAllPaths>;
 
 export const PDrawSettings = z.object({
   permanent: z.boolean(),

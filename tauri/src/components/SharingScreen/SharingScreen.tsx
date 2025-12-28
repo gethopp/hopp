@@ -22,6 +22,8 @@ import {
   TPDrawAddPoint,
   TPDrawEnd,
   TPDrawingModeEvent,
+  TPDrawClearPath,
+  TPDrawClearAllPaths,
 } from "@/payloads";
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
@@ -100,6 +102,23 @@ const ConsumerComponent = React.memo(() => {
   // Draw participants map - stored in ref for efficiency
   const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(new Map());
   const LOCAL_PARTICIPANT_ID = "local";
+
+  // Path ID counter for local participant
+  const pathIdCounterRef = useRef<number>(0);
+  const MAX_PATH_ID = Number.MAX_SAFE_INTEGER;
+
+  // Get the next unique path ID and handle wrap-over
+  const getNextPathId = useCallback(() => {
+    const id = pathIdCounterRef.current;
+    pathIdCounterRef.current++;
+
+    // Handle wrap-over: reset to 0 when reaching max
+    if (pathIdCounterRef.current > MAX_PATH_ID) {
+      pathIdCounterRef.current = 0;
+    }
+
+    return id;
+  }, []);
 
   // Data channel hooks - must be called unconditionally
   const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
@@ -299,6 +318,27 @@ const ConsumerComponent = React.memo(() => {
     }
   }, [drawingMode]);
 
+  // Set/update callback for path removal events (depends on localParticipant)
+  useEffect(() => {
+    const localDrawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+    if (!localDrawParticipant) return;
+
+    // Set callback to send DrawClearPath events when paths are removed
+    localDrawParticipant.setOnPathRemoved((pathIds) => {
+      if (!localParticipant.localParticipant) return;
+
+      pathIds.forEach((pathId) => {
+        const payload: TPDrawClearPath = {
+          type: "DrawClearPath",
+          payload: { path_id: pathId },
+        };
+        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+          reliable: true,
+        });
+      });
+    });
+  }, [localParticipant.localParticipant]);
+
   // Send DrawingMode event when drawing mode changes
   useEffect(() => {
     if (!localParticipant.localParticipant) return;
@@ -372,16 +412,17 @@ const ConsumerComponent = React.memo(() => {
 
         // If in drawing mode and left button, send DrawStart
         if (isDrawingMode && e.button === 0) {
+          const pathId = getNextPathId();
           const payload: TPDrawStart = {
             type: "DrawStart",
-            payload: { x: relativeX, y: relativeY },
+            payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
           };
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
 
           // Update local draw participant
           const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
           if (drawParticipant) {
-            drawParticipant.handleDrawStart(payload.payload);
+            drawParticipant.handleDrawStart(payload.payload.point, payload.payload.path_id);
           }
           return;
         }
@@ -455,7 +496,13 @@ const ConsumerComponent = React.memo(() => {
       // If in drawing mode with permanent enabled, prevent context menu (dev tools)
       if (isDrawingMode && drawingMode.type === "Draw" && drawingMode.settings.permanent) {
         e.stopPropagation();
-        // Clear completed paths on right-click in permanent mode
+        // Send DrawClearAllPaths event on right-click in permanent mode
+        const payload: TPDrawClearAllPaths = {
+          type: "DrawClearAllPaths",
+        };
+        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+
+        // Update local draw participant
         const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
         if (drawParticipant) {
           drawParticipant.clear();
