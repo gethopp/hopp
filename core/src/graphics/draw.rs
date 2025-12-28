@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::time::Instant;
 
 use iced::widget::canvas::{path, stroke, Cache, Frame, Geometry, Stroke};
 use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
-
-pub const PATH_EXPIRATION_TIME: std::time::Duration = std::time::Duration::from_millis(5000);
 
 /// Converts a hex color string (e.g., "#7CCF00" or "7CCF00") to an iced Color.
 pub fn color_from_hex(hex: &str) -> Color {
@@ -19,15 +16,15 @@ pub fn color_from_hex(hex: &str) -> Color {
 
 #[derive(Debug, Clone)]
 struct DrawPath {
+    path_id: u64,
     points: Vec<Position>,
-    finished_at: Option<Instant>,
 }
 
 impl DrawPath {
-    pub fn new(point: Position) -> Self {
+    pub fn new(path_id: u64, point: Position) -> Self {
         Self {
+            path_id,
             points: vec![point],
-            finished_at: None,
         }
     }
 }
@@ -70,6 +67,16 @@ impl Draw {
         }
     }
 
+    pub fn start_path(&mut self, path_id: u64, point: Position) {
+        if self.mode == DrawingMode::Disabled {
+            log::warn!("start_path: drawing mode is disabled, skipping path");
+            return;
+        }
+
+        log::info!("start_path: starting new path with id {}", path_id);
+        self.in_progress_path = Some(DrawPath::new(path_id, point));
+    }
+
     pub fn add_point(&mut self, point: Position) {
         if self.mode == DrawingMode::Disabled {
             log::warn!("add_point: drawing mode is disabled, skipping point");
@@ -79,53 +86,44 @@ impl Draw {
         if let Some(in_progress_path) = self.in_progress_path.as_mut() {
             in_progress_path.points.push(point);
         } else {
-            log::info!("add_point: adding new path");
-            self.in_progress_path = Some(DrawPath::new(point));
+            log::warn!("add_point: no current path in progress, skipping point");
         }
     }
 
     pub fn finish_path(&mut self) {
-        log::info!("finish_path: finishing path");
-
         if self.mode == DrawingMode::Disabled {
             log::warn!("finish_path: drawing mode is disabled, skipping path");
             return;
         }
 
-        if let Some(mut in_progress_path) = self.in_progress_path.take() {
-            match self.mode {
-                DrawingMode::Draw(settings) => {
-                    if !settings.permanent {
-                        in_progress_path.finished_at = Some(Instant::now());
-                    }
-                }
-                _ => {}
-            }
+        if let Some(in_progress_path) = self.in_progress_path.take() {
+            log::info!("finish_path: finishing path {}", in_progress_path.path_id);
             self.completed_paths.push(in_progress_path);
             self.completed_cache.clear();
+        } else {
+            log::warn!("finish_path: no path in progress");
         }
+    }
+
+    pub fn clear_path(&mut self, path_id: u64) {
+        log::info!("clear_path: clearing path {}", path_id);
+
+        // Clear current path if it matches
+        if let Some(in_progress) = &self.in_progress_path {
+            if in_progress.path_id == path_id {
+                self.in_progress_path = None;
+            }
+        }
+
+        // Remove from completed paths
+        self.completed_paths.retain(|path| path.path_id != path_id);
+        self.completed_cache.clear();
     }
 
     pub fn clear(&mut self) {
         self.in_progress_path = None;
         self.completed_paths.clear();
         self.completed_cache.clear();
-    }
-
-    /// Removes expired paths and clears cache if any were removed.
-    pub fn update_completed_paths(&mut self) {
-        let before = self.completed_paths.len();
-        self.completed_paths.retain(|path| {
-            if path.finished_at.is_none() {
-                return true;
-            }
-            let finished_at = path.finished_at.as_ref().unwrap();
-            finished_at.elapsed() < PATH_EXPIRATION_TIME
-        });
-
-        if self.completed_paths.len() < before {
-            self.completed_cache.clear();
-        }
     }
 
     /// Returns cached geometry for completed paths.
@@ -212,10 +210,15 @@ impl DrawManager {
     }
 
     /// Starts a new drawing path for a participant.
-    pub fn draw_start(&mut self, sid: &str, point: Position) {
-        log::debug!("DrawManager::draw_start: sid={} point={:?}", sid, point);
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        log::debug!(
+            "DrawManager::draw_start: sid={} point={:?} path_id={}",
+            sid,
+            point,
+            path_id
+        );
         if let Some(draw) = self.draws.get_mut(sid) {
-            draw.add_point(point);
+            draw.start_path(path_id, point);
         } else {
             log::warn!("DrawManager::draw_start: participant {} not found", sid);
         }
@@ -242,10 +245,33 @@ impl DrawManager {
         }
     }
 
-    /// Updates all draws (removes expired paths).
-    pub fn update(&mut self) {
-        for draw in self.draws.values_mut() {
-            draw.update_completed_paths();
+    /// Clears a specific drawing path for a participant.
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        log::debug!(
+            "DrawManager::draw_clear_path: sid={} path_id={}",
+            sid,
+            path_id
+        );
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.clear_path(path_id);
+        } else {
+            log::warn!(
+                "DrawManager::draw_clear_path: participant {} not found",
+                sid
+            );
+        }
+    }
+
+    /// Clears all drawing paths for a participant.
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        log::debug!("DrawManager::draw_clear_all_paths: sid={}", sid);
+        if let Some(draw) = self.draws.get_mut(sid) {
+            draw.clear();
+        } else {
+            log::warn!(
+                "DrawManager::draw_clear_all_paths: participant {} not found",
+                sid
+            );
         }
     }
 

@@ -471,8 +471,9 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant
     /// * `point` - Starting point of the path
-    pub fn draw_start(&mut self, sid: &str, point: Position) {
-        self.iced_renderer.draw_start(sid, point);
+    /// * `path_id` - Unique identifier for the drawing path
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        self.iced_renderer.draw_start(sid, point, path_id);
     }
 
     /// Adds a point to the current drawing path for a participant.
@@ -491,6 +492,23 @@ impl<'a> GraphicsContext<'a> {
     /// * `point` - Final point of the path
     pub fn draw_end(&mut self, sid: &str, point: Position) {
         self.iced_renderer.draw_end(sid, point);
+    }
+
+    /// Clears a specific drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `path_id` - Unique identifier for the drawing path to clear
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        self.iced_renderer.draw_clear_path(sid, path_id);
+    }
+
+    /// Clears all drawing paths for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        self.iced_renderer.draw_clear_all_paths(sid);
     }
 }
 

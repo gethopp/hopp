@@ -114,8 +114,8 @@ impl IcedRenderer {
         self.overlay_surface.set_drawing_mode(sid, mode);
     }
 
-    pub fn draw_start(&mut self, sid: &str, point: Position) {
-        self.overlay_surface.draw_start(sid, point);
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        self.overlay_surface.draw_start(sid, point, path_id);
     }
 
     pub fn draw_add_point(&mut self, sid: &str, point: Position) {
@@ -124,5 +124,13 @@ impl IcedRenderer {
 
     pub fn draw_end(&mut self, sid: &str, point: Position) {
         self.overlay_surface.draw_end(sid, point);
+    }
+
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        self.overlay_surface.draw_clear_path(sid, path_id);
+    }
+
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        self.overlay_surface.draw_clear_all_paths(sid);
     }
 }

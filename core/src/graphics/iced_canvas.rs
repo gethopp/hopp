@@ -60,7 +60,6 @@ impl OverlaySurface {
 
     pub fn view(&mut self) -> Element<'_, Message, Theme, iced::Renderer> {
         log::debug!("OverlaySurface::view");
-        self.draws.update();
 
         canvas(OverlaySurfaceCanvas::new(&self.marker, &self.draws))
             .width(Length::Fill)
@@ -80,8 +79,8 @@ impl OverlaySurface {
         self.draws.set_drawing_mode(sid, mode);
     }
 
-    pub fn draw_start(&mut self, sid: &str, point: Position) {
-        self.draws.draw_start(sid, point);
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        self.draws.draw_start(sid, point, path_id);
     }
 
     pub fn draw_add_point(&mut self, sid: &str, point: Position) {
@@ -90,5 +89,13 @@ impl OverlaySurface {
 
     pub fn draw_end(&mut self, sid: &str, point: Position) {
         self.draws.draw_end(sid, point);
+    }
+
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        self.draws.draw_clear_path(sid, path_id);
+    }
+
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        self.draws.draw_clear_all_paths(sid);
     }
 }

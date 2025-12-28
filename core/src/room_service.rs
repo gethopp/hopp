@@ -677,6 +677,18 @@ pub struct ClientPoint {
     pub y: f64,
 }
 
+/// Represents a drawing path point with both coordinates and path identifier.
+///
+/// This structure combines a 2D point with a path ID to track which drawing
+/// path the point belongs to, enabling multiple simultaneous drawing paths.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct DrawPathPoint {
+    /// The 2D coordinates of the point
+    pub point: ClientPoint,
+    /// The unique identifier for the drawing path this point belongs to
+    pub path_id: u64,
+}
+
 /// Contains data for mouse click events.
 ///
 /// This structure captures all the information needed to represent a mouse click,
@@ -837,12 +849,16 @@ pub enum ClientEvent {
     PasteFromClipboard(PasteFromClipboardData),
     /// Drawing mode change event (disabled, draw, or click animation)
     DrawingMode(DrawingMode),
-    /// Drawing started at a point
-    DrawStart(ClientPoint),
-    /// Add a point to the current drawing
+    /// Drawing started at a point with a path identifier
+    DrawStart(DrawPathPoint),
+    /// Add a point to the current in-progress drawing
     DrawAddPoint(ClientPoint),
     /// Drawing ended at a point
     DrawEnd(ClientPoint),
+    /// Clear a specific drawing path
+    DrawClearPath { path_id: u64 },
+    /// Clear all drawing paths
+    DrawClearAllPaths,
     /// Click animation at a point
     ClickAnimation(ClientPoint),
 }
@@ -942,14 +958,20 @@ async fn handle_room_events(
                     ClientEvent::DrawingMode(drawing_mode) => {
                         event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode, sid))
                     }
-                    ClientEvent::DrawStart(point) => {
-                        event_loop_proxy.send_event(UserEvent::DrawStart(point, sid))
-                    }
+                    ClientEvent::DrawStart(draw_path_point) => event_loop_proxy.send_event(
+                        UserEvent::DrawStart(draw_path_point.point, draw_path_point.path_id, sid),
+                    ),
                     ClientEvent::DrawAddPoint(point) => {
                         event_loop_proxy.send_event(UserEvent::DrawAddPoint(point, sid))
                     }
                     ClientEvent::DrawEnd(point) => {
                         event_loop_proxy.send_event(UserEvent::DrawEnd(point, sid))
+                    }
+                    ClientEvent::DrawClearPath { path_id } => {
+                        event_loop_proxy.send_event(UserEvent::DrawClearPath(path_id, sid))
+                    }
+                    ClientEvent::DrawClearAllPaths => {
+                        event_loop_proxy.send_event(UserEvent::DrawClearAllPaths(sid))
                     }
                     ClientEvent::ClickAnimation(point) => event_loop_proxy
                         .send_event(UserEvent::ClickAnimationFromParticipant(point, sid)),

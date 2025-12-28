@@ -1,4 +1,4 @@
-use crate::events::{ClientEvent, DrawPoint, DrawSettings, DrawingMode};
+use crate::events::{ClientEvent, DrawPathPoint, DrawPoint, DrawSettings, DrawingMode};
 use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
@@ -20,10 +20,11 @@ async fn send_drawing_mode(room: &Room, mode: DrawingMode) -> io::Result<()> {
     Ok(())
 }
 
-/// Sends a DrawStart event
-async fn send_draw_start(room: &Room, x: f64, y: f64) -> io::Result<()> {
+/// Sends a DrawStart event with a path_id
+async fn send_draw_start(room: &Room, x: f64, y: f64, path_id: u64) -> io::Result<()> {
     let point = DrawPoint { x, y };
-    let event = ClientEvent::DrawStart(point);
+    let draw_path_point = DrawPathPoint { point, path_id };
+    let event = ClientEvent::DrawStart(draw_path_point);
     let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
     room.local_participant()
         .publish_data(DataPacket {
@@ -68,6 +69,36 @@ async fn send_draw_end(room: &Room, x: f64, y: f64) -> io::Result<()> {
     Ok(())
 }
 
+/// Sends a DrawClearPath event to clear a specific path
+async fn send_draw_clear_path(room: &Room, path_id: u64) -> io::Result<()> {
+    let event = ClientEvent::DrawClearPath { path_id };
+    let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
+    room.local_participant()
+        .publish_data(DataPacket {
+            payload,
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// Sends a DrawClearAllPaths event to clear all paths
+async fn send_draw_clear_all_paths(room: &Room) -> io::Result<()> {
+    let event = ClientEvent::DrawClearAllPaths;
+    let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
+    room.local_participant()
+        .publish_data(DataPacket {
+            payload,
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 /// Sends a ClickAnimation event at a specific point
 async fn send_click_animation_at(room: &Room, x: f64, y: f64) -> io::Result<()> {
     let point = DrawPoint { x, y };
@@ -84,18 +115,19 @@ async fn send_click_animation_at(room: &Room, x: f64, y: f64) -> io::Result<()> 
     Ok(())
 }
 
-/// Draws a stroke (line) from one point to another
+/// Draws a stroke (line) from one point to another with a specific path_id
 async fn draw_stroke(
     room: &Room,
     from_x: f64,
     from_y: f64,
     to_x: f64,
     to_y: f64,
+    path_id: u64,
 ) -> io::Result<()> {
     let steps = 20;
     let delay = Duration::from_millis(10);
 
-    send_draw_start(room, from_x, from_y).await?;
+    send_draw_start(room, from_x, from_y, path_id).await?;
     sleep(delay).await;
 
     for i in 1..steps {
@@ -301,16 +333,17 @@ async fn draw_letter(
     base_y: f64,
     width: f64,
     height: f64,
+    path_id_start: u64,
 ) -> io::Result<()> {
     let strokes = get_letter_strokes(letter);
 
-    for stroke in strokes {
+    for (i, stroke) in strokes.iter().enumerate() {
         let from_x = base_x + stroke.from.0 * width;
         let from_y = base_y + stroke.from.1 * height;
         let to_x = base_x + stroke.to.0 * width;
         let to_y = base_y + stroke.to.1 * height;
 
-        draw_stroke(room, from_x, from_y, to_x, to_y).await?;
+        draw_stroke(room, from_x, from_y, to_x, to_y, path_id_start + i as u64).await?;
     }
 
     Ok(())
@@ -325,6 +358,7 @@ async fn draw_hello_world(room: &Room, start_x: f64, start_y: f64) -> io::Result
     let space_width = 0.03;
 
     let mut current_x = start_x;
+    let mut path_id = 0;
 
     for letter in text.chars() {
         if letter == ' ' {
@@ -338,86 +372,15 @@ async fn draw_hello_world(room: &Room, start_x: f64, start_y: f64) -> io::Result
                 start_y,
                 letter_width,
                 letter_height,
+                path_id,
             )
             .await?;
+            // Each letter can have multiple strokes, allocate 10 path_ids per letter to be safe
+            path_id += 10;
             current_x += letter_spacing;
         }
     }
 
-    Ok(())
-}
-
-/// Test drawing with permanent mode ON
-/// Lines should remain visible indefinitely
-pub async fn test_drawing_permanent_on() -> io::Result<()> {
-    println!("\n=== TEST: Drawing Mode - Permanent ON ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
-
-    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    let token = livekit_utils::generate_token("DrawingTester");
-    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
-        .await
-        .unwrap();
-
-    println!("Participant connected. Waiting for setup...");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    // Enable drawing mode with permanent = true
-    println!("Enabling drawing mode with permanent=true");
-    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
-    sleep(Duration::from_millis(500)).await;
-
-    // Draw "Hello World!"
-    println!("Drawing 'Hello World!' with permanent strokes...");
-    draw_hello_world(&room, 0.1, 0.4).await?;
-
-    println!("Drawing complete. Lines should remain visible.");
-    println!("Waiting 10 seconds to observe permanent lines...");
-    sleep(Duration::from_secs(10)).await;
-
-    // Disable drawing mode
-    println!("Disabling drawing mode");
-    send_drawing_mode(&room, DrawingMode::Disabled).await?;
-
-    println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
-    Ok(())
-}
-
-/// Test drawing with permanent mode OFF
-/// Lines should fade away after a while
-pub async fn test_drawing_permanent_off() -> io::Result<()> {
-    println!("\n=== TEST: Drawing Mode - Permanent OFF ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
-
-    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    let token = livekit_utils::generate_token("DrawingTester");
-    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
-        .await
-        .unwrap();
-
-    println!("Participant connected. Waiting for setup...");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    // Enable drawing mode with permanent = false
-    println!("Enabling drawing mode with permanent=false");
-    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: false })).await?;
-    sleep(Duration::from_millis(500)).await;
-
-    // Draw "Hello World!"
-    println!("Drawing 'Hello World!' with fading strokes...");
-    draw_hello_world(&room, 0.1, 0.4).await?;
-
-    println!("Drawing complete. Lines should fade away after a while.");
-    println!("Waiting 15 seconds to observe fading effect...");
-    sleep(Duration::from_secs(15)).await;
-
-    // Disable drawing mode
-    println!("Disabling drawing mode");
-    send_drawing_mode(&room, DrawingMode::Disabled).await?;
-
-    println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
     Ok(())
 }
 
@@ -571,7 +534,7 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
                 to_x,
                 to_y
             );
-            draw_stroke(&room_1, *from_x, *from_y, *to_x, *to_y).await?;
+            draw_stroke(&room_1, *from_x, *from_y, *to_x, *to_y, i as u64).await?;
         }
         println!("Participant 1: Completed all 3 lines");
         Ok::<(), io::Error>(())
@@ -587,7 +550,7 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
                 to_x,
                 to_y
             );
-            draw_stroke(&room_2, *from_x, *from_y, *to_x, *to_y).await?;
+            draw_stroke(&room_2, *from_x, *from_y, *to_x, *to_y, i as u64).await?;
         }
         println!("Participant 2: Completed all 3 lines");
         Ok::<(), io::Error>(())
@@ -603,7 +566,7 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
                 to_x,
                 to_y
             );
-            draw_stroke(&room_3, *from_x, *from_y, *to_x, *to_y).await?;
+            draw_stroke(&room_3, *from_x, *from_y, *to_x, *to_y, i as u64).await?;
         }
         println!("Participant 3: Completed all 3 lines");
         Ok::<(), io::Error>(())
@@ -619,7 +582,7 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
                 to_x,
                 to_y
             );
-            draw_stroke(&room_4, *from_x, *from_y, *to_x, *to_y).await?;
+            draw_stroke(&room_4, *from_x, *from_y, *to_x, *to_y, i as u64).await?;
         }
         println!("Participant 4: Completed all 3 lines");
         Ok::<(), io::Error>(())
@@ -661,6 +624,125 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
     println!("\nAll participants completed drawing concurrently.");
     println!("Waiting 5 seconds to observe the drawn lines...");
     sleep(Duration::from_secs(5)).await;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
+
+/// Test drawing 4 lines and clearing them one by one using DrawClearPath
+pub async fn test_draw_and_clear_paths_individually() -> io::Result<()> {
+    println!("\n=== TEST: Draw and Clear Paths Individually ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("PathClearTester");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for setup...");
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Enable drawing mode
+    println!("Enabling drawing mode with permanent=true");
+    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Draw 4 lines in different positions with different path_ids
+    let lines = vec![
+        ((0.2, 0.2), (0.4, 0.2), 0, "top horizontal"),
+        ((0.6, 0.4), (0.8, 0.4), 1, "middle horizontal"),
+        ((0.2, 0.6), (0.4, 0.6), 2, "lower horizontal"),
+        ((0.6, 0.8), (0.8, 0.8), 3, "bottom horizontal"),
+    ];
+
+    println!("\nDrawing 4 lines with path_ids 0, 1, 2, 3...");
+    for (from, to, path_id, name) in &lines {
+        println!("Drawing {} line (path_id: {})", name, path_id);
+        draw_stroke(&room, from.0, from.1, to.0, to.1, *path_id).await?;
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    println!("\nAll 4 lines drawn. Waiting 2 seconds...");
+    sleep(Duration::from_secs(2)).await;
+
+    // Clear paths one by one
+    println!("\nClearing paths one by one...");
+    for (_, _, path_id, name) in &lines {
+        println!("Clearing {} line (path_id: {})", name, path_id);
+        send_draw_clear_path(&room, *path_id).await?;
+        sleep(Duration::from_secs(2)).await;
+    }
+
+    println!("\nAll paths cleared.");
+    sleep(Duration::from_secs(1)).await;
+
+    // Disable drawing mode
+    println!("Disabling drawing mode");
+    send_drawing_mode(&room, DrawingMode::Disabled).await?;
+
+    println!("\n=== TEST COMPLETED ===");
+    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    Ok(())
+}
+
+/// Test drawing multiple lines and clearing all of them at once using DrawClearAllPaths
+pub async fn test_draw_and_clear_all_paths() -> io::Result<()> {
+    println!("\n=== TEST: Draw and Clear All Paths ===");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    let token = livekit_utils::generate_token("ClearAllTester");
+    let (room, _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+
+    println!("Participant connected. Waiting for setup...");
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Enable drawing mode
+    println!("Enabling drawing mode with permanent=true");
+    send_drawing_mode(&room, DrawingMode::Draw(DrawSettings { permanent: true })).await?;
+    sleep(Duration::from_millis(500)).await;
+
+    // Draw multiple lines forming a grid pattern
+    println!("\nDrawing multiple lines to form a grid pattern...");
+    let mut path_id = 0;
+
+    // Vertical lines
+    for i in 0..5 {
+        let x = 0.2 + (i as f64 * 0.15);
+        println!("Drawing vertical line {} at x={:.2}", i + 1, x);
+        draw_stroke(&room, x, 0.2, x, 0.8, path_id).await?;
+        path_id += 1;
+        sleep(Duration::from_millis(300)).await;
+    }
+
+    // Horizontal lines
+    for i in 0..5 {
+        let y = 0.2 + (i as f64 * 0.15);
+        println!("Drawing horizontal line {} at y={:.2}", i + 1, y);
+        draw_stroke(&room, 0.2, y, 0.8, y, path_id).await?;
+        path_id += 1;
+        sleep(Duration::from_millis(300)).await;
+    }
+
+    println!(
+        "\nGrid pattern complete with {} lines. Waiting 3 seconds...",
+        path_id
+    );
+    sleep(Duration::from_secs(3)).await;
+
+    // Clear all paths at once
+    println!("\nClearing ALL paths at once using DrawClearAllPaths...");
+    send_draw_clear_all_paths(&room).await?;
+    println!("All paths should now be cleared.");
+    sleep(Duration::from_secs(2)).await;
+
+    // Disable drawing mode
+    println!("Disabling drawing mode");
+    send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
     screenshare_client::stop_screenshare_session(&mut cursor_socket)?;

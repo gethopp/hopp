@@ -10,8 +10,7 @@ use std::{
 
 use crate::{
     graphics::graphics_context::{
-        click_animation::ANIMATION_DURATION, cursor::Cursor, draw::PATH_EXPIRATION_TIME,
-        GraphicsContext,
+        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
     },
     overlay_window::OverlayWindow,
     utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
@@ -648,7 +647,6 @@ impl SharerCursor {
 enum RedrawThreadCommands {
     Redraw,
     ClickAnimation(bool),
-    DrawingFinished(bool),
     Stop,
 }
 
@@ -659,7 +657,6 @@ fn redraw_thread(
 ) {
     let mut last_redraw_time = Instant::now();
     let mut last_click_animation_time = None;
-    let mut last_drawing_finished_time = None;
     let redraw_interval = std::time::Duration::from_millis(16);
     let animation_duration = (ANIMATION_DURATION + 500) as u128;
     loop {
@@ -701,30 +698,6 @@ fn redraw_thread(
                         }
                     } else {
                         last_click_animation_time = None;
-                    }
-                }
-                RedrawThreadCommands::DrawingFinished(extend) => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-
-                    if extend || last_drawing_finished_time.is_none() {
-                        last_drawing_finished_time = Some(Instant::now());
-                    }
-
-                    if last_drawing_finished_time.as_ref().unwrap().elapsed() < PATH_EXPIRATION_TIME
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(16));
-                        if let Err(e) = tx.send(RedrawThreadCommands::DrawingFinished(false)) {
-                            log::error!(
-                                "redraw_thread: error sending drawing finished event: {e:?}"
-                            );
-                        }
-                    } else {
-                        last_drawing_finished_time = None;
                     }
                 }
             },
@@ -1348,14 +1321,7 @@ impl CursorController {
         self.overlay_window.clone()
     }
 
-    pub fn draw_path_ended(&self) {
-        if let Err(e) = self
-            .redraw_thread_sender
-            .send(RedrawThreadCommands::DrawingFinished(true))
-        {
-            log::error!("draw_path_ended: error sending drawing finished event: {e:?}");
-        }
-    }
+    pub fn draw_path_ended(&self) {}
 }
 
 impl Drop for CursorController {

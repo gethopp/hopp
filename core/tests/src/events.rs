@@ -96,6 +96,13 @@ pub struct DrawPoint {
     pub y: f64,
 }
 
+/// A drawing path point with both coordinates and path identifier.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct DrawPathPoint {
+    pub point: DrawPoint,
+    pub path_id: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum ClientEvent {
@@ -111,8 +118,10 @@ pub enum ClientEvent {
     AddToClipboard(AddToClipboardData),
     PasteFromClipboard(PasteFromClipboardData),
     DrawingMode(DrawingMode),
-    DrawStart(DrawPoint),
+    DrawStart(DrawPathPoint),
     DrawAddPoint(DrawPoint),
     DrawEnd(DrawPoint),
+    DrawClearPath { path_id: u64 },
+    DrawClearAllPaths,
     ClickAnimation(DrawPoint),
 }

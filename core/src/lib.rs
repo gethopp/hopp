@@ -917,8 +917,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .gfx
                     .set_drawing_mode(sid.as_str(), drawing_mode);
             }
-            UserEvent::DrawStart(point, sid) => {
-                log::debug!("user_event: DrawStart: {:?} {}", point, sid);
+            UserEvent::DrawStart(point, path_id, sid) => {
+                log::debug!("user_event: DrawStart: {:?} {} {}", point, path_id, sid);
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none draw start");
                     return;
@@ -926,7 +926,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control.gfx.draw_start(sid.as_str(), pixel_position);
+                remote_control
+                    .gfx
+                    .draw_start(sid.as_str(), pixel_position, path_id);
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -966,7 +968,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point.y,
                     sid.as_str(),
                 );
-                remote_control.cursor_controller.draw_path_ended();
+            }
+            UserEvent::DrawClearPath(path_id, sid) => {
+                log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw clear path");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+            }
+            UserEvent::DrawClearAllPaths(sid) => {
+                log::debug!("user_event: DrawClearAllPaths: {}", sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw clear all paths");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control.gfx.draw_clear_all_paths(sid.as_str());
             }
             UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
                 // TODO: Handle click animation from participant
@@ -1060,9 +1079,11 @@ pub enum UserEvent {
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),
     DrawingMode(room_service::DrawingMode, String),
-    DrawStart(room_service::ClientPoint, String),
+    DrawStart(room_service::ClientPoint, u64, String),
     DrawAddPoint(room_service::ClientPoint, String),
     DrawEnd(room_service::ClientPoint, String),
+    DrawClearPath(u64, String),
+    DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
 }
 
