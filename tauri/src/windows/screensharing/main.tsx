@@ -193,7 +193,7 @@ function Window() {
 
   return (
     <div
-      className="h-full w-full bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden group"
+      className="h-full w-full bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[12px] shadow-[0_18px_35px_rgba(0,0,0,0.45)] overflow-hidden group"
       tabIndex={0}
       ref={(ref) => ref && setParentKeyTrap(ref)}
     >

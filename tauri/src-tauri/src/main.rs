@@ -18,7 +18,7 @@ use tauri_plugin_log::{Target, TargetKind};
 use hopp::set_window_corner_radius;
 use hopp::{
     app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
+    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData, CORNER_RADIUS,
 };
 use std::sync::Mutex;
 use std::{env, sync::Arc};
@@ -895,7 +895,7 @@ fn main() {
                         // Apply native styling on macOS
                         #[cfg(target_os = "macos")]
                         {
-                            set_window_corner_radius(&permissions_window, 26.0);
+                            set_window_corner_radius(&permissions_window, CORNER_RADIUS);
                         }
 
                         /*
