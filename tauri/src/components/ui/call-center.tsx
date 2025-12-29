@@ -4,8 +4,6 @@ import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
-import { sounds } from "@/constants/sounds";
-import { socketService } from "@/services/socket";
 import {
   useLocalParticipant,
   useMediaDeviceSelect,
@@ -24,12 +22,11 @@ import { HiOutlineCursorClick, HiOutlineEye } from "react-icons/hi";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
-import { usePostHog } from "posthog-js/react";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
-import { useScreenShareListener } from "@/lib/hooks";
+import { useScreenShareListener, useEndCall } from "@/lib/hooks";
 import { useAudioVolume } from "@/components/ui/bar-visualizer";
 import { LiveWaveform } from "@/components/ui/live-waveform";
 
@@ -72,13 +69,13 @@ export function CallCenter() {
 }
 
 export function ConnectedActions() {
-  const { callTokens, teammates, setCallTokens, user } = useStore();
-  const posthog = usePostHog();
+  const { callTokens, teammates } = useStore();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
 
   useScreenShareListener();
+  const handleEndCall = useEndCall();
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -98,51 +95,6 @@ export function ConnectedActions() {
     fetchAccessibilityPermission();
   }, [callTokens?.role]);
 
-  const handleEndCall = useCallback(() => {
-    if (!callTokens) return;
-
-    const { timeStarted, participant, room } = callTokens;
-
-    // Capture call info before clearing tokens for feedback
-    const teamId = user?.team_id?.toString() || "";
-    const roomId = room?.id || "";
-    const participantId = user?.id || "";
-
-    // Send websocket message to end call
-    socketService.send({
-      type: "call_end",
-      payload: {
-        participant_id: participant,
-      },
-    });
-
-    // Play end call sound
-    sounds.callAccepted.play();
-
-    // Clear call tokens
-    if (callTokens.role === ParticipantRole.SHARER) {
-      tauriUtils.stopSharing();
-    }
-    tauriUtils.endCallCleanup();
-
-    setCallTokens(null);
-
-    // Show feedback window for the person ending the call
-    if (participantId && teamId) {
-      tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
-    }
-
-    // Send posthog event on how much
-    // time in seconds the call lasted.
-    // Time is serialized as a string in store
-    // so its not saved as a Date object
-    console.log(`Duration of the call: ${(Date.now() - new Date(timeStarted).getTime()) / 1000}seconds`);
-    posthog.capture("call_ended", {
-      duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
-      participant,
-    });
-  }, [callTokens, setCallTokens, user]);
-
   // Stop call when teammate disconnects
   useEffect(() => {
     if (!callTokens || !callParticipant) return;
@@ -150,7 +102,7 @@ export function ConnectedActions() {
     if (!callParticipant.is_active) {
       handleEndCall();
     }
-  }, [callParticipant, teammates, callTokens]);
+  }, [callParticipant, teammates, callTokens, handleEndCall]);
 
   return (
     <>

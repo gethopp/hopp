@@ -514,10 +514,10 @@ function CameraWindow() {
   }, []);
 
   return (
-    <div className="h-full min-h-full overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px]">
+    <div className="h-full min-h-full overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[12px]">
       <div
         data-tauri-drag-region
-        className="h-[36px] min-w-full bg-black/10 dark:bg-white/10 rounded-t-[26px] titlebar w-full flex flex-row items-center justify-start px-3 relative overflow-visible"
+        className="h-[36px] min-w-full bg-black/10 dark:bg-white/10 rounded-t-[12px] titlebar w-full flex flex-row items-center justify-start px-3 relative overflow-visible"
       >
         <WindowActions.Empty onClick={() => putWindowCorner()} className=" justify-self-start">
           <CustomIcons.Corner />

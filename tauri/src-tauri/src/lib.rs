@@ -29,6 +29,7 @@ use smappservice_rs::*;
 
 const PING_SLEEP_SECS: u64 = 30;
 const PING_CORE_PROCESS_INTERVAL_SECS: u64 = 15;
+pub const CORNER_RADIUS: f64 = 12.0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreProcessCreationError {
@@ -612,7 +613,7 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
         .run_on_main_thread(move || {
             #[cfg(target_os = "macos")]
             {
-                set_window_corner_radius(&window_clone, 26.0);
+                set_window_corner_radius(&window_clone, CORNER_RADIUS);
             }
 
             #[cfg(target_os = "windows")]
