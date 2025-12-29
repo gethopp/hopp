@@ -14,12 +14,12 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tauri_plugin_log::{Target, TargetKind};
 
-#[cfg(target_os = "macos")]
-use hopp::set_window_corner_radius;
 use hopp::{
     app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData, CORNER_RADIUS,
+    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
 };
+#[cfg(target_os = "macos")]
+use hopp::{set_window_corner_radius, CORNER_RADIUS};
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
