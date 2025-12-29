@@ -208,7 +208,7 @@ function Window() {
   }, [allPermissionsGranted]);
 
   return (
-    <div className="h-full overflow-hidden text-black dark:text-white rounded-[26px] flex flex-col" tabIndex={0}>
+    <div className="h-full overflow-hidden text-black dark:text-white rounded-[12px] flex flex-col" tabIndex={0}>
       <Toaster position="top-center" />
       <div
         data-tauri-drag-region
