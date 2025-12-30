@@ -429,7 +429,7 @@ html.dark .window-bg {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  border-radius: 26px;
+  border-radius: 12px;
 }
 
 .screenshare-body #root {
@@ -557,7 +557,7 @@ button {
 
 .camera-body {
   overflow: hidden;
-  border-radius: 26px;
+  border-radius: 12px;
 }
 
 .camera-body #root {
@@ -569,7 +569,7 @@ html.dark .camera-body #root {
 }
 
 .contentPicker-body {
-  border-radius: 26px;
+  border-radius: 12px;
 }
 
 .contentPicker-body #root {
@@ -585,7 +585,7 @@ html.dark .contentPicker-body #root {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  border-radius: 26px;
+  border-radius: 12px;
 }
 
 .permissions-body #root {

@@ -159,7 +159,7 @@ function Window() {
 
   return (
     <div
-      className="h-screen overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[26px] flex flex-col gap-0"
+      className="h-screen overflow-hidden bg-[#ECECEC] dark:bg-[#323232] text-black dark:text-white rounded-[12px] flex flex-col gap-0"
       tabIndex={0}
     >
       <Toaster position="top-center" />

@@ -1,10 +1,13 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import hotkeys from "hotkeys-js";
 import useStore, { ParticipantRole } from "@/store/store";
 import { useLocalParticipant, useRoomContext, useTracks } from "@livekit/components-react";
 import { Track, LocalVideoTrack, RemoteVideoTrack } from "livekit-client";
 import { tauriUtils } from "@/windows/window-utils";
+import { usePostHog } from "posthog-js/react";
+import { socketService } from "@/services/socket";
+import { sounds } from "@/constants/sounds";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -340,3 +343,60 @@ export const useInboundCameraBandwidthMonitor = () => {
     };
   }, [room]);
 };
+
+/**
+ * Hook to end a call and clean up all associated resources.
+ * Handles websocket messages, sound effects, token cleanup, feedback window, and analytics.
+ * Can be shared across components that need to end calls.
+ */
+export function useEndCall() {
+  const { callTokens, setCallTokens, user } = useStore();
+  const posthog = usePostHog();
+
+  const endCall = useCallback(() => {
+    if (!callTokens) return;
+
+    const { timeStarted, participant, room } = callTokens;
+
+    // Capture call info before clearing tokens for feedback
+    const teamId = user?.team_id?.toString() || "";
+    const roomId = room?.id || "";
+    const participantId = user?.id || "";
+
+    // Send websocket message to end call
+    socketService.send({
+      type: "call_end",
+      payload: {
+        participant_id: participant,
+      },
+    });
+
+    // Play end call sound
+    sounds.callAccepted.play();
+
+    // Clear call tokens
+    if (callTokens.role === ParticipantRole.SHARER) {
+      tauriUtils.stopSharing();
+    }
+    tauriUtils.endCallCleanup();
+
+    setCallTokens(null);
+
+    // Show feedback window for the person ending the call
+    if (participantId && teamId) {
+      tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+    }
+
+    // Send posthog event on how much
+    // time in seconds the call lasted.
+    // Time is serialized as a string in store
+    // so its not saved as a Date object
+    console.log(`Duration of the call: ${(Date.now() - new Date(timeStarted).getTime()) / 1000}seconds`);
+    posthog.capture("call_ended", {
+      duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
+      participant,
+    });
+  }, [callTokens, setCallTokens, user, posthog]);
+
+  return endCall;
+}

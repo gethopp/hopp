@@ -37,6 +37,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Constants } from "@/constants";
 import { useState } from "react";
 import doorImage from "@/assets/door.png";
+import { useEndCall } from "@/lib/hooks";
 
 type Room = components["schemas"]["Room"];
 
@@ -57,6 +58,7 @@ export const Rooms = () => {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const endCall = useEndCall();
 
   const { useQuery } = useAPI();
 
@@ -144,6 +146,11 @@ export const Rooms = () => {
 
   const handleJoinRoom = useCallback(
     async (room: Room) => {
+      // End existing call if there is one
+      if (callTokens) {
+        endCall();
+      }
+
       try {
         const tokens = await getRoomTokens({
           params: {
@@ -156,6 +163,7 @@ export const Rooms = () => {
           toast.error("Error joining room");
           return;
         }
+
         sounds.callAccepted.play();
         setCallTokens({
           ...tokens,
@@ -174,7 +182,7 @@ export const Rooms = () => {
         toast.error("Error joining room");
       }
     },
-    [getRoomTokens],
+    [getRoomTokens, callTokens, setCallTokens, endCall],
   );
 
   useEffect(() => {

@@ -205,6 +205,16 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 							c.Logger().Warnf("Failed to parse GitHub user data: %v", err)
 						} else {
 							u.SocialMetadata = result
+
+							// If FirstName is empty, use name or login from GitHub raw data
+							if u.FirstName == "" {
+								if name := gjson.Get(string(rawData), "name"); name.Exists() && name.String() != "" {
+									u.FirstName = name.String()
+								} else if login := gjson.Get(string(rawData), "login"); login.Exists() {
+									u.FirstName = login.String()
+								}
+							}
+
 							if err := tx.Save(&u).Error; err != nil {
 								c.Logger().Errorf("Failed to save GitHub metadata: %v", err)
 								return fmt.Errorf("failed to update user: %w", err)
