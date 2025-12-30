@@ -355,6 +355,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.DELETE("/room/:id", auth.DeleteRoom)
 	protectedAPI.GET("/room/:id", auth.GetRoom)
 	protectedAPI.GET("/rooms", auth.GetRooms)
+	protectedAPI.GET("/rooms/presence", auth.GetRoomsPresence)
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)

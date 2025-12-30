@@ -17,6 +17,8 @@ import (
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"github.com/lindell/go-burner-email-providers/burner"
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
 	"github.com/redis/go-redis/v9"
@@ -1301,4 +1303,77 @@ func (h *AuthHandler) SubmitFeedback(c echo.Context) error {
 	_ = notifications.SendTelegramNotification(message, h.Config)
 
 	return c.NoContent(http.StatusCreated)
+}
+
+// GetRoomsPresence returns a map of room IDs to arrays of participant IDs currently in each room.
+// This endpoint queries LiveKit to determine who is currently connected to each room.
+//
+// NOTE: We currently use LiveKit as the source of truth for call state (who is in a room).
+// Long-term, we want to store call state in our own database for more control and features.
+// See: https://github.com/gethopp/hopp/issues/204
+func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	// Get all rooms for the user's team (same as GetRooms)
+	var rooms []models.Room
+	result := h.DB.Where("team_id = ?", user.TeamID).Find(&rooms)
+	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to fetch rooms")
+	}
+
+	roomsPresence := make(map[string][]string)
+
+	if len(rooms) == 0 {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"rooms": roomsPresence,
+		})
+	}
+
+	// Convert LiveKit server URL (wss://) to HTTP URL for API calls
+	livekitHTTPURL, err := convertLivekitURLToHTTP(h.Config.Livekit.ServerURL)
+	if err != nil {
+		c.Logger().Errorf("Failed to convert LiveKit URL: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to connect to LiveKit")
+	}
+
+	roomClient := lksdk.NewRoomServiceClient(livekitHTTPURL, h.Config.Livekit.APIKey, h.Config.Livekit.Secret)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Query LiveKit for participants in each room
+	for _, room := range rooms {
+		participantIDs := []string{}
+
+		participants, err := roomClient.ListParticipants(ctx, &livekit.ListParticipantsRequest{
+			Room: room.ID,
+		})
+		if err != nil {
+			// Room might not exist in LiveKit yet (no one has joined), treat as empty
+			roomsPresence[room.ID] = participantIDs
+			continue
+		}
+
+		// Dedupe participants by user ID (each user can have audio/video/camera identities)
+		seenUserIDs := make(map[string]bool)
+		for _, p := range participants.Participants {
+			userID, err := extractUserIDFromIdentity(p.Identity)
+			if err != nil {
+				c.Logger().Debugf("Skipping participant with invalid identity: %v", err)
+				continue
+			}
+			if !seenUserIDs[userID] {
+				seenUserIDs[userID] = true
+				participantIDs = append(participantIDs, userID)
+			}
+		}
+
+		roomsPresence[room.ID] = participantIDs
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"rooms": roomsPresence,
+	})
 }
