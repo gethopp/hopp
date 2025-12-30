@@ -27,15 +27,17 @@ import {
 } from "@/payloads";
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
-import { Cursor, SvgComponent } from "../ui/cursor";
-import { Draw } from "../ui/draw";
+import { SvgComponent } from "../ui/cursor";
+import { DrawingLayer } from "../ui/drawing-layer";
 import { DrawParticipant } from "../ui/draw-participant";
+import { RemoteCursors } from "../ui/remote-cursors";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 const CURSORS_TOPIC = "participant_location";
 const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
+const DRAW_TOPIC = "draw";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -55,15 +57,6 @@ export function SharingScreen(props: SharingScreenProps) {
   );
 }
 
-// Define cursor slot interface
-interface CursorSlot {
-  participantId: string | null;
-  participantName: string;
-  x: number;
-  y: number;
-  lastActivity: number;
-}
-
 const ConsumerComponent = React.memo(() => {
   // All state hooks first
   const [updateMouseControls, setUpdateMouseControls] = useState(false);
@@ -71,16 +64,6 @@ const ConsumerComponent = React.memo(() => {
   // Hand-picked colors for the tailwind colors page:
   // https://tailwindcss.com/docs/colors
   const SVG_BADGE_COLORS = ["#0040FF", "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040"];
-  // Pre-create 10 cursor slots, all hidden initially
-  const [cursorSlots, setCursorSlots] = useState<CursorSlot[]>(() =>
-    Array.from({ length: SVG_BADGE_COLORS.length }, (_, index) => ({
-      participantId: null,
-      participantName: "Unknown",
-      x: -1000, // Position off-screen
-      y: -1000, // Position off-screen
-      lastActivity: Date.now(),
-    })),
-  );
 
   // All refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -103,9 +86,30 @@ const ConsumerComponent = React.memo(() => {
   const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(new Map());
   const LOCAL_PARTICIPANT_ID = "local";
 
+  // Shared color map for participants (used by both cursor and draw)
+  const participantColorMapRef = useRef<Map<string, string>>(new Map());
+  const colorIndexRef = useRef<number>(0);
+
   // Path ID counter for local participant
   const pathIdCounterRef = useRef<number>(0);
   const MAX_PATH_ID = Number.MAX_SAFE_INTEGER;
+
+  // Helper function to get or assign a color for a participant
+  // Only assigns a color on entry creation (when participant is first encountered)
+  const getOrAssignColor = useCallback((participantId: string): string => {
+    if (participantColorMapRef.current.has(participantId)) {
+      const existingColor = participantColorMapRef.current.get(participantId);
+      if (existingColor) {
+        return existingColor;
+      }
+    }
+
+    // Assign a new color from the available colors
+    const color = SVG_BADGE_COLORS[colorIndexRef.current % SVG_BADGE_COLORS.length] ?? "#0040FF";
+    participantColorMapRef.current.set(participantId, color);
+    colorIndexRef.current = (colorIndexRef.current + 1) % SVG_BADGE_COLORS.length;
+    return color;
+  }, []);
 
   // Get the next unique path ID and handle wrap-over
   const getNextPathId = useCallback(() => {
@@ -121,78 +125,6 @@ const ConsumerComponent = React.memo(() => {
   }, []);
 
   // Data channel hooks - must be called unconditionally
-  const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
-    const decoder = new TextDecoder();
-    const payload: TPMouseMove = JSON.parse(decoder.decode(msg.payload));
-
-    if (!videoRef.current) return;
-
-    const { absoluteX, absoluteY } = getAbsolutePosition(videoRef.current, payload);
-
-    const participantName = msg.from?.name ?? "Unknown";
-    const participantId = msg.from?.identity ?? "Unknown";
-
-    /* We need the id to be unique for each participant */
-    if (participantId === "Unknown") return;
-
-    /*
-     * We are keeping it simple for now and just set a slot to a participant
-     * the first time they move their mouse.
-     *
-     * The problem with this approach is
-     * that we might exhaust the number of available colors and just
-     * circling through them, this can happen in the following scenario:
-     *  - 10 participants join the call
-     *  - 10 moved their mouse
-     *  - 1 disconnected
-     *  - Another joined
-     *  - The new participant can't find a slot.
-     *
-     * To avoid this, we just use 20 available slots for now.
-     */
-    setCursorSlots((prev) => {
-      const updated = [...prev];
-
-      // Find existing slot for this participant
-      let slotIndex = updated.findIndex((slot) => slot.participantId === participantId);
-
-      // If not found, find first available slot
-      if (slotIndex === -1) {
-        slotIndex = updated.findIndex((slot) => slot.participantId === null);
-      }
-
-      let name = updated[slotIndex]?.participantName ?? "Unknown";
-      // Update the slot
-      if (slotIndex !== -1) {
-        if (name === "Unknown") {
-          name = participantName.split(" ")[0] ?? "Unknown";
-          // If a name already exists, start adding characters until they don't match
-          let uniqueName = name;
-          let fullName = participantName;
-          let j = fullName.indexOf(" ") + 2;
-          while (
-            updated.slice(0, slotIndex).some((slot) => slot?.participantName === uniqueName) &&
-            j <= fullName.length
-          ) {
-            uniqueName = fullName.slice(0, j);
-            j++;
-          }
-          name = uniqueName;
-        }
-
-        updated[slotIndex] = {
-          participantId,
-          participantName: name,
-          x: absoluteX,
-          y: absoluteY,
-          lastActivity: Date.now(),
-        };
-      }
-
-      return updated;
-    });
-  });
-
   useDataChannel("remote_control_enabled", (msg) => {
     const decoder = new TextDecoder();
     const payload: TPRemoteControlEnabled = JSON.parse(decoder.decode(msg.payload));
@@ -224,23 +156,6 @@ const ConsumerComponent = React.memo(() => {
       setShowCustomCursor(true);
     }
   });
-
-  // Hide cursors after 5 seconds of inactivity
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setCursorSlots((prev) =>
-        prev.map((slot) => {
-          if (slot.participantId && now - slot.lastActivity > 5000) {
-            return { ...slot, x: -1000, y: -1000 };
-          }
-          return slot;
-        }),
-      );
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Apply cursor ripple effect function
   const applyCursorRippleEffect = (e: MouseEvent) => {
@@ -304,11 +219,12 @@ const ConsumerComponent = React.memo(() => {
   // Initialize local draw participant
   useEffect(() => {
     if (!drawParticipantsRef.current.has(LOCAL_PARTICIPANT_ID)) {
-      // Use first color for local participant
-      const localDrawParticipant = new DrawParticipant(SVG_BADGE_COLORS[0] ?? "#0040FF", drawingMode);
+      // Get or assign color for local participant (only assigns on first encounter)
+      const color = getOrAssignColor(LOCAL_PARTICIPANT_ID);
+      const localDrawParticipant = new DrawParticipant(color, drawingMode);
       drawParticipantsRef.current.set(LOCAL_PARTICIPANT_ID, localDrawParticipant);
     }
-  }, [drawingMode]);
+  }, [drawingMode, getOrAssignColor]);
 
   // Update local participant's drawing mode when it changes
   useEffect(() => {
@@ -324,16 +240,17 @@ const ConsumerComponent = React.memo(() => {
     if (!localDrawParticipant) return;
 
     // Set callback to send DrawClearPath events when paths are removed
-    localDrawParticipant.setOnPathRemoved((pathIds) => {
+    localDrawParticipant.setOnPathRemoved((pathIds: number[]) => {
       if (!localParticipant.localParticipant) return;
 
-      pathIds.forEach((pathId) => {
+      pathIds.forEach((pathId: number) => {
         const payload: TPDrawClearPath = {
           type: "DrawClearPath",
           payload: { path_id: pathId },
         };
         localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
           reliable: true,
+          topic: DRAW_TOPIC,
         });
       });
     });
@@ -350,6 +267,7 @@ const ConsumerComponent = React.memo(() => {
 
     localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
       reliable: true,
+      topic: DRAW_TOPIC,
     });
   }, [drawingMode, localParticipant.localParticipant]);
 
@@ -383,6 +301,7 @@ const ConsumerComponent = React.memo(() => {
           };
           localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
             reliable: true,
+            topic: DRAW_TOPIC,
           });
 
           // Update local draw participant
@@ -417,7 +336,10 @@ const ConsumerComponent = React.memo(() => {
             type: "DrawStart",
             payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
           };
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+            reliable: true,
+            topic: DRAW_TOPIC,
+          });
 
           // Update local draw participant
           const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -462,7 +384,10 @@ const ConsumerComponent = React.memo(() => {
             type: "DrawEnd",
             payload: { x: relativeX, y: relativeY },
           };
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+            reliable: true,
+            topic: DRAW_TOPIC,
+          });
 
           // Update local draw participant
           const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -500,7 +425,10 @@ const ConsumerComponent = React.memo(() => {
         const payload: TPDrawClearAllPaths = {
           type: "DrawClearAllPaths",
         };
-        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), { reliable: true });
+        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+          reliable: true,
+          topic: DRAW_TOPIC,
+        });
 
         // Update local draw participant
         const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -823,23 +751,9 @@ const ConsumerComponent = React.memo(() => {
         }}
       />
 
-      <Draw videoRef={videoRef} participants={drawParticipantsRef.current} />
+      <DrawingLayer videoRef={videoRef} drawParticipantsRef={drawParticipantsRef} getOrAssignColor={getOrAssignColor} />
 
-      {cursorSlots.map((slot, index) => {
-        const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
-
-        return (
-          <Cursor
-            key={index}
-            name={slot.participantName}
-            color={color}
-            style={{
-              left: `${slot.x}px`,
-              top: `${slot.y}px`,
-            }}
-          />
-        );
-      })}
+      <RemoteCursors videoRef={videoRef} getOrAssignColor={getOrAssignColor} />
 
       {/* Custom cursor rendered at mouse position */}
       {showCustomCursor && mouse.x !== null && mouse.y !== null && (

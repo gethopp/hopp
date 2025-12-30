@@ -104,6 +104,18 @@ export class DrawParticipant {
   }
 
   /**
+   * Clear a specific path by ID
+   */
+  clearPath(pathId: number): void {
+    // Clear in-progress path if it matches
+    if (this._inProgressPath?.id === pathId) {
+      this._inProgressPath = null;
+    }
+    // Remove from completed paths
+    this._completedPaths = this._completedPaths.filter((path) => path.id !== pathId);
+  }
+
+  /**
    * Get all paths that should be rendered (completed + in-progress)
    * Automatically cleans up expired paths in non-permanent mode
    * Calls the onPathRemoved callback if paths are removed
