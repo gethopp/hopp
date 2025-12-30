@@ -220,8 +220,7 @@ const ConsumerComponent = React.memo(() => {
   useEffect(() => {
     if (!drawParticipantsRef.current.has(LOCAL_PARTICIPANT_ID)) {
       // Get or assign color for local participant (only assigns on first encounter)
-      const color = getOrAssignColor(LOCAL_PARTICIPANT_ID);
-      const localDrawParticipant = new DrawParticipant(color, drawingMode);
+      const localDrawParticipant = new DrawParticipant("#FF0000", drawingMode);
       drawParticipantsRef.current.set(LOCAL_PARTICIPANT_ID, localDrawParticipant);
     }
   }, [drawingMode, getOrAssignColor]);
