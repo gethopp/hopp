@@ -991,6 +991,63 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/rooms/presence": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get current participants in each room
+     * @description Returns a map of room IDs to arrays of participant user IDs currently connected to each room
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Room presence data retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["RoomsPresenceResponse"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/room/{id}": {
     parameters: {
       query?: never;
@@ -1743,6 +1800,12 @@ export interface components {
       id: string;
       name: string;
       user_id: string;
+    };
+    RoomsPresenceResponse: {
+      /** @description Map of room IDs to arrays of participant user IDs */
+      rooms: {
+        [key: string]: string[];
+      };
     };
     Error: {
       message?: string;
