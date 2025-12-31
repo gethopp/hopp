@@ -16,6 +16,7 @@ require (
 	github.com/labstack/gommon v0.4.2
 	github.com/lindell/go-burner-email-providers v1.0.117
 	github.com/livekit/protocol v1.43.2
+	github.com/livekit/server-sdk-go/v2 v2.13.1
 	github.com/markbates/goth v1.80.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/redis/go-redis/v9 v9.17.2
@@ -40,7 +41,6 @@ require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
-	github.com/bufbuild/protovalidate-go v0.6.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dennwc/iters v1.2.2 // indirect
@@ -72,11 +72,11 @@ require (
 	github.com/livekit/mageutil v0.0.0-20250511045019-0f1ff63f7731 // indirect
 	github.com/livekit/mediatransportutil v0.0.0-20251128105421-19c7a7b81c22 // indirect
 	github.com/livekit/psrpc v0.7.1 // indirect
-	github.com/livekit/server-sdk-go/v2 v2.13.1 // indirect
 	github.com/magefile/mage v1.15.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.24 // indirect
+	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nats-io/nats.go v1.47.0 // indirect
 	github.com/nats-io/nkeys v0.4.12 // indirect
