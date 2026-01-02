@@ -602,11 +602,15 @@ function MediaDevicesSettings() {
 
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
+  const onConnected = useCallback(() => {
+    setRoomConnected(true);
+  }, []);
   useEffect(() => {
-    room.on(RoomEvent.Connected, () => {
-      setRoomConnected(true);
-    });
-  }, [room]);
+    room.on(RoomEvent.Connected, onConnected);
+    return () => {
+      room.off(RoomEvent.Connected, onConnected);
+    };
+  }, [room, onConnected]);
 
   useEffect(() => {
     if (!callTokens) return;
@@ -651,6 +655,24 @@ function MediaDevicesSettings() {
     callTokens?.hasCameraEnabled,
     callTokens?.krispToggle,
   ]);
+
+  const handleEndCall = useEndCall();
+  const onConnectionStateChanged = useCallback(
+    (state: ConnectionState) => {
+      console.log("Room connection state changed: ", state);
+      if (state === ConnectionState.Disconnected) {
+        handleEndCall();
+      }
+    },
+    [handleEndCall],
+  );
+  useEffect(() => {
+    room.on(RoomEvent.ConnectionStateChanged, onConnectionStateChanged);
+
+    return () => {
+      room.off(RoomEvent.ConnectionStateChanged, onConnectionStateChanged);
+    };
+  }, [room, onConnectionStateChanged]);
 
   const remoteParticipants = useRemoteParticipants();
   const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
