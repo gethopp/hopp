@@ -491,6 +491,12 @@ pub fn setup_tray_icon(
             let mut last_pos = tray_rect.position.to_physical::<i32>(1.0);
             if let Some(window) = app_handle.get_webview_window("main") {
                 if !window.is_visible().unwrap() {
+                    {
+                        let mut location_set = location_set_clone.lock().unwrap();
+                        if !*location_set {
+                            *location_set = true;
+                        }
+                    }
                     center_window_on_tray(&window, tray_rect, false);
                 }
             }
