@@ -2,6 +2,7 @@ import React from "react";
 import { useDataChannel } from "@livekit/components-react";
 import { Draw } from "./draw";
 import { DrawParticipant } from "./draw-participant";
+import { applyCursorRippleEffect } from "@/lib/utils";
 
 const DRAW_TOPIC = "draw";
 
@@ -53,6 +54,14 @@ export const DrawingLayer = ({ videoRef, drawParticipantsRef, getOrAssignColor }
           break;
         case "DrawingMode":
           drawParticipant.setDrawingMode(payload.payload);
+          break;
+        case "ClickAnimation":
+          if (videoRef.current) {
+            const rect = videoRef.current.getBoundingClientRect();
+            const x = payload.payload.x * rect.width + rect.left;
+            const y = payload.payload.y * rect.height + rect.top;
+            applyCursorRippleEffect(x, y, color);
+          }
           break;
       }
     }

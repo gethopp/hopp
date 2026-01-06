@@ -124,6 +124,12 @@ export const PDrawEnd = z.object({
 });
 export type TPDrawEnd = z.infer<typeof PDrawEnd>;
 
+export const PClickAnimation = z.object({
+  type: z.literal("ClickAnimation"),
+  payload: PClientPoint,
+});
+export type TPClickAnimation = z.infer<typeof PClickAnimation>;
+
 export const PDrawClearPath = z.object({
   type: z.literal("DrawClearPath"),
   payload: z.object({

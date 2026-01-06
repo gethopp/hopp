@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
-import { cn, getAbsolutePosition, getRelativePosition } from "@/lib/utils";
+import { cn, getRelativePosition, applyCursorRippleEffect } from "@/lib/utils";
 import {
   TPAddToClipboard,
   TPKeystroke,
@@ -24,6 +24,7 @@ import {
   TPDrawingModeEvent,
   TPDrawClearPath,
   TPDrawClearAllPaths,
+  TPClickAnimation,
 } from "@/payloads";
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
@@ -156,21 +157,6 @@ const ConsumerComponent = React.memo(() => {
       setShowCustomCursor(true);
     }
   });
-
-  // Apply cursor ripple effect function
-  const applyCursorRippleEffect = (e: MouseEvent) => {
-    const ripple = document.createElement("div");
-
-    ripple.className = "click-ripple";
-    document.body.appendChild(ripple);
-
-    ripple.style.left = `${e.clientX - 10}px`;
-    ripple.style.top = `${e.clientY - 10}px`;
-    ripple.style.animation = "click-ripple-effect 0.8s ease-out forwards";
-    ripple.onanimationend = () => {
-      document.body.removeChild(ripple);
-    };
-  };
 
   /**
    * Currently returning the last screen share track
@@ -330,27 +316,39 @@ const ConsumerComponent = React.memo(() => {
 
         // If in drawing mode and left button, send DrawStart
         if (isDrawingMode && e.button === 0) {
-          const pathId = getNextPathId();
-          const payload: TPDrawStart = {
-            type: "DrawStart",
-            payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
-          };
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-            reliable: true,
-            topic: DRAW_TOPIC,
-          });
+          if (drawingMode.type === "ClickAnimation") {
+            const payload: TPClickAnimation = {
+              type: "ClickAnimation",
+              payload: { x: relativeX, y: relativeY },
+            };
+            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+              reliable: true,
+              topic: DRAW_TOPIC,
+            });
 
-          // Update local draw participant
-          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
-          if (drawParticipant) {
-            drawParticipant.handleDrawStart(payload.payload.point, payload.payload.path_id);
+            // Update local draw participant for local visual feedback
+            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+            if (drawParticipant) {
+              applyCursorRippleEffect(e.clientX, e.clientY, drawParticipant.color);
+            }
+          } else {
+            const pathId = getNextPathId();
+            const payload: TPDrawStart = {
+              type: "DrawStart",
+              payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
+            };
+            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+              reliable: true,
+              topic: DRAW_TOPIC,
+            });
+
+            // Update local draw participant
+            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+            if (drawParticipant) {
+              drawParticipant.handleDrawStart(payload.payload.point, payload.payload.path_id);
+            }
           }
           return;
-        }
-
-        // Add click pulse when NOT sharing mouse (pointing mode)
-        if (!isSharingMouse) {
-          applyCursorRippleEffect(e);
         }
 
         const payload: TPMouseClick = {
@@ -379,19 +377,21 @@ const ConsumerComponent = React.memo(() => {
 
         // If in drawing mode and left button was just released, send DrawEnd
         if (isDrawingMode && e.button === 0) {
-          const payload: TPDrawEnd = {
-            type: "DrawEnd",
-            payload: { x: relativeX, y: relativeY },
-          };
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-            reliable: true,
-            topic: DRAW_TOPIC,
-          });
+          if (drawingMode.type !== "ClickAnimation") {
+            const payload: TPDrawEnd = {
+              type: "DrawEnd",
+              payload: { x: relativeX, y: relativeY },
+            };
+            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+              reliable: true,
+              topic: DRAW_TOPIC,
+            });
 
-          // Update local draw participant
-          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
-          if (drawParticipant) {
-            drawParticipant.handleDrawEnd(payload.payload);
+            // Update local draw participant
+            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+            if (drawParticipant) {
+              drawParticipant.handleDrawEnd(payload.payload);
+            }
           }
           return;
         }
