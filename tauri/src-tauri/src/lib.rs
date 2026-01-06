@@ -396,7 +396,13 @@ fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: b
     }
 
     let tray_size: PhysicalSize<f64> = tray_rect.size.to_physical(scale);
-    let mut window_size = window.outer_size().unwrap();
+    let mut window_size = match window.outer_size() {
+        Ok(size) => size,
+        Err(e) => {
+            log::error!("center_window_on_tray: Failed to get window outer size: {e:?}");
+            return;
+        }
+    };
     if scale > 1.0 && window_size.width < 800 {
         window_size = PhysicalSize::new(
             ((window_size.width as f64) * scale) as u32,
@@ -429,10 +435,15 @@ pub fn setup_tray_icon(
     #[cfg(target_os = "macos")]
     {
         let location_set_clone = location_set.clone();
-        let tray = TrayIconBuilder::new()
+        let mut builder = TrayIconBuilder::new()
             .menu(menu)
-            .show_menu_on_left_click(false)
-            .icon(app.default_window_icon().unwrap().clone())
+            .show_menu_on_left_click(false);
+
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+
+        let tray = builder
             .on_tray_icon_event(move |tray, event| {
                 tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
                 if let TrayIconEvent::Click {
@@ -443,14 +454,23 @@ pub fn setup_tray_icon(
                 {
                     let app_handle = tray.app_handle();
                     if let Some(window) = app_handle.get_webview_window("main") {
-                        if window.is_visible().unwrap() {
-                            let _ = window.hide();
-                        } else {
-                            let mut location_set = location_set.lock().unwrap();
-                            if !*location_set {
-                                *location_set = true;
+                        match window.is_visible() {
+                            Ok(true) => {
+                                let _ = window.hide();
                             }
-                            center_window_on_tray(&window, tray.rect().unwrap().unwrap(), true);
+                            Ok(false) => {
+                                if let Ok(mut location_set) = location_set.lock() {
+                                    if !*location_set {
+                                        *location_set = true;
+                                    }
+                                }
+                                if let Ok(Some(rect)) = tray.rect() {
+                                    center_window_on_tray(&window, rect, true);
+                                }
+                            }
+                            Err(e) => log::error!(
+                                "setup_tray_icon: Failed to check window visibility: {e:?}"
+                            ),
                         }
                     }
                 }
@@ -478,26 +498,39 @@ pub fn setup_tray_icon(
          * See: https://github.com/gethopp/hopp/issues/211
          */
         tauri::async_runtime::spawn(async move {
-            let mut tray_rect = tray.rect().unwrap().unwrap();
+            let mut tray_rect = match tray.rect() {
+                Ok(Some(rect)) => rect,
+                _ => {
+                    log::warn!("setup_tray_icon: Initial tray rect not available");
+                    return;
+                }
+            };
             for _ in 0..100 {
                 if tray_rect.position.to_physical::<i32>(1.0).y == 0 {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                tray_rect = tray.rect().unwrap().unwrap();
+                if let Ok(Some(rect)) = tray.rect() {
+                    tray_rect = rect;
+                }
             }
 
             // Initial centering
             let mut last_pos = tray_rect.position.to_physical::<i32>(1.0);
             if let Some(window) = app_handle.get_webview_window("main") {
-                if !window.is_visible().unwrap() {
-                    {
-                        let mut location_set = location_set_clone.lock().unwrap();
-                        if !*location_set {
-                            *location_set = true;
+                match window.is_visible() {
+                    Ok(false) => {
+                        if let Ok(mut location_set) = location_set_clone.lock() {
+                            if !*location_set {
+                                *location_set = true;
+                            }
                         }
+                        center_window_on_tray(&window, tray_rect, false);
                     }
-                    center_window_on_tray(&window, tray_rect, false);
+                    Ok(true) => {}
+                    Err(e) => log::error!(
+                        "setup_tray_icon: Failed to check window visibility in loop: {e:?}"
+                    ),
                 }
             }
 
