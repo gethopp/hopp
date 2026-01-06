@@ -465,34 +465,57 @@ pub fn setup_tray_icon(
         let app_handle = app.handle().clone();
 
         /*
-         * For simplicity we are not joining this thread. This function
-         * is called once during app initialization.
+         * Spawns an async task to manage window positioning relative to the tray icon.
+         * This runs once during app initialization and continues indefinitely.
          *
-         * This function checks if the system has assigned the correct position to
-         * the tray icon. When we get it, we set the position to the window, so
-         * if it opens via a route which doesn't use the tray icon, it will be
-         * positioned correctly.
+         * Initially it waits for the OS to assign a valid tray icon position (y == 0 indicates
+         * the menu bar). Polls every 100ms for up to 100 attempts. Once valid,
+         * centers the window on the tray if it's not visible.
+         *
+         * After initial centering, it polls every 200ms to detect tray icon position changes
+         * (e.g., when the user rearranges menu bar items). If the position changed and the window
+         * is visible, re-centers it to follow the tray icon.
+         * See: https://github.com/gethopp/hopp/issues/211
          */
-        std::thread::spawn(move || {
+        tauri::async_runtime::spawn(async move {
             let mut tray_rect = tray.rect().unwrap().unwrap();
-            let mut attempts = 0;
-            let max_attempts = 20;
-            loop {
-                let position: PhysicalPosition<i32> = tray_rect.position.to_physical(1.0);
-                if position.y == 0 || attempts > max_attempts {
+            for _ in 0..100 {
+                if tray_rect.position.to_physical::<i32>(1.0).y == 0 {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(500));
-                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 tray_rect = tray.rect().unwrap().unwrap();
             }
+
+            // Initial centering
+            let mut last_pos = tray_rect.position.to_physical::<i32>(1.0);
             if let Some(window) = app_handle.get_webview_window("main") {
-                if !window.is_visible().unwrap() && attempts < max_attempts {
-                    let mut location_set = location_set_clone.lock().unwrap();
-                    if !*location_set {
-                        *location_set = true;
-                    }
+                if !window.is_visible().unwrap() {
                     center_window_on_tray(&window, tray_rect, false);
+                }
+            }
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+
+                if let Ok(Some(rect)) = tray.rect() {
+                    let pos = rect.position.to_physical::<i32>(1.0);
+
+                    if pos.x != last_pos.x || pos.y != last_pos.y {
+                        last_pos = pos;
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let is_visible = window.is_visible();
+
+                            match is_visible {
+                                Ok(true) => {
+                                    center_window_on_tray(&window, rect, true);
+                                }
+                                _ => (),
+                            }
+                        }
+                    }
+                } else {
+                    log::warn!("cannot pull tray rect");
                 }
             }
         });
