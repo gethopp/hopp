@@ -987,9 +987,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 remote_control.gfx.draw_clear_all_paths(sid.as_str());
             }
-            UserEvent::ClickAnimationFromParticipant(_point, _sid) => {
-                // TODO: Handle click animation from participant
-                log::debug!("user_event: ClickAnimationFromParticipant");
+            UserEvent::ClickAnimationFromParticipant(point, sid) => {
+                log::debug!(
+                    "user_event: ClickAnimationFromParticipant: {:?} {}",
+                    point,
+                    sid
+                );
+                if self.remote_control.is_none() {
+                    log::warn!(
+                        "user_event: remote control is none click animation from participant"
+                    );
+                    return;
+                }
+                let remote_control = &self.remote_control.as_ref().unwrap();
+                let position = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                remote_control
+                    .cursor_controller
+                    .trigger_click_animation(position, sid.as_str());
             }
         }
     }

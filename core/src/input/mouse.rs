@@ -1036,27 +1036,6 @@ impl CursorController {
 
             if !controller.enabled() || controller.pointer_enabled() {
                 log::info!("mouse_click_controller: controller is disabled.");
-                if click_data.down && controller.pointer_enabled() {
-                    if let Err(e) =
-                        self.event_loop_proxy
-                            .send_event(UserEvent::EnableClickAnimation(Position {
-                                x: click_data.x as f64,
-                                y: click_data.y as f64,
-                            }))
-                    {
-                        error!(
-                            "mouse_click_controller: error sending enable click animation: {e:?}"
-                        );
-                    }
-                    if let Err(e) = self
-                        .redraw_thread_sender
-                        .send(RedrawThreadCommands::ClickAnimation(true))
-                    {
-                        log::error!(
-                            "mouse_click_controller: error sending click animation event: {e:?}"
-                        );
-                    }
-                }
                 break;
             }
 
@@ -1319,6 +1298,32 @@ impl CursorController {
 
     pub fn get_overlay_window(&self) -> Arc<OverlayWindow> {
         self.overlay_window.clone()
+    }
+
+    /// Triggers a click animation at the specified position for a given controller.
+    ///
+    /// This method handles the visual click animation feedback when a controller
+    /// with pointer mode enabled performs a click action. It sends the necessary
+    /// events to update the graphics and trigger the animation sequence.
+    ///
+    /// # Parameters
+    ///
+    /// * `position` - The position where the click animation should be displayed
+    /// * `sid` - Session ID of the controller triggering the animation
+    pub fn trigger_click_animation(&self, position: Position, sid: &str) {
+        log::debug!("trigger_click_animation: position: {position:?} sid: {sid}");
+        if let Err(e) = self
+            .event_loop_proxy
+            .send_event(UserEvent::EnableClickAnimation(position))
+        {
+            error!("trigger_click_animation: error sending enable click animation: {e:?}");
+        }
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::ClickAnimation(true))
+        {
+            log::error!("trigger_click_animation: error sending click animation event: {e:?}");
+        }
     }
 
     pub fn draw_path_ended(&self) {}

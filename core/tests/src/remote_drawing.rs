@@ -384,10 +384,10 @@ async fn draw_hello_world(room: &Room, start_x: f64, start_y: f64) -> io::Result
     Ok(())
 }
 
-/// Test click animation mode
+/// Test click animation mode - Basic functionality
 /// Triggers click animations at various points on the screen
 pub async fn test_click_animation_mode() -> io::Result<()> {
-    println!("\n=== TEST: Click Animation Mode ===");
+    println!("\n=== TEST: Click Animation Mode - Basic ===");
     let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
