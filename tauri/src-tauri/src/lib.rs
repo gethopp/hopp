@@ -506,11 +506,8 @@ pub fn setup_tray_icon(
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let is_visible = window.is_visible();
 
-                            match is_visible {
-                                Ok(true) => {
-                                    center_window_on_tray(&window, rect, true);
-                                }
-                                _ => (),
+                            if let Ok(true) = is_visible {
+                                center_window_on_tray(&window, rect, true);
                             }
                         }
                     }
