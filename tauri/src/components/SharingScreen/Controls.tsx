@@ -10,6 +10,9 @@ import { PiScribbleLoopBold } from "react-icons/pi";
 import { HiOutlineCog6Tooth } from "react-icons/hi2";
 import { TbLineDashed } from "react-icons/tb";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../ui/dropdown-menu";
+import { useEffect, useRef } from "react";
+import { tauriUtils } from "@/windows/window-utils";
+import { TDrawingMode, PDrawingMode } from "@/payloads";
 
 type ScreenSharingControlsProps = {
   className?: string;
@@ -17,6 +20,50 @@ type ScreenSharingControlsProps = {
 
 export function ScreenSharingControls({ className }: ScreenSharingControlsProps = {}) {
   const { setIsSharingKeyEvents, setIsSharingMouse, drawingMode, setDrawingMode } = useSharingContext();
+  const isInitialMount = useRef(true);
+  const cachedDrawingModeRef = useRef<TDrawingMode | null>(null);
+
+  // Load cached drawing mode on mount
+  useEffect(() => {
+    const loadCachedDrawingMode = async () => {
+      try {
+        const cachedMode = await tauriUtils.getLastDrawingMode();
+        if (cachedMode) {
+          const parsed = PDrawingMode.safeParse(JSON.parse(cachedMode));
+          if (parsed.success && parsed.data.type !== "Disabled") {
+            // Store the cached mode but don't set it yet - it will be used when switching to drawing
+            // This is stored in a ref so it's available in handleRemoteControlChange
+            cachedDrawingModeRef.current = parsed.data;
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load cached drawing mode:", error);
+      }
+    };
+    loadCachedDrawingMode();
+  }, []);
+
+  // Save drawing mode whenever it changes (but not on initial mount and not when Disabled)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    if (drawingMode.type !== "Disabled") {
+      // Update the cached ref immediately
+      cachedDrawingModeRef.current = drawingMode;
+
+      const saveDrawingMode = async () => {
+        try {
+          await tauriUtils.setLastDrawingMode(JSON.stringify(drawingMode));
+        } catch (error) {
+          console.error("Failed to save drawing mode:", error);
+        }
+      };
+      saveDrawingMode();
+    }
+  }, [drawingMode]);
 
   // Derive remoteControlStatus from drawingMode
   const remoteControlStatus = drawingMode.type === "Disabled" ? "controlling" : "drawing";
@@ -29,9 +76,10 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     } else if (value === "drawing") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
-      // Initialize with Draw mode if currently Disabled
+      // Use cached mode if available, otherwise default to Draw mode
       if (drawingMode.type === "Disabled") {
-        setDrawingMode({ type: "Draw", settings: { permanent: false } });
+        const modeToUse = cachedDrawingModeRef.current || { type: "Draw", settings: { permanent: false } };
+        setDrawingMode(modeToUse);
       }
     }
   };

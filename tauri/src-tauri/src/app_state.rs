@@ -46,6 +46,9 @@ struct AppStateInternal {
 
     /// Whether the post-call feedback dialog is disabled
     pub feedback_disabled: bool,
+
+    /// The last used drawing mode (stored as JSON string)
+    pub last_drawing_mode: Option<String>,
 }
 
 /// Legacy version of the application state structure.
@@ -67,6 +70,7 @@ impl Default for AppStateInternal {
     /// - User JWT: none
     /// - Hopp server URL: none
     /// - Feedback disabled: false
+    /// - Last drawing mode: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -75,6 +79,7 @@ impl Default for AppStateInternal {
             user_jwt: None,
             hopp_server_url: None,
             feedback_disabled: false,
+            last_drawing_mode: None,
         }
     }
 }
@@ -313,6 +318,22 @@ impl AppState {
         self.state.feedback_disabled = disabled;
         if !self.save() {
             log::error!("set_feedback_disabled: Failed to save app state");
+        }
+    }
+
+    /// Gets the last used drawing mode.
+    pub fn last_drawing_mode(&self) -> Option<String> {
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_drawing_mode.clone()
+    }
+
+    /// Updates the last used drawing mode setting and saves to disk.
+    pub fn set_last_drawing_mode(&mut self, mode: String) {
+        log::info!("set_last_drawing_mode: {mode}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_drawing_mode = Some(mode);
+        if !self.save() {
+            log::error!("set_last_drawing_mode: Failed to save app state");
         }
     }
 
