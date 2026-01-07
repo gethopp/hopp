@@ -30,7 +30,7 @@ import { useParticipants, useRoomContext } from "@livekit/components-react";
 import { RoomEvent } from "livekit-client";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
-import { HiMiniLink } from "react-icons/hi2";
+import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -50,8 +50,94 @@ const fuseSearch = (rooms: Room[], searchQuery: string) => {
   return fuse.search(searchQuery).map((result) => result.item);
 };
 
+// Maximum number of avatars to display before showing +N overflow
+const MAX_VISIBLE_AVATARS = 5;
+
+type BaseUser = components["schemas"]["BaseUser"];
+
+// Component to render room presence avatars with tooltips
+const RoomPresenceAvatars = ({
+  participantIds,
+  getParticipantInfo,
+}: {
+  participantIds: string[];
+  getParticipantInfo: (id: string) => BaseUser | null;
+}) => {
+  if (participantIds.length === 0) return null;
+
+  const visibleParticipants = participantIds.slice(0, MAX_VISIBLE_AVATARS);
+  const overflowCount = participantIds.length - MAX_VISIBLE_AVATARS;
+  const overflowParticipants = participantIds.slice(MAX_VISIBLE_AVATARS);
+
+  return (
+    <TooltipProvider delayDuration={100} skipDelayDuration={50}>
+      <div className="flex flex-row -space-x-0.5 items-center">
+        {visibleParticipants.map((participantId) => {
+          const info = getParticipantInfo(participantId);
+          if (info) {
+            return (
+              <Tooltip key={participantId}>
+                <TooltipTrigger asChild>
+                  <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-emerald-200 flex items-center justify-center shrink-0">
+                    {info.avatar_url ?
+                      <img
+                        src={info.avatar_url}
+                        alt={`${info.first_name} ${info.last_name}`}
+                        className="size-full object-cover"
+                      />
+                    : <span className="text-[8px] font-medium text-emerald-700">
+                        {info.first_name[0]}
+                        {info.last_name[0]}
+                      </span>
+                    }
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {info.first_name} {info.last_name}
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+          // Unknown user fallback
+          return (
+            <Tooltip key={participantId}>
+              <TooltipTrigger asChild>
+                <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-slate-200 flex items-center justify-center shrink-0">
+                  <HiMiniUser className="size-3 text-slate-500" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                Unknown user
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+        {overflowCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="size-5 rounded-md overflow-hidden ring-1 ring-white bg-slate-300 flex items-center justify-center shrink-0">
+                <span className="text-[8px] font-medium text-slate-600">+{overflowCount}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              <div className="flex flex-col gap-0.5">
+                {overflowParticipants.map((participantId) => {
+                  const info = getParticipantInfo(participantId);
+                  return (
+                    <span key={participantId}>{info ? `${info.first_name} ${info.last_name}` : "Unknown user"}</span>
+                  );
+                })}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </TooltipProvider>
+  );
+};
+
 export const Rooms = () => {
-  const { authToken, callTokens, setCallTokens } = useStore();
+  const { authToken, callTokens, setCallTokens, teammates, user } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -73,6 +159,35 @@ export const Rooms = () => {
     retry: true,
     queryHash: `rooms-${authToken}`,
   });
+
+  // Poll for room presence every 10 seconds
+  const { data: roomsPresence } = useQuery("get", "/api/auth/rooms/presence", undefined, {
+    enabled: !!authToken,
+    refetchInterval: 10_000,
+    retry: true,
+    queryHash: `rooms-presence-${authToken}`,
+    select: (data) => data.rooms || {},
+  });
+
+  // Helper to get user info from participant ID
+  const getParticipantInfo = useCallback(
+    (participantId: string): BaseUser | null => {
+      // Check if it's the current user
+      if (user && user.id === participantId) {
+        return user;
+      }
+
+      if (teammates) {
+        const teammate = teammates.find((t) => t.id === participantId);
+        if (teammate) {
+          return teammate;
+        }
+      }
+      // Unknown user
+      return null;
+    },
+    [user, teammates],
+  );
 
   const { useMutation } = useAPI();
   const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
@@ -253,43 +368,52 @@ export const Rooms = () => {
           </div>
           {filteredRooms && filteredRooms.length > 0 ?
             <div className="grid grid-cols-2 gap-2 w-full">
-              {filteredRooms?.map((room) => (
-                <RoomButton
-                  onClick={() => handleJoinRoom(room)}
-                  size="unsized"
-                  title={room.name}
-                  className="flex-1 min-w-0 text-slate-600"
-                  cornerIcon={
-                    <DropdownMenu>
-                      <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
-                        <MoreHorizontal className="size-3 m-0" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent className="muted" align="end">
-                        <DropdownMenuItem
-                          className="text-xs [&>svg]:size-3.5"
-                          onClick={() => {
-                            setSelectedRoom(room);
-                            setIsUpdateDialogOpen(true);
-                          }}
-                        >
-                          <HiOutlinePencil />
-                          Rename room
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-xs [&>svg]:size-3.5 text-red-600"
-                          onClick={() => {
-                            setSelectedRoom(room);
-                            setIsDeleteDialogOpen(true);
-                          }}
-                        >
-                          <HiOutlineTrash />
-                          Delete room
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  }
-                />
-              ))}
+              {filteredRooms?.map((room) => {
+                const presenceIds = roomsPresence?.[room.id] ?? [];
+                return (
+                  <RoomButton
+                    key={room.id}
+                    onClick={() => handleJoinRoom(room)}
+                    size="unsized"
+                    title={room.name}
+                    className="flex-1 min-w-0 text-slate-600"
+                    presenceAvatars={
+                      presenceIds.length > 0 ?
+                        <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
+                      : undefined
+                    }
+                    cornerIcon={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
+                          <MoreHorizontal className="size-3 m-0" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="muted" align="end">
+                          <DropdownMenuItem
+                            className="text-xs [&>svg]:size-3.5"
+                            onClick={() => {
+                              setSelectedRoom(room);
+                              setIsUpdateDialogOpen(true);
+                            }}
+                          >
+                            <HiOutlinePencil />
+                            Rename room
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-xs [&>svg]:size-3.5 text-red-600"
+                            onClick={() => {
+                              setSelectedRoom(room);
+                              setIsDeleteDialogOpen(true);
+                            }}
+                          >
+                            <HiOutlineTrash />
+                            Delete room
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
+                  />
+                );
+              })}
             </div>
           : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} />}
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>

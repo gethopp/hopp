@@ -1025,6 +1025,14 @@ fn main() {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
             log::info!("reopen requested");
+            {
+                let data = app_handle.state::<Mutex<AppData>>();
+                let data = data.lock().unwrap();
+                if !*data.dock_enabled.lock().unwrap() {
+                    log::info!("Dock icon is not enabled, setting activation policy to accessory");
+                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+            }
 
             let location_set = location_set.lock().unwrap();
             if !*location_set {
@@ -1036,14 +1044,7 @@ fn main() {
                 let mut reopen_requested = reopen_requested_clone.lock().unwrap();
                 *reopen_requested = true;
             }
-            {
-                let data = app_handle.state::<Mutex<AppData>>();
-                let data = data.lock().unwrap();
-                if !*data.dock_enabled.lock().unwrap() {
-                    log::info!("Dock icon is not enabled, setting activation policy to accessory");
-                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                }
-            }
+
             let main_window = app_handle.get_webview_window("main");
             if let Some(window) = main_window {
                 let _ = window.show();

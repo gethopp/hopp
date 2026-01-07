@@ -93,6 +93,20 @@ components:
         user_id:
           type: string
 
+    RoomsPresenceResponse:
+      type: object
+      required:
+        - rooms
+      properties:
+        rooms:
+          type: object
+          description: Map of room IDs to arrays of participant user IDs
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              description: User ID of a participant in the room
+
     Error:
       type: object
       properties:
@@ -664,6 +678,32 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Room"
+
+  /api/auth/rooms/presence:
+    get:
+      summary: Get current participants in each room
+      description: Returns a map of room IDs to arrays of participant user IDs currently connected to each room
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Room presence data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomsPresenceResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/auth/room/{id}:
     get:

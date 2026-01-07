@@ -65,7 +65,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   const navigate = useNavigate();
   const { uuid } = useParams<{ uuid: string }>();
   const { useQuery } = useAPI();
-  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app"], {
+  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app", "lastUsedLogin"], {
     doNotParse: true,
   });
   const setAuthToken = useHoppStore((state) => state.setAuthToken);
@@ -196,6 +196,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGoogleLogin = () => {
+    setCookie('lastUsedLogin', 'google', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/google`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
@@ -204,12 +205,20 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGitHubLogin = () => {
+    setCookie('lastUsedLogin', 'github', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/github`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
     }
     window.location.href = url.toString();
   };
+
+  const LastUsedPill = () => (
+    <div
+      className="absolute z-20 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 right-[30px] top-[-15px] font-medium text-center whitespace-nowrap bg-white shadow-md text-slate-700 text-xs rounded-md">
+      Last Used
+    </div>
+  );
 
   if (isLoadingInvitation) {
     return (
@@ -247,15 +256,22 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleEmailAuth}>
-                  <div className="grid gap-6">
-                    <div className="flex flex-col gap-4">
-                      <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
+                  <div className="grid gap-6 relative">
+                    <div className="flex flex-col gap-4 relative z-0">
+
+                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
+                        {cookies.lastUsedLogin === 'google' && (
+                        <LastUsedPill/>
+                        )}
                       </Button>
-                      <Button type="button" variant="outline" className="w-full" onClick={handleGitHubLogin}>
+                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGitHubLogin}>
                         <GrGithub className="size-5 mr-2" />
                         {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
+                        {cookies.lastUsedLogin === 'github' && (
+                        <LastUsedPill/>
+                        )}
                       </Button>
                       {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
                       {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
