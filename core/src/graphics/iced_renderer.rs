@@ -19,7 +19,6 @@ use winit::window::Window;
 mod iced_canvas;
 use iced_canvas::OverlaySurface;
 
-use crate::graphics::graphics_context::draw::Draw;
 use crate::utils::geometry::Position;
 
 pub struct IcedRenderer {
@@ -50,7 +49,7 @@ impl IcedRenderer {
             device.clone(),
             queue.clone(),
             format,
-            None, // TODO: I might need to change this
+            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
             Shell::headless(),
         );
         let physical_size = window.inner_size();
@@ -79,7 +78,7 @@ impl IcedRenderer {
             &mut self.renderer,
         );
 
-        let (state, _) = interface.update(
+        let (_, _) = interface.update(
             &[Event::Window(
                 window::Event::RedrawRequested(Instant::now()),
             )],

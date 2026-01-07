@@ -129,10 +129,13 @@ impl Draw {
     /// Returns cached geometry for completed paths.
     pub fn draw_completed(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
         self.completed_cache.draw(renderer, bounds.size(), |frame| {
-            let stroke = self.make_stroke();
+            let glow_stroke = self.make_glow_stroke();
+            let core_stroke = self.make_stroke();
             for draw_path in &self.completed_paths {
                 if let Some(path) = Self::build_path(&draw_path.points) {
-                    frame.stroke(&path, stroke.clone());
+                    // Two-pass rendering: glow first (wider, semi-transparent), then core
+                    frame.stroke(&path, glow_stroke.clone());
+                    frame.stroke(&path, core_stroke.clone());
                 }
             }
         })
@@ -142,6 +145,8 @@ impl Draw {
     pub fn draw_in_progress_to_frame(&self, frame: &mut Frame) {
         if let Some(in_progress) = &self.in_progress_path {
             if let Some(path) = Self::build_path(&in_progress.points) {
+                // Two-pass rendering: glow first (wider, semi-transparent), then core
+                frame.stroke(&path, self.make_glow_stroke());
                 frame.stroke(&path, self.make_stroke());
             }
         }
@@ -151,6 +156,18 @@ impl Draw {
         Stroke {
             style: stroke::Style::Solid(self.color),
             width: 5.0,
+            line_cap: stroke::LineCap::Round,
+            line_join: stroke::LineJoin::Round,
+            line_dash: stroke::LineDash::default(),
+        }
+    }
+
+    fn make_glow_stroke(&self) -> Stroke<'static> {
+        let mut glow_color = self.color;
+        glow_color.a *= 0.60;
+        Stroke {
+            style: stroke::Style::Solid(glow_color),
+            width: 5.0 + 1.5,
             line_cap: stroke::LineCap::Round,
             line_join: stroke::LineJoin::Round,
             line_dash: stroke::LineDash::default(),
