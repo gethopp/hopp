@@ -54,7 +54,7 @@ pub struct OverlaySurface {
 impl OverlaySurface {
     pub fn new(texture_path: &String) -> Self {
         let marker = Marker::new(texture_path);
-        let draws = DrawManager::new();
+        let draws = DrawManager::default();
         Self { marker, draws }
     }
 

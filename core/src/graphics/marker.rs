@@ -22,8 +22,8 @@ impl Marker {
                 Rectangle {
                     x: 0.,
                     y: 0.,
-                    width: width,
-                    height: height,
+                    width,
+                    height,
                 },
                 image_handle,
             );
@@ -33,8 +33,8 @@ impl Marker {
                 Rectangle {
                     x: 0.,
                     y: bounds.height - height,
-                    width: width,
-                    height: height,
+                    width,
+                    height,
                 },
                 image_handle,
             );
@@ -44,8 +44,8 @@ impl Marker {
                 Rectangle {
                     x: bounds.width - width,
                     y: bounds.height - height,
-                    width: width,
-                    height: height,
+                    width,
+                    height,
                 },
                 image_handle,
             );
@@ -55,8 +55,8 @@ impl Marker {
                 Rectangle {
                     x: bounds.width - width,
                     y: 0.,
-                    width: width,
-                    height: height,
+                    width,
+                    height,
                 },
                 image_handle,
             );

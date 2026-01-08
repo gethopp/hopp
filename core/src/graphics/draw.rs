@@ -143,8 +143,8 @@ impl Draw {
             for draw_path in &self.completed_paths {
                 if let Some(path) = Self::build_path(&draw_path.points) {
                     // Two-pass rendering: glow first (wider, semi-transparent), then core
-                    frame.stroke(&path, glow_stroke.clone());
-                    frame.stroke(&path, core_stroke.clone());
+                    frame.stroke(&path, glow_stroke);
+                    frame.stroke(&path, core_stroke);
                 }
             }
         })
@@ -199,15 +199,14 @@ impl Draw {
 
 /// Manager that owns Draw objects mapped by participant sid.
 /// Each participant gets their own Draw instance with their assigned color.
+#[derive(Default)]
 pub struct DrawManager {
     draws: HashMap<String, Draw>,
 }
 
 impl DrawManager {
     pub fn new() -> Self {
-        Self {
-            draws: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Adds a new participant with their color.
