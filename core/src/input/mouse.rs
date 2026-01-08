@@ -1326,7 +1326,11 @@ impl CursorController {
         }
     }
 
-    pub fn draw_path_ended(&self) {}
+    pub fn trigger_render(&self) {
+        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            log::error!("trigger_render: error sending redraw event: {e:?}");
+        }
+    }
 }
 
 impl Drop for CursorController {

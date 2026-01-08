@@ -977,6 +977,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+                remote_control.cursor_controller.trigger_render();
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
@@ -986,6 +987,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 remote_control.gfx.draw_clear_all_paths(sid.as_str());
+                remote_control.cursor_controller.trigger_render();
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
                 log::debug!(
