@@ -7,9 +7,8 @@ import { SegmentedControl } from "../ui/segmented-control";
 import { CustomIcons } from "../ui/icons";
 import { cn } from "@/lib/utils";
 import { PiScribbleLoopBold } from "react-icons/pi";
-import { HiOutlineCog6Tooth } from "react-icons/hi2";
-import { TbLineDashed } from "react-icons/tb";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../ui/dropdown-menu";
+import { HiCog6Tooth } from "react-icons/hi2";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "../ui/dropdown-menu";
 import { useEffect, useRef } from "react";
 import { tauriUtils } from "@/windows/window-utils";
 import { TDrawingMode, PDrawingMode } from "@/payloads";
@@ -19,7 +18,8 @@ type ScreenSharingControlsProps = {
 };
 
 export function ScreenSharingControls({ className }: ScreenSharingControlsProps = {}) {
-  const { setIsSharingKeyEvents, setIsSharingMouse, drawingMode, setDrawingMode } = useSharingContext();
+  const { setIsSharingKeyEvents, setIsSharingMouse, drawingMode, setDrawingMode, triggerClearDrawings } =
+    useSharingContext();
   const isInitialMount = useRef(true);
   const cachedDrawingModeRef = useRef<TDrawingMode | null>(null);
 
@@ -32,7 +32,7 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
           const parsed = PDrawingMode.safeParse(JSON.parse(cachedMode));
           if (parsed.success && parsed.data.type !== "Disabled") {
             // Store the cached mode but don't set it yet - it will be used when switching to drawing
-            // This is stored in a ref so it's available in handleRemoteControlChange
+            // This is stored in a ref so it's available in handleModeChange
             cachedDrawingModeRef.current = parsed.data;
           }
         }
@@ -65,53 +65,35 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     }
   }, [drawingMode]);
 
-  // Derive remoteControlStatus from drawingMode
-  const remoteControlStatus = drawingMode.type === "Disabled" ? "controlling" : "drawing";
+  // Derive current mode from drawingMode
+  const currentMode =
+    drawingMode.type === "Disabled" ? "pointer"
+    : drawingMode.type === "Draw" ? "drawing"
+    : "clickAnimation";
 
-  const handleRemoteControlChange = (value: string) => {
-    if (value === "controlling") {
+  const handleModeChange = (value: string) => {
+    // Clear all drawings when leaving Draw mode (the scribble mode)
+    if (drawingMode.type === "Draw" && value !== "drawing") {
+      triggerClearDrawings();
+    }
+
+    if (value === "pointer") {
       setIsSharingMouse(true);
       setIsSharingKeyEvents(true);
       setDrawingMode({ type: "Disabled" });
     } else if (value === "drawing") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
-      // Use cached mode if available, otherwise default to Draw mode
-      if (drawingMode.type === "Disabled") {
-        const modeToUse = cachedDrawingModeRef.current || { type: "Draw", settings: { permanent: false } };
-        setDrawingMode(modeToUse);
-      }
-    }
-  };
-
-  const handleDrawingModeTypeChange = (value: string) => {
-    if (value === "drawing") {
-      setDrawingMode({
-        type: "Draw",
-        settings: {
-          permanent: drawingMode.type === "Draw" ? drawingMode.settings.permanent : false,
-        },
-      });
+      // Use cached Draw mode settings if available
+      const cachedSettings =
+        cachedDrawingModeRef.current?.type === "Draw" ? cachedDrawingModeRef.current.settings : { permanent: false };
+      setDrawingMode({ type: "Draw", settings: cachedSettings });
     } else if (value === "clickAnimation") {
+      setIsSharingMouse(false);
+      setIsSharingKeyEvents(false);
       setDrawingMode({ type: "ClickAnimation" });
     }
   };
-
-  const handlePermanentModeChange = (checked: boolean) => {
-    if (drawingMode.type === "Draw") {
-      setDrawingMode({
-        type: "Draw",
-        settings: { permanent: checked },
-      });
-    }
-  };
-
-  // Derive UI state from drawingMode
-  const drawingModeType =
-    drawingMode.type === "Draw" ? "drawing"
-    : drawingMode.type === "ClickAnimation" ? "clickAnimation"
-    : "drawing";
-  const isPermanentMode = drawingMode.type === "Draw" ? drawingMode.settings.permanent : false;
 
   return (
     <TooltipProvider>
@@ -121,7 +103,7 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
             <SegmentedControl
               items={[
                 {
-                  id: "controlling",
+                  id: "pointer",
                   content: <HiOutlineCursorClick className="size-3" />,
                   tooltipContent: "Remote control",
                 },
@@ -130,82 +112,67 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
                   content: <PiScribbleLoopBold className="size-3" />,
                   tooltipContent: "Drawing",
                 },
+                {
+                  id: "clickAnimation",
+                  content: <CustomIcons.PointerClick className="size-3" />,
+                  tooltipContent: "Click Animation",
+                },
               ]}
-              value={remoteControlStatus}
-              onValueChange={handleRemoteControlChange}
+              value={currentMode}
+              onValueChange={handleModeChange}
               className="pointer-events-auto"
             />
-            {remoteControlStatus === "drawing" && (
-              <DropdownMenu>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        className={cn(
-                          "pointer-events-auto h-[28px] w-[28px] flex items-center justify-center rounded-lg",
-                          "bg-gray-500/80 dark:bg-zinc-600 text-white hover:bg-gray-600/80 dark:hover:bg-zinc-700",
-                          "transition-colors outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2",
-                        )}
-                      >
-                        <HiOutlineCog6Tooth className="size-3" />
-                      </button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>Drawing settings</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent
-                  align="end"
-                  className="w-fit min-w-0 p-0.5 bg-gray-500 dark:bg-zinc-600 border-gray-400/50 dark:border-zinc-500/50 text-white"
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <SegmentedControl
-                      items={[
-                        {
-                          id: "drawing",
-                          content: <PiScribbleLoopBold className="size-3" />,
-                          tooltipContent: "Drawing",
-                        },
-                        {
-                          id: "clickAnimation",
-                          content: <CustomIcons.PointerClick className="size-3" />,
-                          tooltipContent: "Click Animation",
-                        },
-                      ]}
-                      value={drawingModeType}
-                      onValueChange={handleDrawingModeTypeChange}
-                      className="pointer-events-auto"
-                    />
-                    {drawingModeType === "drawing" && (
-                      <>
-                        <div className="h-px bg-gray-400/50 dark:bg-zinc-500/50" />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => handlePermanentModeChange(!isPermanentMode)}
-                              className={cn(
-                                "pointer-events-auto h-[28px] w-full px-2 flex items-center justify-center rounded-md",
-                                "text-white transition-colors outline-none",
-                                isPermanentMode ?
-                                  "bg-slate-300/50 dark:bg-slate-300/50 hover:bg-slate-400/50 dark:hover:bg-slate-400/50"
-                                : "bg-gray-500 dark:bg-zinc-600 hover:bg-gray-600 dark:hover:bg-zinc-700",
-                              )}
-                            >
-                              <TbLineDashed className="size-4" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>Permanent Mode</TooltipContent>
-                        </Tooltip>
-                      </>
-                    )}
-                  </div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
         </div>
       </div>
+    </TooltipProvider>
+  );
+}
+
+export function DrawingSettingsButton() {
+  const { drawingMode, rightClickToClear, setRightClickToClear } = useSharingContext();
+  const isDrawingMode = drawingMode.type === "Draw";
+
+  if (!isDrawingMode) {
+    return null;
+  }
+
+  return (
+    <TooltipProvider>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "h-[28px] w-[28px] flex items-center justify-center rounded-lg",
+                  "bg-gray-500/80 dark:bg-zinc-600 text-white hover:bg-gray-600/80 dark:hover:bg-zinc-700",
+                  "transition-colors outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2",
+                )}
+              >
+                <HiCog6Tooth className="size-3" />
+              </button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Drawing settings</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent
+          align="end"
+          className="w-auto min-w-[180px] bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700"
+        >
+          <DropdownMenuCheckboxItem
+            checked={rightClickToClear}
+            onCheckedChange={setRightClickToClear}
+            className="flex items-center justify-between gap-4"
+          >
+            <span>Click to remove drawing</span>
+            <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border border-slate-200 dark:border-zinc-600 bg-slate-100 dark:bg-zinc-700 px-1.5 font-mono text-[10px] font-medium text-slate-600 dark:text-slate-300">
+              Right click
+            </kbd>
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </TooltipProvider>
   );
 }

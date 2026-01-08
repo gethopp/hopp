@@ -74,7 +74,15 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  const { isSharingMouse, isSharingKeyEvents, drawingMode, parentKeyTrap, setStreamDimensions } = useSharingContext();
+  const {
+    isSharingMouse,
+    isSharingKeyEvents,
+    drawingMode,
+    parentKeyTrap,
+    setStreamDimensions,
+    rightClickToClear,
+    clearDrawingsSignal,
+  } = useSharingContext();
   const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens, callTokens } = useStore();
@@ -213,7 +221,7 @@ const ConsumerComponent = React.memo(() => {
   useEffect(() => {
     if (!drawParticipantsRef.current.has(LOCAL_PARTICIPANT_ID)) {
       // Get or assign color for local participant (only assigns on first encounter)
-      const localDrawParticipant = new DrawParticipant("#FF0000", drawingMode);
+      const localDrawParticipant = new DrawParticipant("#FFDF20", drawingMode);
       drawParticipantsRef.current.set(LOCAL_PARTICIPANT_ID, localDrawParticipant);
     }
   }, [drawingMode, getOrAssignColor]);
@@ -262,6 +270,28 @@ const ConsumerComponent = React.memo(() => {
       topic: DRAW_TOPIC,
     });
   }, [drawingMode, localParticipant.localParticipant]);
+
+  // Watch for clear drawings signal and clear all drawings when it changes
+  useEffect(() => {
+    // Skip initial render (signal starts at 0)
+    if (clearDrawingsSignal === 0) return;
+
+    // Send DrawClearAllPaths event if we have a local participant
+    if (localParticipant.localParticipant) {
+      const payload: TPDrawClearAllPaths = {
+        type: "DrawClearAllPaths",
+      };
+      localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
+        reliable: true,
+        topic: DRAW_TOPIC,
+      });
+    }
+
+    // Clear all drawings from all participants (local and remote)
+    drawParticipantsRef.current.forEach((participant) => {
+      participant.clear();
+    });
+  }, [clearDrawingsSignal, localParticipant.localParticipant]);
 
   /*
    * We do this because we need a way to retrigger the useEffect below,
@@ -438,10 +468,10 @@ const ConsumerComponent = React.memo(() => {
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
-      // If in drawing mode with permanent enabled, prevent context menu (dev tools)
-      if (isDrawingMode && drawingMode.type === "Draw" && drawingMode.settings.permanent) {
+      // If in drawing mode and right-click-to-clear is enabled, clear all drawings
+      if (isDrawingMode && drawingMode.type === "Draw" && rightClickToClear) {
         e.stopPropagation();
-        // Send DrawClearAllPaths event on right-click in permanent mode
+        // Send DrawClearAllPaths event on right-click
         const payload: TPDrawClearAllPaths = {
           type: "DrawClearAllPaths",
         };
@@ -514,7 +544,7 @@ const ConsumerComponent = React.memo(() => {
         }
       }
     };
-  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls]);
+  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls, rightClickToClear]);
 
   /**
    * Keyboard sharing logic

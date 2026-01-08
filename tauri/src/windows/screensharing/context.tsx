@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
 import { TDrawingMode } from "@/payloads";
 
 type SharingContextType = {
@@ -14,6 +14,11 @@ type SharingContextType = {
   setParentKeyTrap: (value: HTMLDivElement) => void;
   streamDimensions: { width: number; height: number } | null;
   setStreamDimensions: (value: { width: number; height: number } | null) => void;
+  rightClickToClear: boolean;
+  setRightClickToClear: (value: boolean) => void;
+  // Signal to trigger clearing all drawings - components watch for changes to this value
+  clearDrawingsSignal: number;
+  triggerClearDrawings: () => void;
 };
 
 const SharingContext = createContext<SharingContextType | undefined>(undefined);
@@ -37,6 +42,12 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
   const [parentKeyTrap, setParentKeyTrap] = useState<HTMLDivElement | undefined>(undefined);
   const [videoToken, setVideoToken] = useState<string | null>(null);
   const [streamDimensions, setStreamDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [rightClickToClear, setRightClickToClear] = useState<boolean>(true);
+  const [clearDrawingsSignal, setClearDrawingsSignal] = useState<number>(0);
+
+  const triggerClearDrawings = useCallback(() => {
+    setClearDrawingsSignal((prev) => prev + 1);
+  }, []);
 
   return (
     <SharingContext.Provider
@@ -53,6 +64,10 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
         setVideoToken,
         streamDimensions,
         setStreamDimensions,
+        rightClickToClear,
+        setRightClickToClear,
+        clearDrawingsSignal,
+        triggerClearDrawings,
       }}
     >
       {children}

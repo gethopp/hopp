@@ -76,7 +76,7 @@ const SegmentedControl = React.forwardRef<HTMLOListElement, SegmentedControlProp
                   "relative mb-0 mt-0 leading-none pl-0",
                   // Divider styles
                   showDivider &&
-                    "after:absolute after:top-[15%] after:right-[-0.5px] after:block after:w-px after:h-[70%] after:bg-gray-300 after:transition-opacity after:duration-200 after:ease-out after:content-['']",
+                    "after:absolute after:top-[15%] after:right-[-0.5px] after:block after:w-px after:h-[70%] after:bg-gray-100 after:opacity-20 after:transition-opacity after:duration-200 after:ease-out after:content-['']",
                   // Hide divider for last item
                   i === items.length - 1 && "after:hidden",
                   // Hide divider when it shouldn't show
