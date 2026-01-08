@@ -5,9 +5,18 @@ use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
 
-/// Converts a hex color string (e.g., "#7CCF00" or "7CCF00") to an iced Color.
-pub fn color_from_hex(hex: &str) -> Color {
+fn color_from_hex(hex: &str) -> Color {
     let hex = hex.trim_start_matches('#');
+
+    // Check if the hex string has at least 6 characters to avoid panic
+    if hex.len() < 6 {
+        log::warn!(
+            "color_from_hex: invalid hex color '{}', using default black color",
+            hex
+        );
+        return Color::from_rgb8(0, 0, 0);
+    }
+
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);

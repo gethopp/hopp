@@ -96,7 +96,7 @@ impl IcedRenderer {
 
         let wgpu_renderer = match &mut self.renderer {
             Renderer::Primary(renderer) => renderer,
-            _ => panic!("Expected primary renderer"),
+            _ => unreachable!(),
         };
         wgpu_renderer.present(None, frame.texture.format(), view, &self.viewport);
     }
