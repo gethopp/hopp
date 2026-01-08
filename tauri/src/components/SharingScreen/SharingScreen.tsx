@@ -77,7 +77,14 @@ const ConsumerComponent = React.memo(() => {
   const { isSharingMouse, isSharingKeyEvents, drawingMode, parentKeyTrap, setStreamDimensions } = useSharingContext();
   const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
-  const { updateCallTokens } = useStore();
+  const { updateCallTokens, callTokens } = useStore();
+  const isRemoteControlEnabled = callTokens?.isRemoteControlEnabled;
+  const isRemoteControlEnabledRef = useRef(isRemoteControlEnabled);
+
+  useEffect(() => {
+    isRemoteControlEnabledRef.current = isRemoteControlEnabled;
+  }, [isRemoteControlEnabled]);
+
   const [mouse, mouseRef] = useMouse();
 
   // Boolean to control when to show custom cursor
@@ -276,8 +283,6 @@ const ConsumerComponent = React.memo(() => {
     const handleMouseMove = throttle((e: MouseEvent) => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-        // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
-
         // If in drawing mode and left button is pressed, send DrawAddPoint
         if (isDrawingMode && (e.buttons & 1) === 1) {
           const payload: TPDrawAddPoint = {
@@ -312,7 +317,6 @@ const ConsumerComponent = React.memo(() => {
     const handleMouseDown = (e: MouseEvent) => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-        // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
         // If in drawing mode and left button, send DrawStart
         if (isDrawingMode && e.button === 0) {
@@ -325,12 +329,6 @@ const ConsumerComponent = React.memo(() => {
               reliable: true,
               topic: DRAW_TOPIC,
             });
-
-            // Update local draw participant for local visual feedback
-            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
-            if (drawParticipant) {
-              applyCursorRippleEffect(e.clientX, e.clientY, drawParticipant.color);
-            }
           } else {
             const pathId = getNextPathId();
             const payload: TPDrawStart = {
@@ -349,6 +347,24 @@ const ConsumerComponent = React.memo(() => {
             }
           }
           return;
+        } else {
+          // Always show local ripple on left click (except when in Draw mode, handled above)
+          if (e.button === 0) {
+            applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
+
+            // If remote control is disabled, send ClickAnimation event instead of MouseClick
+            if (isRemoteControlEnabledRef.current === false) {
+              const payload: TPClickAnimation = {
+                type: "ClickAnimation",
+                payload: { x: relativeX, y: relativeY },
+              };
+              localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+                reliable: true,
+                topic: DRAW_TOPIC,
+              });
+              return;
+            }
+          }
         }
 
         const payload: TPMouseClick = {
@@ -394,6 +410,11 @@ const ConsumerComponent = React.memo(() => {
             }
           }
           return;
+        } else {
+          // If remote control is disabled, skip sending MouseClick on left mouse up
+          if (isRemoteControlEnabledRef.current === false) {
+            return;
+          }
         }
 
         const payload: TPMouseClick = {
