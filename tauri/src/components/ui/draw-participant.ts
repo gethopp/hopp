@@ -53,7 +53,7 @@ export class DrawParticipant {
   setDrawingMode(mode: TDrawingMode): void {
     this._drawingMode = mode;
 
-    if (mode.type === "Disabled") {
+    if (mode.type === "Disabled" || mode.type === "ClickAnimation") {
       this.clear();
     }
   }

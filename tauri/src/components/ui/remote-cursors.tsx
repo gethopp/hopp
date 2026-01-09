@@ -4,15 +4,15 @@ import { CursorParticipant } from "./cursor-participant";
 import { Cursor } from "./cursor";
 import { TPMouseMove } from "@/payloads";
 import { getAbsolutePosition } from "@/lib/utils";
+import { getOrAssignColor } from "@/windows/screensharing/utils";
 
 const CURSORS_TOPIC = "participant_location";
 
 interface RemoteCursorsProps {
   videoRef: React.RefObject<HTMLVideoElement>;
-  getOrAssignColor: (participantId: string) => string;
 }
 
-export const RemoteCursors = ({ videoRef, getOrAssignColor }: RemoteCursorsProps) => {
+export const RemoteCursors = ({ videoRef }: RemoteCursorsProps) => {
   const cursorParticipantsRef = useRef<Map<string, CursorParticipant>>(new Map());
   const [, setUpdateTrigger] = useState(0);
 

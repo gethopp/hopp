@@ -11,37 +11,48 @@ import { HiCog6Tooth } from "react-icons/hi2";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "../ui/dropdown-menu";
 import { useEffect, useRef } from "react";
 import { tauriUtils } from "@/windows/window-utils";
-import { TDrawingMode, PDrawingMode } from "@/payloads";
+import { PDrawingMode } from "@/payloads";
 
 type ScreenSharingControlsProps = {
   className?: string;
 };
 
 export function ScreenSharingControls({ className }: ScreenSharingControlsProps = {}) {
-  const { setIsSharingKeyEvents, setIsSharingMouse, drawingMode, setDrawingMode, triggerClearDrawings } =
-    useSharingContext();
+  const {
+    setIsSharingKeyEvents,
+    setIsSharingMouse,
+    drawingMode,
+    setDrawingMode,
+    triggerClearDrawings,
+    rightClickToClear,
+    setRightClickToClear,
+  } = useSharingContext();
   const isInitialMount = useRef(true);
-  const cachedDrawingModeRef = useRef<TDrawingMode | null>(null);
 
-  // Load cached drawing mode on mount
+  // Restore drawing mode from storage on mount
   useEffect(() => {
-    const loadCachedDrawingMode = async () => {
+    const restoreDrawingMode = async () => {
       try {
         const cachedMode = await tauriUtils.getLastDrawingMode();
         if (cachedMode) {
           const parsed = PDrawingMode.safeParse(JSON.parse(cachedMode));
           if (parsed.success && parsed.data.type !== "Disabled") {
-            // Store the cached mode but don't set it yet - it will be used when switching to drawing
-            // This is stored in a ref so it's available in handleModeChange
-            cachedDrawingModeRef.current = parsed.data;
+            // Restore the full mode (Draw or ClickAnimation)
+            setIsSharingMouse(false);
+            setIsSharingKeyEvents(false);
+            setDrawingMode(parsed.data);
+            // Sync rightClickToClear with the cached permanent setting
+            if (parsed.data.type === "Draw") {
+              setRightClickToClear(parsed.data.settings.permanent);
+            }
           }
         }
       } catch (error) {
-        console.error("Failed to load cached drawing mode:", error);
+        console.error("Failed to restore drawing mode:", error);
       }
     };
-    loadCachedDrawingMode();
-  }, []);
+    restoreDrawingMode();
+  }, [setDrawingMode, setIsSharingKeyEvents, setIsSharingMouse, setRightClickToClear]);
 
   // Save drawing mode whenever it changes (but not on initial mount and not when Disabled)
   useEffect(() => {
@@ -51,9 +62,6 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     }
 
     if (drawingMode.type !== "Disabled") {
-      // Update the cached ref immediately
-      cachedDrawingModeRef.current = drawingMode;
-
       const saveDrawingMode = async () => {
         try {
           await tauriUtils.setLastDrawingMode(JSON.stringify(drawingMode));
@@ -71,8 +79,8 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     : drawingMode.type === "Draw" ? "drawing"
     : "clickAnimation";
 
-  const handleModeChange = (value: string) => {
-    // Clear all drawings when leaving Draw mode (the scribble mode)
+  const handleModeChange = async (value: string) => {
+    // Clear all drawings when leaving Draw mode (to pointer or clickAnimation)
     if (drawingMode.type === "Draw" && value !== "drawing") {
       triggerClearDrawings();
     }
@@ -84,10 +92,10 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     } else if (value === "drawing") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
-      // Use cached Draw mode settings if available
-      const cachedSettings =
-        cachedDrawingModeRef.current?.type === "Draw" ? cachedDrawingModeRef.current.settings : { permanent: false };
-      setDrawingMode({ type: "Draw", settings: cachedSettings });
+      // Use rightClickToClear to determine if drawings are permanent
+      // permanent: true = drawings persist until right-click clears them
+      // permanent: false = drawings auto-expire after 5 seconds
+      setDrawingMode({ type: "Draw", settings: { permanent: rightClickToClear } });
     } else if (value === "clickAnimation") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
@@ -130,12 +138,18 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
 }
 
 export function DrawingSettingsButton() {
-  const { drawingMode, rightClickToClear, setRightClickToClear } = useSharingContext();
+  const { drawingMode, setDrawingMode, rightClickToClear, setRightClickToClear } = useSharingContext();
   const isDrawingMode = drawingMode.type === "Draw";
 
   if (!isDrawingMode) {
     return null;
   }
+
+  const handlePermanentToggle = (checked: boolean) => {
+    setRightClickToClear(checked);
+    // Update drawing mode settings to sync permanent flag
+    setDrawingMode({ type: "Draw", settings: { permanent: checked } });
+  };
 
   return (
     <TooltipProvider>
@@ -163,13 +177,10 @@ export function DrawingSettingsButton() {
         >
           <DropdownMenuCheckboxItem
             checked={rightClickToClear}
-            onCheckedChange={setRightClickToClear}
+            onCheckedChange={handlePermanentToggle}
             className="flex items-center justify-between gap-4"
           >
-            <span>Click to remove drawing</span>
-            <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border border-slate-200 dark:border-zinc-600 bg-slate-100 dark:bg-zinc-700 px-1.5 font-mono text-[10px] font-medium text-slate-600 dark:text-slate-300">
-              Right click
-            </kbd>
+            <span>Persist until right click</span>
           </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>

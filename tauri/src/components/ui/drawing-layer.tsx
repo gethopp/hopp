@@ -3,16 +3,16 @@ import { useDataChannel } from "@livekit/components-react";
 import { Draw } from "./draw";
 import { DrawParticipant } from "./draw-participant";
 import { applyCursorRippleEffect } from "@/lib/utils";
+import { getOrAssignColor } from "@/windows/screensharing/utils";
 
 const DRAW_TOPIC = "draw";
 
 interface DrawingLayerProps {
   videoRef: React.RefObject<HTMLVideoElement>;
   drawParticipantsRef: React.MutableRefObject<Map<string, DrawParticipant>>;
-  getOrAssignColor: (participantId: string) => string;
 }
 
-export const DrawingLayer = ({ videoRef, drawParticipantsRef, getOrAssignColor }: DrawingLayerProps) => {
+export const DrawingLayer = ({ videoRef, drawParticipantsRef }: DrawingLayerProps) => {
   // Handle incoming DRAW_TOPIC messages for remote participants
   useDataChannel(DRAW_TOPIC, (msg) => {
     const decoder = new TextDecoder();

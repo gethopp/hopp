@@ -42,7 +42,7 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
   const [parentKeyTrap, setParentKeyTrap] = useState<HTMLDivElement | undefined>(undefined);
   const [videoToken, setVideoToken] = useState<string | null>(null);
   const [streamDimensions, setStreamDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [rightClickToClear, setRightClickToClear] = useState<boolean>(true);
+  const [rightClickToClear, setRightClickToClear] = useState<boolean>(false);
   const [clearDrawingsSignal, setClearDrawingsSignal] = useState<number>(0);
 
   const triggerClearDrawings = useCallback(() => {

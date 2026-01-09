@@ -2,8 +2,9 @@ import ReactJson from "react-json-view";
 import Draggable from "react-draggable";
 import { throttle } from "lodash";
 import { RiDraggable } from "react-icons/ri";
+import { HiPencil } from "react-icons/hi2";
 import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
-import { Track } from "livekit-client";
+import { DataPublishOptions, LocalParticipant, Track } from "livekit-client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
@@ -35,10 +36,15 @@ import { RemoteCursors } from "../ui/remote-cursors";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getNextPathId, SVG_BADGE_COLORS } from "@/windows/screensharing/utils";
 
-const CURSORS_TOPIC = "participant_location";
-const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
-const DRAW_TOPIC = "draw";
+enum Topics {
+  CURSORS = "participant_location",
+  PARTICIPANT_IN_CONTROL = "participant_in_control",
+  DRAW = "draw",
+}
+
+const LOCAL_PARTICIPANT_ID = "local";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -46,7 +52,23 @@ type SharingScreenProps = {
 };
 
 const encoder = new TextEncoder();
-// const decoder = new TextDecoder();
+
+export const publishLocalParticipantData = (
+  localParticipant: LocalParticipant | undefined,
+  payload: any,
+  topic: Topics,
+  settings?: DataPublishOptions,
+): Promise<void> => {
+  if (!localParticipant) {
+    return Promise.resolve();
+  }
+
+  return localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+    reliable: true,
+    topic: topic,
+    ...settings,
+  });
+};
 
 export function SharingScreen(props: SharingScreenProps) {
   const { serverURL, token } = props;
@@ -61,10 +83,6 @@ export function SharingScreen(props: SharingScreenProps) {
 const ConsumerComponent = React.memo(() => {
   // All state hooks first
   const [updateMouseControls, setUpdateMouseControls] = useState(false);
-
-  // Hand-picked colors for the tailwind colors page:
-  // https://tailwindcss.com/docs/colors
-  const SVG_BADGE_COLORS = ["#0040FF", "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040"];
 
   // All refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -86,59 +104,18 @@ const ConsumerComponent = React.memo(() => {
   const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
   const { updateCallTokens, callTokens } = useStore();
-  const isRemoteControlEnabled = callTokens?.isRemoteControlEnabled;
-  const isRemoteControlEnabledRef = useRef(isRemoteControlEnabled);
+  const isRemoteControlEnabled = callTokens?.isRemoteControlEnabled ?? false;
 
-  useEffect(() => {
-    isRemoteControlEnabledRef.current = isRemoteControlEnabled;
-  }, [isRemoteControlEnabled]);
-
-  const [mouse, mouseRef] = useMouse();
+  const [mouse, _] = useMouse();
 
   // Boolean to control when to show custom cursor
   const [showCustomCursor, setShowCustomCursor] = useState(true);
 
   // Draw participants map - stored in ref for efficiency
-  const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(new Map());
-  const LOCAL_PARTICIPANT_ID = "local";
-
-  // Shared color map for participants (used by both cursor and draw)
-  const participantColorMapRef = useRef<Map<string, string>>(new Map());
-  const colorIndexRef = useRef<number>(0);
-
-  // Path ID counter for local participant
-  const pathIdCounterRef = useRef<number>(0);
-  const MAX_PATH_ID = Number.MAX_SAFE_INTEGER;
-
-  // Helper function to get or assign a color for a participant
-  // Only assigns a color on entry creation (when participant is first encountered)
-  const getOrAssignColor = useCallback((participantId: string): string => {
-    if (participantColorMapRef.current.has(participantId)) {
-      const existingColor = participantColorMapRef.current.get(participantId);
-      if (existingColor) {
-        return existingColor;
-      }
-    }
-
-    // Assign a new color from the available colors
-    const color = SVG_BADGE_COLORS[colorIndexRef.current % SVG_BADGE_COLORS.length] ?? "#0040FF";
-    participantColorMapRef.current.set(participantId, color);
-    colorIndexRef.current = (colorIndexRef.current + 1) % SVG_BADGE_COLORS.length;
-    return color;
-  }, []);
-
-  // Get the next unique path ID and handle wrap-over
-  const getNextPathId = useCallback(() => {
-    const id = pathIdCounterRef.current;
-    pathIdCounterRef.current++;
-
-    // Handle wrap-over: reset to 0 when reaching max
-    if (pathIdCounterRef.current > MAX_PATH_ID) {
-      pathIdCounterRef.current = 0;
-    }
-
-    return id;
-  }, []);
+  // Initialized with local participant
+  const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(
+    new Map([[LOCAL_PARTICIPANT_ID, new DrawParticipant("#FFDF20", drawingMode)]]),
+  );
 
   // Data channel hooks - must be called unconditionally
   useDataChannel("remote_control_enabled", (msg) => {
@@ -163,7 +140,7 @@ const ConsumerComponent = React.memo(() => {
     }
   });
 
-  useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
+  useDataChannel(Topics.PARTICIPANT_IN_CONTROL, (msg) => {
     const decoder = new TextDecoder();
     const payload = decoder.decode(msg.payload);
     if (payload === localParticipant.localParticipant?.sid) {
@@ -217,15 +194,6 @@ const ConsumerComponent = React.memo(() => {
     }
   }, [track, streamWidth, streamHeight, setStreamDimensions]);
 
-  // Initialize local draw participant
-  useEffect(() => {
-    if (!drawParticipantsRef.current.has(LOCAL_PARTICIPANT_ID)) {
-      // Get or assign color for local participant (only assigns on first encounter)
-      const localDrawParticipant = new DrawParticipant("#FFDF20", drawingMode);
-      drawParticipantsRef.current.set(LOCAL_PARTICIPANT_ID, localDrawParticipant);
-    }
-  }, [drawingMode, getOrAssignColor]);
-
   // Update local participant's drawing mode when it changes
   useEffect(() => {
     const localDrawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -248,27 +216,36 @@ const ConsumerComponent = React.memo(() => {
           type: "DrawClearPath",
           payload: { path_id: pathId },
         };
-        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-          reliable: true,
-          topic: DRAW_TOPIC,
-        });
+        publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
       });
     });
   }, [localParticipant.localParticipant]);
 
-  // Send DrawingMode event when drawing mode changes
+  // Send DrawingMode event when drawing mode changes or when participant first connects
+  // Uses a ref to track the last sent mode to avoid unnecessary sends
+  const lastSentDrawingModeRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!localParticipant.localParticipant) return;
+    if (!localParticipant.localParticipant) {
+      // Reset tracking when disconnected
+      lastSentDrawingModeRef.current = null;
+      return;
+    }
+
+    // Serialize current mode to compare with last sent
+    const currentModeStr = JSON.stringify(drawingMode);
+
+    // Only send if mode changed or we haven't sent yet after connecting
+    if (lastSentDrawingModeRef.current === currentModeStr) return;
 
     const payload: TPDrawingModeEvent = {
       type: "DrawingMode",
       payload: drawingMode,
     };
 
-    localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
-      reliable: true,
-      topic: DRAW_TOPIC,
-    });
+    publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+
+    lastSentDrawingModeRef.current = currentModeStr;
   }, [drawingMode, localParticipant.localParticipant]);
 
   // Watch for clear drawings signal and clear all drawings when it changes
@@ -281,10 +258,8 @@ const ConsumerComponent = React.memo(() => {
       const payload: TPDrawClearAllPaths = {
         type: "DrawClearAllPaths",
       };
-      localParticipant.localParticipant.publishData(encoder.encode(JSON.stringify(payload)), {
-        reliable: true,
-        topic: DRAW_TOPIC,
-      });
+
+      publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
     }
 
     // Clear all drawings from all participants (local and remote)
@@ -319,10 +294,7 @@ const ConsumerComponent = React.memo(() => {
             type: "DrawAddPoint",
             payload: { x: relativeX, y: relativeY },
           };
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-            reliable: true,
-            topic: DRAW_TOPIC,
-          });
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
           // Update local draw participant
           const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -336,10 +308,7 @@ const ConsumerComponent = React.memo(() => {
             payload: { x: relativeX, y: relativeY, pointer: true },
           };
 
-          localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-            reliable: true,
-            topic: CURSORS_TOPIC,
-          });
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.CURSORS);
         }
       }
     }, 30);
@@ -351,24 +320,22 @@ const ConsumerComponent = React.memo(() => {
         // If in drawing mode and left button, send DrawStart
         if (isDrawingMode && e.button === 0) {
           if (drawingMode.type === "ClickAnimation") {
+            // Show local ripple effect
+            applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
+
             const payload: TPClickAnimation = {
               type: "ClickAnimation",
               payload: { x: relativeX, y: relativeY },
             };
-            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-              reliable: true,
-              topic: DRAW_TOPIC,
-            });
+
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
           } else {
-            const pathId = getNextPathId();
+            const pathId = getNextPathId.next().value;
             const payload: TPDrawStart = {
               type: "DrawStart",
               payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
             };
-            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-              reliable: true,
-              topic: DRAW_TOPIC,
-            });
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
             // Update local draw participant
             const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -383,15 +350,12 @@ const ConsumerComponent = React.memo(() => {
             applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
 
             // If remote control is disabled, send ClickAnimation event instead of MouseClick
-            if (isRemoteControlEnabledRef.current === false) {
+            if (!isRemoteControlEnabled) {
               const payload: TPClickAnimation = {
                 type: "ClickAnimation",
                 payload: { x: relativeX, y: relativeY },
               };
-              localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-                reliable: true,
-                topic: DRAW_TOPIC,
-              });
+              publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
               return;
             }
           }
@@ -428,10 +392,7 @@ const ConsumerComponent = React.memo(() => {
               type: "DrawEnd",
               payload: { x: relativeX, y: relativeY },
             };
-            localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-              reliable: true,
-              topic: DRAW_TOPIC,
-            });
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
             // Update local draw participant
             const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -442,7 +403,7 @@ const ConsumerComponent = React.memo(() => {
           return;
         } else {
           // If remote control is disabled, skip sending MouseClick on left mouse up
-          if (isRemoteControlEnabledRef.current === false) {
+          if (!isRemoteControlEnabled) {
             return;
           }
         }
@@ -475,10 +436,7 @@ const ConsumerComponent = React.memo(() => {
         const payload: TPDrawClearAllPaths = {
           type: "DrawClearAllPaths",
         };
-        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-          reliable: true,
-          topic: DRAW_TOPIC,
-        });
+        publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
         // Update local draw participant
         const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
@@ -544,7 +502,7 @@ const ConsumerComponent = React.memo(() => {
         }
       }
     };
-  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls, rightClickToClear]);
+  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls, rightClickToClear, isRemoteControlEnabled]);
 
   /**
    * Keyboard sharing logic
@@ -801,9 +759,9 @@ const ConsumerComponent = React.memo(() => {
         }}
       />
 
-      <DrawingLayer videoRef={videoRef} drawParticipantsRef={drawParticipantsRef} getOrAssignColor={getOrAssignColor} />
+      <DrawingLayer videoRef={videoRef} drawParticipantsRef={drawParticipantsRef} />
 
-      <RemoteCursors videoRef={videoRef} getOrAssignColor={getOrAssignColor} />
+      <RemoteCursors videoRef={videoRef} />
 
       {/* Custom cursor rendered at mouse position */}
       {showCustomCursor && mouse.x !== null && mouse.y !== null && (
@@ -814,7 +772,12 @@ const ConsumerComponent = React.memo(() => {
             top: `${mouse.y - (videoRef.current?.getBoundingClientRect().top || 0) - 4}px`,
           }}
         >
-          <SvgComponent color="var(--color-cyan-800)" />
+          {drawingMode.type === "Draw" ?
+            <HiPencil
+              className="size-5 stroke-[1.5px] stroke-white rotate-75"
+              style={{ color: "var(--color-cyan-800)" }}
+            />
+          : <SvgComponent color="var(--color-cyan-800)" />}
         </div>
       )}
     </div>
