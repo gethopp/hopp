@@ -669,12 +669,24 @@ async fn room_service_commands(
 ///
 /// This structure is used to represent cursor positions, mouse coordinates,
 /// and other 2D locations within the room service.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct ClientPoint {
     /// The x-coordinate of the point
     pub x: f64,
     /// The y-coordinate of the point
     pub y: f64,
+}
+
+/// Represents a drawing path point with both coordinates and path identifier.
+///
+/// This structure combines a 2D point with a path ID to track which drawing
+/// path the point belongs to, enabling multiple simultaneous drawing paths.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct DrawPathPoint {
+    /// The 2D coordinates of the point
+    pub point: ClientPoint,
+    /// The unique identifier for the drawing path this point belongs to
+    pub path_id: u64,
 }
 
 /// Contains data for mouse click events.
@@ -787,6 +799,25 @@ pub struct PasteFromClipboardData {
     pub data: Option<ClipboardPayload>,
 }
 
+/// Settings specific to the Draw mode.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct DrawSettings {
+    /// Whether drawn lines should be permanent or fade away after a while
+    pub permanent: bool,
+}
+
+/// Drawing mode - specifies the type of drawing operation or disabled state.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", content = "settings")]
+pub enum DrawingMode {
+    /// Drawing mode is disabled
+    Disabled,
+    /// Standard drawing mode with its settings
+    Draw(DrawSettings),
+    /// Click animation mode
+    ClickAnimation,
+}
+
 /// Represents all possible client events that can be sent between room participants.
 ///
 /// This enum defines the different types of events that can be transmitted through
@@ -816,6 +847,20 @@ pub enum ClientEvent {
     AddToClipboard(AddToClipboardData),
     /// Paste command from a remote controller
     PasteFromClipboard(PasteFromClipboardData),
+    /// Drawing mode change event (disabled, draw, or click animation)
+    DrawingMode(DrawingMode),
+    /// Drawing started at a point with a path identifier
+    DrawStart(DrawPathPoint),
+    /// Add a point to the current in-progress drawing
+    DrawAddPoint(ClientPoint),
+    /// Drawing ended at a point
+    DrawEnd(ClientPoint),
+    /// Clear a specific drawing path
+    DrawClearPath { path_id: u64 },
+    /// Clear all drawing paths
+    DrawClearAllPaths,
+    /// Click animation at a point
+    ClickAnimation(ClientPoint),
 }
 
 async fn handle_room_events(
@@ -910,6 +955,26 @@ async fn handle_room_events(
                         .send_event(UserEvent::AddToClipboard(add_to_clipboard_data)),
                     ClientEvent::PasteFromClipboard(paste_from_clipboard_data) => event_loop_proxy
                         .send_event(UserEvent::PasteFromClipboard(paste_from_clipboard_data)),
+                    ClientEvent::DrawingMode(drawing_mode) => {
+                        event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode, sid))
+                    }
+                    ClientEvent::DrawStart(draw_path_point) => event_loop_proxy.send_event(
+                        UserEvent::DrawStart(draw_path_point.point, draw_path_point.path_id, sid),
+                    ),
+                    ClientEvent::DrawAddPoint(point) => {
+                        event_loop_proxy.send_event(UserEvent::DrawAddPoint(point, sid))
+                    }
+                    ClientEvent::DrawEnd(point) => {
+                        event_loop_proxy.send_event(UserEvent::DrawEnd(point, sid))
+                    }
+                    ClientEvent::DrawClearPath { path_id } => {
+                        event_loop_proxy.send_event(UserEvent::DrawClearPath(path_id, sid))
+                    }
+                    ClientEvent::DrawClearAllPaths => {
+                        event_loop_proxy.send_event(UserEvent::DrawClearAllPaths(sid))
+                    }
+                    ClientEvent::ClickAnimation(point) => event_loop_proxy
+                        .send_event(UserEvent::ClickAnimationFromParticipant(point, sid)),
                     _ => Ok(()),
                 };
                 if let Err(e) = res {

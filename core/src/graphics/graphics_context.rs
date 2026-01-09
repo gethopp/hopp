@@ -14,11 +14,6 @@ use winit::window::Window;
 
 #[cfg(target_os = "windows")]
 use super::direct_composition::DirectComposition;
-
-#[path = "marker.rs"]
-mod marker;
-use marker::MarkerRenderer;
-
 #[path = "cursor.rs"]
 pub mod cursor;
 use cursor::{Cursor, CursorsRenderer};
@@ -29,6 +24,13 @@ use click_animation::ClickAnimationRenderer;
 
 #[path = "point.rs"]
 pub mod point;
+
+#[path = "iced_renderer.rs"]
+pub mod iced_renderer;
+use iced_renderer::IcedRenderer;
+
+#[path = "draw.rs"]
+pub mod draw;
 
 /// Errors that can occur during overlay graphics operations.
 #[derive(Error, Debug)]
@@ -133,11 +135,11 @@ pub struct GraphicsContext<'a> {
     #[cfg(target_os = "windows")]
     _direct_composition: DirectComposition,
 
-    /// Renderer for corner markers indicating overlay boundaries
-    marker_renderer: MarkerRenderer,
-
     /// Renderer for click animations
     click_animation_renderer: ClickAnimationRenderer,
+
+    /// Renderer for iced graphics
+    iced_renderer: IcedRenderer,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -222,6 +224,7 @@ impl<'a> GraphicsContext<'a> {
             label: None,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
         .map_err(|_| OverlayError::DeviceRequestError)?;
 
@@ -273,18 +276,6 @@ impl<'a> GraphicsContext<'a> {
 
         let cursor_renderer = CursorsRenderer::create(&device, surface_config.format);
 
-        let marker_renderer = MarkerRenderer::new(
-            &device,
-            &queue,
-            surface_config.format,
-            &texture_path,
-            Extent {
-                width: size.width as f64,
-                height: size.height as f64,
-            },
-            scale,
-        )?;
-
         let click_animation_renderer = ClickAnimationRenderer::create(
             &device,
             &queue,
@@ -297,6 +288,15 @@ impl<'a> GraphicsContext<'a> {
             scale,
         )?;
 
+        let iced_renderer = IcedRenderer::new(
+            &device,
+            &queue,
+            surface_config.format,
+            &adapter,
+            &window_arc,
+            &texture_path,
+        );
+
         Ok(Self {
             surface,
             device,
@@ -305,8 +305,8 @@ impl<'a> GraphicsContext<'a> {
             cursor_renderer,
             #[cfg(target_os = "windows")]
             _direct_composition: direct_composition,
-            marker_renderer,
             click_animation_renderer,
+            iced_renderer,
         })
     }
 
@@ -398,6 +398,7 @@ impl<'a> GraphicsContext<'a> {
                     }),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             occlusion_query_set: None,
@@ -407,13 +408,13 @@ impl<'a> GraphicsContext<'a> {
 
         cursor_controller.draw(&mut render_pass, self);
 
-        self.marker_renderer.draw(&mut render_pass);
         self.click_animation_renderer
             .draw(&mut render_pass, &self.queue);
-
         drop(render_pass);
 
         self.queue.submit(std::iter::once(encoder.finish()));
+
+        self.iced_renderer.draw(&output, &view);
 
         self.window.pre_present_notify();
 
@@ -437,6 +438,77 @@ impl<'a> GraphicsContext<'a> {
         log::debug!("GraphicsContext::enable_click_animation: {position:?}");
         self.click_animation_renderer
             .enable_click_animation(position);
+    }
+
+    /// Adds a new participant to the draw manager with their color.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `color` - Hex color string for the participant's drawings
+    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
+        self.iced_renderer.add_draw_participant(sid, color);
+    }
+
+    /// Removes a participant from the draw manager.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant to remove
+    pub fn remove_draw_participant(&mut self, sid: &str) {
+        self.iced_renderer.remove_draw_participant(sid);
+    }
+
+    /// Sets the drawing mode for a specific participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `mode` - The drawing mode to set
+    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
+        self.iced_renderer.set_drawing_mode(sid, mode);
+    }
+
+    /// Starts a new drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Starting point of the path
+    /// * `path_id` - Unique identifier for the drawing path
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        self.iced_renderer.draw_start(sid, point, path_id);
+    }
+
+    /// Adds a point to the current drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Point to add to the current path
+    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+        self.iced_renderer.draw_add_point(sid, point);
+    }
+
+    /// Ends the current drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `point` - Final point of the path
+    pub fn draw_end(&mut self, sid: &str, point: Position) {
+        self.iced_renderer.draw_end(sid, point);
+    }
+
+    /// Clears a specific drawing path for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    /// * `path_id` - Unique identifier for the drawing path to clear
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        self.iced_renderer.draw_clear_path(sid, path_id);
+    }
+
+    /// Clears all drawing paths for a participant.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID identifying the participant
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        self.iced_renderer.draw_clear_all_paths(sid);
     }
 }
 

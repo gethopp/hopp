@@ -28,6 +28,23 @@ export const getAbsolutePosition = (el: HTMLElement, mousePos: TPMouseMove) => {
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export const applyCursorRippleEffect = (x: number, y: number, color?: string) => {
+  const ripple = document.createElement("div");
+
+  ripple.className = "click-ripple";
+  if (color) {
+    ripple.style.borderColor = color;
+  }
+  document.body.appendChild(ripple);
+
+  ripple.style.left = `${x - 10}px`;
+  ripple.style.top = `${y - 10}px`;
+  ripple.style.animation = "click-ripple-effect 0.8s ease-out forwards";
+  ripple.onanimationend = () => {
+    document.body.removeChild(ripple);
+  };
+};
+
 export async function getMicrophones(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((d) => d.kind === "audioinput");

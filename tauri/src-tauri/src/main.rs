@@ -431,6 +431,24 @@ fn set_last_used_mic(app: tauri::AppHandle, mic: String) {
 }
 
 #[tauri::command]
+fn get_last_drawing_mode(app: tauri::AppHandle) -> Option<String> {
+    log::info!("get_last_drawing_mode");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.last_drawing_mode();
+    log::info!("get_last_drawing_mode: {value:?}");
+    value
+}
+
+#[tauri::command]
+fn set_last_drawing_mode(app: tauri::AppHandle, mode: String) {
+    log::info!("set_last_drawing_mode: {mode}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_last_drawing_mode(mode);
+}
+
+#[tauri::command]
 fn minimize_main_window(app: tauri::AppHandle) {
     log::info!("minimize_main_window");
     if let Some(window) = app.get_webview_window("main") {
@@ -979,6 +997,8 @@ fn main() {
             set_dock_icon_visible,
             set_last_used_mic,
             get_last_used_mic,
+            set_last_drawing_mode,
+            get_last_drawing_mode,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,

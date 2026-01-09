@@ -227,6 +227,14 @@ const setLastUsedMic = async (micId: string) => {
   return await invoke("set_last_used_mic", { mic: micId });
 };
 
+const getLastDrawingMode = async () => {
+  return await invoke<string | null>("get_last_drawing_mode");
+};
+
+const setLastDrawingMode = async (mode: string) => {
+  return await invoke("set_last_drawing_mode", { mode });
+};
+
 const minimizeMainWindow = async () => {
   return await invoke("minimize_main_window");
 };
@@ -342,6 +350,8 @@ export const tauriUtils = {
   setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
+  getLastDrawingMode,
+  setLastDrawingMode,
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,

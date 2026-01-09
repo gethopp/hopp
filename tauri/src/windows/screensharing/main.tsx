@@ -4,7 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { SharingScreen } from "@/components/SharingScreen/SharingScreen";
 import { SharingProvider, useSharingContext } from "./context";
-import { ScreenSharingControls, RemoteControlDisabledIndicator } from "@/components/SharingScreen/Controls";
+import {
+  ScreenSharingControls,
+  RemoteControlDisabledIndicator,
+  DrawingSettingsButton,
+} from "@/components/SharingScreen/Controls";
 import { Toaster } from "react-hot-toast";
 import { useDisableNativeContextMenu, useResizeListener, useSystemTheme } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
@@ -231,8 +235,9 @@ function Window() {
         <div data-tauri-drag-region="no-drag" className="flex items-center justify-center pointer-events-none">
           <ScreenSharingControls className="pt-0" />
         </div>
-        <div className="flex items-center justify-end" data-tauri-drag-region="no-drag">
+        <div className="flex items-center justify-end gap-2" data-tauri-drag-region="no-drag">
           <RemoteControlDisabledIndicator />
+          <DrawingSettingsButton />
         </div>
       </div>
       <div className="content px-1 pb-0.5 pt-[10px] overflow-hidden">
