@@ -15,8 +15,9 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
+    app_state::{AppState, StoredMode},
+    create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
+    setup_start_on_launch, setup_tray_icon, AppData,
 };
 #[cfg(target_os = "macos")]
 use hopp::{set_window_corner_radius, CORNER_RADIUS};
@@ -138,8 +139,8 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
 fn play_sound(app: tauri::AppHandle, sound_name: String) {
     log::info!("play_sound");
     let tmp_sound_name = sound_name.split("/").last();
-    if tmp_sound_name.is_some() {
-        log::info!("Playing sound: {}", tmp_sound_name.unwrap());
+    if let Some(tmp_sound_name) = tmp_sound_name {
+        log::info!("Playing sound: {}", tmp_sound_name);
     }
     /*
      * Check if the sound is already playing, if it has finished we
@@ -206,8 +207,8 @@ fn play_sound(app: tauri::AppHandle, sound_name: String) {
 fn stop_sound(app: tauri::AppHandle, sound_name: String) {
     log::info!("stop_sound");
     let tmp_sound_name = sound_name.split("/").last();
-    if tmp_sound_name.is_some() {
-        log::info!("Stopping sound: {}", tmp_sound_name.unwrap());
+    if let Some(tmp_sound_name) = tmp_sound_name {
+        log::info!("Stopping sound: {}", tmp_sound_name);
     }
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
@@ -428,6 +429,24 @@ fn set_last_used_mic(app: tauri::AppHandle, mic: String) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_last_used_mic(mic);
+}
+
+#[tauri::command]
+fn get_last_mode(app: tauri::AppHandle) -> Option<StoredMode> {
+    log::info!("get_last_mode");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.last_mode();
+    log::info!("get_last_mode: {value:?}");
+    value
+}
+
+#[tauri::command]
+fn set_last_mode(app: tauri::AppHandle, mode: StoredMode) {
+    log::info!("set_last_mode: {mode:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_last_mode(mode);
 }
 
 #[tauri::command]
@@ -759,8 +778,8 @@ fn main() {
 
             /* Clear app logs in the beginning of a session. */
             let dir = app.path().app_log_dir();
-            if dir.is_err() {
-                log::warn!("Failed to get app log dir");
+            if let Err(e) = dir {
+                log::warn!("Failed to get app log dir: {e:?}");
             } else {
                 let dir = dir.unwrap();
                 let log_file = dir.join("hopp.log");
@@ -979,6 +998,8 @@ fn main() {
             set_dock_icon_visible,
             set_last_used_mic,
             get_last_used_mic,
+            set_last_mode,
+            get_last_mode,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,

@@ -57,6 +57,7 @@ use winit::platform::windows::WindowExtWindows;
 use winit::window::{WindowAttributes, WindowLevel};
 
 use crate::overlay_window::DisplayInfo;
+use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
 
 // Constants for magic numbers
@@ -782,6 +783,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let sid = participant.sid.clone();
                 if let Err(e) = remote_control.cursor_controller.add_controller(
                     &mut remote_control.gfx,
                     participant.sid,
@@ -790,6 +792,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!(
                         "user_event: Participant connected: Error adding controller: {e:?}"
                     );
+                    return;
+                }
+                // Add participant to draw manager with their color
+                if let Some(color) = remote_control.cursor_controller.get_participant_color(&sid) {
+                    remote_control.gfx.add_draw_participant(sid, color);
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
@@ -802,6 +809,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 remote_control
                     .cursor_controller
                     .remove_controller(participant.sid.as_str());
+                // Remove participant from draw manager
+                remote_control
+                    .gfx
+                    .remove_draw_participant(participant.sid.as_str());
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
@@ -883,6 +894,122 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     paste_from_clipboard_data.data,
                 );
             }
+            UserEvent::DrawingMode(drawing_mode, sid) => {
+                log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none drawing mode");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                match &drawing_mode {
+                    DrawingMode::Disabled => {
+                        remote_control
+                            .cursor_controller
+                            .set_controller_pointer_enabled(false, sid.as_str());
+                    }
+                    _ => {
+                        remote_control
+                            .cursor_controller
+                            .set_controller_pointer_enabled(true, sid.as_str());
+                    }
+                }
+                remote_control
+                    .gfx
+                    .set_drawing_mode(sid.as_str(), drawing_mode);
+            }
+            UserEvent::DrawStart(point, path_id, sid) => {
+                log::debug!("user_event: DrawStart: {:?} {} {}", point, path_id, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw start");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                remote_control
+                    .gfx
+                    .draw_start(sid.as_str(), pixel_position, path_id);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
+            }
+            UserEvent::DrawAddPoint(point, sid) => {
+                log::debug!("user_event: DrawAddPoint: {:?} {}", point, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw add point");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                remote_control
+                    .gfx
+                    .draw_add_point(sid.as_str(), pixel_position);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
+            }
+            UserEvent::DrawEnd(point, sid) => {
+                log::debug!("user_event: DrawEnd: {:?} {}", point, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw end");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
+                remote_control.gfx.draw_end(sid.as_str(), pixel_position);
+                remote_control.cursor_controller.cursor_move_controller(
+                    point.x,
+                    point.y,
+                    sid.as_str(),
+                );
+            }
+            UserEvent::DrawClearPath(path_id, sid) => {
+                log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw clear path");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+                remote_control.cursor_controller.trigger_render();
+            }
+            UserEvent::DrawClearAllPaths(sid) => {
+                log::debug!("user_event: DrawClearAllPaths: {}", sid);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none draw clear all paths");
+                    return;
+                }
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                remote_control.gfx.draw_clear_all_paths(sid.as_str());
+                remote_control.cursor_controller.trigger_render();
+            }
+            UserEvent::ClickAnimationFromParticipant(point, sid) => {
+                log::debug!(
+                    "user_event: ClickAnimationFromParticipant: {:?} {}",
+                    point,
+                    sid
+                );
+                if self.remote_control.is_none() {
+                    log::warn!(
+                        "user_event: remote control is none click animation from participant"
+                    );
+                    return;
+                }
+                let remote_control = &self.remote_control.as_ref().unwrap();
+                let position = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                remote_control
+                    .cursor_controller
+                    .trigger_click_animation(position, sid.as_str());
+            }
         }
     }
 
@@ -907,9 +1034,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
                 let cursor_controller = &mut remote_control.cursor_controller;
-                gfx.draw(cursor_controller);
+                remote_control.gfx.draw(cursor_controller);
             }
             _ => {}
         }
@@ -971,6 +1097,13 @@ pub enum UserEvent {
     SentryMetadata(SentryMetadata),
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),
+    DrawingMode(room_service::DrawingMode, String),
+    DrawStart(room_service::ClientPoint, u64, String),
+    DrawAddPoint(room_service::ClientPoint, String),
+    DrawEnd(room_service::ClientPoint, String),
+    DrawClearPath(u64, String),
+    DrawClearAllPaths(String),
+    ClickAnimationFromParticipant(room_service::ClientPoint, String),
 }
 
 pub struct RenderEventLoop {

@@ -93,6 +93,90 @@ export const PPasteFromClipboard = z.object({
 });
 export type TPPasteFromClipboard = z.infer<typeof PPasteFromClipboard>;
 
+// Drawing event payloads
+export const PClientPoint = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+export type TPClientPoint = z.infer<typeof PClientPoint>;
+
+export const PDrawPathPoint = z.object({
+  point: PClientPoint,
+  path_id: z.number(),
+});
+export type TPDrawPathPoint = z.infer<typeof PDrawPathPoint>;
+
+export const PDrawStart = z.object({
+  type: z.literal("DrawStart"),
+  payload: PDrawPathPoint,
+});
+export type TPDrawStart = z.infer<typeof PDrawStart>;
+
+export const PDrawAddPoint = z.object({
+  type: z.literal("DrawAddPoint"),
+  payload: PClientPoint,
+});
+export type TPDrawAddPoint = z.infer<typeof PDrawAddPoint>;
+
+export const PDrawEnd = z.object({
+  type: z.literal("DrawEnd"),
+  payload: PClientPoint,
+});
+export type TPDrawEnd = z.infer<typeof PDrawEnd>;
+
+export const PClickAnimation = z.object({
+  type: z.literal("ClickAnimation"),
+  payload: PClientPoint,
+});
+export type TPClickAnimation = z.infer<typeof PClickAnimation>;
+
+export const PDrawClearPath = z.object({
+  type: z.literal("DrawClearPath"),
+  payload: z.object({
+    path_id: z.number(),
+  }),
+});
+export type TPDrawClearPath = z.infer<typeof PDrawClearPath>;
+
+export const PDrawClearAllPaths = z.object({
+  type: z.literal("DrawClearAllPaths"),
+});
+export type TPDrawClearAllPaths = z.infer<typeof PDrawClearAllPaths>;
+
+export const PDrawSettings = z.object({
+  permanent: z.boolean(),
+});
+export type TPDrawSettings = z.infer<typeof PDrawSettings>;
+
+export const PDrawingMode = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("Disabled"),
+  }),
+  z.object({
+    type: z.literal("Draw"),
+    settings: PDrawSettings,
+  }),
+  z.object({
+    type: z.literal("ClickAnimation"),
+  }),
+]);
+export type TDrawingMode = z.infer<typeof PDrawingMode>;
+
+export const PDrawingModeEvent = z.object({
+  type: z.literal("DrawingMode"),
+  payload: PDrawingMode,
+});
+export type TPDrawingModeEvent = z.infer<typeof PDrawingModeEvent>;
+
+// Stored mode type for persisting user's preferred interaction mode
+// (intentionally separate from PDrawingMode for future consolidation)
+export const PStoredMode = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("RemoteControl") }),
+  z.object({ type: z.literal("ClickAnimation") }),
+  z.object({ type: z.literal("Draw"), permanent: z.boolean() }),
+]);
+export type TStoredMode = z.infer<typeof PStoredMode>;
+
 // WebSocket Message Types
 export const MessageType = z.enum([
   "success",

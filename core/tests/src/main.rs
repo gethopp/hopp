@@ -5,6 +5,7 @@ mod events;
 mod livekit_utils;
 mod remote_clipboard;
 mod remote_cursor;
+mod remote_drawing;
 mod remote_keyboard;
 mod screenshare_client;
 
@@ -37,6 +38,12 @@ enum Commands {
         #[arg(value_enum)]
         test_type: ScreenshareTest,
     },
+    /// Test drawing functionality
+    Drawing {
+        /// Type of drawing test to run
+        #[arg(value_enum)]
+        test_type: DrawingTest,
+    },
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -67,16 +74,8 @@ enum CursorTest {
     WindowEdges,
     /// Test concurrent scrolling
     ConcurrentScrolling,
-    /// Click animation
-    ClickAnimation,
-    /// Test transitions: Remote enabled with animation toggling
-    TransitionsRemoteEnabledAnimation,
     /// Test transitions: Remote enabled then disabled
     TransitionsRemoteEnabledThenDisabled,
-    /// Test transitions: Remote disabled with animation
-    TransitionsRemoteDisabledAnimation,
-    /// Test transitions: Mixed remote control and animation
-    TransitionsMixed,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -97,6 +96,18 @@ enum ScreenshareTest {
     Basic,
     /// Test available content consistency across multiple requests
     AvailableContent,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum DrawingTest {
+    /// Test drawing with permanent mode ON (lines stay visible)
+    PermanentOn,
+    /// Test drawing with permanent mode OFF (lines fade away)
+    PermanentOff,
+    /// Test click animation mode
+    ClickAnimation,
+    /// Test 4 participants drawing 3 lines each concurrently in different quarters
+    FourParticipantsConcurrent,
 }
 
 #[tokio::main]
@@ -160,25 +171,9 @@ async fn main() -> io::Result<()> {
                     println!("Running concurrent scrolling test...");
                     remote_cursor::test_concurrent_scrolling().await?;
                 }
-                CursorTest::ClickAnimation => {
-                    println!("Running click animation test...");
-                    remote_cursor::test_click_animation().await?;
-                }
-                CursorTest::TransitionsRemoteEnabledAnimation => {
-                    println!("Running transitions test: Remote enabled with animation...");
-                    remote_cursor::test_transitions_remote_enabled_with_animation().await?;
-                }
                 CursorTest::TransitionsRemoteEnabledThenDisabled => {
                     println!("Running transitions test: Remote enabled then disabled...");
                     remote_cursor::test_transitions_remote_enabled_then_disabled().await?;
-                }
-                CursorTest::TransitionsRemoteDisabledAnimation => {
-                    println!("Running transitions test: Remote disabled with animation...");
-                    remote_cursor::test_transitions_remote_disabled_with_animation().await?;
-                }
-                CursorTest::TransitionsMixed => {
-                    println!("Running transitions test: Mixed remote and animation...");
-                    remote_cursor::test_transitions_mixed_remote_and_animation().await?;
                 }
             }
             println!("Cursor test finished.");
@@ -221,6 +216,27 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Screenshare test finished.");
+        }
+        Commands::Drawing { test_type } => {
+            match test_type {
+                DrawingTest::PermanentOn => {
+                    println!("Running drawing test with permanent mode ON...");
+                    remote_drawing::test_draw_and_clear_paths_individually().await?;
+                }
+                DrawingTest::PermanentOff => {
+                    println!("Running drawing test with permanent mode OFF...");
+                    remote_drawing::test_draw_and_clear_all_paths().await?;
+                }
+                DrawingTest::ClickAnimation => {
+                    println!("Running click animation mode test...");
+                    remote_drawing::test_click_animation_mode().await?;
+                }
+                DrawingTest::FourParticipantsConcurrent => {
+                    println!("Running 4 participants concurrent drawing test...");
+                    remote_drawing::test_four_participants_concurrent_drawing().await?;
+                }
+            }
+            println!("Drawing test finished.");
         }
     }
 

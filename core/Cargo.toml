@@ -1,6 +1,6 @@
 [package]
 name = "hopp_core"
-version = "0.0.39"
+version = "0.0.50"
 edition = "2021"
 authors = ["Iason Paraskevopoulos <iaswnparaskev@gmail.com>"]
 
@@ -46,8 +46,8 @@ glib = "0.21.1"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-winit = { version = "0.30.5", features = [ "rwh_06", "rwh_05" ] }
-wgpu = "25.0.0"
+winit = { version = "0.30.12", features = [ "rwh_06", "rwh_05" ] }
+wgpu = "27.0.1"
 pollster = "0.3.0"
 bytemuck = { version = "1.16", features = [ "derive" ] }
 cgmath = "0.18"
@@ -68,3 +68,7 @@ sysinfo = "0.35.2"
 resvg = "0.45.1"
 fontdb = "0.23.0"
 arboard = "3.6.1"
+iced_winit = "0.14.0"
+iced_wgpu = "0.14.0"
+iced = { version = "0.14.0", features = ["canvas", "image"] }
+iced_core = "0.14.0"

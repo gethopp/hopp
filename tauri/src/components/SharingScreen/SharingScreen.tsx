@@ -2,13 +2,14 @@ import ReactJson from "react-json-view";
 import Draggable from "react-draggable";
 import { throttle } from "lodash";
 import { RiDraggable } from "react-icons/ri";
-import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
-import { Track } from "livekit-client";
+import { HiPencil } from "react-icons/hi2";
+import { LiveKitRoom, useDataChannel, useLocalParticipant, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
+import { ConnectionState, DataPublishOptions, LocalParticipant, Track } from "livekit-client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
 import { useResizeListener } from "@/lib/hooks";
-import { cn, getAbsolutePosition, getRelativePosition } from "@/lib/utils";
+import { cn, getRelativePosition, applyCursorRippleEffect } from "@/lib/utils";
 import {
   TPAddToClipboard,
   TPKeystroke,
@@ -18,16 +19,32 @@ import {
   TPPasteFromClipboard,
   TPRemoteControlEnabled,
   TPWheelEvent,
+  TPDrawStart,
+  TPDrawAddPoint,
+  TPDrawEnd,
+  TPDrawingModeEvent,
+  TPDrawClearPath,
+  TPDrawClearAllPaths,
+  TPClickAnimation,
 } from "@/payloads";
 import { useHover, useMouse } from "@uidotdev/usehooks";
 import { DEBUGGING_VIDEO_TRACK, OS } from "@/constants";
-import { Cursor, SvgComponent } from "../ui/cursor";
+import { SvgComponent } from "../ui/cursor";
+import { DrawingLayer } from "../ui/drawing-layer";
+import { DrawParticipant } from "../ui/draw-participant";
+import { RemoteCursors } from "../ui/remote-cursors";
 import toast from "react-hot-toast";
 import useStore from "@/store/store";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getNextPathId, SVG_BADGE_COLORS } from "@/windows/screensharing/utils";
 
-const CURSORS_TOPIC = "participant_location";
-const PARTICIPANT_IN_CONTROL_TOPIC = "participant_in_control";
+enum Topics {
+  CURSORS = "participant_location",
+  PARTICIPANT_IN_CONTROL = "participant_in_control",
+  DRAW = "draw",
+}
+
+const LOCAL_PARTICIPANT_ID = "local";
 
 type SharingScreenProps = {
   serverURL: string;
@@ -35,7 +52,23 @@ type SharingScreenProps = {
 };
 
 const encoder = new TextEncoder();
-// const decoder = new TextDecoder();
+
+export const publishLocalParticipantData = (
+  localParticipant: LocalParticipant | undefined,
+  payload: any,
+  topic: Topics,
+  settings?: DataPublishOptions,
+): Promise<void> => {
+  if (!localParticipant) {
+    return Promise.resolve();
+  }
+
+  return localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
+    reliable: true,
+    topic: topic,
+    ...settings,
+  });
+};
 
 export function SharingScreen(props: SharingScreenProps) {
   const { serverURL, token } = props;
@@ -47,32 +80,9 @@ export function SharingScreen(props: SharingScreenProps) {
   );
 }
 
-// Define cursor slot interface
-interface CursorSlot {
-  participantId: string | null;
-  participantName: string;
-  x: number;
-  y: number;
-  lastActivity: number;
-}
-
 const ConsumerComponent = React.memo(() => {
   // All state hooks first
   const [updateMouseControls, setUpdateMouseControls] = useState(false);
-
-  // Hand-picked colors for the tailwind colors page:
-  // https://tailwindcss.com/docs/colors
-  const SVG_BADGE_COLORS = ["#0040FF", "#7CCF00", "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040"];
-  // Pre-create 10 cursor slots, all hidden initially
-  const [cursorSlots, setCursorSlots] = useState<CursorSlot[]>(() =>
-    Array.from({ length: SVG_BADGE_COLORS.length }, (_, index) => ({
-      participantId: null,
-      participantName: "Unknown",
-      x: -1000, // Position off-screen
-      y: -1000, // Position off-screen
-      lastActivity: Date.now(),
-    })),
-  );
 
   // All refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -82,87 +92,33 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
-  const { isSharingMouse, isSharingKeyEvents, parentKeyTrap, setStreamDimensions } = useSharingContext();
+  const { state: roomState } = useRoomContext();
+  const {
+    isSharingMouse,
+    isSharingKeyEvents,
+    drawingMode,
+    parentKeyTrap,
+    setStreamDimensions,
+    rightClickToClear,
+    clearDrawingsSignal,
+  } = useSharingContext();
+  const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
-  const { updateCallTokens } = useStore();
-  const [mouse, mouseRef] = useMouse();
+  const { updateCallTokens, callTokens } = useStore();
+  const isRemoteControlEnabled = callTokens?.isRemoteControlEnabled ?? false;
+
+  const [mouse, _] = useMouse();
 
   // Boolean to control when to show custom cursor
   const [showCustomCursor, setShowCustomCursor] = useState(true);
 
+  // Draw participants map - stored in ref for efficiency
+  // Initialized with local participant
+  const drawParticipantsRef = useRef<Map<string, DrawParticipant>>(
+    new Map([[LOCAL_PARTICIPANT_ID, new DrawParticipant("#FFDF20", drawingMode)]]),
+  );
+
   // Data channel hooks - must be called unconditionally
-  const { message: latestMessage, send } = useDataChannel(CURSORS_TOPIC, (msg) => {
-    const decoder = new TextDecoder();
-    const payload: TPMouseMove = JSON.parse(decoder.decode(msg.payload));
-
-    if (!videoRef.current) return;
-
-    const { absoluteX, absoluteY } = getAbsolutePosition(videoRef.current, payload);
-
-    const participantName = msg.from?.name ?? "Unknown";
-    const participantId = msg.from?.identity ?? "Unknown";
-
-    /* We need the id to be unique for each participant */
-    if (participantId === "Unknown") return;
-
-    /*
-     * We are keeping it simple for now and just set a slot to a participant
-     * the first time they move their mouse.
-     *
-     * The problem with this approach is
-     * that we might exhaust the number of available colors and just
-     * circling through them, this can happen in the following scenario:
-     *  - 10 participants join the call
-     *  - 10 moved their mouse
-     *  - 1 disconnected
-     *  - Another joined
-     *  - The new participant can't find a slot.
-     *
-     * To avoid this, we just use 20 available slots for now.
-     */
-    setCursorSlots((prev) => {
-      const updated = [...prev];
-
-      // Find existing slot for this participant
-      let slotIndex = updated.findIndex((slot) => slot.participantId === participantId);
-
-      // If not found, find first available slot
-      if (slotIndex === -1) {
-        slotIndex = updated.findIndex((slot) => slot.participantId === null);
-      }
-
-      let name = updated[slotIndex]?.participantName ?? "Unknown";
-      // Update the slot
-      if (slotIndex !== -1) {
-        if (name === "Unknown") {
-          name = participantName.split(" ")[0] ?? "Unknown";
-          // If a name already exists, start adding characters until they don't match
-          let uniqueName = name;
-          let fullName = participantName;
-          let j = fullName.indexOf(" ") + 2;
-          while (
-            updated.slice(0, slotIndex).some((slot) => slot?.participantName === uniqueName) &&
-            j <= fullName.length
-          ) {
-            uniqueName = fullName.slice(0, j);
-            j++;
-          }
-          name = uniqueName;
-        }
-
-        updated[slotIndex] = {
-          participantId,
-          participantName: name,
-          x: absoluteX,
-          y: absoluteY,
-          lastActivity: Date.now(),
-        };
-      }
-
-      return updated;
-    });
-  });
-
   useDataChannel("remote_control_enabled", (msg) => {
     const decoder = new TextDecoder();
     const payload: TPRemoteControlEnabled = JSON.parse(decoder.decode(msg.payload));
@@ -185,7 +141,7 @@ const ConsumerComponent = React.memo(() => {
     }
   });
 
-  useDataChannel(PARTICIPANT_IN_CONTROL_TOPIC, (msg) => {
+  useDataChannel(Topics.PARTICIPANT_IN_CONTROL, (msg) => {
     const decoder = new TextDecoder();
     const payload = decoder.decode(msg.payload);
     if (payload === localParticipant.localParticipant?.sid) {
@@ -194,38 +150,6 @@ const ConsumerComponent = React.memo(() => {
       setShowCustomCursor(true);
     }
   });
-
-  // Hide cursors after 5 seconds of inactivity
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setCursorSlots((prev) =>
-        prev.map((slot) => {
-          if (slot.participantId && now - slot.lastActivity > 5000) {
-            return { ...slot, x: -1000, y: -1000 };
-          }
-          return slot;
-        }),
-      );
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // Apply cursor ripple effect function
-  const applyCursorRippleEffect = (e: MouseEvent) => {
-    const ripple = document.createElement("div");
-
-    ripple.className = "click-ripple";
-    document.body.appendChild(ripple);
-
-    ripple.style.left = `${e.clientX - 10}px`;
-    ripple.style.top = `${e.clientY - 10}px`;
-    ripple.style.animation = "click-ripple-effect 0.8s ease-out forwards";
-    ripple.onanimationend = () => {
-      document.body.removeChild(ripple);
-    };
-  };
 
   /**
    * Currently returning the last screen share track
@@ -271,6 +195,114 @@ const ConsumerComponent = React.memo(() => {
     }
   }, [track, streamWidth, streamHeight, setStreamDimensions]);
 
+  // Update local participant's drawing mode when it changes
+  useEffect(() => {
+    const localDrawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+    if (localDrawParticipant) {
+      localDrawParticipant.setDrawingMode(drawingMode);
+    }
+  }, [drawingMode]);
+
+  // Set/update callback for path removal events (depends on localParticipant)
+  useEffect(() => {
+    const localDrawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+    if (!localDrawParticipant) return;
+
+    // Set callback to send DrawClearPath events when paths are removed
+    localDrawParticipant.setOnPathRemoved((pathIds: number[]) => {
+      if (!localParticipant.localParticipant) return;
+
+      pathIds.forEach((pathId: number) => {
+        const payload: TPDrawClearPath = {
+          type: "DrawClearPath",
+          payload: { path_id: pathId },
+        };
+        publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+      });
+    });
+  }, [localParticipant.localParticipant]);
+
+  // Send DrawingMode event when drawing mode changes or when participant first connects
+  // Uses a ref to track the last sent mode to avoid unnecessary sends
+  const lastSentDrawingModeRef = useRef<string | null>(null);
+  const isFirstSendRef = useRef<boolean>(true);
+  const failsafeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!localParticipant.localParticipant || roomState !== ConnectionState.Connected) {
+      // Reset tracking when disconnected
+      lastSentDrawingModeRef.current = null;
+      isFirstSendRef.current = true;
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+        failsafeTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // Serialize current mode to compare with last sent
+    const currentModeStr = JSON.stringify(drawingMode);
+
+    // Only send if mode changed or we haven't sent yet after connecting
+    if (lastSentDrawingModeRef.current === currentModeStr) return;
+
+    const payload: TPDrawingModeEvent = {
+      type: "DrawingMode",
+      payload: drawingMode,
+    };
+
+    publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+
+    lastSentDrawingModeRef.current = currentModeStr;
+
+    // Failsafe: On the first time this event is sent, resend it after 2.5 seconds.
+    // This is necessary because in core we sometimes receive the event without a participant,
+    // which means the state is not applied. Resending ensures the state is properly set.
+    // Only do this if the mode is not disabled.
+    if (isFirstSendRef.current && drawingMode.type !== "Disabled") {
+      isFirstSendRef.current = false;
+
+      // Clear any existing failsafe timeout
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+      }
+
+      failsafeTimeoutRef.current = setTimeout(() => {
+        if (localParticipant.localParticipant && roomState === ConnectionState.Connected) {
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+        }
+        failsafeTimeoutRef.current = null;
+      }, 2500);
+    }
+
+    return () => {
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+        failsafeTimeoutRef.current = null;
+      }
+    };
+  }, [drawingMode, localParticipant.localParticipant, roomState]);
+
+  // Watch for clear drawings signal and clear all drawings when it changes
+  useEffect(() => {
+    // Skip initial render (signal starts at 0)
+    if (clearDrawingsSignal === 0) return;
+
+    // Send DrawClearAllPaths event if we have a local participant
+    if (localParticipant.localParticipant) {
+      const payload: TPDrawClearAllPaths = {
+        type: "DrawClearAllPaths",
+      };
+
+      publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+    }
+
+    // Clear all drawings from all participants (local and remote)
+    drawParticipantsRef.current.forEach((participant) => {
+      participant.clear();
+    });
+  }, [clearDrawingsSignal, localParticipant.localParticipant]);
+
   /*
    * We do this because we need a way to retrigger the useEffect below,
    * adding the videoRef.current to the dependency array doesn't work because
@@ -291,28 +323,77 @@ const ConsumerComponent = React.memo(() => {
     const handleMouseMove = throttle((e: MouseEvent) => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-        // console.debug(`Mouse moving 🚶: relativeX: ${relativeX}, relativeY: ${relativeY}`);
+        // If in drawing mode and left button is pressed, send DrawAddPoint
+        if (isDrawingMode && (e.buttons & 1) === 1) {
+          const payload: TPDrawAddPoint = {
+            type: "DrawAddPoint",
+            payload: { x: relativeX, y: relativeY },
+          };
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
-        const payload: TPMouseMove = {
-          type: "MouseMove",
-          payload: { x: relativeX, y: relativeY, pointer: true },
-        };
+          // Update local draw participant
+          const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+          if (drawParticipant) {
+            drawParticipant.handleDrawAddPoint(payload.payload);
+          }
+        } else {
+          // Normal mouse move
+          const payload: TPMouseMove = {
+            type: "MouseMove",
+            payload: { x: relativeX, y: relativeY, pointer: true },
+          };
 
-        localParticipant.localParticipant?.publishData(encoder.encode(JSON.stringify(payload)), {
-          reliable: true,
-          topic: CURSORS_TOPIC,
-        });
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.CURSORS);
+        }
       }
     }, 30);
 
     const handleMouseDown = (e: MouseEvent) => {
       if (videoElement) {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
-        // console.debug(`Clicking down 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
-        // Add click pulse when NOT sharing mouse (pointing mode)
-        if (!isSharingMouse) {
-          applyCursorRippleEffect(e);
+        // If in drawing mode and left button, send DrawStart
+        if (isDrawingMode && e.button === 0) {
+          if (drawingMode.type === "ClickAnimation") {
+            // Show local ripple effect
+            applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
+
+            const payload: TPClickAnimation = {
+              type: "ClickAnimation",
+              payload: { x: relativeX, y: relativeY },
+            };
+
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+          } else {
+            const pathId = getNextPathId.next().value;
+            const payload: TPDrawStart = {
+              type: "DrawStart",
+              payload: { point: { x: relativeX, y: relativeY }, path_id: pathId },
+            };
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+
+            // Update local draw participant
+            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+            if (drawParticipant) {
+              drawParticipant.handleDrawStart(payload.payload.point, payload.payload.path_id);
+            }
+          }
+          return;
+        } else {
+          // Always show local ripple on left click (except when in Draw mode, handled above)
+          if (e.button === 0) {
+            applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
+
+            // If remote control is disabled, send ClickAnimation event instead of MouseClick
+            if (!isRemoteControlEnabled) {
+              const payload: TPClickAnimation = {
+                type: "ClickAnimation",
+                payload: { x: relativeX, y: relativeY },
+              };
+              publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+              return;
+            }
+          }
         }
 
         const payload: TPMouseClick = {
@@ -339,6 +420,29 @@ const ConsumerComponent = React.memo(() => {
         const { relativeX, relativeY } = getRelativePosition(videoElement, e);
         // console.debug(`Clicking up 🖱️: relativeX: ${relativeX}, relativeY: ${relativeY}, detail ${e.detail}`);
 
+        // If in drawing mode and left button was just released, send DrawEnd
+        if (isDrawingMode && e.button === 0) {
+          if (drawingMode.type !== "ClickAnimation") {
+            const payload: TPDrawEnd = {
+              type: "DrawEnd",
+              payload: { x: relativeX, y: relativeY },
+            };
+            publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+
+            // Update local draw participant
+            const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+            if (drawParticipant) {
+              drawParticipant.handleDrawEnd(payload.payload);
+            }
+          }
+          return;
+        } else {
+          // If remote control is disabled, skip sending MouseClick on left mouse up
+          if (!isRemoteControlEnabled) {
+            return;
+          }
+        }
+
         const payload: TPMouseClick = {
           type: "MouseClick",
           payload: {
@@ -360,6 +464,22 @@ const ConsumerComponent = React.memo(() => {
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
+      // If in drawing mode and right-click-to-clear is enabled, clear all drawings
+      if (isDrawingMode && drawingMode.type === "Draw" && rightClickToClear) {
+        e.stopPropagation();
+        // Send DrawClearAllPaths event on right-click
+        const payload: TPDrawClearAllPaths = {
+          type: "DrawClearAllPaths",
+        };
+        publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+
+        // Update local draw participant
+        const drawParticipant = drawParticipantsRef.current.get(LOCAL_PARTICIPANT_ID);
+        if (drawParticipant) {
+          drawParticipant.clear();
+        }
+        return;
+      }
     };
 
     const handleWheel = throttle((e: WheelEvent) => {
@@ -395,12 +515,15 @@ const ConsumerComponent = React.memo(() => {
     if (videoElement) {
       videoElement.addEventListener("mousemove", handleMouseMove);
       videoElement.addEventListener("mousedown", handleMouseDown);
+      videoElement.addEventListener("mouseup", handleMouseUp);
+      // Always add contextmenu handler when in drawing mode or sharing mouse
+      if (isDrawingMode || isSharingMouse) {
+        videoElement.addEventListener("contextmenu", handleContextMenu);
+      }
     }
 
     if (videoElement && isSharingMouse) {
       videoElement.addEventListener("wheel", handleWheel);
-      videoElement.addEventListener("mouseup", handleMouseUp);
-      videoElement.addEventListener("contextmenu", handleContextMenu);
     }
 
     return () => {
@@ -409,10 +532,12 @@ const ConsumerComponent = React.memo(() => {
         videoElement.removeEventListener("wheel", handleWheel);
         videoElement.removeEventListener("mousedown", handleMouseDown);
         videoElement.removeEventListener("mouseup", handleMouseUp);
-        videoElement.removeEventListener("contextmenu", handleContextMenu);
+        if (isDrawingMode || isSharingMouse) {
+          videoElement.removeEventListener("contextmenu", handleContextMenu);
+        }
       }
     };
-  }, [isSharingMouse, updateMouseControls]);
+  }, [isSharingMouse, isDrawingMode, drawingMode, updateMouseControls, rightClickToClear, isRemoteControlEnabled]);
 
   /**
    * Keyboard sharing logic
@@ -669,21 +794,9 @@ const ConsumerComponent = React.memo(() => {
         }}
       />
 
-      {cursorSlots.map((slot, index) => {
-        const color = SVG_BADGE_COLORS[index % SVG_BADGE_COLORS.length];
+      <DrawingLayer videoRef={videoRef} drawParticipantsRef={drawParticipantsRef} />
 
-        return (
-          <Cursor
-            key={index}
-            name={slot.participantName}
-            color={color}
-            style={{
-              left: `${slot.x}px`,
-              top: `${slot.y}px`,
-            }}
-          />
-        );
-      })}
+      <RemoteCursors videoRef={videoRef} />
 
       {/* Custom cursor rendered at mouse position */}
       {showCustomCursor && mouse.x !== null && mouse.y !== null && (
@@ -694,7 +807,12 @@ const ConsumerComponent = React.memo(() => {
             top: `${mouse.y - (videoRef.current?.getBoundingClientRect().top || 0) - 4}px`,
           }}
         >
-          <SvgComponent color="var(--color-cyan-800)" />
+          {drawingMode.type === "Draw" ?
+            <HiPencil
+              className="size-5 stroke-[1.5px] stroke-white rotate-75"
+              style={{ color: "var(--color-cyan-800)" }}
+            />
+          : <SvgComponent color="var(--color-cyan-800)" />}
         </div>
       )}
     </div>

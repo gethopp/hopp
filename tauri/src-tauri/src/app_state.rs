@@ -7,6 +7,22 @@ use std::{
 
 const OLD_USER_TOKEN_FILE: &str = "user_token.txt";
 
+/// Represents the user's preferred interaction mode for screen sharing sessions.
+/// This is stored persistently and restored when the user joins a new session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum StoredMode {
+    /// Remote control mode - mouse and keyboard events are forwarded to the sharer
+    RemoteControl,
+    /// Click animation mode - clicks are visualized on the shared screen
+    ClickAnimation,
+    /// Drawing mode - freehand drawing on the shared screen
+    Draw {
+        /// If true, drawings persist until manually cleared; if false, they auto-expire
+        permanent: bool,
+    },
+}
+
 /// Returns the name for file that stores the app state.
 fn get_app_state_filename() -> String {
     /*
@@ -46,6 +62,9 @@ struct AppStateInternal {
 
     /// Whether the post-call feedback dialog is disabled
     pub feedback_disabled: bool,
+
+    /// The user's preferred interaction mode for screen sharing sessions
+    pub last_mode: Option<StoredMode>,
 }
 
 /// Legacy version of the application state structure.
@@ -67,6 +86,7 @@ impl Default for AppStateInternal {
     /// - User JWT: none
     /// - Hopp server URL: none
     /// - Feedback disabled: false
+    /// - Last mode: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -75,6 +95,7 @@ impl Default for AppStateInternal {
             user_jwt: None,
             hopp_server_url: None,
             feedback_disabled: false,
+            last_mode: None,
         }
     }
 }
@@ -313,6 +334,22 @@ impl AppState {
         self.state.feedback_disabled = disabled;
         if !self.save() {
             log::error!("set_feedback_disabled: Failed to save app state");
+        }
+    }
+
+    /// Gets the user's preferred interaction mode.
+    pub fn last_mode(&self) -> Option<StoredMode> {
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_mode.clone()
+    }
+
+    /// Updates the user's preferred interaction mode and saves to disk.
+    pub fn set_last_mode(&mut self, mode: StoredMode) {
+        log::info!("set_last_mode: {mode:?}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_mode = Some(mode);
+        if !self.save() {
+            log::error!("set_last_mode: Failed to save app state");
         }
     }
 
