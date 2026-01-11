@@ -168,6 +168,15 @@ export const PDrawingModeEvent = z.object({
 });
 export type TPDrawingModeEvent = z.infer<typeof PDrawingModeEvent>;
 
+// Stored mode type for persisting user's preferred interaction mode
+// (intentionally separate from PDrawingMode for future consolidation)
+export const PStoredMode = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("RemoteControl") }),
+  z.object({ type: z.literal("ClickAnimation") }),
+  z.object({ type: z.literal("Draw"), permanent: z.boolean() }),
+]);
+export type TStoredMode = z.infer<typeof PStoredMode>;
+
 // WebSocket Message Types
 export const MessageType = z.enum([
   "success",

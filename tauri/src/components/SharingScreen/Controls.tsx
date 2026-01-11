@@ -9,9 +9,9 @@ import { cn } from "@/lib/utils";
 import { PiScribbleLoopBold } from "react-icons/pi";
 import { HiCog6Tooth } from "react-icons/hi2";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "../ui/dropdown-menu";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { tauriUtils } from "@/windows/window-utils";
-import { PDrawingMode } from "@/payloads";
+import { TStoredMode } from "@/payloads";
 
 type ScreenSharingControlsProps = {
   className?: string;
@@ -27,51 +27,34 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     rightClickToClear,
     setRightClickToClear,
   } = useSharingContext();
-  const isInitialMount = useRef(true);
 
-  // Restore drawing mode from storage on mount
+  // Restore mode from storage on mount (beginning of call)
   useEffect(() => {
-    const restoreDrawingMode = async () => {
+    const restoreMode = async () => {
       try {
-        const cachedMode = await tauriUtils.getLastDrawingMode();
-        if (cachedMode) {
-          const parsed = PDrawingMode.safeParse(JSON.parse(cachedMode));
-          if (parsed.success && parsed.data.type !== "Disabled") {
-            // Restore the full mode (Draw or ClickAnimation)
+        const storedMode = await tauriUtils.getLastMode();
+        if (storedMode) {
+          if (storedMode.type === "RemoteControl") {
+            setIsSharingMouse(true);
+            setIsSharingKeyEvents(true);
+            setDrawingMode({ type: "Disabled" });
+          } else if (storedMode.type === "ClickAnimation") {
             setIsSharingMouse(false);
             setIsSharingKeyEvents(false);
-            setDrawingMode(parsed.data);
-            // Sync rightClickToClear with the cached permanent setting
-            if (parsed.data.type === "Draw") {
-              setRightClickToClear(parsed.data.settings.permanent);
-            }
+            setDrawingMode({ type: "ClickAnimation" });
+          } else if (storedMode.type === "Draw") {
+            setIsSharingMouse(false);
+            setIsSharingKeyEvents(false);
+            setRightClickToClear(storedMode.permanent);
+            setDrawingMode({ type: "Draw", settings: { permanent: storedMode.permanent } });
           }
         }
       } catch (error) {
-        console.error("Failed to restore drawing mode:", error);
+        console.error("Failed to restore mode:", error);
       }
     };
-    restoreDrawingMode();
-  }, [setDrawingMode, setIsSharingKeyEvents, setIsSharingMouse, setRightClickToClear]);
-
-  // Save drawing mode whenever it changes (but not on initial mount and not when Disabled)
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-
-    if (drawingMode.type !== "Disabled") {
-      const saveDrawingMode = async () => {
-        try {
-          await tauriUtils.setLastDrawingMode(JSON.stringify(drawingMode));
-        } catch (error) {
-          console.error("Failed to save drawing mode:", error);
-        }
-      };
-      saveDrawingMode();
-    }
-  }, [drawingMode]);
+    restoreMode();
+  }, []); // Run only on mount
 
   // Derive current mode from drawingMode
   const currentMode =
@@ -79,7 +62,16 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
     : drawingMode.type === "Draw" ? "drawing"
     : "clickAnimation";
 
-  const handleModeChange = async (value: string) => {
+  // Save mode to cache
+  const saveMode = async (mode: TStoredMode) => {
+    try {
+      await tauriUtils.setLastMode(mode);
+    } catch (error) {
+      console.error("Failed to save mode:", error);
+    }
+  };
+
+  const handleModeChange = (value: string) => {
     // Clear all drawings when leaving Draw mode (to pointer or clickAnimation)
     if (drawingMode.type === "Draw" && value !== "drawing") {
       triggerClearDrawings();
@@ -89,17 +81,17 @@ export function ScreenSharingControls({ className }: ScreenSharingControlsProps 
       setIsSharingMouse(true);
       setIsSharingKeyEvents(true);
       setDrawingMode({ type: "Disabled" });
+      saveMode({ type: "RemoteControl" });
     } else if (value === "drawing") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
-      // Use rightClickToClear to determine if drawings are permanent
-      // permanent: true = drawings persist until right-click clears them
-      // permanent: false = drawings auto-expire after 5 seconds
       setDrawingMode({ type: "Draw", settings: { permanent: rightClickToClear } });
+      saveMode({ type: "Draw", permanent: rightClickToClear });
     } else if (value === "clickAnimation") {
       setIsSharingMouse(false);
       setIsSharingKeyEvents(false);
       setDrawingMode({ type: "ClickAnimation" });
+      saveMode({ type: "ClickAnimation" });
     }
   };
 
@@ -145,10 +137,15 @@ export function DrawingSettingsButton() {
     return null;
   }
 
-  const handlePermanentToggle = (checked: boolean) => {
+  const handlePermanentToggle = async (checked: boolean) => {
     setRightClickToClear(checked);
-    // Update drawing mode settings to sync permanent flag
     setDrawingMode({ type: "Draw", settings: { permanent: checked } });
+    // Save the updated setting to cache
+    try {
+      await tauriUtils.setLastMode({ type: "Draw", permanent: checked });
+    } catch (error) {
+      console.error("Failed to save mode:", error);
+    }
   };
 
   return (

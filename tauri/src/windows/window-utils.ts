@@ -1,6 +1,7 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { TStoredMode } from "@/payloads";
 
 const isTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
@@ -227,12 +228,12 @@ const setLastUsedMic = async (micId: string) => {
   return await invoke("set_last_used_mic", { mic: micId });
 };
 
-const getLastDrawingMode = async () => {
-  return await invoke<string | null>("get_last_drawing_mode");
+const getLastMode = async (): Promise<TStoredMode | null> => {
+  return await invoke<TStoredMode | null>("get_last_mode");
 };
 
-const setLastDrawingMode = async (mode: string) => {
-  return await invoke("set_last_drawing_mode", { mode });
+const setLastMode = async (mode: TStoredMode): Promise<void> => {
+  return await invoke("set_last_mode", { mode });
 };
 
 const minimizeMainWindow = async () => {
@@ -350,8 +351,8 @@ export const tauriUtils = {
   setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
-  getLastDrawingMode,
-  setLastDrawingMode,
+  getLastMode,
+  setLastMode,
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,

@@ -15,8 +15,9 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    permissions, ping_frontend, setup_start_on_launch, setup_tray_icon, AppData,
+    app_state::{AppState, StoredMode},
+    create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
+    setup_start_on_launch, setup_tray_icon, AppData,
 };
 #[cfg(target_os = "macos")]
 use hopp::{set_window_corner_radius, CORNER_RADIUS};
@@ -431,21 +432,21 @@ fn set_last_used_mic(app: tauri::AppHandle, mic: String) {
 }
 
 #[tauri::command]
-fn get_last_drawing_mode(app: tauri::AppHandle) -> Option<String> {
-    log::info!("get_last_drawing_mode");
+fn get_last_mode(app: tauri::AppHandle) -> Option<StoredMode> {
+    log::info!("get_last_mode");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    let value = data.app_state.last_drawing_mode();
-    log::info!("get_last_drawing_mode: {value:?}");
+    let value = data.app_state.last_mode();
+    log::info!("get_last_mode: {value:?}");
     value
 }
 
 #[tauri::command]
-fn set_last_drawing_mode(app: tauri::AppHandle, mode: String) {
-    log::info!("set_last_drawing_mode: {mode}");
+fn set_last_mode(app: tauri::AppHandle, mode: StoredMode) {
+    log::info!("set_last_mode: {mode:?}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_last_drawing_mode(mode);
+    data.app_state.set_last_mode(mode);
 }
 
 #[tauri::command]
@@ -997,8 +998,8 @@ fn main() {
             set_dock_icon_visible,
             set_last_used_mic,
             get_last_used_mic,
-            set_last_drawing_mode,
-            get_last_drawing_mode,
+            set_last_mode,
+            get_last_mode,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,

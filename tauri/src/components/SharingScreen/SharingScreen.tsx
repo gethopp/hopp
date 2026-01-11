@@ -3,8 +3,8 @@ import Draggable from "react-draggable";
 import { throttle } from "lodash";
 import { RiDraggable } from "react-icons/ri";
 import { HiPencil } from "react-icons/hi2";
-import { LiveKitRoom, useDataChannel, useLocalParticipant, useTracks, VideoTrack } from "@livekit/components-react";
-import { DataPublishOptions, LocalParticipant, Track } from "livekit-client";
+import { LiveKitRoom, useDataChannel, useLocalParticipant, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
+import { ConnectionState, DataPublishOptions, LocalParticipant, Track } from "livekit-client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resizeWindow } from "./utils";
 import { useSharingContext } from "@/windows/screensharing/context";
@@ -92,6 +92,7 @@ const ConsumerComponent = React.memo(() => {
     onlySubscribed: true,
   });
   const localParticipant = useLocalParticipant();
+  const { state: roomState } = useRoomContext();
   const {
     isSharingMouse,
     isSharingKeyEvents,
@@ -226,7 +227,7 @@ const ConsumerComponent = React.memo(() => {
   const lastSentDrawingModeRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!localParticipant.localParticipant) {
+    if (!localParticipant.localParticipant || roomState !== ConnectionState.Connected) {
       // Reset tracking when disconnected
       lastSentDrawingModeRef.current = null;
       return;
@@ -246,7 +247,8 @@ const ConsumerComponent = React.memo(() => {
     publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
     lastSentDrawingModeRef.current = currentModeStr;
-  }, [drawingMode, localParticipant.localParticipant]);
+    console.debug("Sent drawing mode", drawingMode);
+  }, [drawingMode, localParticipant.localParticipant, roomState]);
 
   // Watch for clear drawings signal and clear all drawings when it changes
   useEffect(() => {
