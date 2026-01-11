@@ -28,9 +28,9 @@ const calculateWindowSizing = async (streamWidth: number, streamHeight: number):
 
   /*
    * When we have to limit the width based on the height, we need to
-   * substruct from the monitor height the taskbar/menubar height.
+   * subtract from the monitor height the taskbar/menubar height.
    *
-   * We also substruct the extra offset needed for the stream to be
+   * We also subtract the extra offset needed for the stream to be
    * shown whole. This is needed because we want the max width to be
    * calculated without this extra offset and subsequently have
    * a smaller max width than the theoretical one. This is needed

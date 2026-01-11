@@ -27,12 +27,11 @@ export const getOrAssignColor = (participantId: string): string => {
 
 function* getNextPathIdGenerator(): Generator<number> {
   let index = 0;
-  while (index < Number.MAX_SAFE_INTEGER) {
-    if (index == Number.MAX_SAFE_INTEGER) {
+  while (true) {
+    yield index++;
+    if (index >= Number.MAX_SAFE_INTEGER) {
       index = 0;
     }
-    yield index;
-    index++;
   }
 }
 // Singleton generator

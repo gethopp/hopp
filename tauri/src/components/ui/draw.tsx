@@ -41,6 +41,7 @@ const Draw = React.forwardRef<HTMLCanvasElement, DrawProps>(({ videoRef, partici
 
       const ctx = canvasElement.getContext("2d");
       if (ctx) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.scale(dpr, dpr);
       }
     };

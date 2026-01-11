@@ -34,7 +34,14 @@ export const RemoteCursors = ({ videoRef }: RemoteCursorsProps) => {
 
   useDataChannel(CURSORS_TOPIC, (msg) => {
     const decoder = new TextDecoder();
-    const payload: TPMouseMove = JSON.parse(decoder.decode(msg.payload));
+    const payloadStr = decoder.decode(msg.payload);
+    let payload: TPMouseMove;
+    try {
+      payload = JSON.parse(payloadStr);
+    } catch (e) {
+      console.error("Failed to parse cursor payload:", e);
+      return;
+    }
 
     if (!videoRef.current) return;
 
