@@ -30,7 +30,7 @@ export default defineConfig({
                 { label: "Development Workflow", slug: "quick-start/local-development/development-workflow" },
                 { label: "FAQ", slug: "quick-start/local-development/faq" },
               ],
-            }
+            },
           ],
         },
         {
@@ -47,13 +47,12 @@ export default defineConfig({
             { label: "Screen Sharing", slug: "features/screen-sharing" },
             { label: "Rooms", slug: "features/rooms" },
             { label: "Remote Control", slug: "features/remote-control" },
+            { label: "Drawing (beta)", slug: "features/drawing" },
           ],
         },
         {
           label: "Community",
-          items: [
-            { label: "FAQ", slug: "faq" },
-          ],
+          items: [{ label: "FAQ", slug: "faq" }],
         },
       ],
       components: {
