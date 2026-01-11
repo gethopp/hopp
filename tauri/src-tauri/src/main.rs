@@ -139,8 +139,8 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
 fn play_sound(app: tauri::AppHandle, sound_name: String) {
     log::info!("play_sound");
     let tmp_sound_name = sound_name.split("/").last();
-    if tmp_sound_name.is_some() {
-        log::info!("Playing sound: {}", tmp_sound_name.unwrap());
+    if let Some(tmp_sound_name) = tmp_sound_name {
+        log::info!("Playing sound: {}", tmp_sound_name);
     }
     /*
      * Check if the sound is already playing, if it has finished we
@@ -207,8 +207,8 @@ fn play_sound(app: tauri::AppHandle, sound_name: String) {
 fn stop_sound(app: tauri::AppHandle, sound_name: String) {
     log::info!("stop_sound");
     let tmp_sound_name = sound_name.split("/").last();
-    if tmp_sound_name.is_some() {
-        log::info!("Stopping sound: {}", tmp_sound_name.unwrap());
+    if let Some(tmp_sound_name) = tmp_sound_name {
+        log::info!("Stopping sound: {}", tmp_sound_name);
     }
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
@@ -778,8 +778,8 @@ fn main() {
 
             /* Clear app logs in the beginning of a session. */
             let dir = app.path().app_log_dir();
-            if dir.is_err() {
-                log::warn!("Failed to get app log dir");
+            if let Err(e) = dir {
+                log::warn!("Failed to get app log dir: {e:?}");
             } else {
                 let dir = dir.unwrap();
                 let log_file = dir.join("hopp.log");
