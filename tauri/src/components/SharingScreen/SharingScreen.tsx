@@ -225,11 +225,18 @@ const ConsumerComponent = React.memo(() => {
   // Send DrawingMode event when drawing mode changes or when participant first connects
   // Uses a ref to track the last sent mode to avoid unnecessary sends
   const lastSentDrawingModeRef = useRef<string | null>(null);
+  const isFirstSendRef = useRef<boolean>(true);
+  const failsafeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!localParticipant.localParticipant || roomState !== ConnectionState.Connected) {
       // Reset tracking when disconnected
       lastSentDrawingModeRef.current = null;
+      isFirstSendRef.current = true;
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+        failsafeTimeoutRef.current = null;
+      }
       return;
     }
 
@@ -247,7 +254,33 @@ const ConsumerComponent = React.memo(() => {
     publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
 
     lastSentDrawingModeRef.current = currentModeStr;
-    console.debug("Sent drawing mode", drawingMode);
+
+    // Failsafe: On the first time this event is sent, resend it after 2.5 seconds.
+    // This is necessary because in core we sometimes receive the event without a participant,
+    // which means the state is not applied. Resending ensures the state is properly set.
+    // Only do this if the mode is not disabled.
+    if (isFirstSendRef.current && drawingMode.type !== "Disabled") {
+      isFirstSendRef.current = false;
+
+      // Clear any existing failsafe timeout
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+      }
+
+      failsafeTimeoutRef.current = setTimeout(() => {
+        if (localParticipant.localParticipant && roomState === ConnectionState.Connected) {
+          publishLocalParticipantData(localParticipant.localParticipant, payload, Topics.DRAW);
+        }
+        failsafeTimeoutRef.current = null;
+      }, 2500);
+    }
+
+    return () => {
+      if (failsafeTimeoutRef.current) {
+        clearTimeout(failsafeTimeoutRef.current);
+        failsafeTimeoutRef.current = null;
+      }
+    };
   }, [drawingMode, localParticipant.localParticipant, roomState]);
 
   // Watch for clear drawings signal and clear all drawings when it changes
