@@ -123,13 +123,13 @@ export class DrawParticipant {
   getAllPaths(): DrawingPath[] {
     // Clean up expired paths (lazy cleanup for non-permanent mode)
     const now = Date.now();
-    const FIVE_SECONDS = 5000;
+    const THREE_SECONDS = 3000;
     const removedPathIds: number[] = [];
 
     if (this._drawingMode?.type === "Draw" && !this._drawingMode.settings.permanent) {
       this._completedPaths = this._completedPaths.filter((path) => {
-        // Keep paths without timestamp (shouldn't happen, but safe) or paths less than 5 seconds old
-        const shouldKeep = !path.completedAt || now - path.completedAt < FIVE_SECONDS;
+        // Keep paths without timestamp (shouldn't happen, but safe) or paths less than 3 seconds old
+        const shouldKeep = !path.completedAt || now - path.completedAt < THREE_SECONDS;
         if (!shouldKeep) {
           removedPathIds.push(path.id);
         }
