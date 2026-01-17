@@ -597,6 +597,7 @@ pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
             return;
         }
     };
+
     let ns_view = match ns_window.contentView() {
         Some(view) => view,
         None => {
@@ -632,6 +633,8 @@ pub struct MediaWindowConfig<'a> {
     pub maximizable: bool,
     pub minimizable: bool,
     pub decorations: bool,
+    pub transparent: bool,
+    pub background_color: Option<tauri::webview::Color>,
 }
 
 pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Result<(), String> {
@@ -648,13 +651,17 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
             .inner_size(config.width, config.height)
             .resizable(config.resizable)
             .visible(false)
-            .transparent(true)
+            .transparent(config.transparent)
             .decorations(config.decorations)
             .shadow(true)
             .always_on_top(config.always_on_top)
             .maximizable(config.maximizable)
             .minimizable(config.minimizable)
             .content_protected(config.content_protected);
+
+    if let Some(bg_color) = config.background_color {
+        window_builder = window_builder.background_color(bg_color);
+    }
 
     #[cfg(target_os = "macos")]
     {

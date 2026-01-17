@@ -503,6 +503,8 @@ async fn create_screenshare_window(
             maximizable: false,
             minimizable: true,
             decorations: false,
+            transparent: false,
+            background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
         },
     )
 }
@@ -526,6 +528,8 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
             maximizable: true,
             minimizable: true,
             decorations: false,
+            transparent: true,
+            background_color: None,
         },
     )
 }
@@ -560,6 +564,8 @@ async fn create_content_picker_window(
             maximizable: false,
             minimizable: true,
             decorations: true,
+            transparent: false,
+            background_color: None,
         },
     )
 }
@@ -647,6 +653,8 @@ async fn create_feedback_window(
             maximizable: false,
             minimizable: false,
             decorations: true,
+            transparent: false,
+            background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
         },
     )
 }
