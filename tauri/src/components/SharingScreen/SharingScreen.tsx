@@ -380,12 +380,10 @@ const ConsumerComponent = React.memo(() => {
           }
           return;
         } else {
-          // Always show local ripple on left click (except when in Draw mode, handled above)
           if (e.button === 0) {
-            applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
-
-            // If remote control is disabled, send ClickAnimation event instead of MouseClick
             if (!isRemoteControlEnabled) {
+              applyCursorRippleEffect(e.clientX, e.clientY, "var(--color-cyan-800)");
+
               const payload: TPClickAnimation = {
                 type: "ClickAnimation",
                 payload: { x: relativeX, y: relativeY },
