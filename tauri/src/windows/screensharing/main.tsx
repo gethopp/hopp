@@ -193,6 +193,14 @@ function Window() {
     }
   }, [streamDimensions, isMaximized]);
 
+  const hasAutoMaximizedRef = useRef(false);
+  useEffect(() => {
+    if (streamDimensions && !isMaximized && !hasAutoMaximizedRef.current) {
+      hasAutoMaximizedRef.current = true;
+      handleFullscreen();
+    }
+  }, [streamDimensions, isMaximized, handleFullscreen]);
+
   const fullscreenDisabled = !streamDimensions;
 
   return (
