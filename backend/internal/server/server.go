@@ -221,6 +221,7 @@ func (s *Server) runMigrations() {
 		&models.EmailInvitation{},
 		&models.Subscription{},
 		&models.Feedback{},
+		&models.SlackInstallation{},
 	)
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
@@ -304,9 +305,14 @@ func (s *Server) setupRoutes() {
 	// Initialize handlers
 	auth := handlers.NewAuthHandler(s.DB, s.Config, s.JwtIssuer, s.Redis, &handlers.RealGothicProvider{})
 	billing := handlers.NewBillingHandler(s.DB, s.Config, s.JwtIssuer, s.EmailClient)
+	slackHndlr := handlers.NewSlackHandler(s.DB, s.Config, s.JwtIssuer, s.Redis, s.Echo.Logger)
 
 	// Set the EmailClient field directly
 	auth.EmailClient = s.EmailClient
+
+	// Start the background Slack room cleanup goroutine
+	// This runs every 5 seconds and cleans up empty Slack rooms
+	slackHndlr.StartSlackRoomCleanup()
 
 	// API routes group
 	api := s.Echo.Group("/api")
@@ -325,6 +331,13 @@ func (s *Server) setupRoutes() {
 
 	// Billing webhook endpoint (public)
 	api.POST("/billing/webhook", billing.HandleWebhook)
+
+	// Slack app endpoints (public - verified via Slack signature)
+	api.GET("/slack/oauth/callback", slackHndlr.SlackOAuthCallback)
+	api.POST("/slack/commands/hopp", slackHndlr.HandleHoppCommand)
+	api.POST("/slack/interactions", slackHndlr.HandleInteraction)
+	// Slack join session endpoint (public, validates room and redirects to web app)
+	api.GET("/slack/join/:sessionId", slackHndlr.JoinPairingSession)
 
 	// Authentication endpoints
 	api.GET("/auth/social/:provider", auth.SocialLogin)
@@ -356,9 +369,19 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/room/:id", auth.GetRoom)
 	protectedAPI.GET("/rooms", auth.GetRooms)
 	protectedAPI.GET("/rooms/presence", auth.GetRoomsPresence)
+	protectedAPI.POST("/room/:id/leave", slackHndlr.LeaveRoom)
 
 	// LiveKit server endpoint
 	protectedAPI.GET("/livekit/server-url", auth.GetLivekitServerURL)
+
+	// Slack session tokens endpoint (protected - requires JWT)
+	// This is called by the desktop app to get tokens for joining a Slack session
+	protectedAPI.GET("/slack/session/:sessionId/tokens", slackHndlr.GetSessionTokens)
+
+	// Slack installation management endpoints (protected - requires JWT)
+	protectedAPI.GET("/slack/install", slackHndlr.SlackInstall)
+	protectedAPI.GET("/slack/installation", slackHndlr.GetSlackInstallation)
+	protectedAPI.DELETE("/slack/installation", slackHndlr.DeleteSlackInstallation)
 
 	// Feedback endpoint
 	protectedAPI.POST("/feedback", auth.SubmitFeedback)

@@ -9,12 +9,14 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { HiHome, HiCog6Tooth, HiUserGroup, HiArrowRightStartOnRectangle, HiCreditCard } from "react-icons/hi2";
+import { PiPlugsFill } from "react-icons/pi";
 import Logo from "@/assets/Hopp.png";
 import DoorImage from "@/assets/door.png";
 import { Button } from "./ui/button";
 import { resetAllStores, useHoppStore } from "@/store/store";
 import { useAPI } from "@/hooks/useQueryClients";
 import { useLocation } from "react-router-dom";
+import { Badge } from "./ui/badge";
 
 const items = [
   {
@@ -31,6 +33,11 @@ const items = [
     title: "Teammates",
     url: "/teammates",
     icon: HiUserGroup,
+  },
+  {
+    title: "Integrations",
+    url: "/integrations",
+    icon: PiPlugsFill,
   },
 ];
 
@@ -111,6 +118,11 @@ export function HoppSidebar() {
                   <a href={item.url}>
                     <item.icon />
                     <span>{item.title}</span>
+                    {item.title === "Integrations" && (
+                      <Badge className="scale-80" variant="secondary">
+                        New
+                      </Badge>
+                    )}
                   </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>

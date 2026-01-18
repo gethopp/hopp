@@ -15,10 +15,14 @@ import { Settings } from "./pages/Settings";
 import { Teammates } from "./pages/Teammates";
 import { Subscription } from "./pages/Subscription";
 import { Room } from "./pages/Room";
+import { SlackJoin } from "./pages/SlackJoin";
+import { SlackIntegration } from "./pages/SlackIntegration";
+import { Integrations } from "./pages/Integrations";
 import { BACKEND_URLS, META } from "./constants";
 import { PostHogProvider } from "posthog-js/react";
 import { PostHogConfig } from "posthog-js";
 import { InvitationHandler } from "./pages/InvitationHandler";
+import { useCookies } from "react-cookie";
 
 const options: Partial<PostHogConfig> = {
   api_host: "https://eu.i.posthog.com",
@@ -43,11 +47,21 @@ const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boo
   const hasHydrated = useHydration();
   const navigate = useNavigate();
   const authToken = useHoppStore((state) => state.authToken);
+  const [cookies, , removeCookie] = useCookies(["redirect_after_login"]);
 
   if (!hasHydrated) {
     return <div>Loading...</div>;
   }
 
+  // Handle post-login redirect (takes priority)
+  if (!overrideRedirect && authToken && cookies.redirect_after_login) {
+    const redirectUrl = cookies.redirect_after_login;
+    removeCookie("redirect_after_login");
+    window.location.href = redirectUrl;
+    return <div>Redirecting...</div>;
+  }
+
+  // Standard auth routing
   if (!requireAuth && authToken && !overrideRedirect) navigate("/dashboard");
   if (requireAuth && !authToken && !overrideRedirect) navigate("/login");
 
@@ -125,6 +139,16 @@ const router = createBrowserRouter([
     ],
   },
   {
+    path: "/slack/join/:sessionId",
+    element: <Providers requireAuth={false} overrideRedirect={true} />,
+    children: [
+      {
+        path: "",
+        element: <SlackJoin />,
+      },
+    ],
+  },
+  {
     path: "/subscription/success",
     element: <Providers requireAuth={true} />,
     loader: () => redirect("/dashboard?subscription_success=true"),
@@ -152,6 +176,14 @@ const router = createBrowserRouter([
       {
         path: "subscription",
         element: <Subscription />,
+      },
+      {
+        path: "integrations",
+        element: <Integrations />,
+      },
+      {
+        path: "integrations/slack/success",
+        element: <SlackIntegration />,
       },
       {
         path: "login-app",

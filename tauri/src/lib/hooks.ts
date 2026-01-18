@@ -8,6 +8,7 @@ import { tauriUtils } from "@/windows/window-utils";
 import { usePostHog } from "posthog-js/react";
 import { socketService } from "@/services/socket";
 import { sounds } from "@/constants/sounds";
+import { useFetchClient } from "@/services/query";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -352,6 +353,7 @@ export const useInboundCameraBandwidthMonitor = () => {
 export function useEndCall() {
   const { callTokens, setCallTokens, user } = useStore();
   const posthog = usePostHog();
+  const fetchClient = useFetchClient();
 
   const endCall = useCallback(() => {
     if (!callTokens) return;
@@ -362,6 +364,23 @@ export function useEndCall() {
     const teamId = user?.team_id?.toString() || "";
     const roomId = room?.id || "";
     const participantId = user?.id || "";
+
+    // Notify backend that user left the room (fire and forget)
+    // This is used for Slack rooms to remove the user from the Slack call
+    if (room?.id) {
+      fetchClient
+        .POST("/api/auth/room/{id}/leave", {
+          params: {
+            path: { id: room.id },
+          },
+        })
+        .catch((e) => {
+          console.error("leave room request failed:", e);
+        })
+        .finally(() => {
+          console.log("leave room request successful:", room.id);
+        });
+    }
 
     // Send websocket message to end call
     socketService.send({
@@ -396,7 +415,7 @@ export function useEndCall() {
       duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
       participant,
     });
-  }, [callTokens, setCallTokens, user, posthog]);
+  }, [callTokens, setCallTokens, user, posthog, fetchClient]);
 
   return endCall;
 }

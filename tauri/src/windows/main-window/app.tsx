@@ -24,6 +24,7 @@ import Invite from "./invite";
 import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
+import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { LiveKitRoom } from "@livekit/components-react";
 import { ConditionalWrap } from "@/components/conditional-wrapper";
@@ -133,21 +134,8 @@ function App() {
         console.log("Received deep link request:", urls);
         const url = urls[0];
         if (url) {
-          try {
-            const urlObj = new URL(url);
-            if (urlObj.protocol === "hopp:" && urlObj.pathname === "/authenticate") {
-              const params = new URLSearchParams(urlObj.search);
-              const token = params.get("token");
-              if (token) {
-                if (token) {
-                  await validateAndSetAuthToken(token);
-                  await tauriUtils.showWindow("main");
-                }
-              }
-            }
-          } catch (err) {
-            console.error("Failed to parse deep link URL:", err);
-          }
+          // Use the centralized deep-link handler
+          await processDeepLinkUrl(url);
         }
       });
 

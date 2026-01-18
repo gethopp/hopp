@@ -269,3 +269,7 @@
     transform: translate(85px, -88px);
   }
 }
+
+code {
+  @apply relative rounded-sm bg-gray-200 outline-1 outline-gray-300 text-slate-700 px-1 py-px font-mono;
+}

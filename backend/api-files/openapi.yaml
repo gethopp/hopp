@@ -156,6 +156,66 @@ components:
           type: string
           description: Optional Rewardful referral ID for affiliate tracking
 
+    SessionTokensResponse:
+      type: object
+      required:
+        - audioToken
+        - videoToken
+        - cameraToken
+        - participant
+      properties:
+        audioToken:
+          type: string
+          description: LiveKit token for audio track
+        videoToken:
+          type: string
+          description: LiveKit token for screenshare video track
+        cameraToken:
+          type: string
+          description: LiveKit token for camera video track
+        participant:
+          type: string
+          description: Participant identity for the session
+
+    SlackInstallation:
+      type: object
+      required:
+        - id
+        - slack_team_id
+        - slack_team_name
+      properties:
+        id:
+          type: integer
+          description: Installation ID
+        slack_team_id:
+          type: string
+          description: Slack workspace/team ID
+        slack_team_name:
+          type: string
+          description: Slack workspace/team name
+        bot_user_id:
+          type: string
+          description: Slack bot user ID
+        scopes:
+          type: string
+          description: OAuth scopes granted to the bot
+        installed_at:
+          type: string
+          format: date-time
+          description: When the app was installed
+        installed_by_id:
+          type: string
+          description: Hopp user ID who installed the app
+        team_id:
+          type: integer
+          description: Hopp team ID linked to this installation
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
   securitySchemes:
     BearerAuth:
       type: http
@@ -724,21 +784,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  audioToken:
-                    type: string
-                  videoToken:
-                    type: string
-                  cameraToken:
-                    type: string
-                  participant:
-                    type: string
-                required:
-                  - audioToken
-                  - videoToken
-                  - cameraToken
-                  - participant
+                $ref: "#/components/schemas/SessionTokensResponse"
 
     put:
       summary: Update room details
@@ -1133,6 +1179,231 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: No subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/slack/join/{sessionId}:
+    get:
+      summary: Join a Slack pairing session
+      description: |
+        Validates the room exists and redirects to the web-app's /slack/join/:sessionId
+        route, which handles authentication and deep-links to the desktop app.
+        This endpoint is called when users click "Join" on a Slack call card.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The session/room ID to join
+      responses:
+        "302":
+          description: Redirect to web-app's Slack join page
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/slack/session/{sessionId}/tokens:
+    get:
+      summary: Get LiveKit tokens for a Slack session
+      description: |
+        Returns LiveKit tokens for joining a Slack room. Called by the desktop app
+        when handling a join-session deep-link. For Slack rooms, this also adds
+        the user as a participant to the Slack call.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The session/room ID to get tokens for
+      responses:
+        "200":
+          description: LiveKit tokens generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionTokensResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/slack/install:
+    get:
+      summary: Initiate Slack app installation
+      description: |
+        Initiates the Slack OAuth flow to install the Hopp app in a Slack workspace.
+        This is an authenticated endpoint - the user's identity is stored and linked
+        to the installation on callback. Accepts token via Authorization header or 
+        query parameter (for browser redirects).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: query
+          description: JWT token (alternative to Authorization header for browser redirects)
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirects to Slack OAuth authorization URL
+        "400":
+          description: User is not part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Slack app not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/slack/installation:
+    get:
+      summary: Get Slack installation for user's team
+      description: Returns the Slack installation linked to the current user's team.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Slack installation retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlackInstallation"
+        "400":
+          description: User is not part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No Slack installation found for this team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: Delete Slack installation for user's team
+      description: |
+        Deletes the Slack installation linked to the current user's team.
+        Only team admins can delete the installation.
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Slack installation deleted successfully
+        "400":
+          description: User is not part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - only admins can delete Slack installations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No Slack installation found for this team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/room/{id}/leave:
+    post:
+      summary: Leave a room
+      description: |
+        Called when a user leaves a room. For Slack rooms, this removes the user
+        from the Slack call and updates the room's LastParticipantLeftAt timestamp.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The room ID to leave
+      responses:
+        "200":
+          description: Successfully left the room
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Room not found
           content:
             application/json:
               schema:

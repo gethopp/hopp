@@ -65,7 +65,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   const navigate = useNavigate();
   const { uuid } = useParams<{ uuid: string }>();
   const { useQuery } = useAPI();
-  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app", "lastUsedLogin"], {
+  const [cookies, setCookie, removeCookie] = useCookies(["redirect_to_app", "redirect_after_login", "lastUsedLogin"], {
     doNotParse: true,
   });
   const setAuthToken = useHoppStore((state) => state.setAuthToken);
@@ -118,22 +118,27 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
       });
     }
 
+    // Store redirect URL in cookie (persists through OAuth flow)
+    const redirectParam = searchParams.get("redirect");
+    if (redirectParam) {
+      setCookie("redirect_after_login", redirectParam, {
+        expires: new Date(Date.now() + 1000 * 60 * 2), // 2 minutes
+      });
+    }
+
     // This will be visible on a callback from social auth
     const token = searchParams.get("token");
     if (token) {
-      setAuthToken(token);
-
-      // If the user should redirect to the app, we need to remove the cookie
+      // If the user should redirect to the app, handle it here before setting auth
       if (cookies.redirect_to_app) {
         removeCookie("redirect_to_app");
-        // Allow app to initialize after auth token is set
-        // and then redirect. Probably holding this in state would be more appropriate but it can work for now
-        setTimeout(() => {
-          window.open(`hopp:///authenticate?token=${token}`, "_blank");
-          navigate("/dashboard?show_app_token_banner=true");
-        }, 500);
+        removeCookie("redirect_after_login");
+        window.open(`hopp:///authenticate?token=${token}`, "_blank");
+        setAuthToken(token);
+        navigate("/dashboard?show_app_token_banner=true");
       } else {
-        navigate("/");
+        // Set auth token - Providers will handle redirect_after_login cookie
+        setAuthToken(token);
       }
     }
   }, [searchParams, navigate, setAuthToken, setCookie, removeCookie, cookies]);
@@ -176,15 +181,16 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
       }
 
       if (data.token) {
-        setAuthToken(data.token);
-
-        // If the user should redirect to the app, we need to remove the cookie
+        // If the user should redirect to the app, handle it before setting auth
         if (cookies.redirect_to_app) {
           removeCookie("redirect_to_app");
+          removeCookie("redirect_after_login");
           window.open(`hopp:///authenticate?token=${data.token}`, "_blank");
-          navigate("/dashboard");
+          setAuthToken(data.token);
+          navigate("/dashboard?show_app_token_banner=true");
         } else {
-          navigate("/dashboard");
+          // Set auth token - Providers will handle redirect_after_login cookie
+          setAuthToken(data.token);
         }
       }
     } catch (error) {
@@ -196,7 +202,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGoogleLogin = () => {
-    setCookie('lastUsedLogin', 'google', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
+    setCookie("lastUsedLogin", "google", { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/google`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
@@ -205,7 +211,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const handleGitHubLogin = () => {
-    setCookie('lastUsedLogin', 'github', { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
+    setCookie("lastUsedLogin", "github", { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
     const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/github`);
     if (formData.teamInviteUUID) {
       url.searchParams.set("invite_uuid", formData.teamInviteUUID);
@@ -214,8 +220,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
   };
 
   const LastUsedPill = () => (
-    <div
-      className="absolute z-20 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 right-[30px] top-[-15px] font-medium text-center whitespace-nowrap bg-white shadow-md text-slate-700 text-xs rounded-md">
+    <div className="absolute z-20 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 right-[30px] top-[-15px] font-medium text-center whitespace-nowrap bg-white shadow-md text-slate-700 text-xs rounded-md">
       Last Used
     </div>
   );
@@ -258,20 +263,15 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <form onSubmit={handleEmailAuth}>
                   <div className="grid gap-6 relative">
                     <div className="flex flex-col gap-4 relative z-0">
-
                       <Button type="button" variant="outline" className="w-full relative" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
-                        {cookies.lastUsedLogin === 'google' && (
-                        <LastUsedPill/>
-                        )}
+                        {cookies.lastUsedLogin === "google" && <LastUsedPill />}
                       </Button>
                       <Button type="button" variant="outline" className="w-full relative" onClick={handleGitHubLogin}>
                         <GrGithub className="size-5 mr-2" />
                         {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
-                        {cookies.lastUsedLogin === 'github' && (
-                        <LastUsedPill/>
-                        )}
+                        {cookies.lastUsedLogin === "github" && <LastUsedPill />}
                       </Button>
                       {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
                       {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
