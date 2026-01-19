@@ -383,14 +383,17 @@ export function Dashboard() {
                     teammates.map((teammate) => (
                       <div
                         key={teammate.id}
-                        className="flex flex-row items-center gap-2 w-fit hover:bg-muted/50 p-2 rounded-lg transition-colors"
+                        className="flex items-center gap-2 w-full hover:bg-muted/50 p-2 rounded-lg transition-colors"
                       >
                         <HoppAvatar
                           src={teammate.avatar_url || undefined}
                           firstName={teammate.first_name}
                           lastName={teammate.last_name}
                         />
-                        <span className="font-medium truncate">
+                        <span
+                          className="font-medium truncate min-w-0"
+                          title={`${teammate.first_name} ${teammate.last_name}`}
+                        >
                           {teammate.first_name} {teammate.last_name.charAt(0)}.
                         </span>
                       </div>
