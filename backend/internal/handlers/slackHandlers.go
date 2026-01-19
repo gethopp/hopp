@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
@@ -64,7 +65,7 @@ func (h *SlackHandler) getBotTokenForSlackTeam(slackTeamID string) (string, erro
 // StartSlackRoomCleanup starts the background goroutine that cleans up empty Slack rooms.
 // It checks LiveKit for actual participant count as the source of truth.
 func (h *SlackHandler) StartSlackRoomCleanup() {
-	h.logger.Info("[SlackCleanup] Starting background cleanup goroutine (interval: 5s)")
+	h.logger.Info("Starting background cleanup goroutine")
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -100,8 +101,6 @@ func (h *SlackHandler) cleanupEmptySlackRooms() {
 	}
 
 	roomClient := lksdk.NewRoomServiceClient(livekitHTTPURL, h.Config.Livekit.APIKey, h.Config.Livekit.Secret)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	now := time.Now()
 	threshold := now.Add(5 * -60 * time.Second)
@@ -109,8 +108,20 @@ func (h *SlackHandler) cleanupEmptySlackRooms() {
 	for i := range rooms {
 		room := &rooms[i]
 
+		// Create a fresh context with timeout for each room to avoid
+		// a single slow/failed request from consuming the deadline for all rooms
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 		// Check LiveKit for actual participant count
-		participantCount := h.getLiveKitParticipantCount(ctx, roomClient, room.ID)
+		participantCount, err := h.getLiveKitParticipantCount(ctx, roomClient, room.ID)
+		cancel() // Cancel immediately after use to avoid leaking
+
+		if err != nil {
+			// Transient error (timeout, network issue, etc.), will skip this room
+			// Don't clean up active rooms due to transient failures
+			h.logger.Warnf("transient error getting participants for room %s, skipping cleanup: %v", room.ID, err)
+			continue
+		}
 
 		if participantCount > 0 {
 			// Room has participants - clear LastParticipantLeftAt if it was set
@@ -137,14 +148,15 @@ func (h *SlackHandler) cleanupEmptySlackRooms() {
 }
 
 // getLiveKitParticipantCount returns the number of unique participants in a LiveKit room.
-// Returns 0 if the room doesn't exist or there's an error.
-func (h *SlackHandler) getLiveKitParticipantCount(ctx context.Context, roomClient *lksdk.RoomServiceClient, roomID string) int {
+// Returns other errors for transient failures (timeout, network issues, etc.).
+func (h *SlackHandler) getLiveKitParticipantCount(ctx context.Context, roomClient *lksdk.RoomServiceClient, roomID string) (int, error) {
 	participants, err := roomClient.ListParticipants(ctx, &livekit.ListParticipantsRequest{
 		Room: roomID,
 	})
 	if err != nil {
-		// Room might not exist in LiveKit (no one has joined yet), treat as empty
-		return 0
+		// Return the error for transient failures
+		// For non-existing rooms Livekit returns 0 participants
+		return 0, fmt.Errorf("failed to list participants for room %s: %w", roomID, err)
 	}
 
 	// Dedupe participants by user ID (each user can have audio/video/camera identities)
@@ -157,7 +169,7 @@ func (h *SlackHandler) getLiveKitParticipantCount(ctx context.Context, roomClien
 		seenUserIDs[userID] = true
 	}
 
-	return len(seenUserIDs)
+	return len(seenUserIDs), nil
 }
 
 // cleanupSlackRoom ends the Slack call and deletes the room.
@@ -170,7 +182,7 @@ func (h *SlackHandler) cleanupSlackRoom(room *models.Room) {
 			botToken, err := models.DecryptToken(installation.BotAccessToken, h.Config.SlackApp.TokenEncryptionKey)
 			if err == nil {
 				if err := endSlackCall(botToken, slackMeta.SlackCallID); err != nil {
-					h.logger.Warnf("fdailed to end Slack call %s: %v", slackMeta.SlackCallID, err)
+					h.logger.Warnf("failed to end Slack call %s: %v", slackMeta.SlackCallID, err)
 				} else {
 					h.logger.Infof("ended Slack call %s for room %s", slackMeta.SlackCallID, room.ID)
 				}
@@ -228,8 +240,8 @@ func (h *SlackHandler) SlackInstall(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "You must be part of a team to install Slack integration")
 	}
 
-	// Generate a random state token and store user info in Redis
-	stateToken := fmt.Sprintf("slack_install_%s_%d", user.ID, time.Now().UnixNano())
+	// Generate a cryptographically secure random state token
+	stateToken := uuid.NewString()
 	stateData := fmt.Sprintf("%s:%d", user.ID, *user.TeamID)
 
 	// Store state -> user mapping in Redis (expires in 15 minutes)
@@ -242,7 +254,7 @@ func (h *SlackHandler) SlackInstall(c echo.Context) error {
 	authorizeURL, _ := url.Parse("https://slack.com/oauth/v2/authorize")
 	q := authorizeURL.Query()
 	q.Set("client_id", h.Config.SlackApp.ClientID)
-	q.Set("scope", "commands,chat:write,chat:write.public,users:read,users:read.email")
+	q.Set("scope", "commands,chat:write,chat:write.public,users:read,users:read.email,calls:read,calls:write")
 	q.Set("redirect_uri", h.Config.SlackApp.RedirectURL)
 	q.Set("state", stateToken)
 	authorizeURL.RawQuery = q.Encode()
@@ -262,23 +274,28 @@ func (h *SlackHandler) SlackOAuthCallback(c echo.Context) error {
 	var installedByID string
 	var hoppTeamID *uint
 
-	if stateToken != "" {
-		ctx := context.Background()
-		stateData, err := h.Redis.Get(ctx, stateToken).Result()
-		if err == nil && stateData != "" {
-			// Parse "userID:teamID" format
-			parts := strings.Split(stateData, ":")
-			if len(parts) == 2 {
-				installedByID = parts[0]
-				if teamIDVal, err := strconv.ParseUint(parts[1], 10, 32); err == nil {
-					teamID := uint(teamIDVal)
-					hoppTeamID = &teamID
-				}
-			}
-			// Clean up the state from Redis
-			h.Redis.Del(ctx, stateToken)
+	if stateToken == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Missing OAuth state")
+	}
+
+	ctx := context.Background()
+	stateData, err := h.Redis.Get(ctx, stateToken).Result()
+
+	if err != nil || stateData == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired OAuth state")
+	}
+
+	// Parse "userID:teamID" format
+	parts := strings.Split(stateData, ":")
+	if len(parts) == 2 {
+		installedByID = parts[0]
+		if teamIDVal, err := strconv.ParseUint(parts[1], 10, 32); err == nil {
+			teamID := uint(teamIDVal)
+			hoppTeamID = &teamID
 		}
 	}
+	// Clean up the state from Redis
+	h.Redis.Del(ctx, stateToken)
 
 	// Exchange code for token using slack-go
 	resp, err := slack.GetOAuthV2Response(http.DefaultClient, h.Config.SlackApp.ClientID, h.Config.SlackApp.ClientSecret, code, h.Config.SlackApp.RedirectURL)
@@ -557,7 +574,7 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 				}
 			}()
 		} else {
-			h.logger.Warnf("Failed to get Slack metadata for participant update: %v", err)
+			h.logger.Warnf("Failed to get Slack metadata for participant update (room %s)", room.ID)
 		}
 	}
 
@@ -598,10 +615,19 @@ type SlackCall struct {
 	ID string `json:"id"`
 }
 
+// newSlackClient creates a Slack client with a sensible HTTP timeout.
+// This prevents potential hangs from Slack API calls.
+func newSlackClient(botToken string) *slack.Client {
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	return slack.New(botToken, slack.OptionHTTPClient(httpClient))
+}
+
 // lookupSlackUserByEmail looks up a Slack user by email using the users.lookupByEmail API.
 // Returns the Slack user ID if found, or empty string if not found.
 func lookupSlackUserByEmail(botToken, email string) (string, error) {
-	api := slack.New(botToken)
+	api := newSlackClient(botToken)
 	user, err := api.GetUserByEmail(email)
 	if err != nil {
 		return "", err
@@ -614,7 +640,7 @@ func lookupSlackUserByEmail(botToken, email string) (string, error) {
 // Slack user format (which enables automatic status updates). Falls back to external
 // user format if the email lookup fails.
 func addParticipantToSlackCall(botToken, callID string, user *models.User) error {
-	api := slack.New(botToken)
+	api := newSlackClient(botToken)
 
 	var participant slack.CallParticipant
 
@@ -641,7 +667,7 @@ func addParticipantToSlackCall(botToken, callID string, user *models.User) error
 
 // createSlackCall creates a call using Slack's Calls API for native call UI
 func (h *SlackHandler) createSlackCall(botToken, externalID, createdBySlackUserID, creatorName, joinURL, channelID string) (*SlackCall, error) {
-	api := slack.New(botToken)
+	api := newSlackClient(botToken)
 
 	// Create the call using the SDK
 	call, err := api.AddCall(slack.AddCallParameters{
@@ -669,7 +695,7 @@ func (h *SlackHandler) createSlackCall(botToken, externalID, createdBySlackUserI
 // removeParticipantFromSlackCall removes a user from a Slack call.
 // It uses the user's email to look up their Slack ID, falling back to external_id.
 func removeParticipantFromSlackCall(botToken, callID string, user *models.User) error {
-	api := slack.New(botToken)
+	api := newSlackClient(botToken)
 
 	var participant slack.CallParticipant
 
@@ -693,7 +719,7 @@ func removeParticipantFromSlackCall(botToken, callID string, user *models.User) 
 
 // endSlackCall ends a Slack call using the calls.end API.
 func endSlackCall(botToken, callID string) error {
-	api := slack.New(botToken)
+	api := newSlackClient(botToken)
 	return api.EndCall(callID, slack.EndCallParameters{})
 }
 

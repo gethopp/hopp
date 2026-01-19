@@ -169,7 +169,11 @@ export function SlackJoin() {
           <div className="text-4xl mb-4">❌</div>
           <h1 className="text-2xl font-semibold mb-2">Unable to Join Session</h1>
           <p className="text-gray-600 mb-4">
-            We couldn't connect to this session. Please try again or contact the host.
+            We couldn't connect to this session. Please try again or report a bug to{" "}
+            <a className="link" href="https://github.com/gethopp/hopp/issues" target="_blank" rel="noreferrer">
+              Hopp's GitHub repository
+            </a>
+            .
           </p>
           <div className="flex gap-2 justify-center">
             <Button onClick={() => window.location.reload()}>Try Again</Button>

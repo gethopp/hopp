@@ -57,6 +57,12 @@ const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boo
   if (!overrideRedirect && authToken && cookies.redirect_after_login) {
     const redirectUrl = cookies.redirect_after_login;
     removeCookie("redirect_after_login");
+
+    if (!redirectUrl || !redirectUrl.startsWith("/")) {
+      console.error("Invalid redirect parameter:", redirectUrl);
+      return <div>Invalid redirect URL</div>;
+    }
+
     window.location.href = redirectUrl;
     return <div>Redirecting...</div>;
   }

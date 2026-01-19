@@ -120,6 +120,12 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
 
     // Store redirect URL in cookie (persists through OAuth flow)
     const redirectParam = searchParams.get("redirect");
+
+    if (!redirectParam || !redirectParam.startsWith("/")) {
+      console.error("Invalid redirect parameter:", redirectParam);
+      return;
+    }
+
     if (redirectParam) {
       setCookie("redirect_after_login", redirectParam, {
         expires: new Date(Date.now() + 1000 * 60 * 2), // 2 minutes

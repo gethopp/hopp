@@ -378,7 +378,7 @@ export function useEndCall() {
           console.error("leave room request failed:", e);
         })
         .finally(() => {
-          console.log("leave room request successful:", room.id);
+          console.log("leave room request successful fired and forgotten:", room.id);
         });
     }
 
