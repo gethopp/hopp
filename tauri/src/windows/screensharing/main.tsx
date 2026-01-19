@@ -62,11 +62,10 @@ const TitlebarButton = ({
 function Window() {
   useDisableNativeContextMenu();
   useSystemTheme(); // Listen for system theme changes
-  const { setParentKeyTrap, setVideoToken, videoToken, streamDimensions } = useSharingContext();
+  const { setParentKeyTrap, setVideoToken, videoToken, streamDimensions, isProgrammaticResize, setIsProgrammaticResize } = useSharingContext();
   const [livekitUrl, setLivekitUrl] = useState<string>("");
   const previousSizeRef = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
-  const isProgrammaticResizeRef = useRef(false);
 
   useEffect(() => {
     const videoTokenFromUrl = tauriUtils.getTokenParam("videoToken");
@@ -91,7 +90,7 @@ function Window() {
   // Detect manual window resizing and reset isMaximized state
   const handleWindowResize = useCallback(() => {
     // Ignore resize events during programmatic resizing
-    if (isProgrammaticResizeRef.current) {
+    if (isProgrammaticResize) {
       return;
     }
 
@@ -100,7 +99,7 @@ function Window() {
       setIsMaximized(false);
       previousSizeRef.current = null;
     }
-  }, [isMaximized]);
+  }, [isMaximized, isProgrammaticResize]);
 
   useResizeListener(handleWindowResize);
 
@@ -125,7 +124,7 @@ function Window() {
     }
 
     if (!isMaximized) {
-      isProgrammaticResizeRef.current = true;
+      setIsProgrammaticResize(true);
       const size = await appWindow.innerSize();
       const position = await appWindow.innerPosition();
       previousSizeRef.current = {
@@ -140,7 +139,7 @@ function Window() {
       if (!monitor) {
         await setWindowToMaxStreamSize(streamDimensions.width, streamDimensions.height);
         setIsMaximized(true);
-        isProgrammaticResizeRef.current = false;
+        setIsProgrammaticResize(false);
         return;
       }
 
@@ -178,20 +177,20 @@ function Window() {
       setIsMaximized(true);
       // Reset flag after a short delay to allow resize event to fire
       setTimeout(() => {
-        isProgrammaticResizeRef.current = false;
+        setIsProgrammaticResize(false);
       }, 100);
     } else if (previousSizeRef.current) {
-      isProgrammaticResizeRef.current = true;
+      setIsProgrammaticResize(true);
       await appWindow.setSize(new PhysicalSize(previousSizeRef.current.width, previousSizeRef.current.height));
       await appWindow.setPosition(new PhysicalPosition(previousSizeRef.current.x, previousSizeRef.current.y));
       previousSizeRef.current = null;
       setIsMaximized(false);
       // Reset flag after a short delay to allow resize event to fire
       setTimeout(() => {
-        isProgrammaticResizeRef.current = false;
+        setIsProgrammaticResize(false);
       }, 100);
     }
-  }, [streamDimensions, isMaximized]);
+  }, [streamDimensions, isMaximized, setIsProgrammaticResize]);
 
   const hasAutoMaximizedRef = useRef(false);
   useEffect(() => {
@@ -237,7 +236,7 @@ function Window() {
           >
             {isMaximized ?
               <LuMinimize2 className="size-[10px] stroke-[3px]" />
-            : <LuMaximize2 className="size-[10px] stroke-[3px]" />}
+              : <LuMaximize2 className="size-[10px] stroke-[3px]" />}
           </TitlebarButton>
         </div>
         <div data-tauri-drag-region="no-drag" className="flex items-center justify-center pointer-events-none">

@@ -101,6 +101,7 @@ const ConsumerComponent = React.memo(() => {
     setStreamDimensions,
     rightClickToClear,
     clearDrawingsSignal,
+    isProgrammaticResize,
   } = useSharingContext();
   const isDrawingMode = drawingMode.type !== "Disabled";
   const [wrapperRef, isMouseInside] = useHover();
@@ -175,17 +176,19 @@ const ConsumerComponent = React.memo(() => {
   const throttledResize = useMemo(
     () =>
       throttle(() => {
-        resizeWindow(streamWidth, streamHeight, videoRef);
+        if (!isProgrammaticResize) {
+          resizeWindow(streamWidth, streamHeight, videoRef);
+        }
       }, 250),
-    [streamWidth, streamHeight, videoRef],
+    [streamWidth, streamHeight, videoRef, isProgrammaticResize],
   );
   useResizeListener(throttledResize);
 
   useEffect(() => {
-    if (videoRef.current && track) {
+    if (videoRef.current && track && !isProgrammaticResize) {
       resizeWindow(streamWidth, streamHeight, videoRef);
     }
-  }, [track, streamWidth, streamHeight]);
+  }, [track, streamWidth, streamHeight, isProgrammaticResize]);
 
   useEffect(() => {
     if (track) {

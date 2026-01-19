@@ -98,6 +98,7 @@ export async function resizeWindow(streamWidth: number, streamHeight: number, re
       // the only thing we modify is the window height
       new PhysicalSize(Math.floor(newWidth), Math.floor(newHeight)),
     );
+  console.log(`resizeWindow: streamWidth: ${streamWidth}, streamHeight: ${streamHeight}, newWidth: ${newWidth}, newHeight: ${newHeight}`);
   }
 }
 
