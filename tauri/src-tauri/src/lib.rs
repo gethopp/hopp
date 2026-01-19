@@ -589,7 +589,13 @@ pub fn get_sentry_dsn() -> String {
 }
 
 #[cfg(target_os = "macos")]
-pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
+pub fn set_window_corner_radius_and_decorations(
+    window: &tauri::WebviewWindow,
+    radius: f64,
+    decorations: bool,
+) {
+    use objc2_app_kit::NSWindowButton;
+
     let ns_window: &objc2_app_kit::NSWindow = match window.ns_window() {
         Ok(ns_window) => unsafe { &*ns_window.cast() },
         Err(e) => {
@@ -597,6 +603,18 @@ pub fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: f64) {
             return;
         }
     };
+
+    if !decorations {
+        if let Some(button) = ns_window.standardWindowButton(NSWindowButton::CloseButton) {
+            button.setHidden(true);
+        }
+        if let Some(button) = ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton) {
+            button.setHidden(true);
+        }
+        if let Some(button) = ns_window.standardWindowButton(NSWindowButton::ZoomButton) {
+            button.setHidden(true);
+        }
+    }
 
     let ns_view = match ns_window.contentView() {
         Some(view) => view,
@@ -652,7 +670,6 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
             .resizable(config.resizable)
             .visible(false)
             .transparent(config.transparent)
-            .decorations(config.decorations)
             .shadow(true)
             .always_on_top(config.always_on_top)
             .maximizable(config.maximizable)
@@ -669,6 +686,11 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
         window_builder = window_builder.title_bar_style(TitleBarStyle::Overlay);
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        window_builder = window_builder.decorations(config.decorations);
+    }
+
     let window = window_builder
         .build()
         .map_err(|e| format!("Failed to create {} window: {}", config.label, e))?;
@@ -680,7 +702,11 @@ pub fn create_media_window(app: &AppHandle, config: MediaWindowConfig<'_>) -> Re
         .run_on_main_thread(move || {
             #[cfg(target_os = "macos")]
             {
-                set_window_corner_radius(&window_clone, CORNER_RADIUS);
+                set_window_corner_radius_and_decorations(
+                    &window_clone,
+                    CORNER_RADIUS,
+                    config.decorations,
+                );
             }
 
             #[cfg(target_os = "windows")]
