@@ -51,6 +51,10 @@ export default defineConfig({
           ],
         },
         {
+          label: "Integrations",
+          items: [{ label: "Slack", slug: "integrations/slack" }],
+        },
+        {
           label: "Community",
           items: [{ label: "FAQ", slug: "faq" }],
         },

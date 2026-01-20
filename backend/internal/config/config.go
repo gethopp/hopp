@@ -38,6 +38,13 @@ type Config struct {
 		Secret    string
 		ServerURL string
 	}
+	SlackApp struct {
+		ClientID           string
+		ClientSecret       string
+		RedirectURL        string
+		SigningSecret      string
+		TokenEncryptionKey string
+	}
 	Database struct {
 		DSN      string
 		RedisURI string
@@ -133,6 +140,13 @@ func Load() (*Config, error) {
 	c.Livekit.APIKey = os.Getenv("LIVEKIT_API_KEY")
 	c.Livekit.Secret = os.Getenv("LIVEKIT_API_SECRET")
 	c.Livekit.ServerURL = os.Getenv("LIVEKIT_SERVER_URL")
+
+	// Slack App configuration
+	c.SlackApp.ClientID = os.Getenv("SLACK_APP_CLIENT_ID")
+	c.SlackApp.ClientSecret = os.Getenv("SLACK_APP_CLIENT_SECRET")
+	c.SlackApp.RedirectURL = fmt.Sprintf("https://%s/api/slack/oauth/callback", c.Server.DeployDomain)
+	c.SlackApp.SigningSecret = os.Getenv("SLACK_SIGNING_SECRET")
+	c.SlackApp.TokenEncryptionKey = os.Getenv("SLACK_TOKEN_ENCRYPTION_KEY")
 
 	c.Telegram.BotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
 	c.Telegram.ChatID = os.Getenv("TELEGRAM_CHAT_ID")

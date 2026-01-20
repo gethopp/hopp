@@ -877,7 +877,8 @@ func (h *AuthHandler) UpdateOnboardingFormStatus(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-// Get all rooms for the user
+// GetRooms returns all rooms for the user.
+// Temporary rooms (temp=true) are excluded from the listing.
 func (h *AuthHandler) GetRooms(c echo.Context) error {
 	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
 	if !isAuthenticated {
@@ -885,8 +886,8 @@ func (h *AuthHandler) GetRooms(c echo.Context) error {
 	}
 
 	var rooms []models.Room
-	// First, check if the room exists
-	result := h.DB.Where("team_id = ?", user.TeamID).Find(&rooms)
+	// Get rooms for the user's team, excluding temporary rooms
+	result := h.DB.Where("team_id = ? AND temp = ?", user.TeamID, false).Find(&rooms)
 
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "Rooms not found")

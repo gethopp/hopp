@@ -1,0 +1,71 @@
+---
+title: Slack
+description: Connect Hopp to Slack to start pairing sessions directly from your workspace.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
+import slack from "../../../assets/integrations/SlackCallAPI.png";
+import integrationsPage from "../../../assets/integrations/IntegrationsPage.png";
+
+The Slack integration allows you to start Hopp pairing sessions directly from any Slack channel using the `/hopp` command. Your teammates can join with a single click, making it effortless to collaborate.
+
+## Connecting Hopp to Slack
+
+<Image src={integrationsPage} class="rounded-md mx-auto mt-6" alt="Integrations page" />
+
+<Steps>
+
+1. **Open Hopp Web App**
+
+   In the Hopp Web app, go to **Integration**.
+
+2. **Connect Slack**
+
+   Click the **Install** button. You'll be redirected to Slack to authorize the Hopp app.
+
+3. **Authorize the App**
+
+   Select the Slack workspace you want to connect and click **Allow**. You probably need to be a workspace admin or have permission to install apps.
+
+4. **Done!**
+
+   Once authorized, you'll be redirected back to Hopp. The Slack integration is now active for your team.
+
+</Steps>
+
+<Aside type="note">The integration is shared across your entire Hopp team.</Aside>
+
+## Starting a Pairing Session
+
+Once connected, any team member can start a Hopp session from Slack:
+
+<Steps>
+
+1. **Use the /hopp command**
+
+   In any Slack channel, type `/hopp` and press Enter.
+
+2. **Session Created**
+
+   Hopp will post a native Slack call card in the channel with a **Join** button.
+
+3. **Join the Session**
+
+   Click **Join** to open the Hopp desktop app and connect to the pairing session automatically.
+
+</Steps>
+
+<Image src={slack} class="rounded-md max-w-[500px] mx-auto mt-6" alt="Join session" />
+
+<Aside type="tip">
+  When you join through Slack, your status in the Slack call card updates automatically so teammates can see who's in
+  the session.
+</Aside>
+
+## Removing the Slack integration
+
+To remove the Slack integration:
+
+1. Go to **Integration** in the Hopp web app
+2. Click **Remove integration** next to Slack icon
