@@ -19,6 +19,9 @@ type SharingContextType = {
   // Signal to trigger clearing all drawings - components watch for changes to this value
   clearDrawingsSignal: number;
   triggerClearDrawings: () => void;
+  // Flag to block resizeWindow calls during programmatic resizing
+  isProgrammaticResize: boolean;
+  setIsProgrammaticResize: (value: boolean) => void;
 };
 
 const SharingContext = createContext<SharingContextType | undefined>(undefined);
@@ -44,6 +47,7 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
   const [streamDimensions, setStreamDimensions] = useState<{ width: number; height: number } | null>(null);
   const [rightClickToClear, setRightClickToClear] = useState<boolean>(false);
   const [clearDrawingsSignal, setClearDrawingsSignal] = useState<number>(0);
+  const [isProgrammaticResize, setIsProgrammaticResize] = useState<boolean>(false);
 
   const triggerClearDrawings = useCallback(() => {
     setClearDrawingsSignal((prev) => prev + 1);
@@ -68,6 +72,8 @@ export const SharingProvider: React.FC<SharingProviderProps> = ({ children }) =>
         setRightClickToClear,
         clearDrawingsSignal,
         triggerClearDrawings,
+        isProgrammaticResize,
+        setIsProgrammaticResize,
       }}
     >
       {children}
