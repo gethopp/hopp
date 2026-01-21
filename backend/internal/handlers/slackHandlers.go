@@ -21,6 +21,7 @@ import (
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/slack-go/slack"
+	"github.com/twitchtv/twirp"
 	"gorm.io/gorm"
 )
 
@@ -154,6 +155,14 @@ func (h *SlackHandler) getLiveKitParticipantCount(ctx context.Context, roomClien
 		Room: roomID,
 	})
 	if err != nil {
+		// Check if error is Twirp (not_found)
+		if twrpErr, ok := err.(twirp.Error); ok {
+			if twrpErr.Code() == twirp.NotFound {
+				// Treat as an empty room
+				return 0, nil
+			}
+		}
+
 		// Return the error for transient failures
 		// For non-existing rooms Livekit returns 0 participants
 		return 0, fmt.Errorf("failed to list participants for room %s: %w", roomID, err)
