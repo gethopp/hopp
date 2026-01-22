@@ -76,7 +76,7 @@ pub mod macos {
             }
 
             let count: usize = msg_send![items, count];
-            
+
             // We might get >1 item for our app, but its filtered from the image selector.
             for i in 0..count {
                 let item: *const AnyObject = msg_send![items, pointerAtIndex: i];
@@ -120,8 +120,7 @@ pub mod macos {
                         let sublayer: *const AnyObject = msg_send![sublayers, objectAtIndex: j];
                         let name: *const AnyObject = msg_send![sublayer, name];
                         if !name.is_null() {
-                            let is_equal: bool =
-                                msg_send![name, isEqualToString: &*dot_layer_name];
+                            let is_equal: bool = msg_send![name, isEqualToString: &*dot_layer_name];
                             if is_equal {
                                 existing_dot = sublayer;
                                 break;
