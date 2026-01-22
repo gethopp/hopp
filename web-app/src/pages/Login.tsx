@@ -120,13 +120,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
 
     // Store redirect URL in cookie (persists through OAuth flow)
     const redirectParam = searchParams.get("redirect");
-
-    if (!redirectParam || !redirectParam.startsWith("/")) {
-      console.error("Invalid redirect parameter:", redirectParam);
-      return;
-    }
-
-    if (redirectParam) {
+    if (redirectParam && redirectParam.startsWith("/")) {
       setCookie("redirect_after_login", redirectParam, {
         expires: new Date(Date.now() + 1000 * 60 * 2), // 2 minutes
       });
@@ -143,8 +137,15 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
         setAuthToken(token);
         navigate("/dashboard?show_app_token_banner=true");
       } else {
-        // Set auth token - Providers will handle redirect_after_login cookie
         setAuthToken(token);
+        // Navigate to redirect URL if set, otherwise go to dashboard
+        const redirectUrl = cookies.redirect_after_login;
+        if (redirectUrl && redirectUrl.startsWith("/")) {
+          removeCookie("redirect_after_login");
+          navigate(redirectUrl);
+        } else {
+          navigate("/dashboard");
+        }
       }
     }
   }, [searchParams, navigate, setAuthToken, setCookie, removeCookie, cookies]);
