@@ -1,6 +1,8 @@
 pub mod app_state;
 pub mod permissions;
 pub mod sounds;
+#[cfg(target_os = "macos")]
+pub mod tray;
 
 use log::LevelFilter;
 use rand::{distributions::Alphanumeric, Rng};
@@ -435,12 +437,22 @@ pub fn setup_tray_icon(
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     {
+        use std::sync::atomic::AtomicBool;
+
         let location_set_clone = location_set.clone();
+        let app_handle = app.handle().clone();
+
+        // Use dark icon as template - macOS will automatically invert for dark menu bars
         let mut builder = TrayIconBuilder::new()
             .menu(menu)
-            .show_menu_on_left_click(false);
+            .show_menu_on_left_click(false)
+            .icon_as_template(true);
 
-        if let Some(icon) = app.default_window_icon() {
+        if let Some(icon) = tray::load_tray_icon(&app_handle, "tray-dark-default.png") {
+            log::info!("setup_tray_icon: Using template icon tray-dark-default.png");
+            builder = builder.icon(icon);
+        } else if let Some(icon) = app.default_window_icon() {
+            log::warn!("setup_tray_icon: Failed to load tray icon, using default window icon");
             builder = builder.icon(icon.clone());
         }
 
@@ -483,6 +495,19 @@ pub fn setup_tray_icon(
                 }
             })
             .build(app)?;
+
+        // Store the tray state for dynamic icon updates
+        let tray_for_state = tray.clone();
+        let app_handle_for_state = app.handle().clone();
+        tray::set_tray_state(tray::TrayState {
+            tray_icon: tray_for_state,
+            app_handle: app_handle_for_state.clone(),
+            notification_enabled: AtomicBool::new(false),
+        });
+
+        // Start monitoring system appearance changes using Tokio async runtime
+        tray::start_appearance_monitoring(app_handle_for_state);
+
         let app_handle = app.handle().clone();
 
         /*

@@ -22,7 +22,8 @@
     "externalBin": ["../../core/target/debug/hopp_core"],
     "resources": {
       "../../core/resources/*": "resources/core/",
-      "resources/sounds/*": "resources/sounds/"
+      "resources/sounds/*": "resources/sounds/",
+      "resources/tray-icons/*": "resources/tray-icons/"
     },
     "createUpdaterArtifacts": true
   },

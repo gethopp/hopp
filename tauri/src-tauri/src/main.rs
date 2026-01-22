@@ -592,6 +592,22 @@ fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
 }
 
+/// Set the tray icon notification state.
+/// When enabled=true, shows the notification variant of the icon.
+/// When enabled=false, shows the default variant.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn set_tray_notification(_app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_tray_notification: enabled={}", enabled);
+    hopp::tray::set_notification_enabled(enabled);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn set_tray_notification(_app: tauri::AppHandle, _enabled: bool) {
+    log::info!("set_tray_notification: not supported on this platform");
+}
+
 #[tauri::command]
 fn get_hopp_server_url(app: tauri::AppHandle) -> Option<String> {
     log::info!("get_hopp_server_url");
@@ -1022,6 +1038,7 @@ fn main() {
             create_content_picker_window,
             set_sentry_metadata,
             call_started,
+            set_tray_notification,
             get_hopp_server_url,
             set_hopp_server_url,
             get_feedback_disabled,
