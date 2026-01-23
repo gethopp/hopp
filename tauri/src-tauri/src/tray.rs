@@ -211,21 +211,6 @@ pub mod macos {
     pub fn stop_appearance_monitoring() {}
 }
 
-#[cfg(not(target_os = "macos"))]
-pub mod fallback {
-    use tauri::AppHandle;
-
-    pub fn start_appearance_monitoring(_app_handle: AppHandle) {}
-    pub fn stop_appearance_monitoring() {}
-    pub fn set_notification_enabled(_enabled: bool) {}
-    pub fn is_notification_enabled() -> bool {
-        false
-    }
-    pub fn update_tray_icon() {}
-}
-
+// Re-export macos module contents at the tray level for simpler imports
 #[cfg(target_os = "macos")]
 pub use macos::*;
-
-#[cfg(not(target_os = "macos"))]
-pub use fallback::*;
