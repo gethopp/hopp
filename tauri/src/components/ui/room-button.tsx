@@ -36,16 +36,7 @@ export const RoomButton: React.FC<
           </span>
         )}
       </div>
-      {presenceAvatars && (
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-          }}
-          className="flex flex-row items-center"
-        >
-          {presenceAvatars}
-        </div>
-      )}
+      {presenceAvatars && <div className="flex flex-row items-center">{presenceAvatars}</div>}
     </button>
   );
 };
