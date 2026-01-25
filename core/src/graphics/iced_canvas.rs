@@ -67,8 +67,12 @@ impl OverlaySurface {
             .into()
     }
 
-    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
-        self.draws.add_participant(sid, color);
+    pub fn update_auto_clear(&mut self) -> Vec<u64> {
+        self.draws.update_auto_clear()
+    }
+
+    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+        self.draws.add_participant(sid, color, auto_clear);
     }
 
     pub fn remove_draw_participant(&mut self, sid: &str) {

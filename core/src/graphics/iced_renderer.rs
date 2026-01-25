@@ -101,8 +101,8 @@ impl IcedRenderer {
         wgpu_renderer.present(None, frame.texture.format(), view, &self.viewport);
     }
 
-    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
-        self.overlay_surface.add_draw_participant(sid, color);
+    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+        self.overlay_surface.add_draw_participant(sid, color, auto_clear);
     }
 
     pub fn remove_draw_participant(&mut self, sid: &str) {
@@ -131,5 +131,9 @@ impl IcedRenderer {
 
     pub fn draw_clear_all_paths(&mut self, sid: &str) {
         self.overlay_surface.draw_clear_all_paths(sid);
+    }
+
+    pub fn update_auto_clear(&mut self) -> Vec<u64> {
+        self.overlay_surface.update_auto_clear()
     }
 }

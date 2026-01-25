@@ -3,6 +3,7 @@ use std::io;
 
 mod events;
 mod livekit_utils;
+mod local_drawing;
 mod remote_clipboard;
 mod remote_cursor;
 mod remote_drawing;
@@ -44,6 +45,8 @@ enum Commands {
         #[arg(value_enum)]
         test_type: DrawingTest,
     },
+    /// Test local drawing functionality (sharer drawing)
+    LocalDrawing,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -237,6 +240,11 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Drawing test finished.");
+        }
+        Commands::LocalDrawing => {
+            println!("Running local drawing test...");
+            local_drawing::test_local_drawing()?;
+            println!("Local drawing test finished.");
         }
     }
 

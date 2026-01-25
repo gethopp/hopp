@@ -20,6 +20,7 @@ const TOPIC_REMOTE_CONTROL_ENABLED: &str = "remote_control_enabled";
 const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
+const TOPIC_DRAW: &str = "draw";
 const MAX_FRAMERATE: f64 = 40.0;
 
 // Bitrate constants (in bits per second)
@@ -55,6 +56,11 @@ enum RoomServiceCommand {
     TickResponse(u128),
     IterateParticipants,
     PublishParticipantInControl(String),
+    PublishDrawStart(DrawPathPoint),
+    PublishDrawAddPoint(ClientPoint),
+    PublishDrawEnd(ClientPoint),
+    PublishDrawClearPaths(Vec<u64>),
+    PublishDrawClearAllPaths,
 }
 
 #[derive(Debug)]
@@ -333,6 +339,56 @@ impl RoomService {
             .send(RoomServiceCommand::PublishParticipantInControl(participant));
         if let Err(e) = res {
             log::error!("publish_participant_in_control: Failed to send command: {e:?}");
+        }
+    }
+
+    pub fn publish_draw_start(&self, point: DrawPathPoint) {
+        log::debug!("publish_draw_start: {:?}", point);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawStart(point));
+        if let Err(e) = res {
+            log::error!("publish_draw_start: Error sending command: {e:?}");
+        }
+    }
+
+    pub fn publish_draw_add_point(&self, point: ClientPoint) {
+        log::debug!("publish_draw_add_point: {:?}", point);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawAddPoint(point));
+        if let Err(e) = res {
+            log::error!("publish_draw_add_point: Error sending command: {e:?}");
+        }
+    }
+
+    pub fn publish_draw_end(&self, point: ClientPoint) {
+        log::debug!("publish_draw_end: {:?}", point);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawEnd(point));
+        if let Err(e) = res {
+            log::error!("publish_draw_end: Error sending command: {e:?}");
+        }
+    }
+
+    pub fn publish_draw_clear_paths(&self, path_ids: Vec<u64>) {
+        log::debug!("publish_draw_clear_paths: {:?}", path_ids);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawClearPaths(path_ids));
+        if let Err(e) = res {
+            log::error!("publish_draw_clear_paths: Error sending command: {e:?}");
+        }
+    }
+
+    pub fn publish_draw_clear_all_paths(&self) {
+        log::debug!("publish_draw_clear_all_paths");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawClearAllPaths);
+        if let Err(e) = res {
+            log::error!("publish_draw_clear_all_paths: Error sending command: {e:?}");
         }
     }
 }
@@ -659,6 +715,125 @@ async fn room_service_commands(
                     log::error!(
                         "room_service_commands: Failed to publish participant in control: {e:?}"
                     );
+                }
+            }
+            RoomServiceCommand::PublishDrawStart(point) => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let event = ClientEvent::DrawStart(point);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish draw start: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishDrawAddPoint(point) => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let event = ClientEvent::DrawAddPoint(point);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: false,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish draw add point: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishDrawEnd(point) => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let event = ClientEvent::DrawEnd(point);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish draw end: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishDrawClearPaths(path_ids) => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                
+                // Send individual DrawClearPath events for each path ID
+                for path_id in path_ids {
+                    let event = ClientEvent::DrawClearPath { path_id };
+                    let payload = serde_json::to_vec(&event).unwrap();
+                    let res = local_participant
+                        .publish_data(DataPacket {
+                            payload,
+                            reliable: true,
+                            topic: Some(TOPIC_DRAW.to_string()),
+                            ..Default::default()
+                        })
+                        .await;
+
+                    if let Err(e) = res {
+                        log::error!("room_service_commands: Failed to publish draw clear path {}: {e:?}", path_id);
+                    }
+                }
+            }
+            RoomServiceCommand::PublishDrawClearAllPaths => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let event = ClientEvent::DrawClearAllPaths;
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish draw clear all paths: {e:?}");
                 }
             }
         }

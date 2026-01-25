@@ -120,6 +120,7 @@ pub enum Message {
     ControllerCursorEnabled(bool),
     LivekitServerUrl(String),
     SentryMetadata(SentryMetadata),
+    DrawingEnabled(bool),
 }
 
 #[derive(Debug)]
