@@ -109,7 +109,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
       hasAudioEnabled: true,
       hasCameraEnabled: false,
       role: ParticipantRole.NONE,
-      isRemoteControlEnabled: true,
+      isRemoteControlEnabled: false,
       isRoomCall: true,
       room: {
         id: sessionId,

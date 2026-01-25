@@ -100,7 +100,7 @@ export const Debug = () => {
                 // hasAudioEnabled: true,
                 hasAudioEnabled: false,
                 hasCameraEnabled: false,
-                isRemoteControlEnabled: true,
+                isRemoteControlEnabled: false,
                 cameraTrackId: null,
               });
             }}

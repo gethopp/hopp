@@ -149,7 +149,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             hasAudioEnabled: true,
             hasCameraEnabled: false,
             role: ParticipantRole.NONE,
-            isRemoteControlEnabled: true,
+            isRemoteControlEnabled: false,
             cameraTrackId: null,
             cameraWindowOpen: false,
             krispToggle: true,

@@ -400,7 +400,7 @@ function ScreenShareIcon({
       setCallTokens({
         ...callTokens,
         role: ParticipantRole.NONE,
-        isRemoteControlEnabled: true,
+        isRemoteControlEnabled: false,
       });
       tauriUtils.stopSharing();
     }
