@@ -1,9 +1,11 @@
 import { formatDistanceToNow } from "date-fns";
 import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
+import { PiScribbleLoopBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import {
   useLocalParticipant,
   useMediaDeviceSelect,
@@ -189,6 +191,7 @@ export function ConnectedActions() {
                   </Tooltip>
                 </TooltipProvider>
               )}
+              {callTokens?.role === ParticipantRole.SHARER && <DrawingEnableButton />}
               <Button
                 className="w-full border-red-500 text-red-600 flex flex-row gap-2"
                 variant="gradient-white"
@@ -203,6 +206,83 @@ export function ConnectedActions() {
       </div>
       <ListenToRemoteAudio muted={callTokens?.cameraWindowOpen} />
     </>
+  );
+}
+
+function DrawingEnableButton() {
+  const [drawingPermanent, setDrawingPermanent] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Load drawing permanent preference on mount
+  useEffect(() => {
+    const loadPreference = async () => {
+      try {
+        const permanent = await tauriUtils.getDrawingPermanent();
+        setDrawingPermanent(permanent);
+      } catch (error) {
+        console.error("Failed to load drawing permanent preference:", error);
+      }
+    };
+    loadPreference();
+  }, []);
+
+  const handlePermanentToggle = async (checked: boolean) => {
+    setDrawingPermanent(checked);
+    try {
+      await tauriUtils.setDrawingPermanent(checked);
+    } catch (error) {
+      console.error("Failed to save drawing permanent preference:", error);
+    }
+  };
+
+  const handleEnableDrawing = async () => {
+    try {
+      await tauriUtils.enableDrawing(drawingPermanent);
+    } catch (error) {
+      console.error("Failed to enable drawing:", error);
+      toast.error("Failed to enable drawing", { duration: 2500 });
+    }
+  };
+
+  return (
+    <div className="flex flex-row gap-0.5">
+      <TooltipProvider>
+        <Tooltip delayDuration={100}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleEnableDrawing}
+              className="size-9 flex items-center justify-center rounded-l-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+            >
+              <PiScribbleLoopBold className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Enable drawing</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+        <TooltipProvider>
+          <Tooltip delayDuration={100}>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="size-9 flex items-center justify-center rounded-r-lg border-y border-r border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                >
+                  <ChevronDownIcon className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Drawing settings</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <DropdownMenuContent align="end" className="w-auto min-w-[200px]">
+          <DropdownMenuCheckboxItem checked={drawingPermanent} onCheckedChange={handlePermanentToggle}>
+            <span>Persist until right click</span>
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

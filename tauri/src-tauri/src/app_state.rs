@@ -65,6 +65,9 @@ struct AppStateInternal {
 
     /// The user's preferred interaction mode for screen sharing sessions
     pub last_mode: Option<StoredMode>,
+
+    /// Whether drawing mode should persist until right-click (permanent mode)
+    pub drawing_permanent: Option<bool>,
 }
 
 /// Legacy version of the application state structure.
@@ -87,6 +90,7 @@ impl Default for AppStateInternal {
     /// - Hopp server URL: none
     /// - Feedback disabled: false
     /// - Last mode: none
+    /// - Drawing permanent: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -96,6 +100,7 @@ impl Default for AppStateInternal {
             hopp_server_url: None,
             feedback_disabled: false,
             last_mode: None,
+            drawing_permanent: None,
         }
     }
 }
@@ -350,6 +355,23 @@ impl AppState {
         self.state.last_mode = Some(mode);
         if !self.save() {
             log::error!("set_last_mode: Failed to save app state");
+        }
+    }
+
+    /// Gets whether drawing mode should persist until right-click (permanent mode).
+    /// Returns false if the setting has not been configured.
+    pub fn drawing_permanent(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_permanent.unwrap_or(false)
+    }
+
+    /// Updates the drawing permanent setting and saves to disk.
+    pub fn set_drawing_permanent(&mut self, permanent: bool) {
+        log::info!("set_drawing_permanent: {permanent}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_permanent = Some(permanent);
+        if !self.save() {
+            log::error!("set_drawing_permanent: Failed to save app state");
         }
     }
 

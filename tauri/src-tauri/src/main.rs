@@ -3,7 +3,7 @@
 
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
-use socket_lib::{CaptureContent, Content, Extent, Message, ScreenShareMessage, SentryMetadata};
+use socket_lib::{CaptureContent, Content, DrawingEnabled, Extent, Message, ScreenShareMessage, SentryMetadata};
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -447,6 +447,43 @@ fn set_last_mode(app: tauri::AppHandle, mode: StoredMode) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_last_mode(mode);
+}
+
+#[tauri::command]
+fn get_drawing_permanent(app: tauri::AppHandle) -> bool {
+    log::info!("get_drawing_permanent");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.drawing_permanent();
+    log::info!("get_drawing_permanent: {value}");
+    value
+}
+
+#[tauri::command]
+fn set_drawing_permanent(app: tauri::AppHandle, permanent: bool) {
+    log::info!("set_drawing_permanent: {permanent}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_drawing_permanent(permanent);
+}
+
+#[tauri::command]
+fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
+    log::info!("enable_drawing: permanent={permanent}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let res = data
+        .socket
+        .send_message(Message::DrawingEnabled(DrawingEnabled { permanent }));
+    if let Err(e) = res {
+        log::error!("enable_drawing: failed to send message: {e:?}");
+    }
+    drop(data);
+
+    // Hide main window
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
 }
 
 #[tauri::command]
@@ -1012,6 +1049,9 @@ fn main() {
             get_last_used_mic,
             set_last_mode,
             get_last_mode,
+            get_drawing_permanent,
+            set_drawing_permanent,
+            enable_drawing,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,
