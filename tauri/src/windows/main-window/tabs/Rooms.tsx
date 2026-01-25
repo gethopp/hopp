@@ -287,7 +287,7 @@ export const Rooms = () => {
           hasAudioEnabled: true,
           hasCameraEnabled: false,
           role: ParticipantRole.NONE,
-          isRemoteControlEnabled: false,
+          isRemoteControlEnabled: true,
           cameraTrackId: null,
           room: room,
           cameraWindowOpen: false,

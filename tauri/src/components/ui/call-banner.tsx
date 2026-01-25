@@ -64,7 +64,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           hasAudioEnabled: true,
           hasCameraEnabled: false,
           role: ParticipantRole.NONE,
-          isRemoteControlEnabled: false,
+          isRemoteControlEnabled: true,
           cameraTrackId: null,
           cameraWindowOpen: false,
           krispToggle: true,
