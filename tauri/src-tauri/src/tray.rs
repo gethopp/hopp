@@ -9,34 +9,47 @@
 // and a CALayer overlay for the colored notification dot when we are on a call.
 
 #[cfg(target_os = "macos")]
+use tauri::image::Image;
+#[cfg(target_os = "macos")]
+use tauri::path::BaseDirectory;
+#[cfg(target_os = "macos")]
+use tauri::tray::TrayIcon;
+#[cfg(target_os = "macos")]
+use tauri::{AppHandle, Manager, Wry};
+
+#[cfg(target_os = "macos")]
 pub mod macos {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
-    use tauri::image::Image;
-    use tauri::path::BaseDirectory;
-    use tauri::tray::TrayIcon;
-    use tauri::{AppHandle, Manager, Wry};
+    use super::*;
 
     /// State for the tray icon
     pub struct TrayState {
         pub tray_icon: TrayIcon<Wry>,
-        pub app_handle: AppHandle,
-        pub notification_enabled: AtomicBool,
+        pub notification_enabled: bool,
     }
 
-    static TRAY_STATE: OnceLock<Arc<Mutex<Option<TrayState>>>> = OnceLock::new();
+    impl TrayState {
+        /// Create a new TrayState
+        pub fn new(tray_icon: TrayIcon<Wry>) -> Self {
+            Self {
+                tray_icon,
+                notification_enabled: false,
+            }
+        }
 
-    pub fn get_tray_state() -> &'static Arc<Mutex<Option<TrayState>>> {
-        TRAY_STATE.get_or_init(|| Arc::new(Mutex::new(None)))
+        /// Set notification state and update the dot overlay
+        pub fn set_notification_enabled(&mut self, enabled: bool) {
+            self.notification_enabled = enabled;
+            update_notification_dot(enabled);
+        }
+
+        /// Get current notification state
+        pub fn is_notification_enabled(&self) -> bool {
+            self.notification_enabled
+        }
     }
 
-    pub fn set_tray_state(state: TrayState) {
-        let global = get_tray_state();
-        let mut guard = global.lock().unwrap();
-        *guard = Some(state);
-    }
-
-    /// Load a tray icon from bundled resources
+    /// Load a tray icon from bundled resources.
+    /// Only used during initial setup in `setup_tray_icon()`.
     pub fn load_tray_icon(app_handle: &AppHandle, filename: &str) -> Option<Image<'static>> {
         let icon_path = app_handle
             .path()
@@ -170,45 +183,6 @@ pub mod macos {
         }
     }
 
-    /// Update the tray icon - always uses template for base icon
-    pub fn update_tray_icon() {
-        let state_arc = get_tray_state().clone();
-        let guard = state_arc.lock().unwrap();
-
-        if let Some(state) = guard.as_ref() {
-            let notification_enabled = state.notification_enabled.load(Ordering::SeqCst);
-
-            if let Some(icon) = load_tray_icon(&state.app_handle, "tray-dark-default.png") {
-                let _ = state.tray_icon.set_icon(Some(icon));
-                let _ = state.tray_icon.set_icon_as_template(true);
-                update_notification_dot(notification_enabled);
-            }
-        }
-    }
-
-    /// Set the notification state and update the icon
-    pub fn set_notification_enabled(enabled: bool) {
-        {
-            let state_guard = get_tray_state().lock().unwrap();
-            if let Some(state) = state_guard.as_ref() {
-                state.notification_enabled.store(enabled, Ordering::SeqCst);
-            }
-        }
-        update_tray_icon();
-    }
-
-    pub fn is_notification_enabled() -> bool {
-        let state_guard = get_tray_state().lock().unwrap();
-        state_guard
-            .as_ref()
-            .map(|s| s.notification_enabled.load(Ordering::SeqCst))
-            .unwrap_or(false)
-    }
-
-    /// No-op - template images handle appearance automatically per-display
-    pub fn start_appearance_monitoring(_app_handle: AppHandle) {}
-
-    pub fn stop_appearance_monitoring() {}
 }
 
 // Re-export macos module contents at the tray level for simpler imports

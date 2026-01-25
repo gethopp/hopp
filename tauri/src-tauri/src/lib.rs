@@ -76,6 +76,12 @@ pub struct AppData {
 
     /// Livekit server URL.
     pub livekit_server_url: String,
+
+    /// Tray icon state (macOS only, None on Windows)
+    #[cfg(target_os = "macos")]
+    pub tray_state: Option<tray::macos::TrayState>,
+    #[cfg(not(target_os = "macos"))]
+    pub tray_state: Option<()>,
 }
 
 impl AppData {
@@ -104,6 +110,7 @@ impl AppData {
             dock_enabled,
             app_state,
             livekit_server_url: "".to_string(),
+            tray_state: None,
         }
     }
 }
@@ -437,8 +444,6 @@ pub fn setup_tray_icon(
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     {
-        use std::sync::atomic::AtomicBool;
-
         let location_set_clone = location_set.clone();
         let app_handle = app.handle().clone();
 
@@ -496,17 +501,13 @@ pub fn setup_tray_icon(
             })
             .build(app)?;
 
-        // Store the tray state for dynamic icon updates
-        let tray_for_state = tray.clone();
-        let app_handle_for_state = app.handle().clone();
-        tray::set_tray_state(tray::TrayState {
-            tray_icon: tray_for_state,
-            app_handle: app_handle_for_state.clone(),
-            notification_enabled: AtomicBool::new(false),
-        });
-
-        // Start monitoring system appearance changes using Tokio async runtime
-        tray::start_appearance_monitoring(app_handle_for_state);
+        // Store the tray state in AppData for dynamic icon updates
+        let tray_state = tray::TrayState::new(tray.clone());
+        {
+            let data = app.state::<Mutex<AppData>>();
+            let mut data = data.lock().unwrap();
+            data.tray_state = Some(tray_state);
+        }
 
         let app_handle = app.handle().clone();
 
