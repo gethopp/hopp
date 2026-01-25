@@ -1087,7 +1087,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         return;
                     }
 
-                    window.set_cursor(remote_control.pencil_cursor.clone());
+                    // This doesn't work
+                    //window.set_cursor(remote_control.pencil_cursor.clone());
 
                     // Disable remote control
                     remote_control
@@ -1124,15 +1125,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     let window = remote_control.gfx.window();
 
-                    // Disable cursor hittest
-                    if let Err(e) = window.set_cursor_hittest(false) {
-                        log::error!("user_event: Failed to disable cursor hittest: {e:?}");
-                    }
-
                     // Restore default cursor
                     window.set_cursor(winit::window::Cursor::Icon(
                         winit::window::CursorIcon::Default,
                     ));
+
+                    // Disable cursor hittest
+                    if let Err(e) = window.set_cursor_hittest(false) {
+                        log::error!("user_event: Failed to disable cursor hittest: {e:?}");
+                    }
 
                     // Re-enable remote control
                     remote_control
@@ -1187,8 +1188,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     remote_control.gfx.draw(cursor_controller);
                 } else {
                     if self.local_drawing.last_redraw_time.elapsed()
-                        > std::time::Duration::from_millis(33)
+                        > std::time::Duration::from_millis(20)
                     {
+                        // This works only if there is a click straight after the mode is enabled
+                        //let window = remote_control.gfx.window();
+                        //window.set_cursor(remote_control.pencil_cursor.clone());
+
                         let cursor_controller = &mut remote_control.cursor_controller;
                         remote_control.gfx.draw(cursor_controller);
                         self.local_drawing.last_redraw_time = std::time::Instant::now();
