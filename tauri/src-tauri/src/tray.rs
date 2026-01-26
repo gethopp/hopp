@@ -171,7 +171,7 @@ mod macos {
                         let name: *const AnyObject = msg_send![sublayer, name];
                         if !name.is_null() {
                             let is_equal: bool =
-                                msg_send![name, isEqualToString: &*dot_layer_name];
+                                msg_send![name, isEqualToString: dot_layer_name];
                             if is_equal {
                                 existing_dot = sublayer;
                                 break;
@@ -183,7 +183,7 @@ mod macos {
                 if show {
                     if existing_dot.is_null() {
                         let dot = CALayer::new();
-                        let _: () = msg_send![&*dot, setName: &*dot_layer_name];
+                        let _: () = msg_send![&*dot, setName: dot_layer_name];
 
                         // Dot size and position (coordinates from top-left of button)
                         let dot_size: f64 = 4.0;
