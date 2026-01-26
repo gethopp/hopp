@@ -120,7 +120,8 @@ mod macos {
             let status_bar = NSStatusBar::systemStatusBar();
 
             // Access status items via private API (NSPointerArray)
-            let items: *const AnyObject = msg_send![&*status_bar, valueForKey: objc2_foundation::ns_string!("_statusItems")];
+            let items: *const AnyObject =
+                msg_send![&*status_bar, valueForKey: objc2_foundation::ns_string!("_statusItems")];
             if items.is_null() {
                 return;
             }
@@ -170,8 +171,7 @@ mod macos {
                         let sublayer: *const AnyObject = msg_send![sublayers, objectAtIndex: j];
                         let name: *const AnyObject = msg_send![sublayer, name];
                         if !name.is_null() {
-                            let is_equal: bool =
-                                msg_send![name, isEqualToString: dot_layer_name];
+                            let is_equal: bool = msg_send![name, isEqualToString: dot_layer_name];
                             if is_equal {
                                 existing_dot = sublayer;
                                 break;
