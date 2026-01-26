@@ -1,7 +1,6 @@
 pub mod app_state;
 pub mod permissions;
 pub mod sounds;
-#[cfg(target_os = "macos")]
 pub mod tray;
 
 use log::LevelFilter;
