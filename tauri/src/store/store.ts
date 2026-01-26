@@ -166,7 +166,24 @@ useStore.subscribe((state, prevState) => {
   if (!isEqual(state, prevState)) {
     emit("store-update", state);
   }
-  // console.debug("Did not emit update, state is the same");
+
+  // Update tray icon based on call state (only from main window to avoid duplicates)
+  if (windowName === "main") {
+    const wasInCall = prevState.callTokens !== null;
+    const isInCall = state.callTokens !== null;
+
+    if (!wasInCall && isInCall) {
+      // Entering a call - show notification dot
+      invoke("set_tray_notification", { enabled: true }).catch((e) => {
+        console.error("Failed to set tray notification:", e);
+      });
+    } else if (wasInCall && !isInCall) {
+      // Leaving a call - hide notification dot
+      invoke("set_tray_notification", { enabled: false }).catch((e) => {
+        console.error("Failed to set tray notification:", e);
+      });
+    }
+  }
 });
 
 // Set up listener for store updates from other windows

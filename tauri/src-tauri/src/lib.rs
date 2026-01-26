@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod permissions;
 pub mod sounds;
+pub mod tray;
 
 use log::LevelFilter;
 use rand::{distributions::Alphanumeric, Rng};
@@ -74,6 +75,9 @@ pub struct AppData {
 
     /// Livekit server URL.
     pub livekit_server_url: String,
+
+    /// Tray icon state. On macOS, contains the actual tray state.
+    pub tray_state: Option<tray::TrayState>,
 }
 
 impl AppData {
@@ -102,6 +106,7 @@ impl AppData {
             dock_enabled,
             app_state,
             livekit_server_url: "".to_string(),
+            tray_state: None,
         }
     }
 }
@@ -436,11 +441,19 @@ pub fn setup_tray_icon(
     #[cfg(target_os = "macos")]
     {
         let location_set_clone = location_set.clone();
+        let app_handle = app.handle().clone();
+
+        // Use dark icon as template - macOS will automatically invert for dark menu bars
         let mut builder = TrayIconBuilder::new()
             .menu(menu)
-            .show_menu_on_left_click(false);
+            .show_menu_on_left_click(false)
+            .icon_as_template(true);
 
-        if let Some(icon) = app.default_window_icon() {
+        if let Some(icon) = tray::load_tray_icon(&app_handle, "tray-dark-default.png") {
+            log::info!("setup_tray_icon: Using template icon tray-dark-default.png");
+            builder = builder.icon(icon);
+        } else if let Some(icon) = app.default_window_icon() {
+            log::warn!("setup_tray_icon: Failed to load tray icon, using default window icon");
             builder = builder.icon(icon.clone());
         }
 
@@ -483,6 +496,15 @@ pub fn setup_tray_icon(
                 }
             })
             .build(app)?;
+
+        // Store the tray state in AppData for dynamic icon updates
+        let tray_state = tray::TrayState::new(tray.clone());
+        {
+            let data = app.state::<Mutex<AppData>>();
+            let mut data = data.lock().unwrap();
+            data.tray_state = Some(tray_state);
+        }
+
         let app_handle = app.handle().clone();
 
         /*
