@@ -206,6 +206,7 @@ struct LocalDrawing {
     last_cursor_position: Option<Position>,
     last_redraw_time: std::time::Instant,
     previous_controllers_enabled: bool,
+    cursor_set_times: u32,
 }
 
 impl fmt::Display for LocalDrawing {
@@ -261,6 +262,7 @@ impl<'a> Application<'a> {
                 last_cursor_position: None,
                 last_redraw_time: std::time::Instant::now(),
                 previous_controllers_enabled: false,
+                cursor_set_times: 0,
             },
         })
     }
@@ -501,7 +503,13 @@ impl<'a> Application<'a> {
             log::error!("create_overlay_window: Failed to load pencil.png: {e:?}");
             ServerError::GfxCreationError
         })?;
-        let rgba = pencil_image.to_rgba8();
+        let mut rgba = pencil_image.to_rgba8();
+        for pixel in rgba.chunks_exact_mut(4) {
+            let a = pixel[3] as f32 / 255.0;
+            pixel[0] = (pixel[0] as f32 * a) as u8;
+            pixel[1] = (pixel[1] as f32 * a) as u8;
+            pixel[2] = (pixel[2] as f32 * a) as u8;
+        }
         let (width, height) = pencil_image.dimensions();
         let hotspot_x = 0; // Pencil tip at top-left
         let hotspot_y = height.saturating_sub(1); // Bottom of image (pencil tip)
@@ -1089,8 +1097,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         return;
                     }
 
-                    // This doesn't work
-                    window.set_cursor(remote_control.pencil_cursor.clone());
+                    // Reset cursor set times counter
+                    self.local_drawing.cursor_set_times = 0;
 
                     // Store the current controller state before disabling
                     self.local_drawing.previous_controllers_enabled =
@@ -1198,10 +1206,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if self.local_drawing.last_redraw_time.elapsed()
                         > std::time::Duration::from_millis(20)
                     {
-                        // This works only if there is a click straight after the mode is enabled
-                        //let window = remote_control.gfx.window();
-                        //window.set_cursor(remote_control.pencil_cursor.clone());
-
+                        if self.local_drawing.cursor_set_times < 1000 {
+                            let window = remote_control.gfx.window();
+                            window.focus_window();
+                            window.set_cursor_visible(false);
+                            window.set_cursor_visible(true);
+                            window.set_cursor(remote_control.pencil_cursor.clone());
+                            self.local_drawing.cursor_set_times += 1;
+                        }
                         let cursor_controller = &mut remote_control.cursor_controller;
                         remote_control.gfx.draw(cursor_controller);
                         self.local_drawing.last_redraw_time = std::time::Instant::now();
