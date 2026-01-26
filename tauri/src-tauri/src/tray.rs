@@ -1,34 +1,57 @@
-// Tray icon management for macOS.
+// Tray icon management with platform-specific implementations.
 //
-// To alternate between light and dark icons, its pretty much impossible in MacOS.
-// The menubar icons are not based on theme, but based on the wallpaper color,
-// and there is no API to grab this, especially not an API call per monitor.
-// Another fun fact is that the menubar icons can be different colors on different monitors.
+// macOS: Uses template images for automatic light/dark adaptation per display,
+// with a CALayer overlay for the colored notification dot during calls.
 //
-// To solve this, we use template images for the base icon (auto adapts to light/dark per display),
-// and a CALayer overlay for the colored notification dot when we are on a call.
+// Other platforms: No-op implementation (tray features not yet implemented).
 
-#[cfg(target_os = "macos")]
 use tauri::image::Image;
-#[cfg(target_os = "macos")]
 use tauri::path::BaseDirectory;
-#[cfg(target_os = "macos")]
 use tauri::tray::TrayIcon;
-#[cfg(target_os = "macos")]
 use tauri::{AppHandle, Manager, Wry};
 
+// Platform-specific type alias
 #[cfg(target_os = "macos")]
-pub mod macos {
-    use super::*;
+type PlatformTrayState = macos::MacOSTrayState;
+#[cfg(not(target_os = "macos"))]
+type PlatformTrayState = default::DefaultTrayState;
 
-    /// State for the tray icon
-    pub struct TrayState {
-        pub tray_icon: TrayIcon<Wry>,
-        pub notification_enabled: bool,
+/// Platform-agnostic tray state manager.
+pub struct TrayState {
+    inner: PlatformTrayState,
+}
+
+impl TrayState {
+    pub fn new(tray_icon: TrayIcon<Wry>) -> Self {
+        Self {
+            inner: PlatformTrayState::new(tray_icon),
+        }
     }
 
-    impl TrayState {
-        /// Create a new TrayState
+    pub fn set_notification_enabled(&mut self, enabled: bool) {
+        self.inner.set_notification_enabled(enabled);
+    }
+
+    pub fn is_notification_enabled(&self) -> bool {
+        self.inner.is_notification_enabled()
+    }
+}
+
+// =============================================================================
+// Default (no-op) implementation for non-macOS platforms
+// =============================================================================
+
+#[cfg(not(target_os = "macos"))]
+mod default {
+    use super::*;
+
+    pub struct DefaultTrayState {
+        #[allow(dead_code)]
+        tray_icon: TrayIcon<Wry>,
+        notification_enabled: bool,
+    }
+
+    impl DefaultTrayState {
         pub fn new(tray_icon: TrayIcon<Wry>) -> Self {
             Self {
                 tray_icon,
@@ -36,43 +59,58 @@ pub mod macos {
             }
         }
 
-        /// Set notification state and update the dot overlay
+        pub fn set_notification_enabled(&mut self, enabled: bool) {
+            self.notification_enabled = enabled;
+            // No-op: platform-specific tray features not implemented
+        }
+
+        pub fn is_notification_enabled(&self) -> bool {
+            self.notification_enabled
+        }
+    }
+}
+
+// =============================================================================
+// macOS implementation using CALayer for notification dot overlay
+// =============================================================================
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::{msg_send, MainThreadMarker};
+    use objc2_app_kit::NSStatusBar;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use objc2_quartz_core::CALayer;
+
+    pub struct MacOSTrayState {
+        #[allow(dead_code)]
+        tray_icon: TrayIcon<Wry>,
+        notification_enabled: bool,
+    }
+
+    impl MacOSTrayState {
+        pub fn new(tray_icon: TrayIcon<Wry>) -> Self {
+            Self {
+                tray_icon,
+                notification_enabled: false,
+            }
+        }
+
         pub fn set_notification_enabled(&mut self, enabled: bool) {
             self.notification_enabled = enabled;
             update_notification_dot(enabled);
         }
 
-        /// Get current notification state
         pub fn is_notification_enabled(&self) -> bool {
             self.notification_enabled
         }
     }
 
-    /// Load a tray icon from bundled resources.
-    /// Only used during initial setup in `setup_tray_icon()`.
-    pub fn load_tray_icon(app_handle: &AppHandle, filename: &str) -> Option<Image<'static>> {
-        let icon_path = app_handle
-            .path()
-            .resolve(
-                format!("resources/tray-icons/{}", filename),
-                BaseDirectory::Resource,
-            )
-            .ok()?;
-
-        let icon_bytes = std::fs::read(&icon_path).ok()?;
-        Image::from_bytes(&icon_bytes).ok()
-    }
-
     /// Add or remove a colored dot overlay on the tray icon button using CALayer.
     /// This preserves the template behavior of the base icon while adding color.
     fn update_notification_dot(show: bool) {
-        use objc2::rc::Retained;
-        use objc2::runtime::AnyObject;
-        use objc2::{msg_send, MainThreadMarker};
-        use objc2_app_kit::NSStatusBar;
-        use objc2_foundation::{NSPoint, NSRect, NSSize};
-        use objc2_quartz_core::CALayer;
-
         unsafe {
             let Some(_mtm) = MainThreadMarker::new() else {
                 log::warn!("[TRAY] update_notification_dot: not on main thread");
@@ -82,8 +120,7 @@ pub mod macos {
             let status_bar = NSStatusBar::systemStatusBar();
 
             // Access status items via private API (NSPointerArray)
-            let items: *const AnyObject =
-                msg_send![&*status_bar, valueForKey: objc2_foundation::ns_string!("_statusItems")];
+            let items: *const AnyObject = msg_send![&*status_bar, valueForKey: objc2_foundation::ns_string!("_statusItems")];
             if items.is_null() {
                 return;
             }
@@ -133,7 +170,8 @@ pub mod macos {
                         let sublayer: *const AnyObject = msg_send![sublayers, objectAtIndex: j];
                         let name: *const AnyObject = msg_send![sublayer, name];
                         if !name.is_null() {
-                            let is_equal: bool = msg_send![name, isEqualToString: &*dot_layer_name];
+                            let is_equal: bool =
+                                msg_send![name, isEqualToString: &*dot_layer_name];
                             if is_equal {
                                 existing_dot = sublayer;
                                 break;
@@ -182,9 +220,23 @@ pub mod macos {
             }
         }
     }
-
 }
 
-// Re-export macos module contents at the tray level for simpler imports
-#[cfg(target_os = "macos")]
-pub use macos::*;
+// =============================================================================
+// Shared utilities
+// =============================================================================
+
+/// Load a tray icon from bundled resources.
+/// Only used during initial setup in `setup_tray_icon()`.
+pub fn load_tray_icon(app_handle: &AppHandle, filename: &str) -> Option<Image<'static>> {
+    let icon_path = app_handle
+        .path()
+        .resolve(
+            format!("resources/tray-icons/{}", filename),
+            BaseDirectory::Resource,
+        )
+        .ok()?;
+
+    let icon_bytes = std::fs::read(&icon_path).ok()?;
+    Image::from_bytes(&icon_bytes).ok()
+}

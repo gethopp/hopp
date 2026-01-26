@@ -592,10 +592,8 @@ fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
 }
 
-/// Set the tray icon notification state.
 /// When enabled=true, shows the notification variant of the icon.
 /// When enabled=false, shows the default variant.
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn set_tray_notification(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_tray_notification: enabled={}", enabled);
@@ -604,12 +602,6 @@ fn set_tray_notification(app: tauri::AppHandle, enabled: bool) {
     if let Some(ref mut tray) = data.tray_state {
         tray.set_notification_enabled(enabled);
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn set_tray_notification(_app: tauri::AppHandle, _enabled: bool) {
-    log::info!("set_tray_notification: not supported on this platform");
 }
 
 #[tauri::command]

@@ -77,11 +77,8 @@ pub struct AppData {
     /// Livekit server URL.
     pub livekit_server_url: String,
 
-    /// Tray icon state (macOS only, None on Windows)
-    #[cfg(target_os = "macos")]
-    pub tray_state: Option<tray::macos::TrayState>,
-    #[cfg(not(target_os = "macos"))]
-    pub tray_state: Option<()>,
+    /// Tray icon state. On macOS, contains the actual tray state.
+    pub tray_state: Option<tray::TrayState>,
 }
 
 impl AppData {
