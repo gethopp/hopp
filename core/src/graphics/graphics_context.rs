@@ -447,7 +447,8 @@ impl<'a> GraphicsContext<'a> {
     /// * `color` - Hex color string for the participant's drawings
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
     pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.iced_renderer.add_draw_participant(sid, color, auto_clear);
+        self.iced_renderer
+            .add_draw_participant(sid, color, auto_clear);
     }
 
     /// Removes a participant from the draw manager.

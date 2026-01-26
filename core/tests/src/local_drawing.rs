@@ -1,5 +1,5 @@
 use crate::screenshare_client;
-use socket_lib::{Message, DrawingEnabled};
+use socket_lib::{DrawingEnabled, Message};
 use std::{io, time::Duration};
 
 pub fn test_local_drawing_permanent() -> io::Result<()> {

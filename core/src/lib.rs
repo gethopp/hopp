@@ -205,11 +205,12 @@ struct LocalDrawing {
     current_path_id: u64,
     last_cursor_position: Option<Position>,
     last_redraw_time: std::time::Instant,
+    previous_controllers_enabled: bool,
 }
 
 impl fmt::Display for LocalDrawing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?} last_redraw_time: {:?}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.last_redraw_time)
+        write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?} last_redraw_time: {:?} previous_controllers_enabled: {}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.last_redraw_time, self.previous_controllers_enabled)
     }
 }
 
@@ -259,6 +260,7 @@ impl<'a> Application<'a> {
                 current_path_id: 0,
                 last_cursor_position: None,
                 last_redraw_time: std::time::Instant::now(),
+                previous_controllers_enabled: false,
             },
         })
     }
@@ -1088,7 +1090,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
 
                     // This doesn't work
-                    //window.set_cursor(remote_control.pencil_cursor.clone());
+                    window.set_cursor(remote_control.pencil_cursor.clone());
+
+                    // Store the current controller state before disabling
+                    self.local_drawing.previous_controllers_enabled =
+                        remote_control.cursor_controller.is_controllers_enabled();
 
                     // Disable remote control
                     remote_control
@@ -1135,11 +1141,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         log::error!("user_event: Failed to disable cursor hittest: {e:?}");
                     }
 
-                    // Re-enable remote control
+                    // Restore remote control to previous state
                     remote_control
                         .cursor_controller
-                        .set_controllers_enabled(true);
-                    remote_control.keyboard_controller.set_enabled(true);
+                        .set_controllers_enabled(self.local_drawing.previous_controllers_enabled);
+                    remote_control
+                        .keyboard_controller
+                        .set_enabled(self.local_drawing.previous_controllers_enabled);
 
                     // Set drawing mode to disabled for local participant
                     remote_control

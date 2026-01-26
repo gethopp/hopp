@@ -102,7 +102,8 @@ impl IcedRenderer {
     }
 
     pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.overlay_surface.add_draw_participant(sid, color, auto_clear);
+        self.overlay_surface
+            .add_draw_participant(sid, color, auto_clear);
     }
 
     pub fn remove_draw_participant(&mut self, sid: &str) {

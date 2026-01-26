@@ -794,7 +794,7 @@ async fn room_service_commands(
                 }
                 let room = room.as_ref().unwrap();
                 let local_participant = room.local_participant();
-                
+
                 // Send individual DrawClearPath events for each path ID
                 for path_id in path_ids {
                     let event = ClientEvent::DrawClearPath { path_id };
@@ -809,7 +809,10 @@ async fn room_service_commands(
                         .await;
 
                     if let Err(e) = res {
-                        log::error!("room_service_commands: Failed to publish draw clear path {}: {e:?}", path_id);
+                        log::error!(
+                            "room_service_commands: Failed to publish draw clear path {}: {e:?}",
+                            path_id
+                        );
                     }
                 }
             }
@@ -833,7 +836,9 @@ async fn room_service_commands(
                     .await;
 
                 if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to publish draw clear all paths: {e:?}");
+                    log::error!(
+                        "room_service_commands: Failed to publish draw clear all paths: {e:?}"
+                    );
                 }
             }
         }
