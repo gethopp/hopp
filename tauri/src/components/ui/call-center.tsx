@@ -11,7 +11,15 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { Track, ConnectionState, RoomEvent, VideoPresets, LocalTrack, ParticipantEvent } from "livekit-client";
+import {
+  Track,
+  ConnectionState,
+  RoomEvent,
+  VideoPresets,
+  LocalTrack,
+  ParticipantEvent,
+  AudioPresets,
+} from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -616,7 +624,16 @@ function MediaDevicesSettings() {
     );
     if (roomState === ConnectionState.Connected) {
       console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
-      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled);
+      localParticipant.setMicrophoneEnabled(
+        callTokens?.hasAudioEnabled,
+        {
+          channelCount: 1,
+        },
+        {
+          audioPreset: AudioPresets.speech,
+          forceStereo: false,
+        },
+      );
 
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
