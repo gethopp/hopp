@@ -201,6 +201,9 @@ function App() {
   // to be cleaner and easier to manage
   useEffect(() => {
     socketService.on("incoming_call", (data: TWebSocketMessage) => {
+      if (data.type !== "incoming_call") {
+        return;
+      }
       // Check that there is no on-going call
       // If there is, reject the call
       const { callTokens } = useStore.getState();
