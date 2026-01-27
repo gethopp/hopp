@@ -1308,10 +1308,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if self.local_drawing.enabled {
+                    let display_scale = if let Some(remote_control) = &mut self.remote_control {
+                        remote_control
+                            .cursor_controller
+                            .get_overlay_window()
+                            .get_display_scale()
+                    } else {
+                        1.0
+                    };
                     // Convert physical position to our Position type
                     let pos = Position {
-                        x: position.x,
-                        y: position.y,
+                        x: position.x / display_scale,
+                        y: position.y / display_scale,
                     };
                     self.local_drawing.last_cursor_position = Some(pos);
 
