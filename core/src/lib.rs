@@ -209,6 +209,18 @@ struct LocalDrawing {
     cursor_set_times: u32,
 }
 
+impl LocalDrawing {
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.permanent = false;
+        self.left_mouse_pressed = false;
+        self.current_path_id = 0;
+        self.last_cursor_position = None;
+        self.last_redraw_time = std::time::Instant::now();
+        self.previous_controllers_enabled = false;
+    }
+}
+
 impl fmt::Display for LocalDrawing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?} last_redraw_time: {:?} previous_controllers_enabled: {}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.last_redraw_time, self.previous_controllers_enabled)
@@ -585,6 +597,9 @@ impl<'a> Application<'a> {
             clipboard_controller,
             pencil_cursor,
         });
+
+        // Reset local drawing state on start of screenshare.
+        self.local_drawing.reset();
 
         #[cfg(target_os = "linux")]
         {
