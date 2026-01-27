@@ -61,6 +61,7 @@ impl MouseObserver {
                     CGEventType::LeftMouseDown,
                     CGEventType::RightMouseDown,
                     CGEventType::MouseMoved,
+                    CGEventType::LeftMouseDragged,
                     CGEventType::ScrollWheel,
                 ],
                 move |_a, _b, d| {
@@ -78,7 +79,7 @@ impl MouseObserver {
                     }
 
                     match d.get_type() {
-                        CGEventType::MouseMoved => {
+                        CGEventType::MouseMoved | CGEventType::LeftMouseDragged => {
                             log::debug!("Mouse moved event received");
 
                             let mut sharer_cursor = internal.lock().unwrap();

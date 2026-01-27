@@ -3,7 +3,9 @@
 
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
-use socket_lib::{CaptureContent, Content, DrawingEnabled, Extent, Message, ScreenShareMessage, SentryMetadata};
+use socket_lib::{
+    CaptureContent, Content, DrawingEnabled, Extent, Message, ScreenShareMessage, SentryMetadata,
+};
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},

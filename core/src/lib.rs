@@ -1085,10 +1085,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 if !self.local_drawing.enabled {
-                    // Enable drawing mode
-                    self.local_drawing.enabled = true;
-                    self.local_drawing.permanent = drawing_enabled.permanent;
-
                     let window = remote_control.gfx.window();
 
                     // Enable cursor hittest so we can receive mouse events
@@ -1096,6 +1092,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         log::error!("user_event: Failed to enable cursor hittest: {e:?}");
                         return;
                     }
+
+                    // Enable drawing mode
+                    self.local_drawing.enabled = true;
+                    self.local_drawing.permanent = drawing_enabled.permanent;
 
                     // Reset cursor set times counter
                     self.local_drawing.cursor_set_times = 0;
@@ -1130,7 +1130,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     // Clear all local drawing paths
                     remote_control.gfx.draw_clear_all_paths("local");
                     let cursor_controller = &mut remote_control.cursor_controller;
-                    remote_control.gfx.draw(&cursor_controller);
+                    remote_control.gfx.draw(cursor_controller);
 
                     // Send LiveKit event to clear all paths
                     if let Some(room_service) = &self.room_service {
@@ -1206,7 +1206,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if self.local_drawing.last_redraw_time.elapsed()
                         > std::time::Duration::from_millis(20)
                     {
-                        if self.local_drawing.cursor_set_times < 1000 {
+                        if self.local_drawing.cursor_set_times < 500 {
                             let window = remote_control.gfx.window();
                             window.focus_window();
                             window.set_cursor_visible(false);
