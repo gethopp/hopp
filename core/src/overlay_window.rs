@@ -262,6 +262,13 @@ impl OverlayWindow {
             y: y * self.display_info.display_extent.height / self.display_info.display_scale,
         }
     }
+
+    pub fn get_local_percentage_from_pixel(&self, x: f64, y: f64) -> Position {
+        Position {
+            x: (x * self.display_info.display_scale) / self.display_info.display_extent.width,
+            y: (y * self.display_info.display_scale) / self.display_info.display_extent.height,
+        }
+    }
 }
 
 impl fmt::Display for OverlayWindow {

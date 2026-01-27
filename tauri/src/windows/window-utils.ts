@@ -236,6 +236,18 @@ const setLastMode = async (mode: TStoredMode): Promise<void> => {
   return await invoke("set_last_mode", { mode });
 };
 
+const getDrawingPermanent = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_drawing_permanent");
+};
+
+const setDrawingPermanent = async (permanent: boolean): Promise<void> => {
+  return await invoke("set_drawing_permanent", { permanent });
+};
+
+const enableDrawing = async (permanent: boolean): Promise<void> => {
+  await invoke("enable_drawing", { permanent });
+};
+
 const minimizeMainWindow = async () => {
   return await invoke("minimize_main_window");
 };
@@ -353,6 +365,9 @@ export const tauriUtils = {
   setLastUsedMic,
   getLastMode,
   setLastMode,
+  getDrawingPermanent,
+  setDrawingPermanent,
+  enableDrawing,
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,

@@ -1331,6 +1331,10 @@ impl CursorController {
             log::error!("trigger_render: error sending redraw event: {e:?}");
         }
     }
+
+    pub fn is_controllers_enabled(&self) -> bool {
+        self.controllers_cursors_enabled
+    }
 }
 
 impl Drop for CursorController {

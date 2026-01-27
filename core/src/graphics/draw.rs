@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use iced::widget::canvas::{path, stroke, Cache, Frame, Geometry, Stroke};
 use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
+
+const PATH_EXPIRY_DURATION: Duration = Duration::from_secs(3);
 
 fn color_from_hex(hex: &str) -> Color {
     let hex = hex.trim_start_matches('#');
@@ -27,6 +30,7 @@ fn color_from_hex(hex: &str) -> Color {
 struct DrawPath {
     path_id: u64,
     points: Vec<Position>,
+    finished_at: Option<Instant>,
 }
 
 impl DrawPath {
@@ -34,6 +38,7 @@ impl DrawPath {
         Self {
             path_id,
             points: vec![point],
+            finished_at: None,
         }
     }
 }
@@ -44,6 +49,7 @@ pub struct Draw {
     completed_cache: Cache,
     mode: DrawingMode,
     color: Color,
+    auto_clear: bool,
 }
 
 impl std::fmt::Debug for Draw {
@@ -58,13 +64,14 @@ impl std::fmt::Debug for Draw {
 }
 
 impl Draw {
-    pub fn new(color: &str) -> Self {
+    pub fn new(color: &str, auto_clear: bool) -> Self {
         Self {
             in_progress_path: None,
             completed_paths: Vec::new(),
             completed_cache: Cache::new(),
             mode: DrawingMode::Disabled,
             color: color_from_hex(color),
+            auto_clear,
         }
     }
 
@@ -104,8 +111,9 @@ impl Draw {
             return;
         }
 
-        if let Some(in_progress_path) = self.in_progress_path.take() {
+        if let Some(mut in_progress_path) = self.in_progress_path.take() {
             log::info!("finish_path: finishing path {}", in_progress_path.path_id);
+            in_progress_path.finished_at = Some(Instant::now());
             self.completed_paths.push(in_progress_path);
             self.completed_cache.clear();
         } else {
@@ -132,6 +140,42 @@ impl Draw {
         self.in_progress_path = None;
         self.completed_paths.clear();
         self.completed_cache.clear();
+    }
+
+    pub fn clear_expired_paths(&mut self) -> Vec<u64> {
+        if !self.auto_clear {
+            return Vec::new();
+        }
+
+        // Only clear in non-permanent mode
+        if let DrawingMode::Draw(settings) = &self.mode {
+            if settings.permanent {
+                return Vec::new();
+            }
+        } else {
+            return Vec::new();
+        }
+
+        let now = Instant::now();
+        let mut removed_ids = Vec::new();
+
+        self.completed_paths.retain(|path| {
+            if let Some(finished_at) = path.finished_at {
+                let should_keep = now.duration_since(finished_at) < PATH_EXPIRY_DURATION;
+                if !should_keep {
+                    removed_ids.push(path.path_id);
+                }
+                should_keep
+            } else {
+                true
+            }
+        });
+
+        if !removed_ids.is_empty() {
+            self.completed_cache.clear();
+        }
+
+        removed_ids
     }
 
     /// Returns cached geometry for completed paths.
@@ -209,9 +253,14 @@ impl DrawManager {
     }
 
     /// Adds a new participant with their color.
-    pub fn add_participant(&mut self, sid: String, color: &str) {
-        log::info!("DrawManager::add_participant: sid={} color={}", sid, color);
-        self.draws.insert(sid, Draw::new(color));
+    pub fn add_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+        log::info!(
+            "DrawManager::add_participant: sid={} color={} auto_clear={}",
+            sid,
+            color,
+            auto_clear
+        );
+        self.draws.insert(sid, Draw::new(color, auto_clear));
     }
 
     /// Removes a participant and their drawing data.
@@ -297,6 +346,17 @@ impl DrawManager {
                 sid
             );
         }
+    }
+
+    pub fn update_auto_clear(&mut self) -> Vec<u64> {
+        let mut removed_path_ids = Vec::new();
+
+        for draw in self.draws.values_mut() {
+            let removed = draw.clear_expired_paths();
+            removed_path_ids.extend(removed);
+        }
+
+        removed_path_ids
     }
 
     /// Renders all draws and returns the geometries.
