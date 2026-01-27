@@ -80,6 +80,12 @@ struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
+    /// Whether this instance is the sharer (has published screen share track).
+    /// Used to determine if we should rebroadcast remote control state on participant join.
+    is_sharer: std::sync::Mutex<bool>,
+    /// Current remote control enabled state. Updated when sharer toggles remote control.
+    /// Used for rebroadcasting to late joiners.
+    remote_control_enabled: std::sync::Mutex<bool>,
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -129,6 +135,8 @@ impl RoomService {
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
+            is_sharer: std::sync::Mutex::new(false),
+            remote_control_enabled: std::sync::Mutex::new(true), // Default to true, sharer will broadcast actual state
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -431,7 +439,12 @@ async fn room_service_commands(
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
-                tokio::spawn(handle_room_events(rx, event_loop_proxy, user_sid));
+                tokio::spawn(handle_room_events(
+                    rx,
+                    event_loop_proxy,
+                    user_sid,
+                    inner.clone(),
+                ));
 
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
@@ -503,8 +516,45 @@ async fn room_service_commands(
                     continue;
                 }
 
-                let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                *inner_buffer_source = Some(buffer_source);
+                // Scope the buffer_source lock so it's dropped before async operations
+                {
+                    let mut inner_buffer_source: std::sync::MutexGuard<
+                        '_,
+                        Option<NativeVideoSource>,
+                    > = inner.buffer_source.lock().unwrap();
+                    *inner_buffer_source = Some(buffer_source);
+                }
+
+                // Mark this instance as the sharer authority
+                {
+                    let mut is_sharer = inner.is_sharer.lock().unwrap();
+                    *is_sharer = true;
+                }
+
+                // Publish initial remote control state so controllers know current state
+                let rc_enabled = {
+                    let rc_state = inner.remote_control_enabled.lock().unwrap();
+                    *rc_state
+                };
+                let local_participant = room.local_participant();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload: serde_json::to_vec(&ClientEvent::RemoteControlEnabled(
+                            RemoteControlEnabled {
+                                enabled: rc_enabled,
+                            },
+                        ))
+                        .unwrap(),
+                        reliable: true,
+                        topic: Some(TOPIC_REMOTE_CONTROL_ENABLED.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+                if let Err(e) = res {
+                    log::warn!(
+                        "room_service_commands: Failed to publish initial remote control state: {e:?}"
+                    );
+                }
 
                 let res = tx.send(RoomServiceCommandResult::Success);
                 if let Err(e) = res {
@@ -514,6 +564,16 @@ async fn room_service_commands(
             RoomServiceCommand::DestroyRoom => {
                 if let Some(task) = stats_task.take() {
                     task.abort();
+                }
+
+                // Reset sharer state
+                {
+                    let mut is_sharer = inner.is_sharer.lock().unwrap();
+                    *is_sharer = false;
+                }
+                {
+                    let mut rc_state = inner.remote_control_enabled.lock().unwrap();
+                    *rc_state = true; // Reset to default
                 }
 
                 let room = {
@@ -561,6 +621,12 @@ async fn room_service_commands(
                 );
             }
             RoomServiceCommand::PublishControllerCursorEnabled(enabled) => {
+                // Update internal state for late joiner rebroadcast
+                {
+                    let mut rc_state = inner.remote_control_enabled.lock().unwrap();
+                    *rc_state = enabled;
+                }
+
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -867,6 +933,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
+    inner: Arc<RoomServiceInner>,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -995,6 +1062,47 @@ async fn handle_room_events(
                 {
                     log::debug!("handle_room_events: Skipping participant: {participant:?}");
                     continue;
+                }
+
+                // If we are the sharer, rebroadcast current remote control state to the new joiner
+                let is_sharer = {
+                    let is_sharer_guard = inner.is_sharer.lock().unwrap();
+                    *is_sharer_guard
+                };
+                if is_sharer {
+                    let rc_enabled = {
+                        let rc_state = inner.remote_control_enabled.lock().unwrap();
+                        *rc_state
+                    };
+
+                    // Get the room and publish the current state
+                    let room_guard = inner.room.lock().await;
+                    if let Some(room) = room_guard.as_ref() {
+                        let local_participant = room.local_participant();
+                        let res = local_participant
+                            .publish_data(DataPacket {
+                                payload: serde_json::to_vec(&ClientEvent::RemoteControlEnabled(
+                                    RemoteControlEnabled {
+                                        enabled: rc_enabled,
+                                    },
+                                ))
+                                .unwrap(),
+                                reliable: true,
+                                topic: Some(TOPIC_REMOTE_CONTROL_ENABLED.to_string()),
+                                ..Default::default()
+                            })
+                            .await;
+                        if let Err(e) = res {
+                            log::warn!(
+                                "handle_room_events: Failed to rebroadcast remote control state: {e:?}"
+                            );
+                        } else {
+                            log::info!(
+                                "handle_room_events: Rebroadcast remote control state ({}) to late joiner",
+                                rc_enabled
+                            );
+                        }
+                    }
                 }
 
                 if let Err(e) =
