@@ -8,6 +8,9 @@ use winit::window::{Window, WindowAttributes, WindowLevel};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::WindowExtMacOS;
 
+#[cfg(target_os = "windows")]
+use winit::platform::windows::WindowExtWindows;
+
 use crate::ServerError;
 
 // Constants for magic numbers

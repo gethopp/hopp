@@ -51,9 +51,6 @@ use winit::monitor::MonitorHandle;
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
 
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowExtWindows;
-
 use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
@@ -995,13 +992,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let cursor_controller = &mut remote_control.cursor_controller;
                 remote_control.gfx.draw(cursor_controller);
-            }
-            WindowEvent::ScaleFactorChanged { .. }
-            | WindowEvent::Resized(_)
-            | WindowEvent::Moved(_) => {
-                if let Some(wm) = self.window_manager.as_mut() {
-                    let _ = wm.update(event_loop);
-                }
             }
             _ => {}
         }
