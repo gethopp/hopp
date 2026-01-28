@@ -32,6 +32,8 @@ export type CallState = {
   krispToggle?: boolean;
   controllerSupportsAv1?: boolean;
   av1Enabled?: boolean;
+  // Reconnection state
+  isReconnecting?: boolean;
 } & TCallTokensMessage["payload"];
 
 type State = {
@@ -47,6 +49,7 @@ type State = {
   // Call tokens for LiveKit
   callTokens: CallState | null;
   customServerUrl: string | null;
+  livekitUrl: string | null;
 };
 
 type Actions = {
@@ -63,6 +66,7 @@ type Actions = {
   setCallTokens: (tokens: CallState | null) => void;
   updateCallTokens: (tokens: Partial<CallState>) => void;
   setCustomServerUrl: (url: string | null) => void;
+  setLivekitUrl: (url: string | null) => void;
 };
 
 const initialState: State = {
@@ -76,6 +80,7 @@ const initialState: State = {
   calling: null,
   callTokens: null,
   customServerUrl: null,
+  livekitUrl: null,
 };
 
 /**
@@ -129,6 +134,10 @@ const useStore = create<State & Actions>()(
     setCustomServerUrl: (url) =>
       set((state) => {
         state.customServerUrl = url;
+      }),
+    setLivekitUrl: (url) =>
+      set((state) => {
+        state.livekitUrl = url;
       }),
     setTab: (tab) =>
       set((state) => {

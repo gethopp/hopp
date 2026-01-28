@@ -23,7 +23,6 @@ import { listen } from "@tauri-apps/api/event";
 import Invite from "./invite";
 import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
-import { validateAndSetAuthToken } from "@/lib/authUtils";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { LiveKitRoom } from "@livekit/components-react";
@@ -44,6 +43,7 @@ function App() {
     setTab,
     setTeammates,
     setAuthToken,
+    setLivekitUrl,
   } = useStore();
 
   const coreProcessCrashedRef = useRef(false);
@@ -52,8 +52,8 @@ function App() {
   const { useQuery } = useAPI();
 
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
-  const [livekitUrl, setLivekitUrl] = useState<string>("");
   const sentryMetadataRef = useRef<boolean>(false);
+  const livekitUrl = useStore((s) => s.livekitUrl);
 
   const { error: userError } = useQuery("get", "/api/auth/user", undefined, {
     enabled: !!authToken,
@@ -90,7 +90,7 @@ function App() {
     queryHash: `livekit-url-${authToken}`,
   });
 
-  // Send LiveKit URL to Tauri backend when it's fetched
+  // Send LiveKit URL to Tauri backend and store when fetched
   useEffect(() => {
     const sendLivekitUrlToBackend = async () => {
       if (livekitUrlData?.url) {
@@ -106,7 +106,7 @@ function App() {
     };
 
     sendLivekitUrlToBackend();
-  }, [livekitUrlData]);
+  }, [livekitUrlData, setLivekitUrl]);
 
   // Load stored token and custom server URL on app start
   useEffect(() => {
@@ -389,7 +389,7 @@ function App() {
       <ConditionalWrap
         condition={!!callTokens}
         wrap={(children) => (
-          <LiveKitRoom key={callTokens?.audioToken} token={callTokens?.audioToken} serverUrl={livekitUrl}>
+          <LiveKitRoom key={callTokens?.audioToken} token={callTokens?.audioToken} serverUrl={livekitUrl || ""}>
             {children}
           </LiveKitRoom>
         )}
