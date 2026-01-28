@@ -10,10 +10,13 @@ use image::GenericImageView;
 use log::error;
 use std::sync::Arc;
 use thiserror::Error;
+use winit::monitor::MonitorHandle;
 use winit::window::Window;
 
-#[cfg(target_os = "windows")]
-use super::direct_composition::DirectComposition;
+#[path = "overlay_context.rs"]
+pub mod overlay_context;
+use overlay_context::OverlayContext;
+
 #[path = "cursor.rs"]
 pub mod cursor;
 use cursor::{Cursor, CursorsRenderer};
@@ -112,34 +115,35 @@ struct Vertex {
 ///
 /// The graphics context maintains separate renderers for different overlay elements:
 /// - Cursor rendering via `CursorsRenderer` for multiple simultaneous cursors
-/// - Marker rendering via `MarkerRenderer` for corner boundary indicators
+/// - Click animation rendering via `ClickAnimationRenderer`
+/// - Drawing/iced rendering via `IcedRenderer`
 ///
 /// # Lifetime
 ///
 /// The lifetime parameter `'a` represents the lifetime of the underlying window
-/// surface, ensuring memory safety when the window is destroyed.
+/// surfaces, ensuring memory safety when windows are destroyed.
 #[derive(Debug)]
 pub struct GraphicsContext<'a> {
-    /// wgpu surface for rendering to the window
-    surface: wgpu::Surface<'a>,
+    /// wgpu instance for creating surfaces
+    instance: wgpu::Instance,
+    /// wgpu adapter for device creation
+    adapter: wgpu::Adapter,
     /// GPU logical device for creating resources and submitting commands
     device: wgpu::Device,
     /// Command queue for submitting GPU operations
     queue: wgpu::Queue,
-    /// Reference to the overlay window
-    window: Arc<Window>,
-    /// Renderer for cursor graphics with multi-cursor support
+    /// Surface format used for all overlays
+    surface_format: wgpu::TextureFormat,
+    /// Path to texture resources
+    texture_path: String,
+    /// Pre-created overlay windows for all displays
+    overlay_contexts: Vec<OverlayContext<'a>>,
+    /// Index of currently active overlay (if any)
+    active_overlay_index: Option<usize>,
+    /// Renderer for cursor graphics with multi-cursor support (created at init)
     cursor_renderer: CursorsRenderer,
-
-    /// Windows-specific DirectComposition integration for transparent overlays
-    #[cfg(target_os = "windows")]
-    _direct_composition: DirectComposition,
-
-    /// Renderer for click animations
-    click_animation_renderer: ClickAnimationRenderer,
-
-    /// Renderer for iced graphics
-    iced_renderer: IcedRenderer,
+    /// Renderer for click animations (created when show_overlay is called)
+    click_animation_renderer: Option<ClickAnimationRenderer>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -151,9 +155,8 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// # Arguments
     ///
-    /// * `window` - The overlay window to render to
+    /// * `windows` - Pre-created and positioned overlay windows
     /// * `texture_path` - Base directory path for loading texture resources
-    /// * `scale` - Display scale
     ///
     /// # Returns
     ///
@@ -166,57 +169,51 @@ impl<'a> GraphicsContext<'a> {
     /// - `OverlayError::SurfaceCreationError` - Failed to create rendering surface
     /// - `OverlayError::AdapterRequestError` - No suitable GPU adapter found
     /// - `OverlayError::DeviceRequestError` - Failed to create logical GPU device
-    /// - `OverlayError::TextureCreationError` - Failed to initialize marker textures
     ///
     /// # Platform-Specific Behavior
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
-    pub fn new(window: Window, texture_path: String, scale: f64) -> OverlayResult<Self> {
-        log::info!("GraphicsContext::new");
-        let size = window.inner_size();
-        let window_arc = Arc::new(window);
+    pub fn new(windows: Vec<Arc<Window>>, texture_path: String) -> OverlayResult<Self> {
+        log::info!("GraphicsContext::new with {} windows", windows.len());
+
+        if windows.is_empty() {
+            log::error!("GraphicsContext::new: No windows provided");
+            return Err(OverlayError::WindowCreationError);
+        }
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
 
-        #[cfg(target_os = "windows")]
-        let direct_composition =
-            DirectComposition::new(window_arc.clone()).ok_or(OverlayError::SurfaceCreationError)?;
+        let mut overlay_surfaces = Vec::new();
 
-        let surface = {
-            #[cfg(target_os = "windows")]
-            {
-                direct_composition.create_surface(&instance)?
+        for window in windows {
+            match overlay_context::create_surface(window, &instance) {
+                Ok(overlay_surface) => {
+                    overlay_surfaces.push(overlay_surface);
+                }
+                Err(e) => {
+                    log::error!("GraphicsContext::new: Failed to create surface: {}", e);
+                }
             }
-            #[cfg(target_os = "macos")]
-            {
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {e:?}");
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-            // Add other OS targets here if needed
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
-                // Default or error for unsupported OS
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {:?}", e);
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-        };
+        }
 
+        if overlay_surfaces.is_empty() {
+            log::error!("GraphicsContext::new: Failed to create any surfaces");
+            return Err(OverlayError::SurfaceCreationError);
+        }
+
+        // Find an adapter that supports the first surface
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
+            compatible_surface: Some(&overlay_surfaces[0].surface),
             force_fallback_adapter: false,
-        }));
-        if let Err(e) = adapter {
-            log::error!("GraphicsContext::new request_adapter: {e:?}");
-            return Err(OverlayError::AdapterRequestError);
-        }
-        let adapter = adapter.unwrap();
+        }))
+        .map_err(|e| {
+            log::error!("GraphicsContext::new: request_adapter failed: {e:?}");
+            OverlayError::AdapterRequestError
+        })?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: wgpu::Features::empty(),
@@ -228,86 +225,287 @@ impl<'a> GraphicsContext<'a> {
         }))
         .map_err(|_| OverlayError::DeviceRequestError)?;
 
-        let surface_capabilities = surface.get_capabilities(&adapter);
+        // Use a common surface format (Bgra8UnormSrgb is widely supported)
+        // TODO: get this from the surfces
+        let surface_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-        let alpha_modes = surface_capabilities.alpha_modes;
-        let surface_formats = surface_capabilities.formats;
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_formats[0],
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync, // This is using fifo or fifo_relaxed
-            alpha_mode: alpha_modes
-                .iter()
-                .find(|mode| {
-                    /*
-                     * This is a workaround for windows, where we observed
-                     * crashes with post multiplied alpha.
-                     */
-                    #[allow(unused_variables)]
-                    let post_multiplied = mode == &&wgpu::CompositeAlphaMode::PostMultiplied;
-                    #[cfg(target_os = "windows")]
-                    let post_multiplied = false;
-                    (mode != &&wgpu::CompositeAlphaMode::Opaque)
-                        && ((mode == &&wgpu::CompositeAlphaMode::PreMultiplied) || post_multiplied)
-                })
-                .copied()
-                .unwrap_or(alpha_modes[0]),
-            view_formats: vec![],
-            desired_maximum_frame_latency: 0,
-        };
-        surface.configure(&device, &surface_config);
-
-        #[cfg(target_os = "windows")]
-        direct_composition.commit()?;
-
-        /*
-         * Workaround for resetting the default white background
-         * on transparent windows on windows.
-         */
-        #[cfg(target_os = "windows")]
-        {
-            window_arc.set_minimized(true);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            window_arc.set_minimized(false);
+        // Create OverlayContexts
+        let mut overlay_contexts = Vec::new();
+        for (index, overlay_surface) in overlay_surfaces.into_iter().enumerate() {
+            match OverlayContext::new(
+                overlay_surface,
+                &device,
+                &queue,
+                surface_format,
+                &adapter,
+                &texture_path,
+            ) {
+                Ok(context) => {
+                    overlay_contexts.push(context);
+                }
+                Err(e) => {
+                    log::error!(
+                        "GraphicsContext::new: Failed to create overlay context {}: {}",
+                        index,
+                        e
+                    );
+                }
+            }
         }
 
-        let cursor_renderer = CursorsRenderer::create(&device, surface_config.format);
+        if overlay_contexts.is_empty() {
+            log::error!("GraphicsContext::new: No overlay contexts created");
+            return Err(OverlayError::SurfaceCreationError);
+        }
+
+        // Configure each surface
+        for overlay_context in &overlay_contexts {
+            overlay_context
+                .configure_surface(&device, &adapter, surface_format)
+                .map_err(|e| {
+                    log::error!("GraphicsContext::new: Failed to configure surface: {}", e);
+                    OverlayError::SurfaceCreationError
+                })?;
+        }
+
+        // Initialize cursor renderer only (others are deferred until show_overlay)
+        let cursor_renderer = CursorsRenderer::create(&device, surface_format);
+
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            surface_format,
+            texture_path,
+            overlay_contexts,
+            active_overlay_index: None,
+            cursor_renderer,
+            click_animation_renderer: None,
+        })
+    }
+
+    /// Finds an adapter that is compatible with all surfaces.
+    fn find_compatible_adapter(
+        instance: &wgpu::Instance,
+        overlay_contexts: &[OverlayContext],
+    ) -> OverlayResult<wgpu::Adapter> {
+        log::info!(
+            "find_compatible_adapter: checking {} surfaces",
+            overlay_contexts.len()
+        );
+
+        // Try to find an adapter compatible with the first surface
+        let first_surface = &overlay_contexts[0].surface;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(first_surface),
+            force_fallback_adapter: false,
+        }));
+
+        match adapter {
+            Ok(adapter) => {
+                // Verify this adapter supports all other surfaces
+                for (i, ctx) in overlay_contexts.iter().enumerate().skip(1) {
+                    if !adapter.is_surface_supported(&ctx.surface) {
+                        log::warn!(
+                            "find_compatible_adapter: adapter not compatible with surface {}",
+                            i
+                        );
+                        // TODO For now, we'll still use this adapter and hope for the best
+                        // A more robust solution would try other adapters
+                    }
+                }
+                log::info!("find_compatible_adapter: found compatible adapter");
+                Ok(adapter)
+            }
+            Err(e) => {
+                log::error!("find_compatible_adapter: request_adapter failed: {e:?}");
+                Err(OverlayError::AdapterRequestError)
+            }
+        }
+    }
+
+    /// Stub method for adding a new overlay window.
+    ///
+    /// This will be called by get_available_content() when a new display is detected.
+    /// Currently empty - implementation to be added later.
+    pub fn add_overlay_window(&mut self) {
+        // Empty stub for now
+        log::debug!("add_overlay_window: stub called");
+    }
+
+    /// Stub method for removing an outdated overlay window.
+    ///
+    /// This will be called by get_available_content() when a display is removed.
+    /// Currently empty - implementation to be added later.
+    pub fn remove_overlay_window(&mut self) {
+        // Empty stub for now
+        log::debug!("remove_overlay_window: stub called");
+    }
+
+    /// Shows the overlay that matches the monitor's position and sets it to fullscreen.
+    ///
+    /// This method finds the overlay whose window position matches the monitor's position,
+    /// shows it, sets it to fullscreen, and creates the display-specific renderers.
+    ///
+    /// # Arguments
+    ///
+    /// * `monitor` - The monitor to match and fullscreen on
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success, or an error if no matching overlay is found or the operation fails.
+    pub fn show_overlay_for_monitor(&mut self, monitor: &MonitorHandle) -> OverlayResult<()> {
+        let index = self
+            .find_overlay_by_monitor_position(&monitor)
+            .ok_or_else(|| {
+                log::error!("show_overlay_for_monitor: no matching overlay found");
+                OverlayError::WindowCreationError
+            })?;
+
+        self.show_overlay(index, monitor)
+    }
+
+    /// Finds the overlay index whose window position matches the monitor's position.
+    ///
+    /// # Arguments
+    ///
+    /// * `monitor` - The monitor to match against
+    ///
+    /// # Returns
+    ///
+    /// Returns Some(index) if a matching overlay is found, None otherwise.
+    pub fn find_overlay_by_monitor_position(&self, monitor: &MonitorHandle) -> Option<usize> {
+        let monitor_pos = monitor.position();
+        log::info!(
+            "find_overlay_by_monitor_position: looking for monitor at ({}, {})",
+            monitor_pos.x,
+            monitor_pos.y
+        );
+
+        for (i, ctx) in self.overlay_contexts.iter().enumerate() {
+            if let Ok(win_pos) = ctx.window.outer_position() {
+                log::debug!(
+                    "find_overlay_by_monitor_position: overlay {} at ({}, {})",
+                    i,
+                    win_pos.x,
+                    win_pos.y
+                );
+                // Compare positions (allow small tolerance for scaling differences)
+                if (win_pos.x - monitor_pos.x).abs() < 10 && (win_pos.y - monitor_pos.y).abs() < 100
+                {
+                    log::info!(
+                        "find_overlay_by_monitor_position: found match at index {}",
+                        i
+                    );
+                    return Some(i);
+                }
+            }
+        }
+        log::warn!("find_overlay_by_monitor_position: no matching overlay found");
+        None
+    }
+
+    /// Shows the overlay at the given index and sets it to fullscreen.
+    ///
+    /// This method also creates the `click_animation_renderer` and `iced_renderer`
+    /// using the monitor's scale factor.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the overlay to show
+    /// * `monitor` - The monitor to fullscreen on
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) on success, or an error if the operation fails.
+    pub fn show_overlay(&mut self, index: usize, monitor: &MonitorHandle) -> OverlayResult<()> {
+        log::info!("show_overlay: index={}, monitor={:?}", index, monitor);
+
+        if index >= self.overlay_contexts.len() {
+            log::error!("show_overlay: index {} out of bounds", index);
+            return Err(OverlayError::WindowCreationError);
+        }
+
+        let overlay_context = &self.overlay_contexts[index];
+        overlay_context
+            .show_fullscreen(monitor.clone())
+            .map_err(|e| {
+                log::error!("show_overlay: show_fullscreen failed: {}", e);
+                OverlayError::WindowCreationError
+            })?;
+
+        // Reconfigure the surface after fullscreen
+        overlay_context
+            .configure_surface(&self.device, &self.adapter, self.surface_format)
+            .map_err(|e| {
+                log::error!("show_overlay: configure_surface failed: {}", e);
+                OverlayError::SurfaceCreationError
+            })?;
+
+        self.active_overlay_index = Some(index);
+
+        // Create the display-specific renderers
+        let window = &overlay_context.window;
+        let size = window.inner_size();
+        let scale = monitor.scale_factor();
 
         let click_animation_renderer = ClickAnimationRenderer::create(
-            &device,
-            &queue,
-            surface_config.format,
-            &texture_path,
+            &self.device,
+            &self.queue,
+            self.surface_format,
+            &self.texture_path,
             Extent {
                 width: size.width as f64,
                 height: size.height as f64,
             },
             scale,
         )?;
+        self.click_animation_renderer = Some(click_animation_renderer);
 
-        let iced_renderer = IcedRenderer::new(
-            &device,
-            &queue,
-            surface_config.format,
-            &adapter,
-            &window_arc,
-            &texture_path,
-        );
+        log::info!("show_overlay: renderers created successfully");
+        Ok(())
+    }
 
-        Ok(Self {
-            surface,
-            device,
-            queue,
-            window: window_arc,
-            cursor_renderer,
-            #[cfg(target_os = "windows")]
-            _direct_composition: direct_composition,
-            click_animation_renderer,
-            iced_renderer,
-        })
+    /// Hides the currently active overlay and clears the display renderers.
+    pub fn hide_active_overlay(&mut self) {
+        log::info!("hide_active_overlay");
+
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get(index) {
+                overlay_context.hide();
+            }
+        }
+
+        self.active_overlay_index = None;
+        self.clear_display_renderers();
+    }
+
+    /// Clears the display-specific renderers.
+    ///
+    /// Sets `click_animation_renderer` and `iced_renderer` to None.
+    pub fn clear_display_renderers(&mut self) {
+        log::info!("clear_display_renderers");
+        self.click_animation_renderer = None;
+    }
+
+    /// Returns a reference to the currently active window.
+    ///
+    /// # Returns
+    ///
+    /// Some(&Arc<Window>) if there's an active overlay, None otherwise.
+    pub fn get_active_window(&self) -> Option<&Arc<Window>> {
+        self.active_overlay_index
+            .and_then(|index| self.overlay_contexts.get(index))
+            .map(|ctx| &ctx.window)
+    }
+
+    /// Returns a reference to the currently active surface.
+    fn get_active_surface(&self) -> Option<&wgpu::Surface<'a>> {
+        self.active_overlay_index
+            .and_then(|index| self.overlay_contexts.get(index))
+            .map(|ctx| &ctx.surface)
     }
 
     /// Creates a new cursor with the specified image and scale factor.
@@ -331,7 +529,11 @@ impl<'a> GraphicsContext<'a> {
         image_data: &[u8],
         display_scale: f64,
     ) -> std::result::Result<Cursor, OverlayError> {
-        let window_size = self.window.inner_size();
+        let window = self.get_active_window().ok_or_else(|| {
+            log::error!("create_cursor: no active window");
+            OverlayError::WindowCreationError
+        })?;
+        let window_size = window.inner_size();
         self.cursor_renderer.create_cursor(
             image_data,
             display_scale,
@@ -369,7 +571,15 @@ impl<'a> GraphicsContext<'a> {
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
     pub fn draw(&mut self, cursor_controller: &CursorController) {
-        let output = match self.surface.get_current_texture() {
+        let surface = match self.get_active_surface() {
+            Some(s) => s,
+            None => {
+                log::warn!("GraphicsContext::draw: no active surface");
+                return;
+            }
+        };
+
+        let output = match surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
                 log::error!("GraphicsContext::draw: failed to get current texture: {e:?}");
@@ -408,26 +618,33 @@ impl<'a> GraphicsContext<'a> {
 
         cursor_controller.draw(&mut render_pass, self);
 
-        self.click_animation_renderer
-            .draw(&mut render_pass, &self.queue);
+        if let Some(ref mut click_animation_renderer) = self.click_animation_renderer {
+            click_animation_renderer.draw(&mut render_pass, &self.queue);
+        }
         drop(render_pass);
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        self.iced_renderer.draw(&output, &view);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.draw(&output, &view);
+            }
+        }
 
-        self.window.pre_present_notify();
+        if let Some(window) = self.get_active_window() {
+            window.pre_present_notify();
+        }
 
         output.present();
     }
 
-    /// Returns a reference to the underlying overlay window.
+    /// Returns a reference to the underlying active overlay window.
     ///
     /// # Returns
     ///
-    /// A reference to the `Window` instance used for overlay rendering.
-    pub fn window(&self) -> &Window {
-        &self.window
+    /// Some(&Window) if there's an active overlay, None otherwise.
+    pub fn window(&self) -> Option<&Window> {
+        self.get_active_window().map(|w| w.as_ref())
     }
 
     /// Requests to enable a click animation at the specified position.
@@ -436,8 +653,11 @@ impl<'a> GraphicsContext<'a> {
     /// * `position` - Screen position where the animation should appear
     pub fn enable_click_animation(&mut self, position: Position) {
         log::debug!("GraphicsContext::enable_click_animation: {position:?}");
-        self.click_animation_renderer
-            .enable_click_animation(position);
+        if let Some(ref mut click_animation_renderer) = self.click_animation_renderer {
+            click_animation_renderer.enable_click_animation(position);
+        } else {
+            log::warn!("enable_click_animation: click_animation_renderer not initialized");
+        }
     }
 
     /// Adds a new participant to the draw manager with their color.
@@ -446,7 +666,15 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `color` - Hex color string for the participant's drawings
     pub fn add_draw_participant(&mut self, sid: String, color: &str) {
-        self.iced_renderer.add_draw_participant(sid, color);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context
+                    .iced_renderer
+                    .add_draw_participant(sid, color);
+            }
+        } else {
+            log::warn!("add_draw_participant: iced_renderer not initialized");
+        }
     }
 
     /// Removes a participant from the draw manager.
@@ -454,7 +682,11 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant to remove
     pub fn remove_draw_participant(&mut self, sid: &str) {
-        self.iced_renderer.remove_draw_participant(sid);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.remove_draw_participant(sid);
+            }
+        }
     }
 
     /// Sets the drawing mode for a specific participant.
@@ -463,7 +695,11 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `mode` - The drawing mode to set
     pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.iced_renderer.set_drawing_mode(sid, mode);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.set_drawing_mode(sid, mode);
+            }
+        }
     }
 
     /// Starts a new drawing path for a participant.
@@ -473,7 +709,13 @@ impl<'a> GraphicsContext<'a> {
     /// * `point` - Starting point of the path
     /// * `path_id` - Unique identifier for the drawing path
     pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.iced_renderer.draw_start(sid, point, path_id);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context
+                    .iced_renderer
+                    .draw_start(sid, point, path_id);
+            }
+        }
     }
 
     /// Adds a point to the current drawing path for a participant.
@@ -482,7 +724,11 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `point` - Point to add to the current path
     pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.iced_renderer.draw_add_point(sid, point);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.draw_add_point(sid, point);
+            }
+        }
     }
 
     /// Ends the current drawing path for a participant.
@@ -491,7 +737,11 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `point` - Final point of the path
     pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.iced_renderer.draw_end(sid, point);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.draw_end(sid, point);
+            }
+        }
     }
 
     /// Clears a specific drawing path for a participant.
@@ -500,7 +750,11 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `path_id` - Unique identifier for the drawing path to clear
     pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.iced_renderer.draw_clear_path(sid, path_id);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.draw_clear_path(sid, path_id);
+            }
+        }
     }
 
     /// Clears all drawing paths for a participant.
@@ -508,7 +762,11 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant
     pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.iced_renderer.draw_clear_all_paths(sid);
+        if let Some(index) = self.active_overlay_index {
+            if let Some(overlay_context) = self.overlay_contexts.get_mut(index) {
+                overlay_context.iced_renderer.draw_clear_all_paths(sid);
+            }
+        }
     }
 }
 
@@ -516,7 +774,10 @@ impl Drop for GraphicsContext<'_> {
     fn drop(&mut self) {
         // This is needed for windows, because otherwise the title bar becomes
         // visible when a new overlay surface is created.
-        self.window.set_minimized(true);
+        // Minimize all overlay windows
+        for ctx in &self.overlay_contexts {
+            ctx.window.set_minimized(true);
+        }
     }
 }
 

@@ -25,6 +25,7 @@ pub mod utils {
 pub(crate) mod overlay_window;
 
 use capture::capturer::{poll_stream, Capturer};
+use graphics::graphics_context::overlay_context::create_overlay_windows;
 use graphics::graphics_context::GraphicsContext;
 use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
@@ -42,27 +43,17 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 
 #[cfg(target_os = "macos")]
-use winit::platform::macos::{EventLoopBuilderExtMacOS, WindowExtMacOS};
-
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowExtWindows;
-
-use winit::window::{WindowAttributes, WindowLevel};
+use winit::platform::macos::EventLoopBuilderExtMacOS;
 
 use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
-
-// Constants for magic numbers
-/// Initial size for the overlay window (width and height in logical pixels)
-const OVERLAY_WINDOW_INITIAL_SIZE: f64 = 1.0;
 
 /// Timeout in seconds for socket message reception
 const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
@@ -95,37 +86,18 @@ pub enum ServerError {
     CursorControllerCreationError,
 }
 
-pub fn get_window_attributes() -> WindowAttributes {
-    WindowAttributes::default()
-        .with_title("Overlay window")
-        .with_window_level(WindowLevel::AlwaysOnTop)
-        .with_decorations(false)
-        .with_transparent(true)
-        .with_inner_size(LogicalSize::new(
-            OVERLAY_WINDOW_INITIAL_SIZE,
-            OVERLAY_WINDOW_INITIAL_SIZE,
-        ))
-        .with_content_protected(true)
-}
-
 /// Encapsulates the active remote control session components.
 ///
 /// This struct manages all the components needed for an active remote control session,
-/// including graphics rendering, input simulation, and window management. It's created
+/// including input simulation and window management. It's created
 /// when a screen sharing session begins and destroyed when it ends.
 ///
 /// # Fields
 ///
-/// * `gfx` - Graphics context for rendering cursors and visual feedback
 /// * `cursor_controller` - Handles mouse movement, clicks, and cursor visualization
 /// * `keyboard_controller` - Manages keyboard input simulation
-///
-/// # Lifetime
-///
-/// The lifetime parameter `'a` ensures that the graphics context and cursor controller
-/// don't outlive the underlying window resources they depend on.
-struct RemoteControl<'a> {
-    gfx: GraphicsContext<'a>,
+/// * `clipboard_controller` - Handles clipboard operations
+struct RemoteControl {
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
     clipboard_controller: Option<ClipboardController>,
@@ -176,11 +148,13 @@ struct RemoteControl<'a> {
 /// Operations return `Result<(), ServerError>` for proper error propagation.
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
-    remote_control: Option<RemoteControl<'a>>,
+    /// Graphics context for rendering cursors and visual feedback (created in resumed())
+    graphics_context: Option<GraphicsContext<'a>>,
+    /// Optional active remote control session (None when not sharing)
+    remote_control: Option<RemoteControl>,
     textures_path: String,
     // The arc is needed because we move the object to the
     // thread that checks if the stream has failed.
-    //screen_capturer: Arc<Mutex<ScreenCapturer>>,
     screen_capturer: Arc<Mutex<Capturer>>,
     _screen_capturer_events: Option<JoinHandle<()>>,
     socket: CursorSocket,
@@ -226,6 +200,7 @@ impl<'a> Application<'a> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
         Ok(Self {
+            graphics_context: None,
             remote_control: None,
             textures_path: input.textures_path,
             screen_capturer: screencapturer.clone(),
@@ -245,7 +220,15 @@ impl<'a> Application<'a> {
             return vec![];
         }
 
-        res.unwrap()
+        let content = res.unwrap();
+
+        // Call stub methods for adding/removing overlay windows
+        if let Some(graphics_context) = &mut self.graphics_context {
+            graphics_context.add_overlay_window();
+            graphics_context.remove_overlay_window();
+        }
+
+        content
     }
 
     /// Initiates a screen sharing session with the specified configuration.
@@ -352,11 +335,7 @@ impl<'a> Application<'a> {
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(
-            monitor,
-            event_loop,
-            screenshare_input.accessibility_permission,
-        );
+        let res = self.create_overlay_window(monitor, screenshare_input.accessibility_permission);
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -388,80 +367,49 @@ impl<'a> Application<'a> {
     fn create_overlay_window(
         &mut self,
         selected_monitor: MonitorHandle,
-        event_loop: &ActiveEventLoop,
         accessibility_permission: bool,
     ) -> Result<(), ServerError> {
-        log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} {accessibility_permission}",);
-        let attributes = get_window_attributes();
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => window,
-            Err(_error) => {
-                return Err(ServerError::WindowCreationError);
-            }
-        };
+        log::info!(
+            "create_overlay_window: selected_monitor: {:?} accessibility_permission: {}",
+            selected_monitor,
+            accessibility_permission
+        );
 
-        #[cfg(target_os = "linux")]
-        {
-            /* This is needed for getting the system picker for screen sharing. */
-            let _ = window.request_inner_size(selected_monitor.size().clone());
-        }
+        let graphics_context = self
+            .graphics_context
+            .as_mut()
+            .ok_or(ServerError::GfxCreationError)?;
 
-        let res = window.set_cursor_hittest(false);
-        if let Err(_error) = res {
-            return Err(ServerError::CursorHittestError);
-        }
+        // Show the overlay and create renderers
+        graphics_context
+            .show_overlay_for_monitor(&selected_monitor)
+            .map_err(|e| {
+                log::error!(
+                    "create_overlay_window: show_overlay_for_monitor failed: {:?}",
+                    e
+                );
+                ServerError::WindowCreationError
+            })?;
 
-        #[cfg(target_os = "windows")]
-        {
-            window.set_skip_taskbar(true);
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            window.set_has_shadow(false);
-        }
-
-        window.set_visible(true);
-
-        let monitor_position = selected_monitor.position();
-        let mut monitor_scale = 1.0;
-        if let Some(active_monitor) = window.current_monitor() {
-            monitor_scale = active_monitor.scale_factor();
-        }
-        let monitor_position_x = (monitor_position.x as f64) * monitor_scale;
-        let monitor_position_y = (monitor_position.y as f64) * monitor_scale;
-        window.set_outer_position(PhysicalPosition::new(
-            monitor_position_x,
-            monitor_position_y,
-        ));
-
-        let res = set_fullscreen(&window, selected_monitor.clone());
-        if let Err(error) = res {
-            log::error!("create_overlay_window: Error setting fullscreen {error:?}");
-            return Err(ServerError::FullscreenError);
-        }
+        // Get the window from the graphics context
+        let window = graphics_context.window().ok_or_else(|| {
+            log::error!("create_overlay_window: No active window after show_overlay");
+            ServerError::WindowCreationError
+        })?;
 
         let window_position = match window.outer_position() {
             Ok(position) => position,
             Err(error) => {
-                log::error!("create_overlay_window: Error getting window position {error:?} using monitor's");
+                log::error!(
+                    "create_overlay_window: Error getting window position {:?} using monitor's",
+                    error
+                );
                 selected_monitor.position()
             }
         };
 
         let window_size = window.inner_size();
-
-        let mut graphics_context = match GraphicsContext::new(
-            window,
-            self.textures_path.clone(),
-            selected_monitor.scale_factor(),
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                log::error!("create_overlay_window: Error creating graphics context {error:?}");
-                return Err(ServerError::GfxCreationError);
-            }
-        };
+        let monitor_position = selected_monitor.position();
 
         /* Hardcode window frame to zero as we only support displays for now.*/
         let window_frame = Frame::default();
@@ -496,7 +444,7 @@ impl<'a> Application<'a> {
         log::info!("create_overlay_window: overlay_window created {overlay_window}");
 
         let cursor_controller = CursorController::new(
-            &mut graphics_context,
+            graphics_context,
             overlay_window.clone(),
             self.event_loop_proxy.clone(),
             accessibility_permission,
@@ -514,7 +462,6 @@ impl<'a> Application<'a> {
             }
         };
         self.remote_control = Some(RemoteControl {
-            gfx: graphics_context,
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
             clipboard_controller,
@@ -531,6 +478,9 @@ impl<'a> Application<'a> {
 
     fn destroy_overlay_window(&mut self) {
         log::info!("destroy_overlay_window");
+        if let Some(graphics_context) = &mut self.graphics_context {
+            graphics_context.hide_active_overlay();
+        }
         self.remote_control = None;
     }
 
@@ -745,13 +695,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none request redraw");
-                    return;
+                if let Some(graphics_context) = &self.graphics_context {
+                    if let Some(window) = graphics_context.window() {
+                        window.request_redraw();
+                    }
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
-                gfx.window().request_redraw();
             }
             UserEvent::SharerPosition(x, y) => {
                 debug!("user_event: sharer position: {x} {y}");
@@ -778,14 +726,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant connected");
+                if self.remote_control.is_none() || self.graphics_context.is_none() {
+                    log::warn!("user_event: remote control or graphics context is none participant connected");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
+                let graphics_context = self.graphics_context.as_mut().unwrap();
                 let sid = participant.sid.clone();
                 if let Err(e) = remote_control.cursor_controller.add_controller(
-                    &mut remote_control.gfx,
+                    graphics_context,
                     participant.sid,
                     participant.name,
                 ) {
@@ -796,7 +745,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 // Add participant to draw manager with their color
                 if let Some(color) = remote_control.cursor_controller.get_participant_color(&sid) {
-                    remote_control.gfx.add_draw_participant(sid, color);
+                    graphics_context.add_draw_participant(sid, color);
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
@@ -805,14 +754,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none participant disconnected");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control
                     .cursor_controller
                     .remove_controller(participant.sid.as_str());
                 // Remove participant from draw manager
-                remote_control
-                    .gfx
-                    .remove_draw_participant(participant.sid.as_str());
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.remove_draw_participant(participant.sid.as_str());
+                }
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
@@ -851,12 +800,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::EnableClickAnimation(position) => {
                 log::debug!("user_event: Enable click animation: {position:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none enable click animation");
-                    return;
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.enable_click_animation(position);
+                } else {
+                    log::warn!("user_event: graphics context is none enable click animation");
                 }
-                let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
-                gfx.enable_click_animation(position);
             }
             UserEvent::AddToClipboard(add_to_clipboard_data) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
@@ -900,7 +848,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none drawing mode");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
                 match &drawing_mode {
                     DrawingMode::Disabled => {
                         remote_control
@@ -913,9 +861,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .set_controller_pointer_enabled(true, sid.as_str());
                     }
                 }
-                remote_control
-                    .gfx
-                    .set_drawing_mode(sid.as_str(), drawing_mode);
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.set_drawing_mode(sid.as_str(), drawing_mode);
+                }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
                 log::debug!("user_event: DrawStart: {:?} {} {}", point, path_id, sid);
@@ -923,12 +871,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none draw start");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_start(sid.as_str(), pixel_position, path_id);
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.draw_start(sid.as_str(), pixel_position, path_id);
+                }
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -941,12 +890,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none draw add point");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_add_point(sid.as_str(), pixel_position);
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.draw_add_point(sid.as_str(), pixel_position);
+                }
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -959,10 +909,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none draw end");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let remote_control = self.remote_control.as_mut().unwrap();
                 let overlay_window = remote_control.cursor_controller.get_overlay_window();
                 let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control.gfx.draw_end(sid.as_str(), pixel_position);
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.draw_end(sid.as_str(), pixel_position);
+                }
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -975,8 +928,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none draw clear path");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.draw_clear_path(sid.as_str(), path_id);
+                }
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control.cursor_controller.trigger_render();
             }
             UserEvent::DrawClearAllPaths(sid) => {
@@ -985,8 +940,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none draw clear all paths");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_all_paths(sid.as_str());
+                if let Some(graphics_context) = &mut self.graphics_context {
+                    graphics_context.draw_clear_all_paths(sid.as_str());
+                }
+                let remote_control = self.remote_control.as_mut().unwrap();
                 remote_control.cursor_controller.trigger_render();
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
@@ -1013,7 +970,33 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         }
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        log::info!("Application::resumed - initializing graphics context");
+
+        // Create the graphics context if it doesn't exist
+        if self.graphics_context.is_none() {
+            // Create overlay windows for all displays
+            let windows = create_overlay_windows(event_loop);
+            // TODO: communcate errors with main app
+            if windows.is_empty() {
+                log::error!("Application::resumed - no windows created");
+                return;
+            }
+
+            match GraphicsContext::new(windows, self.textures_path.clone()) {
+                Ok(gfx) => {
+                    self.graphics_context = Some(gfx);
+                    log::info!("Application::resumed - graphics context created successfully");
+                }
+                Err(e) => {
+                    log::error!(
+                        "Application::resumed - failed to create graphics context: {:?}",
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     // Once we get movement input from guest, we will call Window::request_redraw
     fn window_event(
@@ -1029,13 +1012,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             WindowEvent::RedrawRequested => {
                 // render the cursor
                 // The vertices should be in counter clockwise order because of the front face culling
-                if self.remote_control.is_none() {
-                    log::warn!("window_event: remote control is none redraw requested");
+                if self.remote_control.is_none() || self.graphics_context.is_none() {
+                    log::warn!(
+                        "window_event: remote control or graphics context is none redraw requested"
+                    );
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                remote_control.gfx.draw(cursor_controller);
+                let remote_control = self.remote_control.as_mut().unwrap();
+                let cursor_controller = &remote_control.cursor_controller;
+                let graphics_context = self.graphics_context.as_mut().unwrap();
+                graphics_context.draw(cursor_controller);
             }
             _ => {}
         }
@@ -1227,69 +1213,5 @@ impl RenderEventLoop {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)
         })
-    }
-}
-
-#[derive(Error, Debug)]
-enum FullscreenError {
-    #[error("Failed to get raw window handle")]
-    #[cfg(target_os = "macos")]
-    GetRawWindowHandleError,
-    #[error("Failed to get NSView")]
-    #[cfg(target_os = "macos")]
-    GetNSViewError,
-    #[error("Failed to get NSWindow")]
-    #[cfg(target_os = "macos")]
-    GetNSWindowError,
-    #[error("Failed to get raw window handle")]
-    #[cfg(target_os = "macos")]
-    FailedToGetRawWindowHandle,
-}
-
-fn set_fullscreen(
-    window: &winit::window::Window,
-    selected_monitor: MonitorHandle,
-) -> Result<(), FullscreenError> {
-    log::info!("set_fullscreen: {selected_monitor:?}");
-    #[cfg(target_os = "macos")]
-    {
-        /* WA for putting the window in the right place. */
-        window.set_maximized(true);
-        window.set_simple_fullscreen(true);
-
-        use objc2::rc::Retained;
-        use objc2_app_kit::NSMainMenuWindowLevel;
-        use objc2_app_kit::NSView;
-        use raw_window_handle::HasWindowHandle;
-        use raw_window_handle::RawWindowHandle;
-
-        let raw_handle = window
-            .window_handle()
-            .map_err(|_| FullscreenError::GetRawWindowHandleError)?;
-        if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
-            let view = handle.ns_view.as_ptr();
-            let ns_view: Option<Retained<NSView>> = unsafe { Retained::retain(view.cast()) };
-            if ns_view.is_none() {
-                return Err(FullscreenError::GetNSViewError);
-            }
-            let ns_view = ns_view.unwrap();
-            let ns_window = ns_view.window();
-            if ns_window.is_none() {
-                return Err(FullscreenError::GetNSWindowError);
-            }
-            let ns_window = ns_window.unwrap();
-            /* This is a hack to make the overlay window to appear above the main menu. */
-            ns_window.setLevel(NSMainMenuWindowLevel + 1);
-            return Ok(());
-        }
-        Err(FullscreenError::FailedToGetRawWindowHandle)
-    }
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        use winit::window::Fullscreen;
-
-        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor))));
-
-        Ok(())
     }
 }

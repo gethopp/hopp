@@ -96,6 +96,8 @@ enum ScreenshareTest {
     Basic,
     /// Test available content consistency across multiple requests
     AvailableContent,
+    /// Test every display for 10 seconds each
+    EveryDisplay,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -213,6 +215,10 @@ async fn main() -> io::Result<()> {
                 ScreenshareTest::AvailableContent => {
                     println!("Running available content test...");
                     screenshare_client::test_available_content_consistency()?;
+                }
+                ScreenshareTest::EveryDisplay => {
+                    println!("Running every display screenshare test...");
+                    screenshare_client::test_every_display()?;
                 }
             }
             println!("Screenshare test finished.");

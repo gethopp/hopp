@@ -42,7 +42,7 @@ impl IcedRenderer {
         format: wgpu::TextureFormat,
         adapter: &wgpu::Adapter,
         window: &Arc<Window>,
-        texture_path: &String,
+        texture_path: &str,
     ) -> Self {
         let engine = Engine::new(
             adapter,

@@ -6,7 +6,7 @@ pub struct Marker {
 }
 
 impl Marker {
-    pub fn new(texture_path: &String) -> Self {
+    pub fn new(texture_path: &str) -> Self {
         let cache = canvas::Cache::new();
         let marker =
             iced_core::image::Handle::from_path(format!("{texture_path}/marker_top_left.png"));
