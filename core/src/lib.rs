@@ -23,6 +23,7 @@ pub mod utils {
 }
 
 pub(crate) mod overlay_window;
+pub(crate) mod window_manager;
 
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
@@ -42,27 +43,17 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 
 #[cfg(target_os = "macos")]
-use winit::platform::macos::{EventLoopBuilderExtMacOS, WindowExtMacOS};
-
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowExtWindows;
-
-use winit::window::{WindowAttributes, WindowLevel};
+use winit::platform::macos::EventLoopBuilderExtMacOS;
 
 use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
-
-// Constants for magic numbers
-/// Initial size for the overlay window (width and height in logical pixels)
-const OVERLAY_WINDOW_INITIAL_SIZE: f64 = 1.0;
 
 /// Timeout in seconds for socket message reception
 const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
@@ -93,19 +84,6 @@ pub enum ServerError {
     GfxCreationError,
     #[error("Failed to create cursor controller, accessibility permissions needed")]
     CursorControllerCreationError,
-}
-
-pub fn get_window_attributes() -> WindowAttributes {
-    WindowAttributes::default()
-        .with_title("Overlay window")
-        .with_window_level(WindowLevel::AlwaysOnTop)
-        .with_decorations(false)
-        .with_transparent(true)
-        .with_inner_size(LogicalSize::new(
-            OVERLAY_WINDOW_INITIAL_SIZE,
-            OVERLAY_WINDOW_INITIAL_SIZE,
-        ))
-        .with_content_protected(true)
 }
 
 /// Encapsulates the active remote control session components.
@@ -186,6 +164,7 @@ pub struct Application<'a> {
     socket: CursorSocket,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    window_manager: Option<window_manager::WindowManager>,
 }
 
 #[derive(Error, Debug)]
@@ -233,16 +212,21 @@ impl<'a> Application<'a> {
             socket,
             room_service: None,
             event_loop_proxy,
+            window_manager: None,
         })
     }
 
-    fn get_available_content(&mut self) -> Vec<CaptureContent> {
+    fn get_available_content(&mut self, event_loop: &ActiveEventLoop) -> Vec<CaptureContent> {
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
         let res = screen_capturer.get_available_content();
 
         if let Err(e) = res {
             log::error!("get_available_content: Error getting available content: {e:?}");
             return vec![];
+        }
+
+        if let Some(wm) = self.window_manager.as_mut() {
+            let _ = wm.update(event_loop);
         }
 
         res.unwrap()
@@ -277,7 +261,6 @@ impl<'a> Application<'a> {
         &mut self,
         screenshare_input: ScreenShareMessage,
         monitors: Vec<MonitorHandle>,
-        event_loop: &ActiveEventLoop,
     ) -> Result<(), ServerError> {
         log::info!(
             "screenshare: resolution: {:?} content: {} accessibility_permission: {} use_av1: {}",
@@ -352,11 +335,7 @@ impl<'a> Application<'a> {
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(
-            monitor,
-            event_loop,
-            screenshare_input.accessibility_permission,
-        );
+        let res = self.create_overlay_window(monitor, screenshare_input.accessibility_permission);
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -388,58 +367,21 @@ impl<'a> Application<'a> {
     fn create_overlay_window(
         &mut self,
         selected_monitor: MonitorHandle,
-        event_loop: &ActiveEventLoop,
         accessibility_permission: bool,
     ) -> Result<(), ServerError> {
         log::info!("create_overlay_window: selected_monitor: {selected_monitor:?} {accessibility_permission}",);
-        let attributes = get_window_attributes();
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => window,
-            Err(_error) => {
-                return Err(ServerError::WindowCreationError);
-            }
-        };
 
-        #[cfg(target_os = "linux")]
-        {
-            /* This is needed for getting the system picker for screen sharing. */
-            let _ = window.request_inner_size(selected_monitor.size().clone());
-        }
-
-        let res = window.set_cursor_hittest(false);
-        if let Err(_error) = res {
-            return Err(ServerError::CursorHittestError);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            window.set_skip_taskbar(true);
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            window.set_has_shadow(false);
-        }
-
-        window.set_visible(true);
+        let window = self
+            .window_manager
+            .as_mut()
+            .ok_or(ServerError::WindowCreationError)?
+            .show_window(&selected_monitor)
+            .map_err(|e| {
+                log::error!("create_overlay_window: Error showing window: {:?}", e);
+                ServerError::from(e)
+            })?;
 
         let monitor_position = selected_monitor.position();
-        let mut monitor_scale = 1.0;
-        if let Some(active_monitor) = window.current_monitor() {
-            monitor_scale = active_monitor.scale_factor();
-        }
-        let monitor_position_x = (monitor_position.x as f64) * monitor_scale;
-        let monitor_position_y = (monitor_position.y as f64) * monitor_scale;
-        window.set_outer_position(PhysicalPosition::new(
-            monitor_position_x,
-            monitor_position_y,
-        ));
-
-        let res = set_fullscreen(&window, selected_monitor.clone());
-        if let Err(error) = res {
-            log::error!("create_overlay_window: Error setting fullscreen {error:?}");
-            return Err(ServerError::FullscreenError);
-        }
 
         let window_position = match window.outer_position() {
             Ok(position) => position,
@@ -531,6 +473,9 @@ impl<'a> Application<'a> {
 
     fn destroy_overlay_window(&mut self) {
         log::info!("destroy_overlay_window");
+        if let Some(wm) = self.window_manager.as_mut() {
+            wm.hide_active_window();
+        }
         self.remote_control = None;
     }
 
@@ -701,7 +646,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::GetAvailableContent => {
                 log::debug!("user_event: Get available content");
-                let content = self.get_available_content();
+                let content = self.get_available_content(event_loop);
                 if content.is_empty() {
                     log::error!("user_event: No available content");
                     sentry_utils::upload_logs_event("No available content".to_string());
@@ -724,7 +669,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
 
-                let result_message = match self.screenshare(data, monitors, event_loop) {
+                let result_message = match self.screenshare(data, monitors) {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         log::error!("user_event: Screen share failed: {e:?}");
@@ -1013,7 +958,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         }
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window_manager.is_none() {
+            log::info!("Application::resumed: initializing WindowManager");
+            match window_manager::WindowManager::new(event_loop) {
+                Ok(wm) => self.window_manager = Some(wm),
+                Err(e) => log::error!(
+                    "Application::resumed: failed to initialize WindowManager: {:?}",
+                    e
+                ),
+            }
+        }
+    }
 
     // Once we get movement input from guest, we will call Window::request_redraw
     fn window_event(
@@ -1227,69 +1183,5 @@ impl RenderEventLoop {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)
         })
-    }
-}
-
-#[derive(Error, Debug)]
-enum FullscreenError {
-    #[error("Failed to get raw window handle")]
-    #[cfg(target_os = "macos")]
-    GetRawWindowHandleError,
-    #[error("Failed to get NSView")]
-    #[cfg(target_os = "macos")]
-    GetNSViewError,
-    #[error("Failed to get NSWindow")]
-    #[cfg(target_os = "macos")]
-    GetNSWindowError,
-    #[error("Failed to get raw window handle")]
-    #[cfg(target_os = "macos")]
-    FailedToGetRawWindowHandle,
-}
-
-fn set_fullscreen(
-    window: &winit::window::Window,
-    selected_monitor: MonitorHandle,
-) -> Result<(), FullscreenError> {
-    log::info!("set_fullscreen: {selected_monitor:?}");
-    #[cfg(target_os = "macos")]
-    {
-        /* WA for putting the window in the right place. */
-        window.set_maximized(true);
-        window.set_simple_fullscreen(true);
-
-        use objc2::rc::Retained;
-        use objc2_app_kit::NSMainMenuWindowLevel;
-        use objc2_app_kit::NSView;
-        use raw_window_handle::HasWindowHandle;
-        use raw_window_handle::RawWindowHandle;
-
-        let raw_handle = window
-            .window_handle()
-            .map_err(|_| FullscreenError::GetRawWindowHandleError)?;
-        if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
-            let view = handle.ns_view.as_ptr();
-            let ns_view: Option<Retained<NSView>> = unsafe { Retained::retain(view.cast()) };
-            if ns_view.is_none() {
-                return Err(FullscreenError::GetNSViewError);
-            }
-            let ns_view = ns_view.unwrap();
-            let ns_window = ns_view.window();
-            if ns_window.is_none() {
-                return Err(FullscreenError::GetNSWindowError);
-            }
-            let ns_window = ns_window.unwrap();
-            /* This is a hack to make the overlay window to appear above the main menu. */
-            ns_window.setLevel(NSMainMenuWindowLevel + 1);
-            return Ok(());
-        }
-        Err(FullscreenError::FailedToGetRawWindowHandle)
-    }
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        use winit::window::Fullscreen;
-
-        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor))));
-
-        Ok(())
     }
 }
