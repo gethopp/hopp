@@ -97,7 +97,6 @@ impl WindowManager {
 
         #[cfg(target_os = "windows")]
         {
-            use winit::platform::windows::WindowExtWindows;
             window.set_skip_taskbar(true);
         }
 
