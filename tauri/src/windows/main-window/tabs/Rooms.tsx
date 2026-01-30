@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
+import { LuMicOff } from "react-icons/lu";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Constants } from "@/constants";
 import { useState } from "react";
@@ -553,6 +554,7 @@ const SelectedRoom = ({ room }: { room: Room }) => {
           participantId,
           user: foundUser,
           isLocal: participant.isLocal,
+          isMicrophoneEnabled: participant.isMicrophoneEnabled,
         };
       });
   }, [participants, teammates, user]);
@@ -597,6 +599,12 @@ const SelectedRoom = ({ room }: { room: Room }) => {
                       {participant.user.first_name} {participant.user.last_name}
                       {participant.isLocal && " (You)"}
                     </span>
+                    {!participant.isMicrophoneEnabled && (
+                      <span className="flex items-center gap-1 text-xs font-medium text-orange-500">
+                        <LuMicOff className="size-3" />
+                        <span className="mt-0.5">Muted</span>
+                      </span>
+                    )}
                   </div>
                 </>
               : <>

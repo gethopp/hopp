@@ -89,6 +89,13 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+  const remoteParticipants = useRemoteParticipants();
+
+  // Find the remote audio participant and check if they have microphone enabled
+  const remoteAudioParticipant = remoteParticipants.find(
+    (p) => p.identity.includes("audio") && callParticipant && p.identity.includes(callParticipant.id),
+  );
+  const isRemoteMuted = remoteAudioParticipant ? !remoteAudioParticipant.isMicrophoneEnabled : false;
 
   useScreenShareListener();
   const handleEndCall = useEndCall();
@@ -137,6 +144,7 @@ export function ConnectedActions() {
                   src={callParticipant?.avatar_url || undefined}
                   firstName={callParticipant?.first_name}
                   lastName={callParticipant?.last_name}
+                  isMuted={isRemoteMuted}
                 />
               )}
             </div>
