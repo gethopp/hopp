@@ -581,6 +581,12 @@ impl Capturer {
                         break;
                     }
 
+                    if matches!(res, Err(CapturerError::SelectedSourceNotFound)) {
+                        log::info!("restart_stream: Source not found, stopping screen share");
+                        let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
+                        return;
+                    }
+
                     log::info!("restart_stream: Failed to start capture, retrying {i}/10 {res:?}");
                     std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -595,7 +601,14 @@ impl Capturer {
                     res = new_stream.start_capture(new_stream.source_id());
                 }
 
-                if res.is_err() {
+                if let Err(ref e) = res {
+                    if matches!(e, CapturerError::SelectedSourceNotFound) {
+                        log::info!(
+                            "restart_stream: Source not found after retries, stopping screen share"
+                        );
+                        let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
+                        return;
+                    }
                     log::error!("restart_stream: Failed to start capture after 10 retries {res:?}");
                     sentry_utils::upload_logs_event("Stream start capture failed".to_string());
                     std::process::exit(STREAM_FAILURE_EXIT_CODE);
