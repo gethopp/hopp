@@ -3,7 +3,14 @@ import Draggable from "react-draggable";
 import { throttle } from "lodash";
 import { RiDraggable } from "react-icons/ri";
 import { HiPencil } from "react-icons/hi2";
-import { LiveKitRoom, useDataChannel, useLocalParticipant, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
+import {
+  LiveKitRoom,
+  useDataChannel,
+  useLocalParticipant,
+  useRoomContext,
+  useTracks,
+  VideoTrack,
+} from "@livekit/components-react";
 import { ConnectionState, DataPublishOptions, LocalParticipant, Track } from "livekit-client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resizeWindow } from "./utils";
@@ -123,7 +130,14 @@ const ConsumerComponent = React.memo(() => {
   useDataChannel("remote_control_enabled", (msg) => {
     const decoder = new TextDecoder();
     const payload: TPRemoteControlEnabled = JSON.parse(decoder.decode(msg.payload));
-    if (payload.payload.enabled == false) {
+    const newValue = payload.payload.enabled;
+
+    // Skip if value matches current state
+    if (newValue === isRemoteControlEnabled) {
+      return;
+    }
+
+    if (newValue === false) {
       updateCallTokens({
         isRemoteControlEnabled: false,
       });
