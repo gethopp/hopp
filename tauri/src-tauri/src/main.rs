@@ -631,6 +631,18 @@ fn call_started(_app: tauri::AppHandle, caller_id: String) {
     log::info!("call_started: {caller_id}");
 }
 
+/// When enabled=true, shows the notification variant of the icon.
+/// When enabled=false, shows the default variant.
+#[tauri::command]
+fn set_tray_notification(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_tray_notification: enabled={}", enabled);
+    let data = app.state::<std::sync::Mutex<hopp::AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Some(ref mut tray) = data.tray_state {
+        tray.set_notification_enabled(enabled);
+    }
+}
+
 #[tauri::command]
 fn get_hopp_server_url(app: tauri::AppHandle) -> Option<String> {
     log::info!("get_hopp_server_url");
@@ -792,14 +804,6 @@ fn main() {
                 .build(),
         )
         .setup(move |app| {
-            let quit = MenuItemBuilder::new("Quit")
-                .id("quit")
-                .accelerator("Cmd+Q")
-                .build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&quit]).build()?;
-
-            setup_tray_icon(app, &menu, location_set_setup.clone())?;
-
             /* Create the app_data_dir if it doesn't exist. */
             let app_data_dir = app
                 .path()
@@ -822,6 +826,14 @@ fn main() {
                 app_state,
             ));
             app.manage(data);
+
+            let quit = MenuItemBuilder::new("Quit")
+                .id("quit")
+                .accelerator("Cmd+Q")
+                .build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&quit]).build()?;
+
+            setup_tray_icon(app, &menu, location_set_setup.clone())?;
 
             /* Clear app logs in the beginning of a session. */
             let dir = app.path().app_log_dir();
@@ -1064,6 +1076,7 @@ fn main() {
             create_content_picker_window,
             set_sentry_metadata,
             call_started,
+            set_tray_notification,
             get_hopp_server_url,
             set_hopp_server_url,
             get_feedback_disabled,

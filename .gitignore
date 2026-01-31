@@ -27,3 +27,6 @@ dist-ssr
 *__pycache__/
 
 .yarn/install-state.gz
+
+openspec/changes
+CLAUDE.md

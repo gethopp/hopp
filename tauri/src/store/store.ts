@@ -32,6 +32,8 @@ export type CallState = {
   krispToggle?: boolean;
   controllerSupportsAv1?: boolean;
   av1Enabled?: boolean;
+  // Reconnection state
+  isReconnecting?: boolean;
 } & TCallTokensMessage["payload"];
 
 type State = {
@@ -47,6 +49,7 @@ type State = {
   // Call tokens for LiveKit
   callTokens: CallState | null;
   customServerUrl: string | null;
+  livekitUrl: string | null;
 };
 
 type Actions = {
@@ -63,6 +66,7 @@ type Actions = {
   setCallTokens: (tokens: CallState | null) => void;
   updateCallTokens: (tokens: Partial<CallState>) => void;
   setCustomServerUrl: (url: string | null) => void;
+  setLivekitUrl: (url: string | null) => void;
 };
 
 const initialState: State = {
@@ -76,6 +80,7 @@ const initialState: State = {
   calling: null,
   callTokens: null,
   customServerUrl: null,
+  livekitUrl: null,
 };
 
 /**
@@ -130,6 +135,10 @@ const useStore = create<State & Actions>()(
       set((state) => {
         state.customServerUrl = url;
       }),
+    setLivekitUrl: (url) =>
+      set((state) => {
+        state.livekitUrl = url;
+      }),
     setTab: (tab) =>
       set((state) => {
         state.tab = tab;
@@ -166,7 +175,24 @@ useStore.subscribe((state, prevState) => {
   if (!isEqual(state, prevState)) {
     emit("store-update", state);
   }
-  // console.debug("Did not emit update, state is the same");
+
+  // Update tray icon based on call state (only from main window to avoid duplicates)
+  if (windowName === "main") {
+    const wasInCall = prevState.callTokens !== null;
+    const isInCall = state.callTokens !== null;
+
+    if (!wasInCall && isInCall) {
+      // Entering a call - show notification dot
+      invoke("set_tray_notification", { enabled: true }).catch((e) => {
+        console.error("Failed to set tray notification:", e);
+      });
+    } else if (wasInCall && !isInCall) {
+      // Leaving a call - hide notification dot
+      invoke("set_tray_notification", { enabled: false }).catch((e) => {
+        console.error("Failed to set tray notification:", e);
+      });
+    }
+  }
 });
 
 // Set up listener for store updates from other windows

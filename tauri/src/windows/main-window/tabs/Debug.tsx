@@ -10,13 +10,25 @@ import { validateAndSetAuthToken } from "@/lib/authUtils";
 import { URLS } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";
 import { usePostHog } from "posthog-js/react";
+import { invoke } from "@tauri-apps/api/core";
 
 export const Debug = () => {
   const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
+  const [trayNotification, setTrayNotification] = useState(false);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
   const posthog = usePostHog();
+
+  const handleSetTrayNotification = async (enabled: boolean) => {
+    try {
+      await invoke("set_tray_notification", { enabled });
+      setTrayNotification(enabled);
+      console.log(`Tray notification set to: ${enabled}`);
+    } catch (error) {
+      console.error("Failed to set tray notification:", error);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -142,6 +154,32 @@ export const Debug = () => {
         >
           AV1: {callTokens?.av1Enabled ? "Enabled" : "Disabled"}
         </Button>
+      </div>
+
+      <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
+        <Label className="text-sm font-medium">Tray Icon Test (macOS)</Label>
+        <span className="text-xs text-muted-foreground">
+          Test tray icon switching. The icon should automatically change with system theme.
+        </span>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => handleSetTrayNotification(false)}
+            variant={!trayNotification ? "default" : "outline"}
+            size="sm"
+          >
+            Default Icon
+          </Button>
+          <Button
+            onClick={() => handleSetTrayNotification(true)}
+            variant={trayNotification ? "default" : "outline"}
+            size="sm"
+          >
+            Notification Icon
+          </Button>
+        </div>
+        <span className="text-xs text-muted-foreground">
+          Current state: {trayNotification ? "Notification" : "Default"}
+        </span>
       </div>
     </div>
   );

@@ -166,3 +166,52 @@ pub fn test_available_content_consistency() -> io::Result<()> {
         )))
     }
 }
+
+pub fn test_every_monitor() -> io::Result<()> {
+    let mut socket = connect_socket()?;
+    println!("Connected to socket.");
+
+    let livekit_server_url =
+        env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+
+    let available_content = match get_available_content(&mut socket)? {
+        Message::AvailableContent(available_content) => available_content,
+        _ => return Err(io::Error::other("Failed to get available content")),
+    };
+
+    let monitors: Vec<_> = available_content
+        .content
+        .into_iter()
+        .filter(|c| matches!(c.content.content_type, ContentType::Display))
+        .collect();
+
+    println!("Found {} monitors to test.", monitors.len());
+
+    for (i, monitor) in monitors.iter().enumerate() {
+        println!(
+            "Testing monitor {}/{} (ID: {})",
+            i + 1,
+            monitors.len(),
+            monitor.content.id
+        );
+
+        // Start screen share
+        let width = 1920.0;
+        let height = 1080.0;
+        request_screenshare(&mut socket, monitor.content.id, width, height)?;
+        println!("Screen share started for monitor {}.", monitor.content.id);
+
+        std::thread::sleep(std::time::Duration::from_secs(10));
+
+        // Stop screen share
+        stop_screenshare(&mut socket)?;
+        println!("Screen share stopped for monitor {}.", monitor.content.id);
+
+        // Small delay between monitors
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    println!("✓ Success: All monitors tested.");
+    Ok(())
+}

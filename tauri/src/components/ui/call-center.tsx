@@ -5,7 +5,12 @@ import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+} from "@/components/ui/dropdown-menu";
 import {
   useLocalParticipant,
   useMediaDeviceSelect,
@@ -13,7 +18,15 @@ import {
   useRoomContext,
   useTracks,
 } from "@livekit/components-react";
-import { Track, ConnectionState, RoomEvent, VideoPresets, LocalTrack, ParticipantEvent } from "livekit-client";
+import {
+  Track,
+  ConnectionState,
+  RoomEvent,
+  VideoPresets,
+  LocalTrack,
+  ParticipantEvent,
+  AudioPresets,
+} from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -47,6 +60,14 @@ export function CallCenter() {
 
   return (
     <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
+      {/* Reconnecting Banner */}
+      {callTokens.isReconnecting && (
+        <div className="w-full bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center gap-2">
+          <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
+          <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
+        </div>
+      )}
+
       <div className="w-full">
         {/* Call Timer */}
         {callTokens && (
@@ -75,6 +96,13 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+  const remoteParticipants = useRemoteParticipants();
+
+  // Find the remote audio participant and check if they have microphone enabled
+  const remoteAudioParticipant = remoteParticipants.find(
+    (p) => p.identity.includes("audio") && callParticipant && p.identity.includes(callParticipant.id),
+  );
+  const isRemoteMuted = remoteAudioParticipant ? !remoteAudioParticipant.isMicrophoneEnabled : false;
 
   useScreenShareListener();
   const handleEndCall = useEndCall();
@@ -123,6 +151,7 @@ export function ConnectedActions() {
                   src={callParticipant?.avatar_url || undefined}
                   firstName={callParticipant?.first_name}
                   lastName={callParticipant?.last_name}
+                  isMuted={isRemoteMuted}
                 />
               )}
             </div>
@@ -666,7 +695,7 @@ function CameraIcon() {
 }
 
 function MediaDevicesSettings() {
-  const { callTokens, setCallTokens } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, livekitUrl } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
@@ -682,11 +711,45 @@ function MediaDevicesSettings() {
 
   const room = useRoomContext();
   const [roomConnected, setRoomConnected] = useState(false);
+
   useEffect(() => {
     room.on(RoomEvent.Connected, () => {
       setRoomConnected(true);
     });
   }, [room]);
+
+  // Listen to connection state changes and handle reconnection
+  useEffect(() => {
+    const handleConnectionStateChange = async (state: ConnectionState) => {
+      console.log("Connection state changed:", state);
+
+      if (state === ConnectionState.Disconnected && callTokens) {
+        // Room disconnected but we still have callTokens - try to reconnect
+        console.log("Room disconnected, attempting to reconnect...");
+        updateCallTokens({ isReconnecting: true });
+
+        try {
+          if (!livekitUrl) {
+            throw new Error("LiveKit URL not available");
+          }
+          await room.connect(livekitUrl, callTokens.audioToken);
+        } catch (error) {
+          console.error("Reconnection failed:", error);
+          updateCallTokens({ isReconnecting: false });
+        }
+      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting) {
+        // Successfully reconnected
+        console.log("Successfully reconnected!");
+        updateCallTokens({ isReconnecting: false });
+      }
+    };
+
+    room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
+
+    return () => {
+      room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
+    };
+  }, [room, callTokens, updateCallTokens, livekitUrl]);
 
   useEffect(() => {
     if (!callTokens) return;
@@ -696,7 +759,16 @@ function MediaDevicesSettings() {
     );
     if (roomState === ConnectionState.Connected) {
       console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
-      localParticipant.setMicrophoneEnabled(callTokens?.hasAudioEnabled);
+      localParticipant.setMicrophoneEnabled(
+        callTokens?.hasAudioEnabled,
+        {
+          channelCount: 1,
+        },
+        {
+          audioPreset: AudioPresets.speech,
+          forceStereo: false,
+        },
+      );
 
       localParticipant.setCameraEnabled(
         callTokens?.hasCameraEnabled,
