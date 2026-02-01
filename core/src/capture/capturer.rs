@@ -8,12 +8,28 @@ use livekit::webrtc::{
 };
 
 use socket_lib::{CaptureContent, Content, ContentType};
-use winit::{event_loop::EventLoopProxy, monitor::MonitorHandle};
+use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
 use crate::{
     utils::geometry::{aspect_fit, Extent},
     UserEvent, STREAM_FAILURE_EXIT_CODE,
 };
+
+/// Platform-agnostic monitor identifier.
+///
+/// Different platforms use different types of identifiers for monitors:
+/// - macOS uses numeric CGDirectDisplayID
+/// - Windows uses device name strings like "\\.\DISPLAY1"
+/// - Linux falls back to position-based identification
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MonitorId {
+    /// Numeric identifier (macOS CGDirectDisplayID)
+    Numeric(u32),
+    /// Named identifier (Windows device name)
+    Named(String),
+    /// Position-based identifier (Linux fallback)
+    Position(PhysicalPosition<i32>),
+}
 use std::sync::{mpsc, Arc, Mutex};
 use std::vec;
 
@@ -99,6 +115,15 @@ pub trait ScreenshareExt {
     /// The `MonitorHandle` for the specified monitor. If the monitor ID is not found,
     /// returns the first available monitor as a fallback.
     fn get_selected_monitor(monitors: &[MonitorHandle], input_id: u32) -> MonitorHandle;
+
+    /// Returns a platform-agnostic identifier for the given monitor.
+    ///
+    /// # Parameters
+    /// - `monitor`: The monitor handle to get the ID for
+    ///
+    /// # Returns
+    /// A `MonitorId` that uniquely identifies this monitor across position changes.
+    fn get_monitor_id(monitor: &MonitorHandle) -> MonitorId;
 }
 
 fn raw_image_to_jpeg(raw_image: Vec<u8>, width: u32, height: u32) -> Vec<u8> {

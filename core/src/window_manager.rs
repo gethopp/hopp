@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use thiserror::Error;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowAttributes, WindowLevel};
@@ -11,6 +11,7 @@ use winit::platform::macos::WindowExtMacOS;
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowExtWindows;
 
+use crate::capture::capturer::{MonitorId, ScreenshareExt, ScreenshareFunctions};
 use crate::ServerError;
 
 // Constants for magic numbers
@@ -28,6 +29,12 @@ fn get_window_attributes() -> WindowAttributes {
             OVERLAY_WINDOW_INITIAL_SIZE,
         ))
         .with_content_protected(true)
+}
+
+/// Returns the logical position where a window should be placed for the given monitor.
+fn get_window_position_for_monitor(monitor: &MonitorHandle) -> LogicalPosition<f64> {
+    let monitor_position = monitor.position();
+    monitor_position.to_logical::<f64>(monitor.scale_factor())
 }
 
 #[derive(Error, Debug)]
@@ -52,12 +59,13 @@ impl From<WindowManagerError> for ServerError {
 
 struct WindowEntry {
     window: Arc<Window>,
-    monitor_position: PhysicalPosition<i32>,
+    monitor_id: MonitorId,
+    position: LogicalPosition<f64>,
 }
 
 pub struct WindowManager {
     windows: Vec<WindowEntry>,
-    active_window_index: Option<usize>,
+    active_monitor_id: Option<MonitorId>,
 }
 
 impl WindowManager {
@@ -72,7 +80,7 @@ impl WindowManager {
 
         Ok(Self {
             windows,
-            active_window_index: None,
+            active_monitor_id: None,
         })
     }
 
@@ -105,18 +113,16 @@ impl WindowManager {
             window.set_has_shadow(false);
         }
 
-        let monitor_position = monitor.position();
-        let logical_position = monitor_position.to_logical::<f64>(monitor.scale_factor());
-
-        let final_position =
-            LogicalPosition::new(logical_position.x + 30., logical_position.y + 30.);
-
-        window.set_outer_position(final_position);
+        let position = get_window_position_for_monitor(monitor);
+        window.set_outer_position(position);
         window.set_visible(false);
+
+        let monitor_id = ScreenshareFunctions::get_monitor_id(monitor);
 
         Ok(WindowEntry {
             window,
-            monitor_position,
+            monitor_id,
+            position,
         })
     }
 
@@ -124,29 +130,19 @@ impl WindowManager {
         &mut self,
         monitor: &MonitorHandle,
     ) -> Result<Arc<Window>, WindowManagerError> {
-        let monitor_position = monitor.position();
+        let target_id = ScreenshareFunctions::get_monitor_id(monitor);
         log::info!(
-            "WindowManager::show_window: looking for window at {:?}",
-            monitor_position
+            "WindowManager::show_window: looking for window with id {:?}",
+            target_id
         );
 
-        for entry in &self.windows {
-            log::info!(
-                "WindowManager::show_window: display {:?} window {:?}",
-                entry.monitor_position,
-                entry.window.outer_position()
-            );
-        }
-        let index = self
+        let entry = self
             .windows
             .iter()
-            .position(|entry| entry.monitor_position == monitor_position)
+            .find(|entry| entry.monitor_id == target_id)
             .ok_or(WindowManagerError::MonitorNotFound)?;
 
-        let window = &self.windows[index].window;
-
-        log::info!("window fullscreen {:?}", window.fullscreen());
-        if let Err(e) = set_fullscreen(window, monitor.clone()) {
+        if let Err(e) = set_fullscreen(&entry.window, monitor.clone()) {
             log::error!(
                 "WindowManager::show_window: error setting fullscreen: {:?}",
                 e
@@ -154,61 +150,126 @@ impl WindowManager {
             return Err(WindowManagerError::FullscreenError(e.to_string()));
         }
 
-        window.set_visible(true);
-        self.active_window_index = Some(index);
+        entry.window.set_visible(true);
+        self.active_monitor_id = Some(target_id);
 
-        Ok(window.clone())
+        Ok(entry.window.clone())
     }
 
     pub fn hide_active_window(&mut self) {
-        if let Some(index) = self.active_window_index.take() {
+        if let Some(active_id) = self.active_monitor_id.take() {
             log::info!(
-                "WindowManager::hide_active_window: hiding window at index {}",
-                index
+                "WindowManager::hide_active_window: hiding window for monitor {:?}",
+                active_id
             );
-            self.windows[index].window.set_visible(false);
+            if let Some(entry) = self
+                .windows
+                .iter()
+                .find(|entry| entry.monitor_id == active_id)
+            {
+                entry.window.set_visible(false);
+            }
         }
+    }
+
+    pub fn is_active_window(&self, window_id: winit::window::WindowId) -> bool {
+        self.active_monitor_id.as_ref().is_some_and(|active_id| {
+            self.windows
+                .iter()
+                .find(|entry| &entry.monitor_id == active_id)
+                .is_some_and(|entry| entry.window.id() == window_id)
+        })
     }
 
     pub fn update(&mut self, event_loop: &ActiveEventLoop) -> Result<(), WindowManagerError> {
         let monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
-        let mut monitor_positions: Vec<PhysicalPosition<i32>> =
-            monitors.iter().map(|m| m.position()).collect();
 
         log::info!(
             "WindowManager::update: checking {} monitors",
             monitors.len()
         );
 
-        self.windows.retain(|entry| {
-            if let Some(pos_index) = monitor_positions
+        for monitor in &monitors {
+            log::info!("WindowManager::update: monitor {:?}", monitor);
+        }
+        for window in &self.windows {
+            log::info!(
+                "WindowManager::update: window for monitor id {:?} with position {:?}",
+                window.monitor_id,
+                window.window.outer_position(),
+            );
+        }
+
+        let mut matched_monitor_indices: Vec<usize> = Vec::new();
+        let mut active_monitor_id_found = false;
+
+        self.windows.retain_mut(|entry| {
+            if let Some(monitor_idx) = monitors
                 .iter()
-                .position(|&pos| pos == entry.monitor_position)
+                .position(|m| ScreenshareFunctions::get_monitor_id(m) == entry.monitor_id)
             {
-                monitor_positions.remove(pos_index);
+                matched_monitor_indices.push(monitor_idx);
+                let monitor = &monitors[monitor_idx];
+
+                // Reposition only if the monitor position has changed
+                let new_position = get_window_position_for_monitor(monitor);
+                if entry.position != new_position {
+                    log::info!(
+                        "WindowManager::update: repositioning window for monitor {:?} from {:?} to {:?}",
+                        entry.monitor_id,
+                        entry.position,
+                        new_position
+                    );
+                    entry.window.set_outer_position(new_position);
+                    entry.position = new_position;
+
+                    // Re-apply fullscreen if this is the active window and position changed
+                    if self.active_monitor_id.as_ref() == Some(&entry.monitor_id) {
+                        active_monitor_id_found = true;
+                        log::info!(
+                            "WindowManager::update: re-applying fullscreen for active window on monitor {:?}",
+                            entry.monitor_id
+                        );
+                        if let Err(e) = set_fullscreen(&entry.window, monitor.clone()) {
+                            log::error!(
+                                "WindowManager::update: error setting fullscreen: {:?}",
+                                e
+                            );
+                        }
+                    }
+                } else if self.active_monitor_id.as_ref() == Some(&entry.monitor_id) {
+                    active_monitor_id_found = true;
+                }
+
                 true
             } else {
                 log::info!(
-                    "WindowManager::update: removing window at outdated position {:?}",
-                    entry.monitor_position
+                    "WindowManager::update: removing window for disconnected monitor {:?}",
+                    entry.monitor_id
                 );
                 false
             }
         });
 
-        for position in monitor_positions {
+        // Clear active monitor if it was disconnected
+        if !active_monitor_id_found && self.active_monitor_id.is_some() {
             log::info!(
-                "WindowManager::update: adding new window for position {:?}",
-                position
+                "WindowManager::update: active monitor {:?} disconnected, clearing active monitor",
+                self.active_monitor_id
             );
+            self.active_monitor_id = None;
+        }
 
-            let monitor = monitors
-                .iter()
-                .find(|m| m.position() == position)
-                .ok_or(WindowManagerError::MonitorNotFound)?;
-
-            let window_entry = Self::create_window_entry(event_loop, monitor)?;
-            self.windows.push(window_entry);
+        // Add windows for new monitors
+        for (idx, monitor) in monitors.iter().enumerate() {
+            if !matched_monitor_indices.contains(&idx) {
+                log::info!(
+                    "WindowManager::update: adding new window for monitor {:?}",
+                    ScreenshareFunctions::get_monitor_id(monitor)
+                );
+                self.windows
+                    .push(Self::create_window_entry(event_loop, monitor)?);
+            }
         }
 
         log::info!(
