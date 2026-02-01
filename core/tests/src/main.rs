@@ -3,6 +3,7 @@ use std::io;
 
 mod events;
 mod livekit_utils;
+mod local_drawing;
 mod remote_clipboard;
 mod remote_cursor;
 mod remote_drawing;
@@ -44,6 +45,20 @@ enum Commands {
         #[arg(value_enum)]
         test_type: DrawingTest,
     },
+    /// Test local drawing functionality (sharer drawing)
+    LocalDrawing {
+        /// Type of local drawing test to run
+        #[arg(value_enum)]
+        test_type: LocalDrawingTest,
+    },
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum LocalDrawingTest {
+    /// Test local drawing with permanent mode ON
+    Permanent,
+    /// Test local drawing with permanent mode OFF
+    NonPermanent,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -243,6 +258,19 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Drawing test finished.");
+        }
+        Commands::LocalDrawing { test_type } => {
+            match test_type {
+                LocalDrawingTest::Permanent => {
+                    println!("Running local drawing test (permanent)...");
+                    local_drawing::test_local_drawing_permanent()?;
+                }
+                LocalDrawingTest::NonPermanent => {
+                    println!("Running local drawing test (non-permanent)...");
+                    local_drawing::test_local_drawing_non_permanent()?;
+                }
+            }
+            println!("Local drawing test finished.");
         }
     }
 

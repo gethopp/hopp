@@ -108,6 +108,11 @@ pub struct SentryMetadata {
     pub app_version: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DrawingEnabled {
+    pub permanent: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
@@ -120,6 +125,7 @@ pub enum Message {
     ControllerCursorEnabled(bool),
     LivekitServerUrl(String),
     SentryMetadata(SentryMetadata),
+    DrawingEnabled(DrawingEnabled),
 }
 
 #[derive(Debug)]

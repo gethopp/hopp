@@ -1,9 +1,16 @@
 import { formatDistanceToNow } from "date-fns";
 import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
+import { PiScribbleLoopBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+} from "@/components/ui/dropdown-menu";
 import {
   useLocalParticipant,
   useMediaDeviceSelect,
@@ -31,6 +38,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
+import { MoreHorizontal } from "lucide-react";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
@@ -213,6 +221,7 @@ export function ConnectedActions() {
                   </Tooltip>
                 </TooltipProvider>
               )}
+              {callTokens?.role === ParticipantRole.SHARER && <DrawingEnableButton />}
               <Button
                 className="w-full border-red-500 text-red-600 flex flex-row gap-2"
                 variant="gradient-white"
@@ -227,6 +236,90 @@ export function ConnectedActions() {
       </div>
       <ListenToRemoteAudio muted={callTokens?.cameraWindowOpen} />
     </>
+  );
+}
+
+function DrawingEnableButton() {
+  const [drawingPermanent, setDrawingPermanent] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Load drawing permanent preference on mount
+  useEffect(() => {
+    const loadPreference = async () => {
+      try {
+        const permanent = await tauriUtils.getDrawingPermanent();
+        setDrawingPermanent(permanent);
+      } catch (error) {
+        console.error("Failed to load drawing permanent preference:", error);
+      }
+    };
+    loadPreference();
+  }, []);
+
+  const handlePermanentToggle = async (checked: boolean) => {
+    setDrawingPermanent(checked);
+    try {
+      await tauriUtils.setDrawingPermanent(checked);
+    } catch (error) {
+      console.error("Failed to save drawing permanent preference:", error);
+    }
+  };
+
+  const handleEnableDrawing = async () => {
+    try {
+      await tauriUtils.enableDrawing(drawingPermanent);
+    } catch (error) {
+      console.error("Failed to enable drawing:", error);
+      toast.error("Failed to enable drawing", { duration: 2500 });
+    }
+  };
+
+  return (
+    <div className="inline-flex -space-x-px rounded-lg shadow-xs">
+      <TooltipProvider>
+        <Tooltip delayDuration={100}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleEnableDrawing}
+              className="rounded-none first:rounded-l-lg focus:z-10"
+            >
+              <PiScribbleLoopBold className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Enable drawing</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+        <TooltipProvider>
+          <Tooltip delayDuration={100}>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="rounded-none last:rounded-r-lg focus:z-10"
+                  aria-label="Drawing options"
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Drawing options</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <DropdownMenuContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          align="start"
+          className="w-auto min-w-[200px]"
+        >
+          <DropdownMenuCheckboxItem checked={drawingPermanent} onCheckedChange={handlePermanentToggle}>
+            <span>Persist until right click</span>
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

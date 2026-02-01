@@ -444,8 +444,10 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant
     /// * `color` - Hex color string for the participant's drawings
-    pub fn add_draw_participant(&mut self, sid: String, color: &str) {
-        self.iced_renderer.add_draw_participant(sid, color);
+    /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
+    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+        self.iced_renderer
+            .add_draw_participant(sid, color, auto_clear);
     }
 
     /// Removes a participant from the draw manager.
@@ -508,6 +510,14 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     pub fn draw_clear_all_paths(&mut self, sid: &str) {
         self.iced_renderer.draw_clear_all_paths(sid);
+    }
+
+    /// Updates auto-clear for all participants and returns removed path IDs.
+    ///
+    /// # Returns
+    /// A vector of removed path IDs
+    pub fn update_auto_clear(&mut self) -> Vec<u64> {
+        self.iced_renderer.update_auto_clear()
     }
 }
 

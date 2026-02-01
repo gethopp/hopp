@@ -19,6 +19,7 @@ All commands use [Taskfile](https://taskfile.dev). Run `task --list` in any dire
 Avoid running the following commands as an agent, as this is preferred to run from a user in their terminal and navigate in the Desktop app.
 
 **Backend (Go):**
+
 ```bash
 cd backend
 task run          # Run with hot reload (Air)
@@ -26,6 +27,7 @@ task test         # Run tests
 ```
 
 **Core (Rust):**
+
 ```bash
 cd core
 cargo build
@@ -34,6 +36,7 @@ cargo fmt         # Format code
 ```
 
 **Tauri App:**
+
 ```bash
 cd tauri
 task dev          # Dev mode with hot reload
@@ -41,6 +44,7 @@ task build        # Production build
 ```
 
 **Web App:**
+
 ```bash
 cd web-app
 yarn dev
@@ -69,16 +73,19 @@ Pre-commit hooks enforce all formatting automatically.
 - Cross-platform: macOS, Windows, Linux all supported
 
 <!-- OPENSPEC:START -->
+
 # OpenSpec Instructions
 
 These instructions are for AI assistants working in this project.
 
 Always open `@/openspec/AGENTS.md` when the request:
+
 - Mentions planning or proposals (words like proposal, spec, change, plan)
 - Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
 - Sounds ambiguous and you need the authoritative spec before coding
 
 Use `@/openspec/AGENTS.md` to learn:
+
 - How to create and apply change proposals
 - Spec format and conventions
 - Project structure and guidelines

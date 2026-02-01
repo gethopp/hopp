@@ -27,6 +27,7 @@ pub(crate) mod window_manager;
 
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
+use image::GenericImageView;
 use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
 use input::mouse::CursorController;
@@ -107,6 +108,7 @@ struct RemoteControl<'a> {
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
     clipboard_controller: Option<ClipboardController>,
+    pencil_cursor: winit::window::CustomCursor,
 }
 
 /// The main application struct that manages the entire remote desktop control session.
@@ -164,6 +166,7 @@ pub struct Application<'a> {
     socket: CursorSocket,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
 }
 
@@ -171,6 +174,36 @@ pub struct Application<'a> {
 pub enum ApplicationError {
     #[error("Failed to create room service: {0}")]
     RoomServiceError(#[from] std::io::Error),
+}
+
+#[derive(Debug)]
+struct LocalDrawing {
+    enabled: bool,
+    permanent: bool,
+    left_mouse_pressed: bool,
+    current_path_id: u64,
+    last_cursor_position: Option<Position>,
+    last_redraw_time: std::time::Instant,
+    previous_controllers_enabled: bool,
+    cursor_set_times: u32,
+}
+
+impl LocalDrawing {
+    fn reset(&mut self) {
+        self.enabled = false;
+        self.permanent = false;
+        self.left_mouse_pressed = false;
+        self.current_path_id = 0;
+        self.last_cursor_position = None;
+        self.last_redraw_time = std::time::Instant::now();
+        self.previous_controllers_enabled = false;
+    }
+}
+
+impl fmt::Display for LocalDrawing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?} last_redraw_time: {:?} previous_controllers_enabled: {}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.last_redraw_time, self.previous_controllers_enabled)
+    }
 }
 
 impl<'a> Application<'a> {
@@ -212,6 +245,16 @@ impl<'a> Application<'a> {
             socket,
             room_service: None,
             event_loop_proxy,
+            local_drawing: LocalDrawing {
+                enabled: false,
+                permanent: false,
+                left_mouse_pressed: false,
+                current_path_id: 0,
+                last_cursor_position: None,
+                last_redraw_time: std::time::Instant::now(),
+                previous_controllers_enabled: false,
+                cursor_set_times: 0,
+            },
             window_manager: None,
         })
     }
@@ -259,6 +302,7 @@ impl<'a> Application<'a> {
     /// - Begins streaming captured content via LiveKit
     fn screenshare(
         &mut self,
+        event_loop: &ActiveEventLoop,
         screenshare_input: ScreenShareMessage,
         monitors: Vec<MonitorHandle>,
     ) -> Result<(), ServerError> {
@@ -335,7 +379,11 @@ impl<'a> Application<'a> {
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, screenshare_input.accessibility_permission);
+        let res = self.create_overlay_window(
+            event_loop,
+            monitor,
+            screenshare_input.accessibility_permission,
+        );
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -366,6 +414,7 @@ impl<'a> Application<'a> {
 
     fn create_overlay_window(
         &mut self,
+        event_loop: &ActiveEventLoop,
         selected_monitor: MonitorHandle,
         accessibility_permission: bool,
     ) -> Result<(), ServerError> {
@@ -395,6 +444,40 @@ impl<'a> Application<'a> {
                 return Err(ServerError::GfxCreationError);
             }
         };
+
+        // Add local participant to draw manager with auto-clear enabled
+        graphics_context.add_draw_participant("local".to_string(), "#FFDF20", true);
+
+        // Load pencil cursor image once during window creation
+        let pencil_path = format!("{}/pencil.png", self.textures_path);
+        let pencil_image = image::open(&pencil_path).map_err(|e| {
+            log::error!("create_overlay_window: Failed to load pencil.png: {e:?}");
+            ServerError::GfxCreationError
+        })?;
+        let mut rgba = pencil_image.to_rgba8();
+        for pixel in rgba.chunks_exact_mut(4) {
+            let a = pixel[3] as f32 / 255.0;
+            pixel[0] = (pixel[0] as f32 * a) as u8;
+            pixel[1] = (pixel[1] as f32 * a) as u8;
+            pixel[2] = (pixel[2] as f32 * a) as u8;
+        }
+        let (width, height) = pencil_image.dimensions();
+        let hotspot_x = 0; // Pencil tip at top-left
+        let hotspot_y = height.saturating_sub(1); // Bottom of image (pencil tip)
+
+        let custom_cursor_source = winit::window::CustomCursor::from_rgba(
+            rgba.into_raw(),
+            width as u16,
+            height as u16,
+            hotspot_x as u16,
+            hotspot_y as u16,
+        )
+        .map_err(|e| {
+            log::error!("create_overlay_window: Failed to create cursor source: {e:?}");
+            ServerError::GfxCreationError
+        })?;
+
+        let pencil_cursor = event_loop.create_custom_cursor(custom_cursor_source);
 
         /* Hardcode window frame to zero as we only support displays for now.*/
         let window_frame = Frame::default();
@@ -462,7 +545,11 @@ impl<'a> Application<'a> {
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
             clipboard_controller,
+            pencil_cursor,
         });
+
+        // Reset local drawing state on start of screenshare.
+        self.local_drawing.reset();
 
         #[cfg(target_os = "linux")]
         {
@@ -671,7 +758,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
 
-                let result_message = match self.screenshare(data, monitors) {
+                let result_message = match self.screenshare(event_loop, data, monitors) {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         log::error!("user_event: Screen share failed: {e:?}");
@@ -743,7 +830,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 // Add participant to draw manager with their color
                 if let Some(color) = remote_control.cursor_controller.get_participant_color(&sid) {
-                    remote_control.gfx.add_draw_participant(sid, color);
+                    remote_control.gfx.add_draw_participant(sid, color, false);
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
@@ -957,6 +1044,95 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .cursor_controller
                     .trigger_click_animation(position, sid.as_str());
             }
+            UserEvent::LocalDrawingEnabled(drawing_enabled) => {
+                log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
+                if self.remote_control.is_none() {
+                    log::warn!("user_event: remote control is none local drawing enabled");
+                    return;
+                }
+
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                if !self.local_drawing.enabled {
+                    let window = remote_control.gfx.window();
+
+                    // Enable cursor hittest so we can receive mouse events
+                    if let Err(e) = window.set_cursor_hittest(true) {
+                        log::error!("user_event: Failed to enable cursor hittest: {e:?}");
+                        return;
+                    }
+
+                    // Enable drawing mode
+                    self.local_drawing.enabled = true;
+                    self.local_drawing.permanent = drawing_enabled.permanent;
+
+                    // Reset cursor set times counter
+                    self.local_drawing.cursor_set_times = 0;
+
+                    // Store the current controller state before disabling
+                    self.local_drawing.previous_controllers_enabled =
+                        remote_control.cursor_controller.is_controllers_enabled();
+
+                    // Disable remote control
+                    remote_control
+                        .cursor_controller
+                        .set_controllers_enabled(false);
+                    remote_control.keyboard_controller.set_enabled(false);
+
+                    remote_control.gfx.set_drawing_mode(
+                        "local",
+                        room_service::DrawingMode::Draw(room_service::DrawSettings {
+                            permanent: drawing_enabled.permanent,
+                        }),
+                    );
+
+                    log::info!(
+                        "Local drawing mode enabled (permanent: {})",
+                        drawing_enabled.permanent
+                    );
+                } else {
+                    // Disable drawing mode
+                    self.local_drawing.enabled = false;
+                    self.local_drawing.left_mouse_pressed = false;
+                    self.local_drawing.last_cursor_position = None;
+
+                    // Clear all local drawing paths
+                    remote_control.gfx.draw_clear_all_paths("local");
+                    let cursor_controller = &mut remote_control.cursor_controller;
+                    remote_control.gfx.draw(cursor_controller);
+
+                    // Send LiveKit event to clear all paths
+                    if let Some(room_service) = &self.room_service {
+                        room_service.publish_draw_clear_all_paths();
+                    }
+
+                    let window = remote_control.gfx.window();
+
+                    // Restore default cursor
+                    window.set_cursor(winit::window::Cursor::Icon(
+                        winit::window::CursorIcon::Default,
+                    ));
+
+                    // Disable cursor hittest
+                    if let Err(e) = window.set_cursor_hittest(false) {
+                        log::error!("user_event: Failed to disable cursor hittest: {e:?}");
+                    }
+
+                    // Restore remote control to previous state
+                    remote_control
+                        .cursor_controller
+                        .set_controllers_enabled(self.local_drawing.previous_controllers_enabled);
+                    remote_control
+                        .keyboard_controller
+                        .set_enabled(self.local_drawing.previous_controllers_enabled);
+
+                    // Set drawing mode to disabled for local participant
+                    remote_control
+                        .gfx
+                        .set_drawing_mode("local", room_service::DrawingMode::Disabled);
+
+                    log::info!("Local drawing mode disabled");
+                }
+            }
         }
     }
 
@@ -992,8 +1168,176 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                remote_control.gfx.draw(cursor_controller);
+
+                // Update auto-clear and send events for cleared paths
+                let cleared_path_ids = remote_control.gfx.update_auto_clear();
+                if !cleared_path_ids.is_empty() && self.room_service.is_some() {
+                    self.room_service
+                        .as_ref()
+                        .unwrap()
+                        .publish_draw_clear_paths(cleared_path_ids);
+                }
+
+                if !self.local_drawing.enabled {
+                    let cursor_controller = &mut remote_control.cursor_controller;
+                    remote_control.gfx.draw(cursor_controller);
+                } else {
+                    if self.local_drawing.last_redraw_time.elapsed()
+                        > std::time::Duration::from_millis(20)
+                    {
+                        if self.local_drawing.cursor_set_times < 500 {
+                            let window = remote_control.gfx.window();
+                            window.focus_window();
+                            window.set_cursor_visible(false);
+                            window.set_cursor_visible(true);
+                            window.set_cursor(remote_control.pencil_cursor.clone());
+                            self.local_drawing.cursor_set_times += 1;
+                        }
+                        let cursor_controller = &mut remote_control.cursor_controller;
+                        remote_control.gfx.draw(cursor_controller);
+                        self.local_drawing.last_redraw_time = std::time::Instant::now();
+                    }
+                    remote_control.gfx.window().request_redraw();
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if self.local_drawing.enabled {
+                    if button == winit::event::MouseButton::Left {
+                        if state == winit::event::ElementState::Pressed {
+                            self.local_drawing.left_mouse_pressed = true;
+                            // Start a new path if we have a cursor position
+                            if let Some(position) = self.local_drawing.last_cursor_position {
+                                if let Some(remote_control) = &mut self.remote_control {
+                                    self.local_drawing.current_path_id += 1;
+                                    remote_control.gfx.draw_start(
+                                        "local",
+                                        position,
+                                        self.local_drawing.current_path_id,
+                                    );
+                                    remote_control.cursor_controller.trigger_render();
+
+                                    // Send LiveKit event
+                                    if let Some(room_service) = &self.room_service {
+                                        let overlay_window =
+                                            remote_control.cursor_controller.get_overlay_window();
+                                        let normalized_point = overlay_window
+                                            .get_local_percentage_from_pixel(
+                                                position.x, position.y,
+                                            );
+                                        room_service.publish_draw_start(
+                                            room_service::DrawPathPoint {
+                                                point: room_service::ClientPoint {
+                                                    x: normalized_point.x,
+                                                    y: normalized_point.y,
+                                                },
+                                                path_id: self.local_drawing.current_path_id,
+                                            },
+                                        );
+                                    }
+
+                                    log::debug!(
+                                        "Local draw_start at {:?} with path_id {}",
+                                        position,
+                                        self.local_drawing.current_path_id
+                                    );
+                                }
+                            }
+                        } else {
+                            self.local_drawing.left_mouse_pressed = false;
+                            // End the current path
+                            if let Some(position) = self.local_drawing.last_cursor_position {
+                                if let Some(remote_control) = &mut self.remote_control {
+                                    remote_control.gfx.draw_end("local", position);
+                                    remote_control.cursor_controller.trigger_render();
+
+                                    // Send LiveKit event
+                                    if let Some(room_service) = &self.room_service {
+                                        let overlay_window =
+                                            remote_control.cursor_controller.get_overlay_window();
+                                        let normalized_point = overlay_window
+                                            .get_local_percentage_from_pixel(
+                                                position.x, position.y,
+                                            );
+                                        room_service.publish_draw_end(room_service::ClientPoint {
+                                            x: normalized_point.x,
+                                            y: normalized_point.y,
+                                        });
+                                    }
+
+                                    log::debug!("Local draw_end at {:?}", position);
+                                }
+                            }
+                        }
+                    } else if button == winit::event::MouseButton::Right
+                        && state == winit::event::ElementState::Pressed
+                    {
+                        if let Some(remote_control) = &mut self.remote_control {
+                            // Clear all local drawing paths
+                            remote_control.gfx.draw_clear_all_paths("local");
+                            remote_control.cursor_controller.trigger_render();
+
+                            // Send LiveKit event to clear all paths
+                            if let Some(room_service) = &self.room_service {
+                                room_service.publish_draw_clear_all_paths();
+                            }
+                            log::debug!("Local draw_clear_all_paths on right click");
+                        }
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if self.local_drawing.enabled {
+                    let display_scale = if let Some(remote_control) = &mut self.remote_control {
+                        remote_control
+                            .cursor_controller
+                            .get_overlay_window()
+                            .get_display_scale()
+                    } else {
+                        1.0
+                    };
+                    // Convert physical position to our Position type
+                    let pos = Position {
+                        x: position.x / display_scale,
+                        y: position.y / display_scale,
+                    };
+                    self.local_drawing.last_cursor_position = Some(pos);
+
+                    // If we're actively drawing, add a point
+                    if self.local_drawing.left_mouse_pressed {
+                        if let Some(remote_control) = &mut self.remote_control {
+                            remote_control.gfx.draw_add_point("local", pos);
+                            remote_control.cursor_controller.trigger_render();
+
+                            // Send LiveKit event
+                            if let Some(room_service) = &self.room_service {
+                                let overlay_window =
+                                    remote_control.cursor_controller.get_overlay_window();
+                                let normalized_point =
+                                    overlay_window.get_local_percentage_from_pixel(pos.x, pos.y);
+                                room_service.publish_draw_add_point(room_service::ClientPoint {
+                                    x: normalized_point.x,
+                                    y: normalized_point.y,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if self.local_drawing.enabled && event.state == winit::event::ElementState::Pressed
+                {
+                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) =
+                        event.logical_key
+                    {
+                        // Disable drawing mode
+                        let _ = self
+                            .event_loop_proxy
+                            .send_event(UserEvent::LocalDrawingEnabled(
+                                socket_lib::DrawingEnabled { permanent: false },
+                            ));
+                        log::debug!("Escape pressed, disabling local drawing");
+                    }
+                }
             }
             WindowEvent::Resized(_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
@@ -1072,6 +1416,7 @@ pub enum UserEvent {
     DrawClearPath(u64, String),
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
+    LocalDrawingEnabled(socket_lib::DrawingEnabled),
 }
 
 pub struct RenderEventLoop {
@@ -1167,6 +1512,7 @@ impl RenderEventLoop {
                 Message::ControllerCursorEnabled(enabled) => {
                     UserEvent::ControllerCursorEnabled(enabled)
                 }
+                Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
                 // Ping is on purpose empty. We use it only for stopping the above receive to timeout.
                 Message::Ping => {
                     continue;
