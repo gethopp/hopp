@@ -1,6 +1,9 @@
 use winit::platform::windows::MonitorHandleExtWindows;
 
-use crate::{capture::capturer::ScreenshareExt, utils::geometry::Extent};
+use crate::{
+    capture::capturer::{MonitorId, ScreenshareExt},
+    utils::geometry::Extent,
+};
 
 use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
@@ -40,6 +43,10 @@ impl ScreenshareExt for ScreenshareFunctions {
             }
         }
         selected_monitor
+    }
+
+    fn get_monitor_id(monitor: &winit::monitor::MonitorHandle) -> MonitorId {
+        MonitorId::Named(monitor.native_id())
     }
 }
 

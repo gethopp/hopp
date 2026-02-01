@@ -381,17 +381,8 @@ impl<'a> Application<'a> {
                 ServerError::from(e)
             })?;
 
-        let monitor_position = selected_monitor.position();
-
-        let window_position = match window.outer_position() {
-            Ok(position) => position,
-            Err(error) => {
-                log::error!("create_overlay_window: Error getting window position {error:?} using monitor's");
-                selected_monitor.position()
-            }
-        };
-
         let window_size = window.inner_size();
+        let window_outer_position = window.outer_position();
 
         let mut graphics_context = match GraphicsContext::new(
             window,
@@ -417,6 +408,17 @@ impl<'a> Application<'a> {
                 false
             }
         };
+
+        let monitor_position = selected_monitor.position();
+
+        let window_position = match window_outer_position {
+            Ok(position) => position,
+            Err(error) => {
+                log::error!("create_overlay_window: Error getting window position {error:?} using monitor's");
+                selected_monitor.position()
+            }
+        };
+
         let overlay_window = Arc::new(OverlayWindow::new(
             window_frame,
             Extent {
@@ -975,7 +977,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
+        window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
         match event {
@@ -992,6 +994,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let cursor_controller = &mut remote_control.cursor_controller;
                 remote_control.gfx.draw(cursor_controller);
+            }
+            WindowEvent::Resized(_size) => {
+                if let Some(wm) = self.window_manager.as_mut() {
+                    if wm.is_active_window(window_id) {
+                        log::info!("window_event: active window resized {:?}", window_id);
+                        if let Err(e) = wm.update(event_loop) {
+                            log::error!("window_event: failed to update window manager: {:?}", e);
+                        }
+                    }
+                }
             }
             _ => {}
         }
