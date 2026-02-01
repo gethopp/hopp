@@ -38,6 +38,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
+import { MoreHorizontal } from "lucide-react";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import ListenToRemoteAudio from "./listen-to-remote-audio";
@@ -274,17 +275,18 @@ function DrawingEnableButton() {
   };
 
   return (
-    <div className="flex flex-row gap-0.5">
+    <div className="inline-flex -space-x-px rounded-lg shadow-xs">
       <TooltipProvider>
         <Tooltip delayDuration={100}>
           <TooltipTrigger asChild>
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon"
               onClick={handleEnableDrawing}
-              className="size-9 flex items-center justify-center rounded-l-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              className="rounded-none first:rounded-l-lg focus:z-10"
             >
-              <PiScribbleLoopBold className="size-3.5" />
-            </button>
+              <PiScribbleLoopBold className="size-4" />
+            </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">Enable drawing</TooltipContent>
         </Tooltip>
@@ -294,18 +296,24 @@ function DrawingEnableButton() {
           <Tooltip delayDuration={100}>
             <TooltipTrigger asChild>
               <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="size-9 flex items-center justify-center rounded-r-lg border-y border-r border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="rounded-none last:rounded-r-lg focus:z-10"
+                  aria-label="Drawing options"
                 >
-                  <ChevronDownIcon className="size-3.5" />
-                </button>
+                  <MoreHorizontal className="size-4" />
+                </Button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Drawing settings</TooltipContent>
+            <TooltipContent side="bottom">Drawing options</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <DropdownMenuContent align="end" className="w-auto min-w-[200px]">
+        <DropdownMenuContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          align="start"
+          className="w-auto min-w-[200px]"
+        >
           <DropdownMenuCheckboxItem checked={drawingPermanent} onCheckedChange={handlePermanentToggle}>
             <span>Persist until right click</span>
           </DropdownMenuCheckboxItem>
