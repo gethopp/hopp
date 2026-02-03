@@ -533,8 +533,8 @@ function ScreenShareIcon({
       onClick={toggleScreenShare}
       icon={
         callTokens?.role === ParticipantRole.SHARER ?
-          <LuScreenShare className={`size-4 ${Colors.screen.icon}`} />
-        : <LuScreenShareOff className={`size-4 ${Colors.deactivatedIcon}`} />
+          <LuScreenShareOff className={`size-4 ${Colors.screen.icon}`} />
+        : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
       }
       state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
       size="unsized"
