@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useHoppStore } from "@/store/store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +6,9 @@ import { toast } from "react-hot-toast";
 import { HiXMark } from "react-icons/hi2";
 import { HiExclamationCircle } from "react-icons/hi2";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useAPI } from "@/hooks/useQueryClients";
+import { useQueryClient } from "@tanstack/react-query";
 import type { components } from "@/openapi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import clsx from "clsx";
@@ -45,8 +47,11 @@ const tiers = [
 export function Subscription() {
   const { authToken } = useHoppStore();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [billingEmail, setBillingEmail] = useState("");
+  const [billingEmailSaving, setBillingEmailSaving] = useState(false);
 
   const { useQuery, useMutation } = useAPI();
+  const queryClient = useQueryClient();
 
   const { data: subscriptionData, isLoading: loading } = useQuery("get", "/api/auth/billing/subscription", undefined, {
     queryHash: `subscription-${authToken}`,
@@ -54,9 +59,29 @@ export function Subscription() {
 
   const subscriptionStatus = subscriptionData?.subscription;
 
+  // Fetch billing settings
+  const { data: billingSettingsData, isLoading: billingSettingsLoading } = useQuery(
+    "get",
+    "/api/auth/billing/settings",
+    undefined,
+    {
+      queryHash: `billing-settings-${authToken}`,
+      enabled: !!subscriptionStatus?.is_admin,
+    },
+  );
+
+  // Update local state when billing settings are loaded
+  useEffect(() => {
+    if (billingSettingsData?.billing_email !== undefined) {
+      setBillingEmail(billingSettingsData.billing_email);
+    }
+  }, [billingSettingsData?.billing_email]);
+
   const createCheckoutSessionMutation = useMutation("post", "/api/auth/billing/create-checkout-session");
 
   const createPortalSessionMutation = useMutation("post", "/api/auth/billing/create-portal-session");
+
+  const updateBillingSettingsMutation = useMutation("put", "/api/auth/billing/settings");
 
   const handleUpgrade = async (tier: string) => {
     if (!subscriptionStatus?.is_admin) {
@@ -112,6 +137,52 @@ export function Subscription() {
   const handleEnterpriseContact = () => {
     window.location.href = "mailto:costa@gethopp.app?subject=Enterprise%20Plan%20Inquiry";
   };
+
+  const handleSaveBillingEmail = async () => {
+    setBillingEmailSaving(true);
+    try {
+      await updateBillingSettingsMutation.mutateAsync({
+        body: {
+          billing_email: billingEmail,
+        },
+      });
+      // Invalidate the billing settings query to refetch
+      queryClient.invalidateQueries({ queryKey: ["get", "/api/auth/billing/settings"] });
+      toast.success("Billing email saved");
+    } catch (error: unknown) {
+      console.error("Error saving billing email:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to save billing email";
+      toast.error(errorMessage);
+    } finally {
+      setBillingEmailSaving(false);
+    }
+  };
+
+  const handleDeleteBillingEmail = async () => {
+    setBillingEmailSaving(true);
+    try {
+      await updateBillingSettingsMutation.mutateAsync({
+        body: {
+          billing_email: "",
+        },
+      });
+      setBillingEmail("");
+      // Invalidate the billing settings query to refetch
+      queryClient.invalidateQueries({ queryKey: ["get", "/api/auth/billing/settings"] });
+      toast.success("Billing email removed");
+    } catch (error: unknown) {
+      console.error("Error removing billing email:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to remove billing email";
+      toast.error(errorMessage);
+    } finally {
+      setBillingEmailSaving(false);
+    }
+  };
+
+  // Determine the current state of the billing email form
+  const savedBillingEmail = billingSettingsData?.billing_email || "";
+  const hasSavedEmail = savedBillingEmail !== "";
+  const isEmailModified = billingEmail !== savedBillingEmail;
 
   const getTierBadgeVariant = (tier: string) => {
     switch (tier) {
@@ -263,6 +334,55 @@ export function Subscription() {
               </AlertDescription>
             </Alert>
           )}
+
+        {/* Invoice Settings */}
+        <Card className="max-w-md">
+          <CardHeader>
+            <CardTitle>Invoice Settings</CardTitle>
+            <CardDescription>
+              Configure where invoices are sent. This is separate from your Stripe account email.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveBillingEmail();
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label htmlFor="billing-email" className="text-sm font-medium">
+                  Billing Email
+                </label>
+                <Input
+                  id="billing-email"
+                  type="email"
+                  placeholder="finance@yourcompany.com"
+                  value={billingEmail}
+                  onChange={(e) => setBillingEmail(e.target.value)}
+                  disabled={billingSettingsLoading}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Invoices will be sent to this email address. Leave empty to not receive invoice emails.
+                </p>
+              </div>
+              {hasSavedEmail && !isEmailModified ?
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDeleteBillingEmail}
+                  disabled={billingEmailSaving}
+                >
+                  {billingEmailSaving ? "Deleting..." : "Delete"}
+                </Button>
+              : <Button type="submit" disabled={billingEmailSaving || (!isEmailModified && !billingEmail)}>
+                  {billingEmailSaving ? "Saving" : "Save"}
+                </Button>
+              }
+            </form>
+          </CardContent>
+        </Card>
       </div>
     );
   }

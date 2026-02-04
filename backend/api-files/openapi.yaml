@@ -156,6 +156,23 @@ components:
           type: string
           description: Optional Rewardful referral ID for affiliate tracking
 
+    BillingSettingsRequest:
+      type: object
+      properties:
+        billing_email:
+          type: string
+          format: email
+          description: Email address where invoices will be sent (leave empty to disable invoice emails)
+
+    BillingSettingsResponse:
+      type: object
+      required:
+        - billing_email
+      properties:
+        billing_email:
+          type: string
+          description: Email address where invoices are sent (empty string if not configured)
+
     SessionTokensResponse:
       type: object
       required:
@@ -1179,6 +1196,86 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: No subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/billing/settings:
+    get:
+      summary: Get billing settings
+      description: Returns the billing settings for the current user's team, including the billing email where invoices are sent
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Billing settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingSettingsResponse"
+        "400":
+          description: Bad request - user must be part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - only team admins can view billing settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      summary: Update billing settings
+      description: Updates the billing settings for the current user's team. Set billing_email to configure where invoices are sent, or leave empty to disable invoice emails.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingSettingsRequest"
+      responses:
+        "200":
+          description: Billing settings updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingSettingsResponse"
+        "400":
+          description: Bad request - invalid email format or user must be part of a team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - only team admins can update billing settings
           content:
             application/json:
               schema:

@@ -8,8 +8,9 @@ import (
 
 type Team struct {
 	gorm.Model
-	Name            string `gorm:"not null" json:"name" validate:"required"`
-	IsManualUpgrade bool   `gorm:"default:false" json:"is_manual_upgrade"`
+	Name            string  `gorm:"not null" json:"name" validate:"required"`
+	IsManualUpgrade bool    `gorm:"default:false" json:"is_manual_upgrade"`
+	BillingEmail    *string `gorm:"default:null" json:"billing_email" validate:"omitempty,email"`
 }
 
 func GetTeamByID(db *gorm.DB, id string) (*Team, error) {

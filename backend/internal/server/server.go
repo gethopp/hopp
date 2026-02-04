@@ -390,6 +390,8 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/billing/subscription", billing.GetSubscriptionStatus)
 	protectedAPI.POST("/billing/create-checkout-session", billing.CreateCheckoutSession)
 	protectedAPI.POST("/billing/create-portal-session", billing.CreatePortalSession)
+	protectedAPI.GET("/billing/settings", billing.GetBillingSettings)
+	protectedAPI.PUT("/billing/settings", billing.UpdateBillingSettings)
 
 	// Debug endpoints - only enabled when ENABLE_DEBUG_ENDPOINTS=true
 	if s.Config.Server.Debug {
