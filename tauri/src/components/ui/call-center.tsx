@@ -26,6 +26,7 @@ import {
   LocalTrack,
   ParticipantEvent,
   AudioPresets,
+  EngineEvent,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
@@ -63,7 +64,7 @@ export function CallCenter() {
     <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
       {/* Reconnecting Banner */}
       {callTokens.isReconnecting && (
-        <div className="w-full bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center gap-2">
+        <div className="bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
           <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
           <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
         </div>
@@ -703,7 +704,7 @@ function CameraIcon() {
 }
 
 function MediaDevicesSettings() {
-  const { callTokens, setCallTokens, updateCallTokens, livekitUrl } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, livekitUrl, socketConnected } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
@@ -721,10 +722,25 @@ function MediaDevicesSettings() {
   const [roomConnected, setRoomConnected] = useState(false);
 
   useEffect(() => {
-    room.on(RoomEvent.Connected, () => {
+    const handleConnected = () => {
       setRoomConnected(true);
-    });
+    };
+
+    room.on(RoomEvent.Connected, handleConnected);
+
+    return () => {
+      room.off(RoomEvent.Connected, handleConnected);
+    };
   }, [room]);
+
+  // Early disconnection detection via SocketService
+  useEffect(() => {
+    if (!callTokens) return;
+
+    if (!socketConnected && !callTokens.isReconnecting) {
+      updateCallTokens({ isReconnecting: true });
+    }
+  }, [socketConnected, callTokens, updateCallTokens, roomState]);
 
   // Listen to connection state changes and handle reconnection
   useEffect(() => {
@@ -745,8 +761,8 @@ function MediaDevicesSettings() {
           console.error("Reconnection failed:", error);
           updateCallTokens({ isReconnecting: false });
         }
-      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting) {
-        // Successfully reconnected
+      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting && socketConnected) {
+        // Successfully reconnected (both LiveKit and socket are connected)
         console.log("Successfully reconnected!");
         updateCallTokens({ isReconnecting: false });
       }
@@ -757,7 +773,7 @@ function MediaDevicesSettings() {
     return () => {
       room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
     };
-  }, [room, callTokens, updateCallTokens, livekitUrl]);
+  }, [room, callTokens, updateCallTokens, livekitUrl, socketConnected]);
 
   useEffect(() => {
     if (!callTokens) return;
