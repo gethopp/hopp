@@ -19,6 +19,19 @@ type EmailClient interface {
 	SendTeamRemovalEmail(user *models.User, oldTeamName, newTeamName string)
 	SendSubscriptionConfirmationEmail(user *models.User)
 	SendSubscriptionCancellationEmail(user *models.User)
+	SendInvoiceEmail(toEmail string, data InvoiceEmailData)
+}
+
+// InvoiceEmailData contains the data needed to send an invoice email
+type InvoiceEmailData struct {
+	// e.g. "AFFUTBBC-1234"
+	InvoiceNumber string
+	// e.g. "Jan 3 - Feb 3, 2026"
+	Period string
+	// e.g. "https://invoice.stripe.com/i/aa..."
+	HostedInvoiceURL string
+	// e.g. "https://pay.stripe.com/invoice/..."
+	InvoicePDFURL string
 }
 
 // ResendEmailClient implements EmailClient using the Resend service
@@ -202,4 +215,31 @@ func (c *ResendEmailClient) SendSubscriptionCancellationEmail(user *models.User)
 	subject := "We're sorry to see you go 😢"
 
 	c.SendAsync(user.Email, subject, htmlBody)
+}
+
+// SendInvoiceEmail sends an invoice email with links to view and download the invoice
+func (c *ResendEmailClient) SendInvoiceEmail(toEmail string, data InvoiceEmailData) {
+	if toEmail == "" {
+		c.logger.Error("Cannot send invoice email to empty email address")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-invoice.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read invoice email template: %v", err)
+		return
+	}
+
+	replacer := strings.NewReplacer(
+		"{invoice_number}", data.InvoiceNumber,
+		"{period}", data.Period,
+		"{view_link}", data.HostedInvoiceURL,
+		"{download_link}", data.InvoicePDFURL,
+	)
+	htmlBody := replacer.Replace(string(templateBytes))
+
+	subject := fmt.Sprintf("Invoice #%s from Hopp 🏀", data.InvoiceNumber)
+
+	c.SendAsync(toEmail, subject, htmlBody)
 }

@@ -40,6 +40,16 @@ type SubscriptionResponse struct {
 	IsAdmin           bool                      `json:"is_admin"`
 }
 
+// BillingSettingsRequest represents the request body for updating billing settings
+type BillingSettingsRequest struct {
+	BillingEmail string `json:"billing_email" validate:"omitempty,email"`
+}
+
+// BillingSettingsResponse represents the response for billing settings
+type BillingSettingsResponse struct {
+	BillingEmail string `json:"billing_email"`
+}
+
 // TODO: Refactor billing and handlers to avoid complicated codebase
 // Maybe share a common interface to implement
 
@@ -326,6 +336,8 @@ func (bh *BillingHandler) HandleWebhook(c echo.Context) error {
 		err = bh.handleSubscriptionUpdated(c, event)
 	case "checkout.session.completed":
 		err = bh.handleCheckoutSessionCompleted(c, event)
+	case "invoice.payment_succeeded":
+		err = bh.handleInvoicePaymentSucceeded(c, event)
 	default:
 		c.Logger().Infof("Unhandled event type: %s", event.Type)
 	}
@@ -487,4 +499,137 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("💸💸💸 Team ID: %s - subscription activated", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
 
 	return nil
+}
+
+// handleInvoicePaymentSucceeded handles the invoice.payment_succeeded webhook event
+// It sends an invoice email to the team's billing email if configured
+func (bh *BillingHandler) handleInvoicePaymentSucceeded(c echo.Context, event stripe.Event) error {
+	var invoice stripe.Invoice
+	if err := json.Unmarshal(event.Data.Raw, &invoice); err != nil {
+		c.Logger().Errorf("Failed to unmarshal invoice: %v", err)
+		return err
+	}
+
+	// Skip if invoice has no customer
+	if invoice.Customer == nil || invoice.Customer.ID == "" {
+		c.Logger().Info("Invoice has no customer, skipping invoice email")
+		return nil
+	}
+
+	// Look up subscription by Stripe customer ID
+	var subscription models.Subscription
+	if err := bh.DB.Preload("Team").Where("stripe_customer_id = ?", invoice.Customer.ID).First(&subscription).Error; err != nil {
+		c.Logger().Infof("Could not find subscription for customer %s: %v", invoice.Customer.ID, err)
+		// Return nil to acknowledge the webhook as subscription might not exist yet
+		return nil
+	}
+
+	team := subscription.Team
+
+	// Only send if team has billing
+	// email set else skip
+	if team.BillingEmail == nil || *team.BillingEmail == "" {
+		c.Logger().Infof("Team %d has no billing email set, skipping invoice email", team.ID)
+		return nil
+	}
+
+	// Format period from timestamps (period_start, period_end)
+	periodStart := time.Unix(invoice.PeriodStart, 0)
+	periodEnd := time.Unix(invoice.PeriodEnd, 0)
+	period := fmt.Sprintf("%s - %s", periodStart.Format("Jan 2"), periodEnd.Format("Jan 2, 2006"))
+
+	// Send invoice email
+	if bh.EmailClient != nil {
+		bh.EmailClient.SendInvoiceEmail(*team.BillingEmail, email.InvoiceEmailData{
+			InvoiceNumber:    invoice.Number,
+			Period:           period,
+			HostedInvoiceURL: invoice.HostedInvoiceURL,
+			InvoicePDFURL:    invoice.InvoicePDF,
+		})
+		c.Logger().Infof("Sent invoice email for %s to %s", invoice.Number, *team.BillingEmail)
+	}
+
+	return nil
+}
+
+// GetBillingSettings returns the current billing settings for the user's team
+func (bh *BillingHandler) GetBillingSettings(c echo.Context) error {
+	user, found := bh.getAuthenticatedUserFromJWT(c)
+	if !found {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Failed to authenticate user")
+	}
+
+	if user.TeamID == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "User must be part of a team")
+	}
+
+	if !user.IsAdmin {
+		return echo.NewHTTPError(http.StatusForbidden, "Only team admins can view billing settings")
+	}
+
+	// Get team
+	team, err := models.GetTeamByID(bh.DB, strconv.Itoa(int(*user.TeamID)))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get team")
+	}
+
+	billingEmail := ""
+	if team.BillingEmail != nil {
+		billingEmail = *team.BillingEmail
+	}
+
+	return c.JSON(http.StatusOK, BillingSettingsResponse{
+		BillingEmail: billingEmail,
+	})
+}
+
+// UpdateBillingSettings updates the billing settings for the user's team
+func (bh *BillingHandler) UpdateBillingSettings(c echo.Context) error {
+	user, found := bh.getAuthenticatedUserFromJWT(c)
+	if !found {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Failed to authenticate user")
+	}
+
+	if user.TeamID == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "User must be part of a team")
+	}
+
+	if !user.IsAdmin {
+		return echo.NewHTTPError(http.StatusForbidden, "Only team admins can update billing settings")
+	}
+
+	var req BillingSettingsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	if err := c.Validate(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Get team
+	team, err := models.GetTeamByID(bh.DB, strconv.Itoa(int(*user.TeamID)))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get team")
+	}
+
+	// Update billing email (allow empty string to clear it)
+	if req.BillingEmail == "" {
+		team.BillingEmail = nil
+	} else {
+		team.BillingEmail = &req.BillingEmail
+	}
+
+	if err := bh.DB.Save(team).Error; err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update billing settings")
+	}
+
+	billingEmail := ""
+	if team.BillingEmail != nil {
+		billingEmail = *team.BillingEmail
+	}
+
+	return c.JSON(http.StatusOK, BillingSettingsResponse{
+		BillingEmail: billingEmail,
+	})
 }

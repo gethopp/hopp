@@ -1749,6 +1749,144 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/billing/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get billing settings
+     * @description Returns the billing settings for the current user's team, including the billing email where invoices are sent
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Billing settings retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["BillingSettingsResponse"];
+          };
+        };
+        /** @description Bad request - user must be part of a team */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - only team admins can view billing settings */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    /**
+     * Update billing settings
+     * @description Updates the billing settings for the current user's team. Set billing_email to configure where invoices are sent, or leave empty to disable invoice emails.
+     */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": components["schemas"]["BillingSettingsRequest"];
+        };
+      };
+      responses: {
+        /** @description Billing settings updated successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["BillingSettingsResponse"];
+          };
+        };
+        /** @description Bad request - invalid email format or user must be part of a team */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - only team admins can update billing settings */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/slack/join/{sessionId}": {
     parameters: {
       query?: never;
@@ -2244,6 +2382,17 @@ export interface components {
       price_id?: string;
       /** @description Optional Rewardful referral ID for affiliate tracking */
       referral?: string;
+    };
+    BillingSettingsRequest: {
+      /**
+       * Format: email
+       * @description Email address where invoices will be sent (leave empty to disable invoice emails)
+       */
+      billing_email?: string;
+    };
+    BillingSettingsResponse: {
+      /** @description Email address where invoices are sent (empty string if not configured) */
+      billing_email: string;
     };
     SessionTokensResponse: {
       /** @description LiveKit token for audio track */
