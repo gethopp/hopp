@@ -353,7 +353,7 @@ fn set_fullscreen(
         if current_size.width == expected_size.width && current_size.height == expected_size.height
         {
             log::info!(
-                "create_overlay_window: window reached fullscreen size {:?}",
+                "set_fullscreen: window reached fullscreen size {:?}",
                 current_size
             );
             break;
@@ -361,7 +361,7 @@ fn set_fullscreen(
 
         if start.elapsed() > timeout {
             log::error!(
-                        "create_overlay_window: timeout waiting for fullscreen. Current: {:?}, Expected: {:?}",
+                        "set_fullscreen: timeout waiting for fullscreen. Current: {:?}, Expected: {:?}",
                         current_size,
                         expected_size
                         );
