@@ -340,7 +340,7 @@ fn set_fullscreen(
     {
         use winit::window::Fullscreen;
 
-        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor))));
+        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor.clone()))));
     }
     // Wait for the window to reach fullscreen size before creating the graphics context to avoid scissor rect
     // validation errors in wgpu.
