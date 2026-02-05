@@ -295,6 +295,8 @@ enum FullscreenError {
     #[error("Failed to get raw window handle")]
     #[cfg(target_os = "macos")]
     FailedToGetRawWindowHandle,
+    #[error("Failed to match fullscreen size within timeout")]
+    FailedToMatchFullscreenSize,
 }
 
 fn set_fullscreen(
@@ -330,16 +332,44 @@ fn set_fullscreen(
             let ns_window = ns_window.unwrap();
             /* This is a hack to make the overlay window to appear above the main menu. */
             ns_window.setLevel(NSMainMenuWindowLevel + 1);
-            return Ok(());
+        } else {
+            return Err(FullscreenError::FailedToGetRawWindowHandle);
         }
-        Err(FullscreenError::FailedToGetRawWindowHandle)
     }
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         use winit::window::Fullscreen;
 
-        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor))));
-
-        Ok(())
+        window.set_fullscreen(Some(Fullscreen::Borderless(Some(selected_monitor.clone()))));
     }
+    // Wait for the window to reach fullscreen size before creating the graphics context to avoid scissor rect
+    // validation errors in wgpu.
+    let expected_size = selected_monitor.size();
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(1);
+
+    loop {
+        let current_size = window.inner_size();
+        if current_size.width == expected_size.width && current_size.height == expected_size.height
+        {
+            log::info!(
+                "set_fullscreen: window reached fullscreen size {:?}",
+                current_size
+            );
+            break;
+        }
+
+        if start.elapsed() > timeout {
+            log::error!(
+                        "set_fullscreen: timeout waiting for fullscreen. Current: {:?}, Expected: {:?}",
+                        current_size,
+                        expected_size
+                        );
+            return Err(FullscreenError::FailedToMatchFullscreenSize);
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    Ok(())
 }
