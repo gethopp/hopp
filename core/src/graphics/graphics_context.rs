@@ -174,6 +174,7 @@ impl<'a> GraphicsContext<'a> {
     pub fn new(window_arc: Arc<Window>, texture_path: String, scale: f64) -> OverlayResult<Self> {
         log::info!("GraphicsContext::new");
         let size = window_arc.inner_size();
+        log::info!("GraphicsContext::new: window size: {size:?}, scale: {scale}");
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
