@@ -9,9 +9,7 @@ use std::{
 };
 
 use crate::{
-    graphics::graphics_context::{
-        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
-    },
+    graphics::graphics_context::{cursor::Cursor, GraphicsContext, RedrawThreadCommands},
     overlay_window::OverlayWindow,
     utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
     MouseClickData, ScrollDelta, UserEvent,
@@ -644,71 +642,6 @@ impl SharerCursor {
     }
 }
 
-enum RedrawThreadCommands {
-    Redraw,
-    ClickAnimation(bool),
-    Stop,
-}
-
-fn redraw_thread(
-    event_loop_proxy: EventLoopProxy<UserEvent>,
-    receiver: Receiver<RedrawThreadCommands>,
-    tx: Sender<RedrawThreadCommands>,
-) {
-    let mut last_redraw_time = Instant::now();
-    let mut last_click_animation_time = None;
-    let redraw_interval = std::time::Duration::from_millis(16);
-    let animation_duration = (ANIMATION_DURATION + 500) as u128;
-    loop {
-        match receiver.recv() {
-            Ok(command) => match command {
-                RedrawThreadCommands::Stop => break,
-                RedrawThreadCommands::Redraw => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-                }
-                RedrawThreadCommands::ClickAnimation(extend) => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-
-                    if extend || last_click_animation_time.is_none() {
-                        last_click_animation_time = Some(Instant::now());
-                    }
-
-                    if last_click_animation_time
-                        .as_ref()
-                        .unwrap()
-                        .elapsed()
-                        .as_millis()
-                        < animation_duration
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(16));
-                        if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
-                            log::error!(
-                                "redraw_thread: error sending click animation event: {e:?}"
-                            );
-                        }
-                    } else {
-                        last_click_animation_time = None;
-                    }
-                }
-            },
-            Err(e) => {
-                log::error!("redraw_thread: error receiving command: {e:?}");
-                break;
-            }
-        }
-    }
-}
-
 struct RemoteControl {
     /// Cursor that is shown when the sharer looses control
     sharer_cursor: Arc<Mutex<SharerCursor>>,
@@ -755,8 +688,6 @@ pub struct CursorController {
     controllers_cursors_enabled: bool,
     /// Object that is used to translate coordinates between local and global
     overlay_window: Arc<OverlayWindow>,
-    /// Thread that is used to control the redraws
-    redraw_thread: Option<JoinHandle<()>>,
     /// Sender for the redraw thread
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Event loop proxy for sending events
@@ -787,17 +718,14 @@ impl CursorController {
     ///
     /// * `Ok(CursorController)` - Successfully initialized controller
     /// * `Err(CursorControllerError)` - Specific failure reason (see error variants)
-    pub fn new(
+    pub(crate) fn new(
         gfx: &mut GraphicsContext,
         overlay_window: Arc<OverlayWindow>,
+        redraw_thread_sender: Sender<RedrawThreadCommands>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         accessibility_permission: bool,
     ) -> Result<Self, CursorControllerError> {
         let controllers_cursors = Arc::new(Mutex::new(vec![]));
-
-        let event_loop_proxy_clone = event_loop_proxy.clone();
-
-        let (sender, receiver) = std::sync::mpsc::channel();
         let remote_control = if accessibility_permission {
             let scale_factor = overlay_window.get_display_scale();
             let color = SHARER_COLOR;
@@ -810,7 +738,7 @@ impl CursorController {
 
             let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
             let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
-                CursorWrapper::new(sharer_cursor, sender.clone()),
+                CursorWrapper::new(sharer_cursor, redraw_thread_sender.clone()),
                 event_loop_proxy.clone(),
                 overlay_window.clone(),
                 cursor_simulator.clone(),
@@ -838,16 +766,12 @@ impl CursorController {
             "#FF5BFF", "#00D091",
         ]);
 
-        let sender_clone = sender.clone();
         Ok(Self {
             remote_control,
             controllers_cursors,
             controllers_cursors_enabled: accessibility_permission,
             overlay_window,
-            redraw_thread: Some(std::thread::spawn(move || {
-                redraw_thread(event_loop_proxy_clone, receiver, sender_clone);
-            })),
-            redraw_thread_sender: sender,
+            redraw_thread_sender,
             event_loop_proxy,
             available_colors: available,
         })
@@ -1310,39 +1234,8 @@ impl CursorController {
     ///
     /// * `position` - The position where the click animation should be displayed
     /// * `sid` - Session ID of the controller triggering the animation
-    pub fn trigger_click_animation(&self, position: Position, sid: &str) {
-        log::debug!("trigger_click_animation: position: {position:?} sid: {sid}");
-        if let Err(e) = self
-            .event_loop_proxy
-            .send_event(UserEvent::EnableClickAnimation(position))
-        {
-            error!("trigger_click_animation: error sending enable click animation: {e:?}");
-        }
-        if let Err(e) = self
-            .redraw_thread_sender
-            .send(RedrawThreadCommands::ClickAnimation(true))
-        {
-            log::error!("trigger_click_animation: error sending click animation event: {e:?}");
-        }
-    }
-
-    pub fn trigger_render(&self) {
-        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("trigger_render: error sending redraw event: {e:?}");
-        }
-    }
-
     pub fn is_controllers_enabled(&self) -> bool {
         self.controllers_cursors_enabled
-    }
-}
-
-impl Drop for CursorController {
-    fn drop(&mut self) {
-        if let Some(handle) = self.redraw_thread.take() {
-            let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
-            let _ = handle.join();
-        }
     }
 }
 

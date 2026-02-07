@@ -437,6 +437,7 @@ impl<'a> Application<'a> {
             window,
             self.textures_path.clone(),
             selected_monitor.scale_factor(),
+            self.event_loop_proxy.clone(),
         ) {
             Ok(context) => context,
             Err(error) => {
@@ -522,9 +523,11 @@ impl<'a> Application<'a> {
 
         log::info!("create_overlay_window: overlay_window created {overlay_window}");
 
+        let redraw_sender = graphics_context.redraw_sender();
         let cursor_controller = CursorController::new(
             &mut graphics_context,
             overlay_window.clone(),
+            redraw_sender,
             self.event_loop_proxy.clone(),
             accessibility_permission,
         );
@@ -883,15 +886,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     sentry_metadata.app_version,
                 );
             }
-            UserEvent::EnableClickAnimation(position) => {
-                log::debug!("user_event: Enable click animation: {position:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none enable click animation");
-                    return;
-                }
-                let gfx = &mut self.remote_control.as_mut().unwrap().gfx;
-                gfx.enable_click_animation(position);
-            }
             UserEvent::AddToClipboard(add_to_clipboard_data) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
                 if self.remote_control.is_none() {
@@ -1011,7 +1005,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
-                remote_control.cursor_controller.trigger_render();
+                remote_control.gfx.trigger_render();
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
@@ -1021,7 +1015,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 remote_control.gfx.draw_clear_all_paths(sid.as_str());
-                remote_control.cursor_controller.trigger_render();
+                remote_control.gfx.trigger_render();
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
                 log::debug!(
@@ -1035,14 +1029,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                     return;
                 }
-                let remote_control = &self.remote_control.as_ref().unwrap();
+                let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let position = Position {
                     x: point.x,
                     y: point.y,
                 };
-                remote_control
-                    .cursor_controller
-                    .trigger_click_animation(position, sid.as_str());
+                remote_control.gfx.trigger_click_animation(position);
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
@@ -1197,7 +1189,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         remote_control.gfx.draw(cursor_controller);
                         self.local_drawing.last_redraw_time = std::time::Instant::now();
                     }
-                    remote_control.gfx.window().request_redraw();
+                    remote_control.gfx.trigger_render();
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -1214,7 +1206,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                         position,
                                         self.local_drawing.current_path_id,
                                     );
-                                    remote_control.cursor_controller.trigger_render();
+                                    remote_control.gfx.trigger_render();
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
@@ -1248,7 +1240,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             if let Some(position) = self.local_drawing.last_cursor_position {
                                 if let Some(remote_control) = &mut self.remote_control {
                                     remote_control.gfx.draw_end("local", position);
-                                    remote_control.cursor_controller.trigger_render();
+                                    remote_control.gfx.trigger_render();
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
@@ -1274,7 +1266,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         if let Some(remote_control) = &mut self.remote_control {
                             // Clear all local drawing paths
                             remote_control.gfx.draw_clear_all_paths("local");
-                            remote_control.cursor_controller.trigger_render();
+                            remote_control.gfx.trigger_render();
 
                             // Send LiveKit event to clear all paths
                             if let Some(room_service) = &self.room_service {
@@ -1306,7 +1298,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if self.local_drawing.left_mouse_pressed {
                         if let Some(remote_control) = &mut self.remote_control {
                             remote_control.gfx.draw_add_point("local", pos);
-                            remote_control.cursor_controller.trigger_render();
+                            remote_control.gfx.trigger_render();
 
                             // Send LiveKit event
                             if let Some(room_service) = &self.room_service {
@@ -1397,7 +1389,6 @@ pub enum UserEvent {
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
     RequestRedraw,
-    EnableClickAnimation(Position),
     SharerPosition(f64, f64),
     ResetState,
     Tick(u128),

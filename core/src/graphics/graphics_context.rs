@@ -5,11 +5,17 @@
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
 use crate::utils::geometry::Extent;
-use crate::{input::mouse::CursorController, utils::geometry::Position};
+use crate::{input::mouse::CursorController, utils::geometry::Position, UserEvent};
 use image::GenericImageView;
 use log::error;
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc,
+};
+use std::thread::JoinHandle;
+use std::time::Instant;
 use thiserror::Error;
+use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
 
 #[cfg(target_os = "windows")]
@@ -31,6 +37,71 @@ use iced_renderer::IcedRenderer;
 
 #[path = "draw.rs"]
 pub mod draw;
+
+pub(crate) enum RedrawThreadCommands {
+    Redraw,
+    ClickAnimation(bool),
+    Stop,
+}
+
+fn redraw_thread(
+    event_loop_proxy: EventLoopProxy<UserEvent>,
+    receiver: Receiver<RedrawThreadCommands>,
+    tx: Sender<RedrawThreadCommands>,
+) {
+    let mut last_redraw_time = Instant::now();
+    let mut last_click_animation_time = None;
+    let redraw_interval = std::time::Duration::from_millis(16);
+    let animation_duration = (click_animation::ANIMATION_DURATION + 500) as u128;
+    loop {
+        match receiver.recv() {
+            Ok(command) => match command {
+                RedrawThreadCommands::Stop => break,
+                RedrawThreadCommands::Redraw => {
+                    if last_redraw_time.elapsed() > redraw_interval {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        last_redraw_time = Instant::now();
+                    }
+                }
+                RedrawThreadCommands::ClickAnimation(extend) => {
+                    if last_redraw_time.elapsed() > redraw_interval {
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+                            log::error!("redraw_thread: error sending redraw event: {e:?}");
+                        }
+                        last_redraw_time = Instant::now();
+                    }
+
+                    if extend || last_click_animation_time.is_none() {
+                        last_click_animation_time = Some(Instant::now());
+                    }
+
+                    if last_click_animation_time
+                        .as_ref()
+                        .unwrap()
+                        .elapsed()
+                        .as_millis()
+                        < animation_duration
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(16));
+                        if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
+                            log::error!(
+                                "redraw_thread: error sending click animation event: {e:?}"
+                            );
+                        }
+                    } else {
+                        last_click_animation_time = None;
+                    }
+                }
+            },
+            Err(e) => {
+                log::error!("redraw_thread: error receiving command: {e:?}");
+                break;
+            }
+        }
+    }
+}
 
 /// Errors that can occur during overlay graphics operations.
 #[derive(Error, Debug)]
@@ -140,6 +211,11 @@ pub struct GraphicsContext<'a> {
 
     /// Renderer for iced graphics
     iced_renderer: IcedRenderer,
+
+    /// Thread that controls rendering cadence
+    redraw_thread: Option<JoinHandle<()>>,
+    /// Sender for triggering redraws and animations
+    redraw_thread_sender: Sender<RedrawThreadCommands>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -171,7 +247,12 @@ impl<'a> GraphicsContext<'a> {
     /// # Platform-Specific Behavior
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
-    pub fn new(window_arc: Arc<Window>, texture_path: String, scale: f64) -> OverlayResult<Self> {
+    pub fn new(
+        window_arc: Arc<Window>,
+        texture_path: String,
+        scale: f64,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
+    ) -> OverlayResult<Self> {
         log::info!("GraphicsContext::new");
         let size = window_arc.inner_size();
         log::info!("GraphicsContext::new: window size: {size:?}, scale: {scale}");
@@ -297,6 +378,12 @@ impl<'a> GraphicsContext<'a> {
             &texture_path,
         );
 
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let sender_clone = sender.clone();
+        let redraw_thread = Some(std::thread::spawn(move || {
+            redraw_thread(event_loop_proxy, receiver, sender_clone);
+        }));
+
         Ok(Self {
             surface,
             device,
@@ -307,6 +394,8 @@ impl<'a> GraphicsContext<'a> {
             _direct_composition: direct_composition,
             click_animation_renderer,
             iced_renderer,
+            redraw_thread,
+            redraw_thread_sender: sender,
         })
     }
 
@@ -342,6 +431,39 @@ impl<'a> GraphicsContext<'a> {
                 height: window_size.height as f64,
             },
         )
+    }
+
+    /// Returns a clone of the redraw thread sender for use by subsystems.
+    ///
+    /// This allows other components (like CursorController and CursorWrapper)
+    /// to trigger redraws by sending commands to the redraw thread.
+    pub(crate) fn redraw_sender(&self) -> Sender<RedrawThreadCommands> {
+        self.redraw_thread_sender.clone()
+    }
+
+    /// Triggers a single throttled redraw.
+    ///
+    /// The redraw will be throttled to 60fps by the redraw thread.
+    pub fn trigger_render(&self) {
+        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            log::error!("GraphicsContext::trigger_render: error sending redraw event: {e:?}");
+        }
+    }
+
+    /// Triggers a click animation at the given position.
+    ///
+    /// This combines enabling the click animation renderer state AND
+    /// starting the 60fps render loop for the animation duration + 500ms.
+    pub fn trigger_click_animation(&mut self, position: Position) {
+        log::debug!("GraphicsContext::trigger_click_animation: {position:?}");
+        self.click_animation_renderer
+            .enable_click_animation(position);
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::ClickAnimation(true))
+        {
+            log::error!("GraphicsContext::trigger_click_animation: error: {e:?}");
+        }
     }
 
     /// Renders the current frame with all overlay elements.
@@ -524,6 +646,11 @@ impl<'a> GraphicsContext<'a> {
 
 impl Drop for GraphicsContext<'_> {
     fn drop(&mut self) {
+        // Stop the redraw thread
+        if let Some(handle) = self.redraw_thread.take() {
+            let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
+            let _ = handle.join();
+        }
         // This is needed for windows, because otherwise the title bar becomes
         // visible when a new overlay surface is created.
         self.window.set_minimized(true);

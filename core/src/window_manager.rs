@@ -361,10 +361,10 @@ fn set_fullscreen(
 
         if start.elapsed() > timeout {
             log::error!(
-                        "set_fullscreen: timeout waiting for fullscreen. Current: {:?}, Expected: {:?}",
-                        current_size,
-                        expected_size
-                        );
+                "set_fullscreen: timeout waiting for fullscreen. Current: {:?}, Expected: {:?}",
+                current_size,
+                expected_size
+            );
             return Err(FullscreenError::FailedToMatchFullscreenSize);
         }
 
