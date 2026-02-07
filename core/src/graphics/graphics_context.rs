@@ -46,7 +46,6 @@ pub(crate) enum RedrawThreadCommands {
 fn redraw_thread(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     receiver: Receiver<RedrawThreadCommands>,
-    _tx: Sender<RedrawThreadCommands>,
 ) {
     let redraw_interval = std::time::Duration::from_millis(16);
     let inactivity_timeout = std::time::Duration::from_secs(15);
@@ -61,9 +60,7 @@ fn redraw_thread(
                     last_activity_time = Instant::now();
                 }
             },
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Normal - no message received, continue
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 log::error!("redraw_thread: channel disconnected");
                 break;
@@ -359,9 +356,8 @@ impl<'a> GraphicsContext<'a> {
         );
 
         let (sender, receiver) = std::sync::mpsc::channel();
-        let sender_clone = sender.clone();
         let redraw_thread = Some(std::thread::spawn(move || {
-            redraw_thread(event_loop_proxy, receiver, sender_clone);
+            redraw_thread(event_loop_proxy, receiver);
         }));
 
         Ok(Self {
