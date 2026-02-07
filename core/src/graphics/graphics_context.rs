@@ -39,66 +39,46 @@ use iced_renderer::IcedRenderer;
 pub mod draw;
 
 pub(crate) enum RedrawThreadCommands {
-    Redraw,
-    ClickAnimation(bool),
+    Activity,
     Stop,
 }
 
 fn redraw_thread(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     receiver: Receiver<RedrawThreadCommands>,
-    tx: Sender<RedrawThreadCommands>,
+    _tx: Sender<RedrawThreadCommands>,
 ) {
-    let mut last_redraw_time = Instant::now();
-    let mut last_click_animation_time = None;
     let redraw_interval = std::time::Duration::from_millis(16);
-    let animation_duration = (click_animation::ANIMATION_DURATION + 500) as u128;
+    let inactivity_timeout = std::time::Duration::from_secs(15);
+    let mut last_activity_time = Instant::now();
+
     loop {
-        match receiver.recv() {
+        // Check for messages with a timeout equal to the redraw interval
+        match receiver.recv_timeout(redraw_interval) {
             Ok(command) => match command {
                 RedrawThreadCommands::Stop => break,
-                RedrawThreadCommands::Redraw => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-                }
-                RedrawThreadCommands::ClickAnimation(extend) => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-
-                    if extend || last_click_animation_time.is_none() {
-                        last_click_animation_time = Some(Instant::now());
-                    }
-
-                    if last_click_animation_time
-                        .as_ref()
-                        .unwrap()
-                        .elapsed()
-                        .as_millis()
-                        < animation_duration
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(16));
-                        if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
-                            log::error!(
-                                "redraw_thread: error sending click animation event: {e:?}"
-                            );
-                        }
-                    } else {
-                        last_click_animation_time = None;
-                    }
+                RedrawThreadCommands::Activity => {
+                    last_activity_time = Instant::now();
                 }
             },
-            Err(e) => {
-                log::error!("redraw_thread: error receiving command: {e:?}");
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Normal - no message received, continue
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                log::error!("redraw_thread: channel disconnected");
                 break;
             }
+        }
+
+        // Check if we should stop due to inactivity
+        if last_activity_time.elapsed() > inactivity_timeout {
+            log::info!("redraw_thread: stopping due to inactivity");
+            continue;
+        }
+
+        // Send redraw event every 16ms
+        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
+            log::error!("redraw_thread: error sending redraw event: {e:?}");
         }
     }
 }
@@ -441,26 +421,28 @@ impl<'a> GraphicsContext<'a> {
         self.redraw_thread_sender.clone()
     }
 
-    /// Triggers a single throttled redraw.
+    /// Triggers rendering activity.
     ///
-    /// The redraw will be throttled to 60fps by the redraw thread.
+    /// Signals the redraw thread to continue rendering and resets the inactivity timer.
     pub fn trigger_render(&self) {
-        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("GraphicsContext::trigger_render: error sending redraw event: {e:?}");
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::Activity)
+        {
+            log::error!("GraphicsContext::trigger_render: error sending activity event: {e:?}");
         }
     }
 
     /// Triggers a click animation at the given position.
     ///
-    /// This combines enabling the click animation renderer state AND
-    /// starting the 60fps render loop for the animation duration + 500ms.
+    /// Enables the click animation renderer state and signals rendering activity.
     pub fn trigger_click_animation(&mut self, position: Position) {
         log::debug!("GraphicsContext::trigger_click_animation: {position:?}");
         self.click_animation_renderer
             .enable_click_animation(position);
         if let Err(e) = self
             .redraw_thread_sender
-            .send(RedrawThreadCommands::ClickAnimation(true))
+            .send(RedrawThreadCommands::Activity)
         {
             log::error!("GraphicsContext::trigger_click_animation: error: {e:?}");
         }

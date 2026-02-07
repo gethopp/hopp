@@ -1,10 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{
-        mpsc::{Receiver, RecvTimeoutError, Sender},
-        Arc, Mutex,
-    },
-    thread::JoinHandle,
+    sync::{mpsc::Sender, Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -94,6 +90,8 @@ pub const CUSTOM_MOUSE_EVENT: i64 = 1234;
 const MAX_CURSORS: u32 = 10;
 
 const SHARER_COLOR: &str = "#7CCF00";
+
+const CURSOR_HIDE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SHARER_POSITION_UPDATE_INTERVAL: Duration = Duration::from_millis(30);
 
@@ -193,81 +191,26 @@ pub trait CursorSimulatorFunctions {
     fn simulate_scroll(&mut self, delta: ScrollDelta);
 }
 
-enum CursorWrapperCommands {
-    Hide,
-    Show(Position),
-    Terminate,
-}
-
-/// This thread is used for updating the virtual cursor's position,
-/// when there isn't any events for 5 seconds, we hide the cursor.
-fn cursor_wrapper_thread(
-    cursor: Arc<Mutex<Cursor>>,
-    receiver: Receiver<CursorWrapperCommands>,
-    redraw_thread_sender: Sender<RedrawThreadCommands>,
-) {
-    let timeout = Duration::from_secs(5);
-    loop {
-        match receiver.recv_timeout(timeout) {
-            Ok(command) => match command {
-                CursorWrapperCommands::Hide => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(-100., -100.);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                CursorWrapperCommands::Show(position) => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(position.x, position.y);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                CursorWrapperCommands::Terminate => {
-                    break;
-                }
-            },
-            Err(e) => match e {
-                RecvTimeoutError::Timeout => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(-100., -100.);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                _ => {
-                    log::error!("cursor_wrapper_thread: error receiving command: {e:?}");
-                    break;
-                }
-            },
-        }
-    }
-}
-
 struct CursorWrapper {
     cursor: Arc<Mutex<Cursor>>,
     /// Cursor's position in global coordinates, this is used when simulating events
     global_position: Position,
     /// Cursor's position in local coordinates, this is used for rendering
     local_position: Position,
-    /// Handle for the thread that updates the cursor's position
-    hide_handle: Option<JoinHandle<()>>,
-    command_sender: Sender<CursorWrapperCommands>,
+    /// Timestamp of the last time the cursor was shown, used for auto-hiding
+    last_show_time: Option<Instant>,
+    redraw_thread_sender: Sender<RedrawThreadCommands>,
 }
 
 impl CursorWrapper {
     fn new(cursor: Cursor, redraw_thread_sender: Sender<RedrawThreadCommands>) -> Self {
         let cursor = Arc::new(Mutex::new(cursor));
-        let (tx, rx) = std::sync::mpsc::channel();
         Self {
-            cursor: cursor.clone(),
+            cursor,
             global_position: Position::default(),
             local_position: Position::default(),
-            hide_handle: Some(std::thread::spawn(move || {
-                cursor_wrapper_thread(cursor, rx, redraw_thread_sender)
-            })),
-            command_sender: tx,
+            last_show_time: None,
+            redraw_thread_sender,
         }
     }
 
@@ -278,27 +221,47 @@ impl CursorWrapper {
         self.global_position = global_position;
         self.local_position = local_position;
         if show {
+            self.last_show_time = Some(Instant::now());
+            let mut cursor = self.cursor.lock().unwrap();
+            cursor.set_position(local_position.x, local_position.y);
             if let Err(e) = self
-                .command_sender
-                .send(CursorWrapperCommands::Show(local_position))
+                .redraw_thread_sender
+                .send(RedrawThreadCommands::Activity)
             {
-                log::error!("set_position: error sending show command: {e:?}");
+                log::error!("set_position: error sending redraw event: {e:?}");
             }
         }
     }
 
     fn hide(&mut self) {
-        if let Err(e) = self.command_sender.send(CursorWrapperCommands::Hide) {
-            log::error!("hide: error sending hide command: {e:?}");
+        self.last_show_time = None;
+        let mut cursor = self.cursor.lock().unwrap();
+        cursor.set_position(-100., -100.);
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::Activity)
+        {
+            log::error!("hide: error sending redraw event: {e:?}");
         }
     }
 
     fn show(&mut self) {
+        self.last_show_time = Some(Instant::now());
+        let mut cursor = self.cursor.lock().unwrap();
+        cursor.set_position(self.local_position.x, self.local_position.y);
         if let Err(e) = self
-            .command_sender
-            .send(CursorWrapperCommands::Show(self.local_position))
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::Activity)
         {
-            log::error!("show: error sending show command: {e:?}");
+            log::error!("show: error sending redraw event: {e:?}");
+        }
+    }
+
+    fn hide_if_expired(&mut self) {
+        if let Some(last_show) = self.last_show_time {
+            if last_show.elapsed() > CURSOR_HIDE_TIMEOUT {
+                self.hide();
+            }
         }
     }
 
@@ -306,19 +269,6 @@ impl CursorWrapper {
         let cursor = self.cursor.lock().unwrap();
         cursor.update_transform_buffer(gfx);
         cursor.draw(render_pass, gfx);
-    }
-}
-
-impl Drop for CursorWrapper {
-    fn drop(&mut self) {
-        if let Some(handle) = self.hide_handle.take() {
-            let res = self.command_sender.send(CursorWrapperCommands::Terminate);
-            if let Err(e) = res {
-                log::error!("cursor_wrapper_thread: error sending terminate command: {e:?}");
-            } else {
-                let _ = handle.join();
-            }
-        }
     }
 }
 
@@ -463,6 +413,11 @@ impl ControllerCursor {
 
     fn pointer_enabled(&self) -> bool {
         self.pointer_enabled
+    }
+
+    fn hide_if_expired(&mut self) {
+        self.control_cursor.hide_if_expired();
+        self.pointer_cursor.hide_if_expired();
     }
 }
 
@@ -887,7 +842,10 @@ impl CursorController {
             // take ownership so we can recover color
             let controller = controllers_cursors.remove(pos);
             self.available_colors.push_back(controller.color);
-            if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            if let Err(e) = self
+                .redraw_thread_sender
+                .send(RedrawThreadCommands::Activity)
+            {
                 log::error!("remove_controller: error sending redraw event: {e:?}");
             }
         } else {
@@ -1236,6 +1194,24 @@ impl CursorController {
     /// * `sid` - Session ID of the controller triggering the animation
     pub fn is_controllers_enabled(&self) -> bool {
         self.controllers_cursors_enabled
+    }
+
+    /// Hides cursors that have been inactive for longer than `CURSOR_HIDE_TIMEOUT`.
+    ///
+    /// This should be called during each redraw cycle, similar to how
+    /// `update_auto_clear` works for drawing paths. Each cursor tracks
+    /// when it was last shown, and cursors exceeding the timeout are
+    /// automatically hidden.
+    pub fn hide_inactive_cursors(&mut self) {
+        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter_mut() {
+            controller.hide_if_expired();
+        }
+
+        if let Some(remote_control) = &self.remote_control {
+            let mut sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
+            sharer_cursor.cursor.hide_if_expired();
+        }
     }
 }
 

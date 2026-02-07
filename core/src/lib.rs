@@ -1161,6 +1161,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
 
+                // Hide cursors that have been inactive for too long
+                remote_control.cursor_controller.hide_inactive_cursors();
+
                 // Update auto-clear and send events for cleared paths
                 let cleared_path_ids = remote_control.gfx.update_auto_clear();
                 if !cleared_path_ids.is_empty() && self.room_service.is_some() {
