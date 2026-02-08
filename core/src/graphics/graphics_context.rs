@@ -57,6 +57,9 @@ fn redraw_thread(
             Ok(command) => match command {
                 RedrawThreadCommands::Stop => break,
                 RedrawThreadCommands::Activity => {
+                    if last_activity_time.elapsed() < redraw_interval {
+                        continue;
+                    }
                     last_activity_time = Instant::now();
                 }
             },
@@ -69,7 +72,7 @@ fn redraw_thread(
 
         // Check if we should stop due to inactivity
         if last_activity_time.elapsed() > inactivity_timeout {
-            log::info!("redraw_thread: stopping due to inactivity");
+            log::debug!("redraw_thread: stopping due to inactivity");
             continue;
         }
 
