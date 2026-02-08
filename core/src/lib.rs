@@ -18,6 +18,7 @@ pub mod graphics {
 }
 
 pub mod utils {
+    pub mod clock;
     pub mod geometry;
     pub mod svg_renderer;
 }
@@ -183,7 +184,6 @@ struct LocalDrawing {
     left_mouse_pressed: bool,
     current_path_id: u64,
     last_cursor_position: Option<Position>,
-    last_redraw_time: std::time::Instant,
     previous_controllers_enabled: bool,
     cursor_set_times: u32,
 }
@@ -195,14 +195,13 @@ impl LocalDrawing {
         self.left_mouse_pressed = false;
         self.current_path_id = 0;
         self.last_cursor_position = None;
-        self.last_redraw_time = std::time::Instant::now();
         self.previous_controllers_enabled = false;
     }
 }
 
 impl fmt::Display for LocalDrawing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?} last_redraw_time: {:?} previous_controllers_enabled: {}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.last_redraw_time, self.previous_controllers_enabled)
+        write!(f, "LocalDrawing: enabled: {} permanent: {} left_mouse_pressed: {} current_path_id: {} last_cursor_position: {:?}  previous_controllers_enabled: {}", self.enabled, self.permanent, self.left_mouse_pressed, self.current_path_id, self.last_cursor_position, self.previous_controllers_enabled)
     }
 }
 
@@ -251,7 +250,6 @@ impl<'a> Application<'a> {
                 left_mouse_pressed: false,
                 current_path_id: 0,
                 last_cursor_position: None,
-                last_redraw_time: std::time::Instant::now(),
                 previous_controllers_enabled: false,
                 cursor_set_times: 0,
             },
@@ -1153,8 +1151,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                // render the cursor
-                // The vertices should be in counter clockwise order because of the front face culling
                 if self.remote_control.is_none() {
                     log::warn!("window_event: remote control is none redraw requested");
                     return;
@@ -1173,27 +1169,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .publish_draw_clear_paths(cleared_path_ids);
                 }
 
-                if !self.local_drawing.enabled {
-                    let cursor_controller = &mut remote_control.cursor_controller;
-                    remote_control.gfx.draw(cursor_controller);
-                } else {
-                    if self.local_drawing.last_redraw_time.elapsed()
-                        > std::time::Duration::from_millis(20)
-                    {
-                        if self.local_drawing.cursor_set_times < 500 {
-                            let window = remote_control.gfx.window();
-                            window.focus_window();
-                            window.set_cursor_visible(false);
-                            window.set_cursor_visible(true);
-                            window.set_cursor(remote_control.pencil_cursor.clone());
-                            self.local_drawing.cursor_set_times += 1;
-                        }
-                        let cursor_controller = &mut remote_control.cursor_controller;
-                        remote_control.gfx.draw(cursor_controller);
-                        self.local_drawing.last_redraw_time = std::time::Instant::now();
+                if self.local_drawing.enabled {
+                    if self.local_drawing.cursor_set_times < 500 {
+                        let window = remote_control.gfx.window();
+                        window.focus_window();
+                        window.set_cursor_visible(false);
+                        window.set_cursor_visible(true);
+                        window.set_cursor(remote_control.pencil_cursor.clone());
+                        self.local_drawing.cursor_set_times += 1;
                     }
-                    remote_control.gfx.trigger_render();
                 }
+                let cursor_controller = &mut remote_control.cursor_controller;
+                remote_control.gfx.draw(cursor_controller);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if self.local_drawing.enabled {

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     graphics::graphics_context::{cursor::Cursor, GraphicsContext, RedrawThreadCommands},
     overlay_window::OverlayWindow,
-    utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
+    utils::{clock::Clock, geometry::Position, svg_renderer::render_user_badge_to_png},
     MouseClickData, ScrollDelta, UserEvent,
 };
 
@@ -200,10 +200,16 @@ struct CursorWrapper {
     /// Timestamp of the last time the cursor was shown, used for auto-hiding
     last_show_time: Option<Instant>,
     redraw_thread_sender: Sender<RedrawThreadCommands>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
 impl CursorWrapper {
-    fn new(cursor: Cursor, redraw_thread_sender: Sender<RedrawThreadCommands>) -> Self {
+    fn new(
+        cursor: Cursor,
+        redraw_thread_sender: Sender<RedrawThreadCommands>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let cursor = Arc::new(Mutex::new(cursor));
         Self {
             cursor,
@@ -211,6 +217,7 @@ impl CursorWrapper {
             local_position: Position::default(),
             last_show_time: None,
             redraw_thread_sender,
+            clock,
         }
     }
 
@@ -221,7 +228,7 @@ impl CursorWrapper {
         self.global_position = global_position;
         self.local_position = local_position;
         if show {
-            self.last_show_time = Some(Instant::now());
+            self.last_show_time = Some(self.clock.now());
             let mut cursor = self.cursor.lock().unwrap();
             cursor.set_position(local_position.x, local_position.y);
             if let Err(e) = self
@@ -246,7 +253,7 @@ impl CursorWrapper {
     }
 
     fn show(&mut self) {
-        self.last_show_time = Some(Instant::now());
+        self.last_show_time = Some(self.clock.now());
         let mut cursor = self.cursor.lock().unwrap();
         cursor.set_position(self.local_position.x, self.local_position.y);
         if let Err(e) = self
@@ -259,7 +266,7 @@ impl CursorWrapper {
 
     fn hide_if_expired(&mut self) {
         if let Some(last_show) = self.last_show_time {
-            if last_show.elapsed() > CURSOR_HIDE_TIMEOUT {
+            if self.clock.now().duration_since(last_show) > CURSOR_HIDE_TIMEOUT {
                 self.hide();
             }
         }
@@ -649,6 +656,8 @@ pub struct CursorController {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     /// Available colors for new controllers
     available_colors: VecDeque<&'static str>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
 impl CursorController {
@@ -692,8 +701,9 @@ impl CursorController {
             };
 
             let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
+            let clock = gfx.clock();
             let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
-                CursorWrapper::new(sharer_cursor, redraw_thread_sender.clone()),
+                CursorWrapper::new(sharer_cursor, redraw_thread_sender.clone(), clock.clone()),
                 event_loop_proxy.clone(),
                 overlay_window.clone(),
                 cursor_simulator.clone(),
@@ -721,6 +731,8 @@ impl CursorController {
             "#FF5BFF", "#00D091",
         ]);
 
+        let clock = gfx.clock();
+
         Ok(Self {
             remote_control,
             controllers_cursors,
@@ -729,6 +741,7 @@ impl CursorController {
             redraw_thread_sender,
             event_loop_proxy,
             available_colors: available,
+            clock,
         })
     }
 
@@ -805,8 +818,16 @@ impl CursorController {
         };
 
         controllers_cursors.push(ControllerCursor::new(
-            CursorWrapper::new(controller_cursor, self.redraw_thread_sender.clone()),
-            CursorWrapper::new(controller_pointer_cursor, self.redraw_thread_sender.clone()),
+            CursorWrapper::new(
+                controller_cursor,
+                self.redraw_thread_sender.clone(),
+                self.clock.clone(),
+            ),
+            CursorWrapper::new(
+                controller_pointer_cursor,
+                self.redraw_thread_sender.clone(),
+                self.clock.clone(),
+            ),
             sid,
             visible_name,
             self.controllers_cursors_enabled,

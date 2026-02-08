@@ -5,7 +5,9 @@
 //! The system uses a shared transform buffer with dynamic offsets for efficient
 //! rendering of multiple click animations.
 
+use crate::utils::clock::Clock;
 use crate::utils::geometry::{Extent, Position};
+use std::sync::Arc;
 use std::{collections::VecDeque, fs::File, io::Read};
 use wgpu::util::DeviceExt;
 
@@ -46,6 +48,8 @@ pub struct ClickAnimation {
     radius_offset: wgpu::DynamicOffset,
     /// Time when the animation was enabled, None if disabled
     enabled_instant: Option<std::time::Instant>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
 impl ClickAnimation {
@@ -100,7 +104,7 @@ impl ClickAnimation {
             .set_position(position.x as f32, position.y as f32);
         self.update_transform_buffer(queue, transforms_buffer);
         self.update_radius(queue, radius_buffer, 0.1);
-        self.enabled_instant = Some(std::time::Instant::now());
+        self.enabled_instant = Some(self.clock.now());
     }
 
     /// Disables the click animation by moving it off-screen.
@@ -142,7 +146,7 @@ impl ClickAnimation {
         }
         let enabled_instant = self.enabled_instant.unwrap();
         let radius_start = 0.1;
-        let elapsed = enabled_instant.elapsed().as_millis();
+        let elapsed = self.clock.now().duration_since(enabled_instant).as_millis();
         let time_offset = 300;
         if elapsed > time_offset {
             // We want the radius to reach up to 0.1 + 0.3. We got
@@ -220,6 +224,7 @@ struct ClickAnimationCreateData<'a> {
     radius_buffer_entry_offset: wgpu::BufferAddress,
     radius_buffer: &'a wgpu::Buffer,
     animations_created: u32,
+    clock: Arc<dyn Clock>,
 }
 
 impl ClickAnimationRenderer {
@@ -250,6 +255,7 @@ impl ClickAnimationRenderer {
         texture_path: &str,
         window_size: Extent,
         scale: f64,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self, OverlayError> {
         // Create bind group layout for click animation textures
         let texture_bind_group_layout =
@@ -454,6 +460,7 @@ impl ClickAnimationRenderer {
                 radius_buffer_entry_offset: aligned_radius_buffer_size,
                 radius_buffer: &radius_buffer,
                 animations_created: i as u32,
+                clock: clock.clone(),
             })?;
 
             click_animations.push(click_animation);
@@ -566,6 +573,7 @@ impl ClickAnimationRenderer {
             position: point,
             radius_offset: radius_offset as wgpu::DynamicOffset,
             enabled_instant: None,
+            clock: data.clock,
         })
     }
 

@@ -4,6 +4,7 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
+use crate::utils::clock::Clock;
 use crate::utils::geometry::Extent;
 use crate::{input::mouse::CursorController, utils::geometry::Position, UserEvent};
 use image::GenericImageView;
@@ -196,6 +197,8 @@ pub struct GraphicsContext<'a> {
     redraw_thread: Option<JoinHandle<()>>,
     /// Sender for triggering redraws and animations
     redraw_thread_sender: Sender<RedrawThreadCommands>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -232,6 +235,23 @@ impl<'a> GraphicsContext<'a> {
         texture_path: String,
         scale: f64,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+    ) -> OverlayResult<Self> {
+        Self::with_clock(
+            window_arc,
+            texture_path,
+            scale,
+            event_loop_proxy,
+            crate::utils::clock::default_clock(),
+        )
+    }
+
+    /// Creates a new graphics context with a custom clock (for testing).
+    pub fn with_clock(
+        window_arc: Arc<Window>,
+        texture_path: String,
+        scale: f64,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
+        clock: Arc<dyn Clock>,
     ) -> OverlayResult<Self> {
         log::info!("GraphicsContext::new");
         let size = window_arc.inner_size();
@@ -347,6 +367,7 @@ impl<'a> GraphicsContext<'a> {
                 height: size.height as f64,
             },
             scale,
+            clock.clone(),
         )?;
 
         let iced_renderer = IcedRenderer::new(
@@ -375,6 +396,7 @@ impl<'a> GraphicsContext<'a> {
             iced_renderer,
             redraw_thread,
             redraw_thread_sender: sender,
+            clock,
         })
     }
 
@@ -418,6 +440,14 @@ impl<'a> GraphicsContext<'a> {
     /// to trigger redraws by sending commands to the redraw thread.
     pub(crate) fn redraw_sender(&self) -> Sender<RedrawThreadCommands> {
         self.redraw_thread_sender.clone()
+    }
+
+    /// Returns a clone of the clock for use by subsystems.
+    ///
+    /// This allows other components (like CursorController) to use the same
+    /// clock for time-dependent logic.
+    pub fn clock(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
     }
 
     /// Triggers rendering activity.
