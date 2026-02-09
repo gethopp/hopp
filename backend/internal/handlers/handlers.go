@@ -1024,6 +1024,23 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
 
+	// Check if caller has access (paid or active trial)
+	userWithSub, err := models.GetUserWithSubscription(h.DB, user)
+	if err != nil {
+		c.Logger().Error("Error getting user subscription: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")
+	}
+
+	hasAccess := userWithSub.IsPro
+	if !hasAccess && userWithSub.IsTrial && userWithSub.TrialEndsAt != nil {
+		hasAccess = userWithSub.TrialEndsAt.After(time.Now())
+	}
+
+	if !hasAccess {
+		_ = notifications.SendTelegramNotification(fmt.Sprintf("Unsubscribed user %s tried to join room %s", user.ID, room.Name), h.Config)
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "trial-ended"})
+	}
+
 	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
 	if err != nil {
 		c.Logger().Error("Failed to generate room tokens:", err)

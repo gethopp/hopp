@@ -294,8 +294,12 @@ export const Rooms = () => {
           cameraWindowOpen: false,
           krispToggle: true,
         });
-      } catch (error) {
-        toast.error("Error joining room");
+      } catch (error: any) {
+        if (error?.error === "trial-ended") {
+          toast.error("Trial has expired, contact us if you want to extend it");
+        } else {
+          toast.error("Error joining room");
+        }
       }
     },
     [getRoomTokens, callTokens, setCallTokens, endCall],

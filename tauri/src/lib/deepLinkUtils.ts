@@ -92,7 +92,12 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
         toast.error("Please log in again to join the session");
         setTab("login");
       } else if (response.status === 403) {
-        toast.error("You don't have access to this session. It belongs to a different team.");
+        const body = await response.json().catch(() => null);
+        if (body?.error === "trial-ended") {
+          toast.error("Trial has expired, contact us if you want to extend it");
+        } else {
+          toast.error("You don't have access to this session. It belongs to a different team.");
+        }
       } else {
         toast.error("Failed to join session");
       }
