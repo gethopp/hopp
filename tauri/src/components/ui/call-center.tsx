@@ -140,7 +140,7 @@ export function ConnectedActions() {
       room.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
       room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
     };
-  }, [room, callParticipant]);
+  }, [room, callParticipant?.id]);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -770,6 +770,9 @@ function MediaDevicesSettings() {
 
     if (!socketConnected && !callTokens.isReconnecting) {
       updateCallTokens({ isReconnecting: true });
+    } else if (socketConnected && callTokens.isReconnecting && roomState === ConnectionState.Connected) {
+      // Socket recovered and LiveKit is still connected — clear the banner
+      updateCallTokens({ isReconnecting: false });
     }
   }, [socketConnected, callTokens, updateCallTokens, roomState]);
 
