@@ -19,7 +19,7 @@ use winit::window::Window;
 mod iced_canvas;
 use iced_canvas::OverlaySurface;
 
-use crate::utils::geometry::Position;
+use super::draw::DrawManager;
 
 pub struct IcedRenderer {
     renderer: Renderer,
@@ -70,9 +70,14 @@ impl IcedRenderer {
         }
     }
 
-    pub fn draw(&mut self, frame: &wgpu::SurfaceTexture, view: &wgpu::TextureView) {
+    pub fn draw(
+        &mut self,
+        frame: &wgpu::SurfaceTexture,
+        view: &wgpu::TextureView,
+        draws: &DrawManager,
+    ) {
         let mut interface = UserInterface::build(
-            self.overlay_surface.view(),
+            self.overlay_surface.view(draws),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,
@@ -99,42 +104,5 @@ impl IcedRenderer {
             _ => unreachable!(),
         };
         wgpu_renderer.present(None, frame.texture.format(), view, &self.viewport);
-    }
-
-    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.overlay_surface
-            .add_draw_participant(sid, color, auto_clear);
-    }
-
-    pub fn remove_draw_participant(&mut self, sid: &str) {
-        self.overlay_surface.remove_draw_participant(sid);
-    }
-
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.overlay_surface.set_drawing_mode(sid, mode);
-    }
-
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.overlay_surface.draw_start(sid, point, path_id);
-    }
-
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.overlay_surface.draw_add_point(sid, point);
-    }
-
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.overlay_surface.draw_end(sid, point);
-    }
-
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.overlay_surface.draw_clear_path(sid, path_id);
-    }
-
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.overlay_surface.draw_clear_all_paths(sid);
-    }
-
-    pub fn update_auto_clear(&mut self) -> Vec<u64> {
-        self.overlay_surface.update_auto_clear()
     }
 }

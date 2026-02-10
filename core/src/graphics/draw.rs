@@ -242,7 +242,7 @@ impl Draw {
 
 /// Manager that owns Draw objects mapped by participant sid.
 /// Each participant gets their own Draw instance with their assigned color.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DrawManager {
     draws: HashMap<String, Draw>,
 }

@@ -241,12 +241,12 @@ async fn main() -> io::Result<()> {
         Commands::Drawing { test_type } => {
             match test_type {
                 DrawingTest::PermanentOn => {
-                    println!("Running drawing test with permanent mode ON...");
-                    remote_drawing::test_draw_and_clear_paths_individually().await?;
-                }
-                DrawingTest::PermanentOff => {
                     println!("Running drawing test with permanent mode OFF...");
                     remote_drawing::test_draw_and_clear_all_paths().await?;
+                }
+                DrawingTest::PermanentOff => {
+                    println!("Running drawing test with permanent mode ON...");
+                    remote_drawing::test_draw_and_clear_paths_individually().await?;
                 }
                 DrawingTest::ClickAnimation => {
                     println!("Running click animation mode test...");

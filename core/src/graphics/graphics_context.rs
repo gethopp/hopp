@@ -38,6 +38,7 @@ use iced_renderer::IcedRenderer;
 
 #[path = "draw.rs"]
 pub mod draw;
+use draw::DrawManager;
 
 pub(crate) enum RedrawThreadCommands {
     Activity,
@@ -192,6 +193,9 @@ pub struct GraphicsContext<'a> {
 
     /// Renderer for iced graphics
     iced_renderer: IcedRenderer,
+
+    /// Manager for drawing operations
+    draw_manager: DrawManager,
 
     /// Thread that controls rendering cadence
     redraw_thread: Option<JoinHandle<()>>,
@@ -394,6 +398,7 @@ impl<'a> GraphicsContext<'a> {
             _direct_composition: direct_composition,
             click_animation_renderer,
             iced_renderer,
+            draw_manager: DrawManager::default(),
             redraw_thread,
             redraw_thread_sender: sender,
             clock,
@@ -547,7 +552,7 @@ impl<'a> GraphicsContext<'a> {
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        self.iced_renderer.draw(&output, &view);
+        self.iced_renderer.draw(&output, &view, &self.draw_manager);
 
         self.window.pre_present_notify();
 
@@ -580,8 +585,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `color` - Hex color string for the participant's drawings
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
     pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.iced_renderer
-            .add_draw_participant(sid, color, auto_clear);
+        self.draw_manager.add_participant(sid, color, auto_clear);
     }
 
     /// Removes a participant from the draw manager.
@@ -589,7 +593,7 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant to remove
     pub fn remove_draw_participant(&mut self, sid: &str) {
-        self.iced_renderer.remove_draw_participant(sid);
+        self.draw_manager.remove_participant(sid);
     }
 
     /// Sets the drawing mode for a specific participant.
@@ -598,7 +602,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `mode` - The drawing mode to set
     pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.iced_renderer.set_drawing_mode(sid, mode);
+        self.draw_manager.set_drawing_mode(sid, mode);
     }
 
     /// Starts a new drawing path for a participant.
@@ -608,7 +612,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `point` - Starting point of the path
     /// * `path_id` - Unique identifier for the drawing path
     pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.iced_renderer.draw_start(sid, point, path_id);
+        self.draw_manager.draw_start(sid, point, path_id);
     }
 
     /// Adds a point to the current drawing path for a participant.
@@ -617,7 +621,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `point` - Point to add to the current path
     pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.iced_renderer.draw_add_point(sid, point);
+        self.draw_manager.draw_add_point(sid, point);
     }
 
     /// Ends the current drawing path for a participant.
@@ -626,7 +630,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `point` - Final point of the path
     pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.iced_renderer.draw_end(sid, point);
+        self.draw_manager.draw_end(sid, point);
     }
 
     /// Clears a specific drawing path for a participant.
@@ -635,7 +639,7 @@ impl<'a> GraphicsContext<'a> {
     /// * `sid` - Session ID identifying the participant
     /// * `path_id` - Unique identifier for the drawing path to clear
     pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.iced_renderer.draw_clear_path(sid, path_id);
+        self.draw_manager.draw_clear_path(sid, path_id);
     }
 
     /// Clears all drawing paths for a participant.
@@ -643,7 +647,7 @@ impl<'a> GraphicsContext<'a> {
     /// # Arguments
     /// * `sid` - Session ID identifying the participant
     pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.iced_renderer.draw_clear_all_paths(sid);
+        self.draw_manager.draw_clear_all_paths(sid);
     }
 
     /// Updates auto-clear for all participants and returns removed path IDs.
@@ -651,7 +655,7 @@ impl<'a> GraphicsContext<'a> {
     /// # Returns
     /// A vector of removed path IDs
     pub fn update_auto_clear(&mut self) -> Vec<u64> {
-        self.iced_renderer.update_auto_clear()
+        self.draw_manager.update_auto_clear()
     }
 }
 

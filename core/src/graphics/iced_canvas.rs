@@ -7,7 +7,6 @@ mod marker;
 use marker::Marker;
 
 use crate::graphics::graphics_context::draw::DrawManager;
-use crate::utils::geometry::Position;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Message {}
@@ -48,58 +47,23 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
 
 pub struct OverlaySurface {
     marker: Marker,
-    draws: DrawManager,
 }
 
 impl OverlaySurface {
     pub fn new(texture_path: &String) -> Self {
         let marker = Marker::new(texture_path);
-        let draws = DrawManager::default();
-        Self { marker, draws }
+        Self { marker }
     }
 
-    pub fn view(&mut self) -> Element<'_, Message, Theme, iced::Renderer> {
+    pub fn view<'a>(
+        &'a mut self,
+        draws: &'a DrawManager,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
         log::debug!("OverlaySurface::view");
 
-        canvas(OverlaySurfaceCanvas::new(&self.marker, &self.draws))
+        canvas(OverlaySurfaceCanvas::new(&self.marker, draws))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
-    }
-
-    pub fn update_auto_clear(&mut self) -> Vec<u64> {
-        self.draws.update_auto_clear()
-    }
-
-    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.draws.add_participant(sid, color, auto_clear);
-    }
-
-    pub fn remove_draw_participant(&mut self, sid: &str) {
-        self.draws.remove_participant(sid);
-    }
-
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.draws.set_drawing_mode(sid, mode);
-    }
-
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.draws.draw_start(sid, point, path_id);
-    }
-
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.draws.draw_add_point(sid, point);
-    }
-
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.draws.draw_end(sid, point);
-    }
-
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.draws.draw_clear_path(sid, path_id);
-    }
-
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.draws.draw_clear_all_paths(sid);
     }
 }
