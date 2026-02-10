@@ -24,6 +24,12 @@ pub struct TestClock {
     current: Mutex<Instant>,
 }
 
+impl Default for TestClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestClock {
     pub fn new() -> Self {
         Self {

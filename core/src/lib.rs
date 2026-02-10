@@ -119,7 +119,7 @@ impl<'a> RemoteControl<'a> {
     /// Vector of cleared path IDs from auto-clear
     pub fn render_frame(&mut self) -> Vec<u64> {
         self.cursor_controller
-            .update_cursors(&mut self.gfx.participants_manager_mut());
+            .update_cursors(self.gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
         self.gfx.draw();
@@ -1179,15 +1179,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
 
-                if self.local_drawing.enabled {
-                    if self.local_drawing.cursor_set_times < 500 {
-                        let window = remote_control.gfx.window();
-                        window.focus_window();
-                        window.set_cursor_visible(false);
-                        window.set_cursor_visible(true);
-                        window.set_cursor(remote_control.pencil_cursor.clone());
-                        self.local_drawing.cursor_set_times += 1;
-                    }
+                if self.local_drawing.enabled && self.local_drawing.cursor_set_times < 500 {
+                    let window = remote_control.gfx.window();
+                    window.focus_window();
+                    window.set_cursor_visible(false);
+                    window.set_cursor_visible(true);
+                    window.set_cursor(remote_control.pencil_cursor.clone());
+                    self.local_drawing.cursor_set_times += 1;
                 }
 
                 // Render frame with cursor updates, auto-clear, and drawing

@@ -90,7 +90,7 @@ impl Participant {
         Ok(Self {
             draw: Draw::new(color, auto_clear),
             cursor: Cursor::new(color, name)?,
-            color: color,
+            color,
         })
     }
 
@@ -116,7 +116,7 @@ impl Participant {
 
     /// Returns the participant's color.
     pub fn color(&self) -> &str {
-        &self.color
+        self.color
     }
 }
 
@@ -171,7 +171,7 @@ impl ParticipantsManager {
                     "ParticipantsManager::add_participant: no colors available for participant {}",
                     sid
                 );
-                &DEFAULT_COLOR
+                DEFAULT_COLOR
             })
         };
 
