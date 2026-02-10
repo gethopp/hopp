@@ -36,6 +36,9 @@ pub mod point;
 pub mod iced_renderer;
 use iced_renderer::IcedRenderer;
 
+#[path = "iced_cursor.rs"]
+pub mod iced_cursor;
+
 #[path = "draw.rs"]
 pub mod draw;
 use draw::DrawManager;
