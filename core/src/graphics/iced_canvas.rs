@@ -6,14 +6,14 @@ use iced_wgpu::core::Element;
 mod marker;
 use marker::Marker;
 
-use crate::graphics::graphics_context::draw::DrawManager;
+use crate::graphics::graphics_context::participant::ParticipantsManager;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Message {}
 
 pub struct OverlaySurfaceCanvas<'a> {
     marker: &'a Marker,
-    draws: &'a DrawManager,
+    participants: &'a ParticipantsManager,
 }
 
 impl<'a> std::fmt::Debug for OverlaySurfaceCanvas<'a> {
@@ -23,8 +23,11 @@ impl<'a> std::fmt::Debug for OverlaySurfaceCanvas<'a> {
 }
 
 impl<'a> OverlaySurfaceCanvas<'a> {
-    pub fn new(marker: &'a Marker, draws: &'a DrawManager) -> Self {
-        Self { marker, draws }
+    pub fn new(marker: &'a Marker, participants: &'a ParticipantsManager) -> Self {
+        Self {
+            marker,
+            participants,
+        }
     }
 }
 
@@ -40,7 +43,7 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut geometries = vec![self.marker.draw(renderer, bounds)];
-        geometries.extend(self.draws.draw(renderer, bounds));
+        geometries.extend(self.participants.draw(renderer, bounds));
         geometries
     }
 }
@@ -57,11 +60,11 @@ impl OverlaySurface {
 
     pub fn view<'a>(
         &'a mut self,
-        draws: &'a DrawManager,
+        participants: &'a ParticipantsManager,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
         log::debug!("OverlaySurface::view");
 
-        canvas(OverlaySurfaceCanvas::new(&self.marker, draws))
+        canvas(OverlaySurfaceCanvas::new(&self.marker, participants))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

@@ -177,6 +177,7 @@ fn generate_pointer_cursor_svg(color: &str, name: &str, box_width: f32) -> Strin
 ///
 /// This struct holds both normal (arrow) and pointer (hand) cursor variants
 /// as SVG handles that can be rendered directly onto an iced canvas frame.
+#[derive(Debug)]
 pub struct IcedCursor {
     /// Hex color code for the cursor (stored for future use)
     #[allow(dead_code)]
@@ -190,7 +191,7 @@ pub struct IcedCursor {
     /// Logical height of cursor (same for both variants in this implementation)
     cursor_height: f32,
     /// Current position of the cursor
-    position: Position,
+    position: Option<Position>,
 }
 
 impl IcedCursor {
@@ -232,7 +233,7 @@ impl IcedCursor {
             pointer_cursor,
             cursor_width,
             cursor_height,
-            position: Position { x: 0.0, y: 0.0 },
+            position: None,
         }
     }
 
@@ -241,7 +242,7 @@ impl IcedCursor {
     /// # Arguments
     ///
     /// * `position` - The new position for the cursor
-    pub fn set_position(&mut self, position: Position) {
+    pub fn set_position(&mut self, position: Option<Position>) {
         self.position = position;
     }
 
@@ -252,21 +253,22 @@ impl IcedCursor {
     /// * `frame` - The iced canvas frame to draw onto
     /// * `pointer` - If true, draws the pointer/hand cursor; otherwise draws the normal arrow cursor
     pub fn draw(&self, frame: &mut Frame, pointer: bool) {
-        // Select the appropriate handle based on pointer flag
+        if self.position.is_none() {
+            return;
+        }
+
         let handle = if pointer {
             &self.pointer_cursor
         } else {
             &self.normal_cursor
         };
 
-        // Create SVG widget from handle
         let svg = iced_core::svg::Svg::new(handle.clone());
-
-        // Draw the SVG at the current position
+        let position = self.position.as_ref().unwrap();
         frame.draw_svg(
             Rectangle {
-                x: self.position.x as f32,
-                y: self.position.y as f32,
+                x: position.x as f32,
+                y: position.y as f32,
                 width: self.cursor_width,
                 height: self.cursor_height,
             },

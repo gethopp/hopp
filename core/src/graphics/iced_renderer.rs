@@ -19,7 +19,7 @@ use winit::window::Window;
 mod iced_canvas;
 use iced_canvas::OverlaySurface;
 
-use super::draw::DrawManager;
+use super::participant::ParticipantsManager;
 
 pub struct IcedRenderer {
     renderer: Renderer,
@@ -74,10 +74,10 @@ impl IcedRenderer {
         &mut self,
         frame: &wgpu::SurfaceTexture,
         view: &wgpu::TextureView,
-        draws: &DrawManager,
+        participants: &ParticipantsManager,
     ) {
         let mut interface = UserInterface::build(
-            self.overlay_surface.view(draws),
+            self.overlay_surface.view(participants),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,
