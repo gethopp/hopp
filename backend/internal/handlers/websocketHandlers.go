@@ -9,7 +9,6 @@ import (
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -272,18 +271,12 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 		return
 	}
 
-	callerWithSub, err := models.GetUserWithSubscription(s.DB, caller)
+	// Check if caller has access (paid or active trial)
+	hasAccess, err := checkUserHasAccess(s.DB, caller)
 	if err != nil {
 		ctx.Logger().Error("Error getting caller subscription: ", err)
 		sendWSErrorMessage(ws, "Failed to check subscription status")
 		return
-	}
-
-	// Check if caller has access (paid or active trial)
-	hasAccess := callerWithSub.IsPro
-	if !hasAccess && callerWithSub.IsTrial && callerWithSub.TrialEndsAt != nil {
-		// Check if trial is still active
-		hasAccess = callerWithSub.TrialEndsAt.After(time.Now())
 	}
 
 	if !hasAccess {

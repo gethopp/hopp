@@ -197,3 +197,20 @@ func extractUserIDFromIdentity(identity string) (string, error) {
 	}
 	return "", fmt.Errorf("invalid identity format: %s", identity)
 }
+
+// checkUserHasAccess checks if a user has an active subscription or trial.
+// Returns true if the user is a Pro subscriber or has an active trial, false otherwise.
+// Returns an error if the subscription check fails.
+func checkUserHasAccess(db *gorm.DB, user *models.User) (bool, error) {
+	userWithSub, err := models.GetUserWithSubscription(db, user)
+	if err != nil {
+		return false, fmt.Errorf("failed to get user subscription: %w", err)
+	}
+
+	hasAccess := userWithSub.IsPro
+	if !hasAccess && userWithSub.IsTrial && userWithSub.TrialEndsAt != nil {
+		hasAccess = userWithSub.TrialEndsAt.After(time.Now())
+	}
+
+	return hasAccess, nil
+}
