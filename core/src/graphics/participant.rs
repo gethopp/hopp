@@ -4,6 +4,7 @@
 //! per-participant state including drawing and cursor rendering.
 
 use crate::utils::geometry::Position;
+use crate::utils::svg_renderer::SvgRenderError;
 use iced::widget::canvas::{Frame, Geometry};
 use iced::{Rectangle, Renderer};
 use std::collections::{HashMap, VecDeque};
@@ -85,12 +86,12 @@ impl Participant {
     /// * `color` - Hex color string for the participant's drawings and cursor
     /// * `name` - Display name for the participant's cursor
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds
-    pub fn new(color: &'static str, name: &str, auto_clear: bool) -> Self {
-        Self {
+    pub fn new(color: &'static str, name: &str, auto_clear: bool) -> Result<Self, SvgRenderError> {
+        Ok(Self {
             draw: Draw::new(color, auto_clear),
-            cursor: Cursor::new(color, name),
+            cursor: Cursor::new(color, name)?,
             color: color,
-        }
+        })
     }
 
     /// Returns a reference to the participant's Draw instance.
@@ -156,11 +157,16 @@ impl ParticipantsManager {
     ///
     /// # Returns
     /// The assigned color, or None if no colors are available
-    pub fn add_participant(&mut self, sid: String, name: &str, auto_clear: bool) {
+    pub fn add_participant(
+        &mut self,
+        sid: String,
+        name: &str,
+        auto_clear: bool,
+    ) -> Result<(), SvgRenderError> {
         let color = if sid == "local" {
             SHARER_COLOR
         } else {
-            self.available_colors.front().unwrap_or_else(|| {
+            self.available_colors.pop_front().unwrap_or_else(|| {
                 log::warn!(
                     "ParticipantsManager::add_participant: no colors available for participant {}",
                     sid
@@ -184,7 +190,8 @@ impl ParticipantsManager {
         );
 
         self.participants
-            .insert(sid, Participant::new(color, &visible_name, auto_clear));
+            .insert(sid, Participant::new(color, &visible_name, auto_clear)?);
+        Ok(())
     }
 
     /// Removes a participant and their data.

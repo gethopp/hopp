@@ -7,6 +7,7 @@
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Extent;
 use crate::utils::geometry::Position;
+use crate::utils::svg_renderer::SvgRenderError;
 use crate::UserEvent;
 use image::GenericImageView;
 use log::error;
@@ -547,9 +548,14 @@ impl<'a> GraphicsContext<'a> {
     /// # Returns
     /// * `Ok(())` - Participant added successfully
     /// * `Err(OverlayError)` - Failed to add participant (e.g., no colors available)
-    pub fn add_participant(&mut self, sid: String, name: &str, auto_clear: bool) {
+    pub fn add_participant(
+        &mut self,
+        sid: String,
+        name: &str,
+        auto_clear: bool,
+    ) -> Result<(), SvgRenderError> {
         self.participants_manager
-            .add_participant(sid, name, auto_clear);
+            .add_participant(sid, name, auto_clear)
     }
 
     /// Removes a participant.

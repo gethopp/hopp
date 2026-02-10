@@ -460,7 +460,14 @@ impl<'a> Application<'a> {
         };
 
         // Add local participant to draw manager with auto-clear enabled
-        graphics_context.add_participant("local".to_string(), "Me ", true);
+        graphics_context
+            .add_participant("local".to_string(), "Me ", true)
+            .map_err(|e| {
+                log::error!(
+                    "create_overlay_window: Failed to create local participant cursor: {e}"
+                );
+                ServerError::GfxCreationError
+            })?;
 
         // Load pencil cursor image once during window creation
         let pencil_path = format!("{}/pencil.png", self.textures_path);
@@ -838,9 +845,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let name = participant.name.clone();
 
                 // Add participant to draw manager first (assigns color)
-                remote_control
+                if let Err(e) = remote_control
                     .gfx
-                    .add_participant(sid.clone(), &name, false);
+                    .add_participant(sid.clone(), &name, false)
+                {
+                    log::error!("Failed to create cursor for participant {sid}: {e}");
+                    return;
+                }
 
                 // Then add to cursor controller for state tracking
                 remote_control.cursor_controller.add_controller(sid);
