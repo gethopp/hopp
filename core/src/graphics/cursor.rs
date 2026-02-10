@@ -1,436 +1,297 @@
-//! Cursor rendering system for overlay graphics.
+//! SVG-based cursor for iced canvas rendering.
 //!
-//! This module provides a GPU-accelerated cursor rendering system using wgpu.
-//! It supports multiple cursors with individual textures, transforms, and positions.
-//! The system uses a shared transform buffer with dynamic offsets for efficient
-//! rendering of multiple cursors.
+//! This module provides a `Cursor` that renders user cursors as SVG graphics
+//! on an iced canvas frame. Unlike the PNG-based approach in `svg_renderer.rs`,
+//! this uses iced's native SVG support for direct rendering.
 
-use crate::utils::geometry::Extent;
-use wgpu::util::DeviceExt;
+use crate::utils::geometry::Position;
+use iced::widget::canvas::Frame;
+use iced::Rectangle;
 
-use super::{
-    create_texture,
-    point::{Point, TransformMatrix},
-    GraphicsContext, OverlayError, Texture, Vertex,
-};
+/// Cursor display mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorMode {
+    /// Normal arrow cursor
+    Normal,
+    /// Pointer/hand cursor
+    Pointer,
+}
 
-/// Maximum number of cursors that can be rendered simultaneously
-const MAX_CURSORS: u32 = 100;
-/// Base horizontal offset for cursor positioning (as a fraction of screen space)
-const BASE_OFFSET_X: f32 = 0.001;
-/// Base vertical offset for cursor positioning (as a fraction of screen space)
-const BASE_OFFSET_Y: f32 = 0.002;
+/// Calculate dynamic box width based on text length.
+/// Increases box width for longer text to ensure it fits comfortably.
+fn calculate_box_width(text: &str) -> f32 {
+    let base_width = 29.0;
+    let base_chars = 2;
+    let char_width = 6.5;
 
-/// Represents a single cursor with its texture, geometry, and position data.
+    if text.len() <= base_chars {
+        base_width
+    } else {
+        base_width + ((text.len() - base_chars) as f32 * char_width)
+    }
+}
+
+/// Generate the regular arrow cursor SVG string.
+fn generate_normal_cursor_svg(color: &str, name: &str, box_width: f32) -> String {
+    let scale_factor = 2.0;
+    let text_x_regular = 18.6445 + 6.0;
+    let svg_width_regular = (box_width + 36.0) * scale_factor;
+    let svg_height_regular = 75.0 * scale_factor;
+
+    format!(
+        r##"<svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g transform="scale({scale_factor})">
+<g filter="url(#filter0_di_3982_4518)">
+<path d="M11.1115 28.1619C10.3335 29.2773 8.59925 28.9255 8.31748 27.595L3.33755 4.08087C3.06368 2.78771 4.42715 1.76508 5.59191 2.39005L27.3579 14.0689C28.606 14.7386 28.3801 16.5926 27.0078 16.9431L17.7466 19.3083C17.3856 19.4004 17.0699 19.6192 16.8568 19.9248L11.1115 28.1619Z" fill="{color}"/>
+<path d="M3.71777 4C3.51267 3.03029 4.53473 2.26375 5.4082 2.73242L27.1738 14.4111C28.1097 14.9133 27.9409 16.3032 26.9121 16.5664L17.6504 18.9316C17.1993 19.0468 16.8045 19.3204 16.5381 19.7021L10.793 27.9395C10.2095 28.776 8.90864 28.5124 8.69727 27.5146L3.71777 4Z" stroke="white" stroke-opacity="1" stroke-width="1"/>
+</g>
+<g filter="url(#filter1_di_3982_4518)">
+<rect x="18.6445" y="22.8086" width="{box_width}" height="35" rx="17.5" fill="{color}"/>
+<rect x="19.1949" y="23.3589" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="1" stroke-width="1"/>
+<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="44.5486">{name}</tspan></text>
+</g>
+</g>
+<defs>
+<filter id="filter0_di_3982_4518" x="-0.657412" y="-1.3927" width="34.6039" height="36.6039" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1.10065"/>
+<feGaussianBlur stdDeviation="1.65097"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3982_4518"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3982_4518" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="2.37363" dy="3.16484"/>
+<feGaussianBlur stdDeviation="3.95604"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3982_4518"/>
+</filter>
+<filter id="filter1_di_3982_4518" x="2.13481" y="6.29888" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="8.25486"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3982_4518"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3982_4518" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="3.16484"/>
+<feGaussianBlur stdDeviation="4.35165"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.75 0"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3982_4518"/>
+</filter>
+</defs>
+</svg>"##,
+        color = color,
+        name = name,
+        box_width = box_width,
+        box_width_stroke = box_width - 1.10065,
+        filter_width = box_width + 16.5097 * 2.0,
+        text_x = text_x_regular,
+        svg_width = svg_width_regular,
+        svg_height = svg_height_regular,
+        scale_factor = scale_factor,
+    )
+}
+
+/// Generate the pointer/hand cursor SVG string.
+fn generate_pointer_cursor_svg(color: &str, name: &str, box_width: f32) -> String {
+    let scale_factor = 2.0;
+    let text_x_pointer = 16.5317 + 6.0;
+    let svg_width_pointer = (box_width + 34.0) * scale_factor;
+    let svg_height_pointer = 74.0 * scale_factor;
+
+    format!(
+        r##"<svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g transform="scale({scale_factor})">
+<g filter="url(#filter0_i_3994_1008)">
+<g filter="url(#filter1_d_3994_1008)">
+<g filter="url(#filter2_i_3994_1008)">
+<path d="M2.40749 13.6518L2.7247 15.5709L3.84935 16.464L5.12039 16.951L11.9511 23.7817L20.6231 20.6997L20.8002 17.8562L20.7076 14.2666L18.4636 7.01823L16.5589 6.12507L14.6074 5.94603L10.1285 6.12507L8.20668 6.35776L5.33446 1.74688L3.20274 2.51759L6.98815 14.0294L4.08571 12.6684L2.40749 13.6518Z" fill="{color}"/>
+</g>
+<path d="M2.18055 3.07546L3.24641 2.6901L7.48533 14.4146L6.41947 14.8L6.03411 13.7341L4.96825 14.1194L4.58289 13.0536L5.64876 12.6682L2.18055 3.07546ZM18.0538 6.97809L20.7513 14.4391L21.8171 14.0538L19.1196 6.59273L18.0538 6.97809ZM0.999948 13.1438L2.15602 16.3414L3.22188 15.956L2.45117 13.8243L4.58289 13.0536L4.19754 11.9877L0.999948 13.1438ZM6.50968 18.3829L5.73896 16.2512L4.6731 16.6365L5.44381 18.7683L6.50968 18.3829ZM8.34625 20.1293L7.57554 17.9975L6.50968 18.3829L7.28039 20.5146L8.34625 20.1293ZM10.1828 21.8756L11.3389 25.0732L21.9975 21.2197L20.8439 18.0287L19.778 18.4141L20.5463 20.5392L12.0194 23.622L11.2487 21.4903L10.1828 21.8756L9.41212 19.7439L8.34625 20.1293L9.11697 22.261L10.1828 21.8756ZM20.8415 18.0221L21.9073 17.6367L20.7513 14.4391L19.6854 14.8245L20.8415 18.0221ZM4.6731 16.6365L4.28774 15.5707L3.22188 15.956L3.60724 17.0219L4.6731 16.6365ZM16.6025 6.29758L16.9879 7.36344L18.0538 6.97809L17.6684 5.91222L16.6025 6.29758ZM14.0855 6.00243L15.6269 10.2659L16.6927 9.88053L15.5367 6.68294L16.6025 6.29758L16.2172 5.23172L14.0855 6.00243ZM10.5025 6.09264L12.0439 10.3561L13.1098 9.97073L11.9537 6.77314L14.0855 6.00243L13.7001 4.93657L10.5025 6.09264ZM7.98543 5.79749L6.444 1.53403L5.37814 1.91939L8.84635 11.5122L9.91221 11.1268L8.37078 6.86335L10.5025 6.09264L10.1172 5.02677L7.98543 5.79749ZM2.86105 1.62424L3.24641 2.6901L5.37814 1.91939L4.99278 0.853529L2.86105 1.62424Z" fill="white"/>
+</g>
+</g>
+<g filter="url(#filter3_di_3994_1008)">
+<rect x="16.5317" y="22" width="{box_width}" height="35" rx="17.5" fill="{color}"/>
+<rect x="17.0821" y="22.5503" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="0.7" stroke-width="1.10065"/>
+<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="43.74">{name}</tspan></text>
+</g>
+</g>
+<defs>
+<filter id="filter0_i_3994_1008" x="0.531738" y="0" width="30.3736" height="33.1648" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="2.37363" dy="3.16484"/>
+<feGaussianBlur stdDeviation="3.95604"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_3994_1008"/>
+</filter>
+<filter id="filter1_d_3994_1008" x="-0.468262" y="0" width="30" height="32" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1"/>
+<feGaussianBlur stdDeviation="0.5"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3994_1008"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3994_1008" result="shape"/>
+</filter>
+<filter id="filter2_i_3994_1008" x="2.40747" y="1.74683" width="20.2383" height="24.4955" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="1.84544" dy="2.46058"/>
+<feGaussianBlur stdDeviation="3.07573"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.4 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_3994_1008"/>
+</filter>
+<filter id="filter3_di_3994_1008" x="0.0220203" y="5.49028" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="8.25486"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3994_1008"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3994_1008" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="3.16484"/>
+<feGaussianBlur stdDeviation="4.35165"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.75 0"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3994_1008"/>
+</filter>
+</defs>
+</svg>"##,
+        color = color,
+        name = name,
+        box_width = box_width,
+        box_width_stroke = box_width - 1.10065,
+        filter_width = box_width + 16.5097 * 2.0,
+        text_x = text_x_pointer,
+        svg_width = svg_width_pointer,
+        svg_height = svg_height_pointer,
+        scale_factor = scale_factor,
+    )
+}
+
+/// An SVG-based cursor for rendering on iced canvas frames.
 ///
-/// Each cursor maintains its own vertex and index buffers for geometry,
-/// a texture for appearance, and position information for rendering.
-/// The cursor uses a dynamic offset into a shared transform buffer.
+/// This struct holds both normal (arrow) and pointer (hand) cursor variants
+/// as SVG handles that can be rendered directly onto an iced canvas frame.
 #[derive(Debug)]
 pub struct Cursor {
-    /// The cursor's texture (image)
-    texture: Texture,
-    /// GPU buffer containing vertex data for the cursor quad
-    vertex_buffer: wgpu::Buffer,
-    /// GPU buffer containing index data for the cursor quad
-    index_buffer: wgpu::Buffer,
-    /// Dynamic offset into the shared transform buffer
-    transform_offset: wgpu::DynamicOffset,
-    /// Position and transformation data
-    position: Point,
+    /// Visible name displayed on the cursor
+    visible_name: String,
+    /// SVG handle for normal arrow cursor
+    normal_cursor: iced_core::svg::Handle,
+    /// SVG handle for pointer/hand cursor
+    pointer_cursor: iced_core::svg::Handle,
+    /// Logical width of cursor (same for both variants in this implementation)
+    cursor_width: f32,
+    /// Logical height of cursor (same for both variants in this implementation)
+    cursor_height: f32,
+    /// Current position of the cursor
+    position: Option<Position>,
+    /// Current cursor display mode
+    mode: CursorMode,
 }
 
 impl Cursor {
-    /// Updates the cursor's position.
+    /// Creates a new `Cursor` with the given color and name.
     ///
     /// # Arguments
-    /// * `x` - New X coordinate (0.0 to 1.0, representing screen space)
-    /// * `y` - New Y coordinate (0.0 to 1.0, representing screen space)
-    pub fn set_position(&mut self, x: f64, y: f64) {
-        self.position.set_position(x as f32, y as f32);
-    }
-
-    /// Returns the current transformation matrix for this cursor.
     ///
-    /// This matrix can be used to position the cursor in 3D space or
-    /// for other transformation calculations.
-    pub fn get_translation_matrix(&self) -> TransformMatrix {
-        self.position.get_transform_matrix()
-    }
-
-    /// Updates the GPU transform buffer with this cursor's current position.
-    ///
-    /// # Arguments
-    /// * `gfx` - Graphics context containing the shared transform buffer
-    ///
-    /// This method uploads the cursor's transformation matrix to the GPU
-    /// at the appropriate offset in the shared buffer.
-    pub fn update_transform_buffer(&self, gfx: &GraphicsContext) {
-        gfx.queue.write_buffer(
-            &gfx.cursor_renderer.transforms_buffer,
-            self.transform_offset as wgpu::BufferAddress,
-            bytemuck::cast_slice(&[self.position.get_transform_matrix()]),
-        );
-    }
-
-    /// Renders this cursor using the provided render pass.
-    ///
-    /// # Arguments
-    /// * `render_pass` - Active wgpu render pass for drawing
-    /// * `gfx` - Graphics context containing shared rendering resources
-    ///
-    /// This method sets up the necessary bind groups, buffers, and draw call
-    /// to render the cursor to the current render target.
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
-        render_pass.set_bind_group(0, &self.texture.bind_group, &[]);
-        render_pass.set_bind_group(
-            1,
-            &gfx.cursor_renderer.transforms_bind_group,
-            &[self.transform_offset],
-        );
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..6, 0, 0..1);
-    }
-}
-
-/// Main cursor rendering system that manages multiple cursors.
-///
-/// This renderer creates and manages the GPU resources needed for cursor rendering,
-/// including shaders, pipelines, and shared buffers. It uses a single transform
-/// buffer with dynamic offsets to efficiently handle multiple cursors.
-///
-/// # Design Notes
-///
-/// Due to compatibility issues with development Windows VMs, this implementation
-/// uses a shared transform buffer with dynamic offsets rather than separate
-/// buffers for each cursor.
-#[derive(Debug)]
-pub struct CursorsRenderer {
-    /// GPU render pipeline for cursor rendering
-    pub render_pipeline: wgpu::RenderPipeline,
-    /// Bind group layout for cursor textures
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
-    /// Bind group layout for transformation matrices
-    pub transform_bind_group_layout: wgpu::BindGroupLayout,
-    /// Shared buffer containing all cursor transform matrices
-    pub transforms_buffer: wgpu::Buffer,
-    /// Size of each entry in the transform buffer (including alignment)
-    pub transforms_buffer_entry_offset: wgpu::BufferAddress,
-    /// Bind group for accessing the transform buffer
-    pub transforms_bind_group: wgpu::BindGroup,
-    /// Number of cursors that have been created
-    pub cursors_created: u32,
-}
-
-impl CursorsRenderer {
-    /// Creates a new cursor renderer with all necessary GPU resources.
-    ///
-    /// # Arguments
-    /// * `device` - wgpu device for creating GPU resources
-    /// * `texture_format` - Format of the render target texture
+    /// * `color` - Hex color code (e.g., "#FF5733")
+    /// * `name` - Name text to display on the cursor badge
     ///
     /// # Returns
-    /// A fully initialized cursor renderer ready to create and render cursors.
     ///
-    /// This method sets up:
-    /// - Bind group layouts for textures and transforms
-    /// - A shared transform buffer with proper alignment
-    /// - Render pipeline with vertex and fragment shaders
-    /// - All necessary GPU state for cursor rendering
-    pub fn create(device: &wgpu::Device, texture_format: wgpu::TextureFormat) -> Self {
-        // Create bind group layout for cursor textures
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Shared Cursor Texture BGL"),
-                entries: &[
-                    // Texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+    /// A new `Cursor` instance with both normal and pointer SVG handles initialized.
+    pub fn new(color: &str, name: &str) -> Self {
+        // Calculate box width and clamp/truncate if necessary
+        let mut box_width = calculate_box_width(name);
+        let mut name = name.to_string();
 
-        /*
-         * Because of an issue in our dev windows vm when using a separate transform
-         * buffer for each cursor, we are using a single transform buffer for all cursors
-         * with dynamic offsets.
-         */
+        if box_width > 152.0 {
+            box_width = 152.0;
+            name = name.chars().take(17).collect::<String>() + "...";
+        }
 
-        // Calculate proper buffer alignment for transform matrices
-        let device_limits = device.limits();
-        let buffer_uniform_alignment =
-            device_limits.min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
-        let transform_buffer_size = std::mem::size_of::<TransformMatrix>() as wgpu::BufferAddress;
-        let aligned_buffer_size = (transform_buffer_size + buffer_uniform_alignment - 1)
-            & !(buffer_uniform_alignment - 1);
+        // Generate SVG strings for both cursor types
+        let normal_svg = generate_normal_cursor_svg(color, &name, box_width);
+        let pointer_svg = generate_pointer_cursor_svg(color, &name, box_width);
 
-        // Create bind group layout for transformation matrices
-        let transform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Transform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: std::num::NonZero::new(transform_buffer_size),
-                    },
-                    count: None,
-                }],
-            });
+        // Create SVG handles from memory
+        let normal_cursor = iced_core::svg::Handle::from_memory(normal_svg.into_bytes());
+        let pointer_cursor = iced_core::svg::Handle::from_memory(pointer_svg.into_bytes());
 
-        // Create shared transform buffer for all cursors
-        let transforms_buffer_size = aligned_buffer_size * MAX_CURSORS as wgpu::BufferAddress;
-        let transforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Transforms Buffer"),
-            size: transforms_buffer_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create bind group for the transform buffer
-        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Transforms Buffer Bind Group"),
-            layout: &transform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &transforms_buffer,
-                    offset: 0,
-                    size: std::num::NonZero::new(transform_buffer_size),
-                }),
-            }],
-        });
-
-        // Load shader and create render pipeline
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline"),
-                bind_group_layouts: &[&texture_bind_group_layout, &transform_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                    ],
-                }],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: texture_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        // Calculate logical dimensions (using the regular cursor dimensions as reference)
+        let cursor_width = box_width + 36.0;
+        let cursor_height = 75.0;
 
         Self {
-            render_pipeline,
-            texture_bind_group_layout,
-            transform_bind_group_layout,
-            transforms_buffer,
-            transforms_buffer_entry_offset: aligned_buffer_size,
-            transforms_bind_group: transform_bind_group,
-            cursors_created: 0,
+            visible_name: name.to_string(),
+            normal_cursor,
+            pointer_cursor,
+            cursor_width,
+            cursor_height,
+            position: None,
+            mode: CursorMode::Normal,
         }
     }
 
-    /// Creates a new cursor with the specified image and properties.
-    ///
-    /// # Arguments
-    /// * `image_data` - Loaded image data
-    /// * `scale` - Display scale
-    /// * `device` - wgpu device for creating GPU resources
-    /// * `queue` - wgpu queue for uploading data to GPU
-    /// * `texture_path` - texture path
-    /// * `window_size` - Size of the rendering window for proper scaling
-    ///
-    /// # Returns
-    /// A new `Cursor` instance ready for rendering, or an error if creation fails.
-    ///
-    /// # Errors
-    /// Returns `OverlayError::TextureCreationError` if:
-    /// - The maximum number of cursors has been reached
-    /// - Texture creation fails
-    ///
-    /// The cursor is automatically positioned at (0,0) and its transform matrix
-    /// is uploaded to the GPU.
-    pub fn create_cursor(
-        &mut self,
-        image_data: &[u8],
-        scale: f64,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        window_size: Extent,
-    ) -> Result<Cursor, OverlayError> {
-        if self.cursors_created >= MAX_CURSORS {
-            log::error!("create_cursor: maximum number of cursors reached");
-            return Err(OverlayError::TextureCreationError);
-        }
-
-        // Create texture from image file
-        let texture = create_texture(device, queue, image_data, &self.texture_bind_group_layout)?;
-
-        // Create vertex and index buffers for cursor geometry
-        let (vertex_buffer, index_buffer) =
-            Self::create_cursor_vertex_buffer(device, &texture, scale, window_size);
-
-        // Calculate offset into shared transform buffer
-        let transform_offset =
-            (self.cursors_created as wgpu::BufferAddress) * self.transforms_buffer_entry_offset;
-        self.cursors_created += 1;
-
-        // Initialize cursor position with base offsets
-        let point = Point::new(
-            0.0,
-            0.0,
-            BASE_OFFSET_X * (scale as f32),
-            BASE_OFFSET_Y * (scale as f32),
-        );
-
-        // Upload initial transform matrix to GPU
-        queue.write_buffer(
-            &self.transforms_buffer,
-            transform_offset,
-            bytemuck::cast_slice(&[point.get_transform_matrix()]),
-        );
-
-        Ok(Cursor {
-            texture,
-            vertex_buffer,
-            index_buffer,
-            transform_offset: transform_offset as wgpu::DynamicOffset,
-            position: point,
-        })
+    /// Returns the visible name displayed on this cursor.
+    pub fn visible_name(&self) -> &str {
+        &self.visible_name
     }
 
-    /// Creates vertex and index buffers for a cursor quad.
+    /// Sets the cursor display mode.
+    pub fn set_mode(&mut self, mode: CursorMode) {
+        self.mode = mode;
+    }
+
+    /// Sets the cursor position.
     ///
     /// # Arguments
-    /// * `device` - wgpu device for creating buffers
-    /// * `texture` - Cursor texture containing size information
-    /// * `scale` - Scale factor for cursor size
-    /// * `window_size` - Window dimensions for proper aspect ratio
     ///
-    /// # Returns
-    /// A tuple containing (vertex_buffer, index_buffer) for the cursor quad.
-    ///
-    /// This method creates a quad that maintains the original texture aspect ratio
-    /// while scaling appropriately for the target window size. The quad is positioned
-    /// at the top-left of normalized device coordinates and sized according to the
-    /// texture dimensions and scale factor.
-    fn create_cursor_vertex_buffer(
-        device: &wgpu::Device,
-        texture: &Texture,
-        scale: f64,
-        window_size: Extent,
-    ) -> (wgpu::Buffer, wgpu::Buffer) {
-        /*
-         * Here we want to make the cursor size in the shader to always
-         * be relative to the monitor extents. Also we want to keep the
-         * original ratio of the texture.
-         */
+    /// * `position` - The new position for the cursor
+    pub fn set_position(&mut self, position: Option<Position>) {
+        self.position = position;
+    }
 
-        // Calculate cursor size in clip space, maintaining aspect ratio
-        let clip_extent = Extent {
-            width: (texture.extent.width / window_size.width) * 2.0 * scale / 2.5,
-            height: (texture.extent.height / window_size.height) * 2.0 * scale / 2.5,
+    /// Draws the cursor onto an iced canvas frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The iced canvas frame to draw onto
+    pub fn draw(&self, frame: &mut Frame) {
+        if self.position.is_none() {
+            return;
+        }
+
+        let handle = match self.mode {
+            CursorMode::Pointer => &self.pointer_cursor,
+            CursorMode::Normal => &self.normal_cursor,
         };
 
-        // Create quad vertices with texture coordinates
-        let vertices = vec![
-            Vertex {
-                position: [-1.0, 1.0],
-                texture_coords: [0.0, 0.0],
+        let svg = iced_core::svg::Svg::new(handle.clone());
+        let position = self.position.as_ref().unwrap();
+        frame.draw_svg(
+            Rectangle {
+                x: position.x as f32,
+                y: position.y as f32,
+                width: self.cursor_width,
+                height: self.cursor_height,
             },
-            Vertex {
-                position: [-1.0, 1.0 - clip_extent.height as f32],
-                texture_coords: [0.0, 1.0],
-            },
-            Vertex {
-                position: [
-                    -1.0 + clip_extent.width as f32,
-                    1.0 - clip_extent.height as f32,
-                ],
-                texture_coords: [1.0, 1.0],
-            },
-            Vertex {
-                position: [-1.0 + clip_extent.width as f32, 1.0],
-                texture_coords: [1.0, 0.0],
-            },
-        ];
-
-        // Define triangle indices for the quad (two triangles)
-        let indices = vec![0, 1, 2, 0, 2, 3];
-
-        // Create GPU buffers
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        (vertex_buffer, index_buffer)
+            svg,
+        );
     }
 }

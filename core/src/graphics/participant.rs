@@ -6,22 +6,66 @@
 use crate::utils::geometry::Position;
 use iced::widget::canvas::{Frame, Geometry};
 use iced::{Rectangle, Renderer};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[path = "draw.rs"]
 mod draw;
 use draw::Draw;
 
-#[path = "iced_cursor.rs"]
-mod iced_cursor;
-use iced_cursor::IcedCursor;
+#[path = "cursor.rs"]
+pub mod cursor;
+use cursor::Cursor;
+
+// Re-export CursorMode for external use
+pub use cursor::CursorMode;
 
 use crate::room_service::DrawingMode;
 
-/// Stub function to resolve participant name.
-/// TODO: Replace with actual name resolution logic.
-fn resolve_name() -> String {
-    "User".to_string()
+const SHARER_COLOR: &str = "#7CCF00";
+const DEFAULT_COLOR: &str = "#FF0000";
+
+/// Generates a unique visible name based on the full name and existing names.
+///
+/// # Algorithm
+/// - For "John Smith" with no conflicts: returns "John"
+/// - If "John" exists: tries "John S", then "John Sm", etc.
+/// - If full name exists: adds numbers "John Smith2", "John Smith3", etc.
+fn generate_unique_visible_name(name: &str, used_names: &[String]) -> String {
+    let parts: Vec<&str> = name.split_whitespace().collect();
+    let first_name = parts.first().unwrap_or(&name);
+
+    // Try progressively longer candidates
+    let candidates = if parts.len() > 1 {
+        let last_name = parts[1];
+        let mut candidates = vec![first_name.to_string()];
+
+        // Add candidates with increasing characters from last name
+        for i in 1..=last_name.chars().count() {
+            let partial_last_name: String = last_name.chars().take(i).collect();
+            candidates.push(format!("{first_name} {partial_last_name}"));
+        }
+        candidates
+    } else {
+        vec![first_name.to_string()]
+    };
+
+    // Find first unused candidate
+    for candidate in candidates.iter() {
+        if !used_names.contains(candidate) {
+            return candidate.clone();
+        }
+    }
+
+    // Fall back to numbering
+    let base = candidates.last().unwrap().clone();
+    for num in 2.. {
+        let candidate = format!("{base}{num}");
+        if !used_names.contains(&candidate) {
+            return candidate;
+        }
+    }
+
+    unreachable!()
 }
 
 /// Represents a participant in a remote control session.
@@ -30,22 +74,22 @@ fn resolve_name() -> String {
 #[derive(Debug)]
 pub struct Participant {
     draw: Draw,
-    cursor: IcedCursor,
-    color: String,
+    cursor: Cursor,
+    color: &'static str,
 }
 
 impl Participant {
-    /// Creates a new participant with the given color and auto-clear setting.
+    /// Creates a new participant with the given color, name and auto-clear setting.
     ///
     /// # Arguments
     /// * `color` - Hex color string for the participant's drawings and cursor
+    /// * `name` - Display name for the participant's cursor
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds
-    pub fn new(color: &str, auto_clear: bool) -> Self {
-        let name = resolve_name();
+    pub fn new(color: &'static str, name: &str, auto_clear: bool) -> Self {
         Self {
             draw: Draw::new(color, auto_clear),
-            cursor: IcedCursor::new(color, &name),
-            color: color.to_string(),
+            cursor: Cursor::new(color, name),
+            color: color,
         }
     }
 
@@ -60,12 +104,12 @@ impl Participant {
     }
 
     /// Returns a reference to the participant's cursor.
-    pub fn cursor(&self) -> &IcedCursor {
+    pub fn cursor(&self) -> &Cursor {
         &self.cursor
     }
 
     /// Returns a mutable reference to the participant's cursor.
-    pub fn cursor_mut(&mut self) -> &mut IcedCursor {
+    pub fn cursor_mut(&mut self) -> &mut Cursor {
         &mut self.cursor
     }
 
@@ -79,9 +123,23 @@ impl Participant {
 ///
 /// Each participant gets their own Participant instance with their assigned color,
 /// drawing state, and cursor.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct ParticipantsManager {
     participants: HashMap<String, Participant>,
+    /// Available colors for new controllers
+    available_colors: VecDeque<&'static str>,
+}
+
+impl Default for ParticipantsManager {
+    fn default() -> Self {
+        Self {
+            participants: HashMap::new(),
+            available_colors: VecDeque::from([
+                "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040", "#E49500",
+                "#B80088", "#FF5BFF", "#00D091",
+            ]),
+        }
+    }
 }
 
 impl ParticipantsManager {
@@ -89,22 +147,60 @@ impl ParticipantsManager {
         Self::default()
     }
 
-    /// Adds a new participant with their color.
-    pub fn add_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+    /// Adds a new participant with automatic color assignment.
+    ///
+    /// # Arguments
+    /// * `sid` - Session ID for the participant
+    /// * `name` - Full name of the participant (will be made unique)
+    /// * `auto_clear` - Whether to automatically clear paths after 3 seconds
+    ///
+    /// # Returns
+    /// The assigned color, or None if no colors are available
+    pub fn add_participant(&mut self, sid: String, name: &str, auto_clear: bool) {
+        let color = if sid == "local" {
+            SHARER_COLOR
+        } else {
+            self.available_colors.front().unwrap_or_else(|| {
+                log::warn!(
+                    "ParticipantsManager::add_participant: no colors available for participant {}",
+                    sid
+                );
+                &DEFAULT_COLOR
+            })
+        };
+
+        let used_names: Vec<String> = self
+            .participants
+            .values()
+            .map(|p| p.cursor().visible_name().to_string())
+            .collect();
+        let visible_name = generate_unique_visible_name(name, &used_names);
+
         log::info!(
             "ParticipantsManager::add_participant: sid={} color={} auto_clear={}",
             sid,
             color,
             auto_clear
         );
+
         self.participants
-            .insert(sid, Participant::new(color, auto_clear));
+            .insert(sid, Participant::new(color, &visible_name, auto_clear));
     }
 
     /// Removes a participant and their data.
     pub fn remove_participant(&mut self, sid: &str) {
         log::info!("ParticipantsManager::remove_participant: sid={}", sid);
-        self.participants.remove(sid);
+        let participant = self.participants.remove(sid);
+        if participant.is_none() {
+            log::warn!(
+                "ParticipantsManager::remove_participant: participant {} not found",
+                sid
+            );
+        };
+        let participant = participant.unwrap();
+        if sid != "local" {
+            self.available_colors.push_back(participant.color);
+        }
     }
 
     /// Sets the drawing mode for a specific participant.
@@ -229,6 +325,13 @@ impl ParticipantsManager {
         }
     }
 
+    /// Sets the cursor mode for a participant.
+    pub fn set_cursor_mode(&mut self, sid: &str, mode: CursorMode) {
+        if let Some(participant) = self.participants.get_mut(sid) {
+            participant.cursor_mut().set_mode(mode);
+        }
+    }
+
     /// Renders all participants' drawings and cursors.
     ///
     /// # Returns
@@ -250,8 +353,7 @@ impl ParticipantsManager {
         }
 
         for participant in self.participants.values() {
-            // Draw cursor with pointer=false (normal cursor for now)
-            participant.cursor().draw(&mut in_progress_frame, false);
+            participant.cursor().draw(&mut in_progress_frame);
         }
         geometries.push(in_progress_frame.into_geometry());
 

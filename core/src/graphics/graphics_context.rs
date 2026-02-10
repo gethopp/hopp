@@ -6,7 +6,8 @@
 
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Extent;
-use crate::{input::mouse::CursorController, utils::geometry::Position, UserEvent};
+use crate::utils::geometry::Position;
+use crate::UserEvent;
 use image::GenericImageView;
 use log::error;
 use std::sync::{
@@ -21,9 +22,6 @@ use winit::window::Window;
 
 #[cfg(target_os = "windows")]
 use super::direct_composition::DirectComposition;
-#[path = "cursor.rs"]
-pub mod cursor;
-use cursor::{Cursor, CursorsRenderer};
 
 #[path = "click_animation.rs"]
 pub mod click_animation;
@@ -107,6 +105,10 @@ pub enum OverlayError {
     /// Failed to create or load a texture resource.
     #[error("Failed to create or load texture resource")]
     TextureCreationError,
+
+    /// Maximum number of participants reached.
+    #[error("Maximum number of participants reached")]
+    MaxParticipantsReached,
 }
 
 /// Type alias for Results in overlay graphics operations.
@@ -164,8 +166,8 @@ struct Vertex {
 /// # Rendering Pipeline
 ///
 /// The graphics context maintains separate renderers for different overlay elements:
-/// - Cursor rendering via `CursorsRenderer` for multiple simultaneous cursors
-/// - Marker rendering via `MarkerRenderer` for corner boundary indicators
+/// - Click animation rendering
+/// - Iced-based participant cursors and drawings
 ///
 /// # Lifetime
 ///
@@ -181,8 +183,6 @@ pub struct GraphicsContext<'a> {
     queue: wgpu::Queue,
     /// Reference to the overlay window
     window: Arc<Window>,
-    /// Renderer for cursor graphics with multi-cursor support
-    cursor_renderer: CursorsRenderer,
 
     /// Windows-specific DirectComposition integration for transparent overlays
     #[cfg(target_os = "windows")]
@@ -359,8 +359,6 @@ impl<'a> GraphicsContext<'a> {
             window_arc.set_minimized(false);
         }
 
-        let cursor_renderer = CursorsRenderer::create(&device, surface_config.format);
-
         let click_animation_renderer = ClickAnimationRenderer::create(
             &device,
             &queue,
@@ -393,7 +391,6 @@ impl<'a> GraphicsContext<'a> {
             device,
             queue,
             window: window_arc,
-            cursor_renderer,
             #[cfg(target_os = "windows")]
             _direct_composition: direct_composition,
             click_animation_renderer,
@@ -403,40 +400,6 @@ impl<'a> GraphicsContext<'a> {
             redraw_thread_sender: sender,
             clock,
         })
-    }
-
-    /// Creates a new cursor with the specified image and scale factor.
-    ///
-    /// This method loads a cursor image from disk and creates all necessary GPU
-    /// resources for rendering it as part of the overlay. The cursor maintains
-    /// its original aspect ratio while being scaled appropriately for the target
-    /// window size.
-    ///
-    /// # Arguments
-    ///
-    /// * `image_data` - Loaded image data
-    /// * `display_scale` - Display scale
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the new `Cursor` instance on success,
-    /// or an `OverlayError` if cursor creation fails.
-    pub fn create_cursor(
-        &mut self,
-        image_data: &[u8],
-        display_scale: f64,
-    ) -> std::result::Result<Cursor, OverlayError> {
-        let window_size = self.window.inner_size();
-        self.cursor_renderer.create_cursor(
-            image_data,
-            display_scale,
-            &self.device,
-            &self.queue,
-            Extent {
-                width: window_size.width as f64,
-                height: window_size.height as f64,
-            },
-        )
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
@@ -489,24 +452,21 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// # Arguments
     ///
-    /// * `cursor_controller` - Controller managing cursor state and rendering
-    ///
     /// # Rendering Pipeline
     ///
     /// The draw operation follows this sequence:
     /// 1. Acquire the current frame buffer from the surface
     /// 2. Clear the frame buffer with transparent black (0,0,0,0)
-    /// 3. Set up the cursor rendering pipeline
-    /// 4. Render all active cursors via the cursor controller
-    /// 5. Render corner markers for overlay boundaries
-    /// 6. Submit commands to GPU and present the frame
+    /// 3. Render click animations
+    /// 4. Render iced elements (participant cursors and drawings)
+    /// 5. Submit commands to GPU and present the frame
     ///
     /// # Error Handling
     ///
     /// If frame acquisition fails (e.g., surface lost), the method logs the error
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
-    pub fn draw(&mut self, cursor_controller: &CursorController) {
+    pub fn draw(&mut self) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -520,10 +480,10 @@ impl<'a> GraphicsContext<'a> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cursor encoder"),
+                label: Some("overlay encoder"),
             });
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("cursor render pass"),
+            label: Some("overlay render pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 resolve_target: None,
@@ -542,9 +502,6 @@ impl<'a> GraphicsContext<'a> {
             occlusion_query_set: None,
             timestamp_writes: None,
         });
-        render_pass.set_pipeline(&self.cursor_renderer.render_pipeline);
-
-        cursor_controller.draw(&mut render_pass, self);
 
         self.click_animation_renderer
             .draw(&mut render_pass, &self.queue);
@@ -560,10 +517,11 @@ impl<'a> GraphicsContext<'a> {
         output.present();
     }
 
-    /// Returns a reference to the underlying overlay window.
-    ///
-    /// # Returns
-    ///
+    /// Returns a mutable reference to the participants manager for cursor updates.
+    pub fn participants_manager_mut(&mut self) -> &mut ParticipantsManager {
+        &mut self.participants_manager
+    }
+
     /// A reference to the `Window` instance used for overlay rendering.
     pub fn window(&self) -> &Window {
         &self.window
@@ -579,22 +537,26 @@ impl<'a> GraphicsContext<'a> {
             .enable_click_animation(position);
     }
 
-    /// Adds a new participant with their color.
+    /// Adds a new participant with automatic color assignment.
     ///
     /// # Arguments
     /// * `sid` - Session ID identifying the participant
-    /// * `color` - Hex color string for the participant's drawings
+    /// * `name` - Full name of the participant (will be made unique)
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
-    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
+    ///
+    /// # Returns
+    /// * `Ok(())` - Participant added successfully
+    /// * `Err(OverlayError)` - Failed to add participant (e.g., no colors available)
+    pub fn add_participant(&mut self, sid: String, name: &str, auto_clear: bool) {
         self.participants_manager
-            .add_participant(sid, color, auto_clear);
+            .add_participant(sid, name, auto_clear);
     }
 
     /// Removes a participant.
     ///
     /// # Arguments
     /// * `sid` - Session ID identifying the participant to remove
-    pub fn remove_draw_participant(&mut self, sid: &str) {
+    pub fn remove_participant(&mut self, sid: &str) {
         self.participants_manager.remove_participant(sid);
     }
 

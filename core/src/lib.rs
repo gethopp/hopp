@@ -112,6 +112,21 @@ struct RemoteControl<'a> {
     pencil_cursor: winit::window::CustomCursor,
 }
 
+impl<'a> RemoteControl<'a> {
+    /// Renders a complete frame by updating cursors, hiding inactive ones, clearing expired paths, and drawing.
+    ///
+    /// # Returns
+    /// Vector of cleared path IDs from auto-clear
+    pub fn render_frame(&mut self) -> Vec<u64> {
+        self.cursor_controller
+            .update_cursors(&mut self.gfx.participants_manager_mut());
+        self.cursor_controller.hide_inactive_cursors();
+        let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
+        self.gfx.draw();
+        cleared_path_ids
+    }
+}
+
 /// The main application struct that manages the entire remote desktop control session.
 ///
 /// This struct coordinates all aspects of the remote desktop system, including screen capture,
@@ -445,7 +460,7 @@ impl<'a> Application<'a> {
         };
 
         // Add local participant to draw manager with auto-clear enabled
-        graphics_context.add_draw_participant("local".to_string(), "#FFDF20", true);
+        graphics_context.add_participant("local".to_string(), "Me ", true);
 
         // Load pencil cursor image once during window creation
         let pencil_path = format!("{}/pencil.png", self.textures_path);
@@ -522,12 +537,13 @@ impl<'a> Application<'a> {
         log::info!("create_overlay_window: overlay_window created {overlay_window}");
 
         let redraw_sender = graphics_context.redraw_sender();
+        let clock = graphics_context.clock();
         let cursor_controller = CursorController::new(
-            &mut graphics_context,
             overlay_window.clone(),
             redraw_sender,
             self.event_loop_proxy.clone(),
             accessibility_permission,
+            clock,
         );
         if let Err(error) = cursor_controller {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");
@@ -708,7 +724,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controller_pointer_enabled(visible, sid.as_str());
+                cursor_controller.set_controller_pointer(visible, sid.as_str());
             }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
@@ -819,20 +835,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
                 let sid = participant.sid.clone();
-                if let Err(e) = remote_control.cursor_controller.add_controller(
-                    &mut remote_control.gfx,
-                    participant.sid,
-                    participant.name,
-                ) {
-                    log::error!(
-                        "user_event: Participant connected: Error adding controller: {e:?}"
-                    );
-                    return;
-                }
-                // Add participant to draw manager with their color
-                if let Some(color) = remote_control.cursor_controller.get_participant_color(&sid) {
-                    remote_control.gfx.add_draw_participant(sid, color, false);
-                }
+                let name = participant.name.clone();
+
+                // Add participant to draw manager first (assigns color)
+                remote_control
+                    .gfx
+                    .add_participant(sid.clone(), &name, false);
+
+                // Then add to cursor controller for state tracking
+                remote_control.cursor_controller.add_controller(sid);
             }
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
@@ -847,7 +858,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 // Remove participant from draw manager
                 remote_control
                     .gfx
-                    .remove_draw_participant(participant.sid.as_str());
+                    .remove_participant(participant.sid.as_str());
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
@@ -931,12 +942,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     DrawingMode::Disabled => {
                         remote_control
                             .cursor_controller
-                            .set_controller_pointer_enabled(false, sid.as_str());
+                            .set_controller_pointer(false, sid.as_str());
                     }
                     _ => {
                         remote_control
                             .cursor_controller
-                            .set_controller_pointer_enabled(true, sid.as_str());
+                            .set_controller_pointer(true, sid.as_str());
                     }
                 }
                 remote_control
@@ -1087,8 +1098,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     // Clear all local drawing paths
                     remote_control.gfx.draw_clear_all_paths("local");
-                    let cursor_controller = &mut remote_control.cursor_controller;
-                    remote_control.gfx.draw(cursor_controller);
 
                     // Send LiveKit event to clear all paths
                     if let Some(room_service) = &self.room_service {
@@ -1121,6 +1130,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .set_drawing_mode("local", room_service::DrawingMode::Disabled);
 
                     log::info!("Local drawing mode disabled");
+
+                    remote_control.gfx.trigger_render();
                 }
             }
         }
@@ -1157,18 +1168,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
 
-                // Hide cursors that have been inactive for too long
-                remote_control.cursor_controller.hide_inactive_cursors();
-
-                // Update auto-clear and send events for cleared paths
-                let cleared_path_ids = remote_control.gfx.update_auto_clear();
-                if !cleared_path_ids.is_empty() && self.room_service.is_some() {
-                    self.room_service
-                        .as_ref()
-                        .unwrap()
-                        .publish_draw_clear_paths(cleared_path_ids);
-                }
-
                 if self.local_drawing.enabled {
                     if self.local_drawing.cursor_set_times < 500 {
                         let window = remote_control.gfx.window();
@@ -1179,8 +1178,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         self.local_drawing.cursor_set_times += 1;
                     }
                 }
-                let cursor_controller = &mut remote_control.cursor_controller;
-                remote_control.gfx.draw(cursor_controller);
+
+                // Render frame with cursor updates, auto-clear, and drawing
+                let cleared_path_ids = remote_control.render_frame();
+
+                // Publish cleared paths to room service
+                if !cleared_path_ids.is_empty() && self.room_service.is_some() {
+                    self.room_service
+                        .as_ref()
+                        .unwrap()
+                        .publish_draw_clear_paths(cleared_path_ids);
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if self.local_drawing.enabled {
