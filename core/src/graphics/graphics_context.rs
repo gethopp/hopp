@@ -5,12 +5,9 @@
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
 use crate::utils::clock::Clock;
-use crate::utils::geometry::Extent;
 use crate::utils::geometry::Position;
 use crate::utils::svg_renderer::SvgRenderError;
 use crate::UserEvent;
-use image::GenericImageView;
-use log::error;
 use std::sync::{
     mpsc::{Receiver, Sender},
     Arc,
@@ -27,9 +24,6 @@ use super::direct_composition::DirectComposition;
 #[path = "click_animation.rs"]
 pub mod click_animation;
 use click_animation::ClickAnimationRenderer;
-
-#[path = "point.rs"]
-pub mod point;
 
 #[path = "iced_renderer.rs"]
 pub mod iced_renderer;
@@ -119,38 +113,6 @@ pub enum OverlayError {
 /// Most graphics operations either succeed completely or fail with an `OverlayError`.
 pub type OverlayResult<T = ()> = std::result::Result<T, OverlayError>;
 
-/// Internal texture representation for overlay graphics.
-///
-/// This struct encapsulates a GPU texture resource along with its metadata
-/// and binding information. It stores both the texture's dimensions and the
-/// wgpu bind group needed for shader access during rendering.
-#[derive(Debug)]
-struct Texture {
-    /// Dimensions of the texture in pixels (width, height)
-    extent: Extent,
-    /// wgpu bind group containing texture and sampler resources for shader access
-    bind_group: wgpu::BindGroup,
-}
-
-/// Vertex data structure for overlay geometry rendering.
-///
-/// This struct represents a single vertex in the graphics pipeline, containing
-/// both position and texture coordinate information. It's designed to be
-/// directly uploaded to GPU vertex buffers for efficient rendering.
-///
-/// # Memory Layout
-///
-/// The struct uses `#[repr(C)]` to ensure consistent memory layout across
-/// platforms, making it safe for direct GPU buffer uploads via bytemuck.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    /// 2D position in clip space coordinates (range: -1.0 to 1.0)
-    position: [f32; 2],
-    /// 2D texture coordinates for sampling (range: 0.0 to 1.0)
-    texture_coords: [f32; 2],
-}
-
 /// Core graphics context for overlay rendering operations.
 ///
 /// `GraphicsContext` encapsulates all the necessary GPU resources and state required
@@ -178,10 +140,10 @@ struct Vertex {
 pub struct GraphicsContext<'a> {
     /// wgpu surface for rendering to the window
     surface: wgpu::Surface<'a>,
-    /// GPU logical device for creating resources and submitting commands
-    device: wgpu::Device,
-    /// Command queue for submitting GPU operations
-    queue: wgpu::Queue,
+    /// GPU logical device — kept alive for wgpu resource lifetime
+    _device: wgpu::Device,
+    /// Command queue — kept alive for wgpu resource lifetime
+    _queue: wgpu::Queue,
     /// Reference to the overlay window
     window: Arc<Window>,
 
@@ -360,18 +322,7 @@ impl<'a> GraphicsContext<'a> {
             window_arc.set_minimized(false);
         }
 
-        let click_animation_renderer = ClickAnimationRenderer::create(
-            &device,
-            &queue,
-            surface_config.format,
-            &texture_path,
-            Extent {
-                width: size.width as f64,
-                height: size.height as f64,
-            },
-            scale,
-            clock.clone(),
-        )?;
+        let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
         let iced_renderer = IcedRenderer::new(
             &device,
@@ -389,8 +340,8 @@ impl<'a> GraphicsContext<'a> {
 
         Ok(Self {
             surface,
-            device,
-            queue,
+            _device: device,
+            _queue: queue,
             window: window_arc,
             #[cfg(target_os = "windows")]
             _direct_composition: direct_composition,
@@ -478,40 +429,15 @@ impl<'a> GraphicsContext<'a> {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("overlay encoder"),
-            });
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("overlay render pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
 
-        self.click_animation_renderer
-            .draw(&mut render_pass, &self.queue);
-        drop(render_pass);
+        self.click_animation_renderer.update();
 
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        self.iced_renderer
-            .draw(&output, &view, &self.participants_manager);
+        self.iced_renderer.draw(
+            &output,
+            &view,
+            &self.participants_manager,
+            &self.click_animation_renderer,
+        );
 
         self.window.pre_present_notify();
 
@@ -640,106 +566,4 @@ impl Drop for GraphicsContext<'_> {
         // visible when a new overlay surface is created.
         self.window.set_minimized(true);
     }
-}
-
-/// Creates a GPU texture from an image file for overlay rendering.
-///
-/// This function loads an image from disk, uploads it to GPU memory, and creates
-/// all necessary wgpu resources for texture rendering including samplers and
-/// bind groups. The resulting texture is ready for use in overlay rendering pipelines.
-///
-/// # Arguments
-///
-/// * `device` - wgpu device for creating GPU resources
-/// * `queue` - wgpu queue for uploading texture data to GPU
-/// * `image_data` - Loaded image data
-/// * `bind_group_layout` - wgpu bind group layout for the texture resources
-///
-/// # Returns
-///
-/// Returns a `Result` containing the created `Texture` on success, or an
-/// `OverlayError::TextureCreationError` if any step of texture creation fails.
-fn create_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    image_data: &[u8],
-    bind_group_layout: &wgpu::BindGroupLayout,
-) -> Result<Texture, OverlayError> {
-    let diffuse_image = match image::load_from_memory(image_data) {
-        Ok(image) => image,
-        Err(_) => {
-            error!("create_cursor_texture: failed to load image");
-            return Err(OverlayError::TextureCreationError);
-        }
-    };
-
-    let diffuse_rgba = diffuse_image.to_rgba8();
-
-    let dimensions = diffuse_image.dimensions();
-    let texture_size = wgpu::Extent3d {
-        width: dimensions.0,
-        height: dimensions.1,
-        depth_or_array_layers: 1,
-    };
-
-    let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
-        size: texture_size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-        label: Some("texture"),
-        view_formats: &[],
-    });
-
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &diffuse_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &diffuse_rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * dimensions.0),
-            rows_per_image: Some(dimensions.1),
-        },
-        texture_size,
-    );
-
-    let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    });
-
-    let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("diffuse_bind_group"),
-        layout: bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-            },
-        ],
-    });
-
-    Ok(Texture {
-        extent: Extent {
-            width: dimensions.0 as f64,
-            height: dimensions.1 as f64,
-        },
-        bind_group: diffuse_bind_group,
-    })
 }

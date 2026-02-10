@@ -1050,10 +1050,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let position = Position {
-                    x: point.x,
-                    y: point.y,
-                };
+                let position = remote_control
+                    .cursor_controller
+                    .get_overlay_window()
+                    .get_pixel_position(point.x, point.y);
                 remote_control.gfx.trigger_click_animation(position);
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {

@@ -19,6 +19,7 @@ use winit::window::Window;
 mod iced_canvas;
 use iced_canvas::OverlaySurface;
 
+use super::click_animation::ClickAnimationRenderer;
 use super::participant::ParticipantsManager;
 
 pub struct IcedRenderer {
@@ -75,9 +76,11 @@ impl IcedRenderer {
         frame: &wgpu::SurfaceTexture,
         view: &wgpu::TextureView,
         participants: &ParticipantsManager,
+        click_animation_renderer: &ClickAnimationRenderer,
     ) {
         let mut interface = UserInterface::build(
-            self.overlay_surface.view(participants),
+            self.overlay_surface
+                .view(participants, click_animation_renderer),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,
