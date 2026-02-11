@@ -70,5 +70,5 @@ fontdb = "0.23.0"
 arboard = "3.6.1"
 iced_winit = "0.14.0"
 iced_wgpu = "0.14.0"
-iced = { version = "0.14.0", features = ["canvas", "image"] }
+iced = { version = "0.14.0", features = ["canvas", "image", "svg"] }
 iced_core = "0.14.0"

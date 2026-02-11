@@ -6,15 +6,16 @@ use iced_wgpu::core::Element;
 mod marker;
 use marker::Marker;
 
-use crate::graphics::graphics_context::draw::DrawManager;
-use crate::utils::geometry::Position;
+use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
+use crate::graphics::graphics_context::participant::ParticipantsManager;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Message {}
 
 pub struct OverlaySurfaceCanvas<'a> {
     marker: &'a Marker,
-    draws: &'a DrawManager,
+    participants: &'a ParticipantsManager,
+    click_animation_renderer: &'a ClickAnimationRenderer,
 }
 
 impl<'a> std::fmt::Debug for OverlaySurfaceCanvas<'a> {
@@ -24,8 +25,16 @@ impl<'a> std::fmt::Debug for OverlaySurfaceCanvas<'a> {
 }
 
 impl<'a> OverlaySurfaceCanvas<'a> {
-    pub fn new(marker: &'a Marker, draws: &'a DrawManager) -> Self {
-        Self { marker, draws }
+    pub fn new(
+        marker: &'a Marker,
+        participants: &'a ParticipantsManager,
+        click_animation_renderer: &'a ClickAnimationRenderer,
+    ) -> Self {
+        Self {
+            marker,
+            participants,
+            click_animation_renderer,
+        }
     }
 }
 
@@ -41,65 +50,38 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut geometries = vec![self.marker.draw(renderer, bounds)];
-        geometries.extend(self.draws.draw(renderer, bounds));
+        geometries.extend(self.participants.draw(renderer, bounds));
+
+        geometries.push(self.click_animation_renderer.draw(renderer, bounds));
+
         geometries
     }
 }
 
 pub struct OverlaySurface {
     marker: Marker,
-    draws: DrawManager,
 }
 
 impl OverlaySurface {
     pub fn new(texture_path: &String) -> Self {
         let marker = Marker::new(texture_path);
-        let draws = DrawManager::default();
-        Self { marker, draws }
+        Self { marker }
     }
 
-    pub fn view(&mut self) -> Element<'_, Message, Theme, iced::Renderer> {
+    pub fn view<'a>(
+        &'a mut self,
+        participants: &'a ParticipantsManager,
+        click_animation_renderer: &'a ClickAnimationRenderer,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
         log::debug!("OverlaySurface::view");
 
-        canvas(OverlaySurfaceCanvas::new(&self.marker, &self.draws))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-
-    pub fn update_auto_clear(&mut self) -> Vec<u64> {
-        self.draws.update_auto_clear()
-    }
-
-    pub fn add_draw_participant(&mut self, sid: String, color: &str, auto_clear: bool) {
-        self.draws.add_participant(sid, color, auto_clear);
-    }
-
-    pub fn remove_draw_participant(&mut self, sid: &str) {
-        self.draws.remove_participant(sid);
-    }
-
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.draws.set_drawing_mode(sid, mode);
-    }
-
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.draws.draw_start(sid, point, path_id);
-    }
-
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.draws.draw_add_point(sid, point);
-    }
-
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.draws.draw_end(sid, point);
-    }
-
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.draws.draw_clear_path(sid, path_id);
-    }
-
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.draws.draw_clear_all_paths(sid);
+        canvas(OverlaySurfaceCanvas::new(
+            &self.marker,
+            participants,
+            click_animation_renderer,
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }

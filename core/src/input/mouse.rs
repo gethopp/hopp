@@ -1,19 +1,12 @@
 use std::{
-    collections::VecDeque,
-    sync::{
-        mpsc::{Receiver, RecvTimeoutError, Sender},
-        Arc, Mutex,
-    },
-    thread::JoinHandle,
+    sync::{mpsc::Sender, Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use crate::{
-    graphics::graphics_context::{
-        click_animation::ANIMATION_DURATION, cursor::Cursor, GraphicsContext,
-    },
+    graphics::graphics_context::{participant::cursor::CursorMode, RedrawThreadCommands},
     overlay_window::OverlayWindow,
-    utils::{geometry::Position, svg_renderer::render_user_badge_to_png},
+    utils::{clock::Clock, geometry::Position},
     MouseClickData, ScrollDelta, UserEvent,
 };
 
@@ -92,10 +85,7 @@ pub use platform::{CursorSimulator, MouseObserver};
 /// 4. Loop is broken, preventing recursive event generation
 pub const CUSTOM_MOUSE_EVENT: i64 = 1234;
 
-/// Maximum number of simultaneous remote controllers supported by the system.
-const MAX_CURSORS: u32 = 10;
-
-const SHARER_COLOR: &str = "#7CCF00";
+const CURSOR_HIDE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SHARER_POSITION_UPDATE_INTERVAL: Duration = Duration::from_millis(30);
 
@@ -105,42 +95,12 @@ const SHARER_POSITION_UPDATE_INTERVAL: Duration = Duration::from_millis(30);
 /// CursorController creation, enabling better error handling and debugging.
 #[derive(Debug, thiserror::Error)]
 pub enum CursorControllerError {
-    /// Failed to create the sharer's cursor graphic.
-    ///
-    /// This typically indicates a problem loading the native cursor texture
-    /// or insufficient graphics resources.
-    #[error("Failed to create sharer cursor")]
-    SharerCursorCreationFailed,
-
-    /// Failed to create the controller's cursor graphic.
-    ///
-    /// This typically indicates a problem loading the controller cursor texture
-    /// or insufficient graphics resources.
-    #[error("Failed to create controller cursor")]
-    ControllerCursorCreationFailed,
-
-    #[error("Controller already exists")]
-    ControllerAlreadyExists,
-
-    #[error("Failed to render SVG badge")]
-    SvgRenderError,
-
-    /// Failed to create the controller's pointer cursor graphic.
-    ///
-    /// This typically indicates a problem loading the pointer cursor texture
-    /// or insufficient graphics resources.
-    #[error("Failed to create controller pointer cursor")]
-    ControllerPointerCursorCreationFailed,
-
     /// Failed to initialize platform-specific mouse event capture.
     ///
     /// This indicates the underlying platform API failed to initialize.
     /// Common causes include missing permissions or insufficient privileges.
     #[error("Failed to create mouse observer")]
     MouseObserverCreationFailed,
-
-    #[error("Max controllers reached")]
-    MaxControllersReached,
 }
 
 /// Platform-agnostic trait for mouse event simulation.
@@ -195,81 +155,29 @@ pub trait CursorSimulatorFunctions {
     fn simulate_scroll(&mut self, delta: ScrollDelta);
 }
 
-enum CursorWrapperCommands {
-    Hide,
-    Show(Position),
-    Terminate,
-}
-
-/// This thread is used for updating the virtual cursor's position,
-/// when there isn't any events for 5 seconds, we hide the cursor.
-fn cursor_wrapper_thread(
-    cursor: Arc<Mutex<Cursor>>,
-    receiver: Receiver<CursorWrapperCommands>,
-    redraw_thread_sender: Sender<RedrawThreadCommands>,
-) {
-    let timeout = Duration::from_secs(5);
-    loop {
-        match receiver.recv_timeout(timeout) {
-            Ok(command) => match command {
-                CursorWrapperCommands::Hide => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(-100., -100.);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                CursorWrapperCommands::Show(position) => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(position.x, position.y);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                CursorWrapperCommands::Terminate => {
-                    break;
-                }
-            },
-            Err(e) => match e {
-                RecvTimeoutError::Timeout => {
-                    let mut cursor = cursor.lock().unwrap();
-                    cursor.set_position(-100., -100.);
-                    if let Err(e) = redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-                        log::error!("cursor_wrapper_thread: error sending redraw event: {e:?}");
-                    }
-                }
-                _ => {
-                    log::error!("cursor_wrapper_thread: error receiving command: {e:?}");
-                    break;
-                }
-            },
-        }
-    }
-}
-
-struct CursorWrapper {
-    cursor: Arc<Mutex<Cursor>>,
+struct CursorState {
     /// Cursor's position in global coordinates, this is used when simulating events
     global_position: Position,
     /// Cursor's position in local coordinates, this is used for rendering
     local_position: Position,
-    /// Handle for the thread that updates the cursor's position
-    hide_handle: Option<JoinHandle<()>>,
-    command_sender: Sender<CursorWrapperCommands>,
+    /// Timestamp of the last time the cursor was shown, used for auto-hiding
+    last_show_time: Option<Instant>,
+    /// Whether the cursor is currently visible
+    visible: bool,
+    redraw_thread_sender: Sender<RedrawThreadCommands>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
-impl CursorWrapper {
-    fn new(cursor: Cursor, redraw_thread_sender: Sender<RedrawThreadCommands>) -> Self {
-        let cursor = Arc::new(Mutex::new(cursor));
-        let (tx, rx) = std::sync::mpsc::channel();
+impl CursorState {
+    fn new(redraw_thread_sender: Sender<RedrawThreadCommands>, clock: Arc<dyn Clock>) -> Self {
         Self {
-            cursor: cursor.clone(),
             global_position: Position::default(),
             local_position: Position::default(),
-            hide_handle: Some(std::thread::spawn(move || {
-                cursor_wrapper_thread(cursor, rx, redraw_thread_sender)
-            })),
-            command_sender: tx,
+            last_show_time: None,
+            visible: false,
+            redraw_thread_sender,
+            clock,
         }
     }
 
@@ -280,147 +188,116 @@ impl CursorWrapper {
         self.global_position = global_position;
         self.local_position = local_position;
         if show {
+            self.last_show_time = Some(self.clock.now());
+            self.visible = true;
             if let Err(e) = self
-                .command_sender
-                .send(CursorWrapperCommands::Show(local_position))
+                .redraw_thread_sender
+                .send(RedrawThreadCommands::Activity)
             {
-                log::error!("set_position: error sending show command: {e:?}");
+                log::error!("set_position: error sending redraw event: {e:?}");
             }
         }
     }
 
     fn hide(&mut self) {
-        if let Err(e) = self.command_sender.send(CursorWrapperCommands::Hide) {
-            log::error!("hide: error sending hide command: {e:?}");
+        self.last_show_time = None;
+        self.visible = false;
+        if let Err(e) = self
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::Activity)
+        {
+            log::error!("hide: error sending redraw event: {e:?}");
         }
     }
 
     fn show(&mut self) {
+        self.last_show_time = Some(self.clock.now());
+        self.visible = true;
         if let Err(e) = self
-            .command_sender
-            .send(CursorWrapperCommands::Show(self.local_position))
+            .redraw_thread_sender
+            .send(RedrawThreadCommands::Activity)
         {
-            log::error!("show: error sending show command: {e:?}");
+            log::error!("show: error sending redraw event: {e:?}");
         }
     }
 
-    fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
-        let cursor = self.cursor.lock().unwrap();
-        cursor.update_transform_buffer(gfx);
-        cursor.draw(render_pass, gfx);
-    }
-}
-
-impl Drop for CursorWrapper {
-    fn drop(&mut self) {
-        if let Some(handle) = self.hide_handle.take() {
-            let res = self.command_sender.send(CursorWrapperCommands::Terminate);
-            if let Err(e) = res {
-                log::error!("cursor_wrapper_thread: error sending terminate command: {e:?}");
-            } else {
-                let _ = handle.join();
+    fn hide_if_expired(&mut self) {
+        if let Some(last_show) = self.last_show_time {
+            if self.clock.now().duration_since(last_show) > CURSOR_HIDE_TIMEOUT {
+                self.hide();
             }
         }
     }
 }
 
 struct ControllerCursor {
-    /// Cursor that is shown when the controller is allowed to take control
-    control_cursor: CursorWrapper,
-    /// Cursor that is shown when the controller is not allowed to take control
-    pointer_cursor: CursorWrapper,
+    /// Cursor state
+    cursor_state: CursorState,
     /*
      * This is used to record when the controller
      * clicked down. Then for each mouse move we
      * send LeftMouseDragged instead of MouseMoved.
      */
     clicked: bool,
-    enabled: bool,
-    pointer_enabled: bool,
+    mode: CursorMode,
+    pointer_mode: bool,
     has_control: bool,
-    visible_name: String,
     sid: String,
-    color: &'static str,
 }
 
 impl ControllerCursor {
-    fn new(
-        control_cursor: CursorWrapper,
-        pointer_cursor: CursorWrapper,
-        sid: String,
-        visible_name: String,
-        enabled: bool,
-        color: &'static str,
-    ) -> Self {
+    fn new(cursor_state: CursorState, sid: String, mode: CursorMode) -> Self {
         Self {
-            control_cursor,
-            pointer_cursor,
+            cursor_state,
             clicked: false,
-            enabled,
-            pointer_enabled: false,
+            mode,
+            pointer_mode: mode == CursorMode::Pointer,
             has_control: false,
-            visible_name,
             sid,
-            color,
         }
     }
 
     fn set_position(&mut self, global_position: Position, local_position: Position) {
         log::debug!(
-            "controller_cursor: set_position: global_position: {:?} local_position: {:?} has_control: {} enabled: {}",
+            "controller_cursor: set_position: global_position: {:?} local_position: {:?} has_control: {} mode: {:?}",
             global_position,
             local_position,
             self.has_control,
-            self.enabled_control_cursor()
+            self.mode
         );
-        self.control_cursor.set_position(
-            global_position,
-            local_position,
-            !self.has_control && self.enabled_control_cursor(),
-        );
-        self.pointer_cursor.set_position(
-            global_position,
-            local_position,
-            !self.has_control && !self.enabled_control_cursor(),
-        );
+        self.cursor_state
+            .set_position(global_position, local_position, !self.has_control);
     }
 
     fn show(&mut self) {
         self.has_control = false;
-        if self.enabled_control_cursor() {
-            self.control_cursor.show();
-        } else {
-            self.pointer_cursor.show();
-        }
+        self.cursor_state.show();
     }
 
     fn hide(&mut self) {
-        if self.enabled_control_cursor() {
-            self.has_control = true;
-            self.control_cursor.hide();
+        self.has_control = true;
+        self.cursor_state.hide();
+    }
+
+    fn mode(&self) -> CursorMode {
+        self.mode
+    }
+
+    fn set_mode(&mut self, mode: CursorMode) {
+        self.mode = mode;
+    }
+
+    fn set_pointer_mode(&mut self, enabled: bool, remote_control_enabled: bool) {
+        if !enabled && remote_control_enabled {
+            self.mode = CursorMode::Normal;
         } else {
-            self.pointer_cursor.hide();
+            self.mode = CursorMode::Pointer;
         }
+        self.pointer_mode = enabled;
     }
 
-    fn enabled_control_cursor(&self) -> bool {
-        self.enabled && !self.pointer_enabled
-    }
-
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-
-        if enabled && !self.pointer_enabled {
-            self.control_cursor.show();
-            self.pointer_cursor.hide();
-        } else {
-            self.control_cursor.hide();
-            self.pointer_cursor.show();
-        }
+    fn pointer_mode(&self) -> bool {
+        self.pointer_mode
     }
 
     fn clicked(&mut self) -> bool {
@@ -432,39 +309,23 @@ impl ControllerCursor {
     }
 
     fn global_position(&self) -> Position {
-        self.control_cursor.global_position
+        self.cursor_state.global_position
     }
 
-    fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
-        if self.has_control {
-            return;
-        }
+    fn local_position(&self) -> Position {
+        self.cursor_state.local_position
+    }
 
-        if self.enabled && !self.pointer_enabled {
-            self.control_cursor.draw(render_pass, gfx);
-        } else {
-            self.pointer_cursor.draw(render_pass, gfx);
-        }
+    fn visible(&self) -> bool {
+        self.cursor_state.visible
     }
 
     fn has_control(&self) -> bool {
         self.has_control
     }
 
-    fn set_pointer_enabled(&mut self, pointer_enabled: bool) {
-        self.pointer_enabled = pointer_enabled;
-
-        if pointer_enabled {
-            self.pointer_cursor.show();
-            self.control_cursor.hide();
-        } else if self.enabled {
-            self.pointer_cursor.hide();
-            self.control_cursor.show();
-        }
-    }
-
-    fn pointer_enabled(&self) -> bool {
-        self.pointer_enabled
+    fn hide_if_expired(&mut self) {
+        self.cursor_state.hide_if_expired();
     }
 }
 
@@ -479,7 +340,7 @@ fn is_out_of_bounds(position: Position) -> bool {
 }
 
 pub struct SharerCursor {
-    cursor: CursorWrapper,
+    cursor_state: CursorState,
     has_control: bool,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     overlay_window: Arc<OverlayWindow>,
@@ -492,14 +353,14 @@ pub struct SharerCursor {
 
 impl SharerCursor {
     fn new(
-        cursor: CursorWrapper,
+        cursor_state: CursorState,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         overlay_window: Arc<OverlayWindow>,
         cursor_simulator: Arc<Mutex<CursorSimulator>>,
         controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
     ) -> Self {
         Self {
-            cursor,
+            cursor_state,
             has_control: true,
             event_loop_proxy,
             overlay_window,
@@ -521,7 +382,7 @@ impl SharerCursor {
             .overlay_window
             .global_percentage_from_global(global_position.x, global_position.y);
 
-        self.cursor
+        self.cursor_state
             .set_position(global_position, local_position, !self.has_control);
 
         // This needs to be after we have set the position in order to use the correct global position
@@ -591,24 +452,26 @@ impl SharerCursor {
     }
 
     fn global_position(&self) -> Position {
-        self.cursor.global_position
+        self.cursor_state.global_position
     }
 
-    fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
-        if !self.has_control {
-            self.cursor.draw(render_pass, gfx);
-        }
+    fn local_position(&self) -> Position {
+        self.cursor_state.local_position
+    }
+
+    fn visible(&self) -> bool {
+        self.cursor_state.visible
     }
 
     fn show(&mut self) {
         self.has_control = false;
-        self.cursor.show();
+        self.cursor_state.show();
     }
 
     // show_controller needs to be false when this is called from another object.
     fn hide(&mut self, show_controller: bool) {
         self.has_control = true;
-        self.cursor.hide();
+        self.cursor_state.hide();
 
         {
             let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
@@ -644,71 +507,6 @@ impl SharerCursor {
     }
 }
 
-enum RedrawThreadCommands {
-    Redraw,
-    ClickAnimation(bool),
-    Stop,
-}
-
-fn redraw_thread(
-    event_loop_proxy: EventLoopProxy<UserEvent>,
-    receiver: Receiver<RedrawThreadCommands>,
-    tx: Sender<RedrawThreadCommands>,
-) {
-    let mut last_redraw_time = Instant::now();
-    let mut last_click_animation_time = None;
-    let redraw_interval = std::time::Duration::from_millis(16);
-    let animation_duration = (ANIMATION_DURATION + 500) as u128;
-    loop {
-        match receiver.recv() {
-            Ok(command) => match command {
-                RedrawThreadCommands::Stop => break,
-                RedrawThreadCommands::Redraw => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-                }
-                RedrawThreadCommands::ClickAnimation(extend) => {
-                    if last_redraw_time.elapsed() > redraw_interval {
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::RequestRedraw) {
-                            log::error!("redraw_thread: error sending redraw event: {e:?}");
-                        }
-                        last_redraw_time = Instant::now();
-                    }
-
-                    if extend || last_click_animation_time.is_none() {
-                        last_click_animation_time = Some(Instant::now());
-                    }
-
-                    if last_click_animation_time
-                        .as_ref()
-                        .unwrap()
-                        .elapsed()
-                        .as_millis()
-                        < animation_duration
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(16));
-                        if let Err(e) = tx.send(RedrawThreadCommands::ClickAnimation(false)) {
-                            log::error!(
-                                "redraw_thread: error sending click animation event: {e:?}"
-                            );
-                        }
-                    } else {
-                        last_click_animation_time = None;
-                    }
-                }
-            },
-            Err(e) => {
-                log::error!("redraw_thread: error receiving command: {e:?}");
-                break;
-            }
-        }
-    }
-}
-
 struct RemoteControl {
     /// Cursor that is shown when the sharer looses control
     sharer_cursor: Arc<Mutex<SharerCursor>>,
@@ -739,12 +537,7 @@ struct RemoteControl {
 ///
 /// ## Error Handling:
 /// Constructor returns `CursorControllerError` with specific failure reasons:
-/// - `SharerCursorCreationFailed`: Graphics resources unavailable
-/// - `ControllerCursorCreationFailed`: Controller cursor texture failed
-/// - `ControllerPointerCursorCreationFailed`: Pointer cursor texture failed
 /// - `MouseObserverCreationFailed`: Platform mouse capture initialization failed
-/// - `ControllerAlreadyExists`: Attempted to add controller with existing SID
-/// - `MaxControllersReached`: Exceeded maximum number of controllers
 pub struct CursorController {
     /// Objects that are used for remote control. When accessibility permission is not granted,
     /// this is None.
@@ -755,62 +548,49 @@ pub struct CursorController {
     controllers_cursors_enabled: bool,
     /// Object that is used to translate coordinates between local and global
     overlay_window: Arc<OverlayWindow>,
-    /// Thread that is used to control the redraws
-    redraw_thread: Option<JoinHandle<()>>,
     /// Sender for the redraw thread
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Event loop proxy for sending events
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    /// Available colors for new controllers
-    available_colors: VecDeque<&'static str>,
+    /// Clock for time tracking
+    clock: Arc<dyn Clock>,
 }
 
 impl CursorController {
     /// Creates a new cursor controller with platform-specific mouse capture and simulation.
     ///
     /// This function initializes all necessary components for cursor management:
-    /// - Creates visual cursor representation for the local sharer
     /// - Sets up platform-specific mouse event capture
     /// - Initializes cursor simulation capabilities
-    /// - Establishes communication with the graphics and overlay systems
+    /// - Establishes communication with the overlay systems
     /// - Prepares infrastructure for managing multiple remote controllers
     ///
     /// Note: Remote controllers are added separately using `add_controller()` method.
     ///
     /// # Parameters
     ///
-    /// * `gfx` - Graphics context for creating cursor textures and render resources
     /// * `overlay_window` - Shared overlay window for coordinate transformations
+    /// * `redraw_thread_sender` - Sender for triggering redraws
     /// * `event_loop_proxy` - Event loop proxy for sending cursor position updates
+    /// * `accessibility_permission` - Whether accessibility permissions are granted
+    /// * `clock` - Clock for time tracking
     ///
     /// # Returns
     ///
     /// * `Ok(CursorController)` - Successfully initialized controller
     /// * `Err(CursorControllerError)` - Specific failure reason (see error variants)
-    pub fn new(
-        gfx: &mut GraphicsContext,
+    pub(crate) fn new(
         overlay_window: Arc<OverlayWindow>,
+        redraw_thread_sender: Sender<RedrawThreadCommands>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         accessibility_permission: bool,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self, CursorControllerError> {
         let controllers_cursors = Arc::new(Mutex::new(vec![]));
-
-        let event_loop_proxy_clone = event_loop_proxy.clone();
-
-        let (sender, receiver) = std::sync::mpsc::channel();
         let remote_control = if accessibility_permission {
-            let scale_factor = overlay_window.get_display_scale();
-            let color = SHARER_COLOR;
-            let svg_badge = render_user_badge_to_png(color, "Me ", false)
-                .map_err(|_| CursorControllerError::SvgRenderError)?;
-            let sharer_cursor = match gfx.create_cursor(&svg_badge, scale_factor) {
-                Ok(cursor) => cursor,
-                Err(_) => return Err(CursorControllerError::SharerCursorCreationFailed),
-            };
-
             let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
             let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
-                CursorWrapper::new(sharer_cursor, sender.clone()),
+                CursorState::new(redraw_thread_sender.clone(), clock.clone()),
                 event_loop_proxy.clone(),
                 overlay_window.clone(),
                 cursor_simulator.clone(),
@@ -833,107 +613,54 @@ impl CursorController {
             None
         };
 
-        let available = VecDeque::from([
-            "#615FFF", "#009689", "#C800DE", "#00A6F4", "#FFB900", "#ED0040", "#E49500", "#B80088",
-            "#FF5BFF", "#00D091",
-        ]);
-
-        let sender_clone = sender.clone();
         Ok(Self {
             remote_control,
             controllers_cursors,
             controllers_cursors_enabled: accessibility_permission,
             overlay_window,
-            redraw_thread: Some(std::thread::spawn(move || {
-                redraw_thread(event_loop_proxy_clone, receiver, sender_clone);
-            })),
-            redraw_thread_sender: sender,
+            redraw_thread_sender,
             event_loop_proxy,
-            available_colors: available,
+            clock,
         })
     }
 
     /// Adds a new remote controller to the cursor management system.
     ///
-    /// This function creates visual cursor representations for a new remote controller
-    /// and adds it to the active controller list. Each controller gets a unique color
-    /// badge and can be independently controlled.
+    /// This function adds a controller to the active controller list for state tracking.
     ///
     /// # Parameters
     ///
-    /// * `gfx` - Graphics context for creating cursor textures
     /// * `sid` - Unique session ID for the controller (must not already exist)
-    /// * `name` - Display name for the controller (used in visual badge)
     ///
     /// # Returns
     ///
     /// * `Ok(())` - Controller successfully added
-    /// * `Err(CursorControllerError)` - Addition failed for specific reason:
-    ///   - `ControllerAlreadyExists`: SID already in use
-    ///   - `MaxControllersReached`: Maximum controllers exceeded
-    ///   - `ControllerCursorCreationFailed`: Graphics resource creation failed
-    ///   - `ControllerPointerCursorCreationFailed`: Pointer cursor creation failed
-    ///   - `SvgRenderError`: Badge rendering failed
-    ///
-    /// # Name Generation
-    ///
-    /// If multiple controllers have the same name, the system automatically generates
-    /// unique visible names (e.g., "John" → "John", "John S", "John Smith", "John Smith2").
-    pub fn add_controller(
-        &mut self,
-        gfx: &mut GraphicsContext,
-        sid: String,
-        name: String,
-    ) -> Result<(), CursorControllerError> {
+    pub fn add_controller(&mut self, sid: String) {
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         log::info!(
             "add_controller: sid: {} controllers_cursors: {}",
             sid,
             controllers_cursors.len()
         );
+
+        // Check if controller already exists
         for controller in controllers_cursors.iter() {
             if controller.sid == sid {
-                return Err(CursorControllerError::ControllerAlreadyExists);
+                log::warn!("add_controller: controller {} already exists", sid);
+                return;
             }
         }
 
-        if controllers_cursors.len() + 1 > MAX_CURSORS as usize {
-            return Err(CursorControllerError::MaxControllersReached);
-        }
-
-        let color = match self.available_colors.pop_front() {
-            Some(color) => color,
-            None => return Err(CursorControllerError::MaxControllersReached),
+        let mode = if self.controllers_cursors_enabled {
+            CursorMode::Normal
+        } else {
+            CursorMode::Pointer
         };
-        let used_names: Vec<String> = controllers_cursors
-            .iter()
-            .map(|c| c.visible_name.clone())
-            .collect();
-        let visible_name = generate_unique_visible_name(&name, &used_names);
-        let scale_factor = self.overlay_window.get_display_scale();
-        let svg_badge = render_user_badge_to_png(color, &visible_name, false)
-            .map_err(|_| CursorControllerError::SvgRenderError)?;
-
-        let controller_cursor = match gfx.create_cursor(&svg_badge, scale_factor) {
-            Ok(cursor) => cursor,
-            Err(_) => return Err(CursorControllerError::ControllerCursorCreationFailed),
-        };
-        let svg_badge_pointer = render_user_badge_to_png(color, &visible_name, true)
-            .map_err(|_| CursorControllerError::SvgRenderError)?;
-        let controller_pointer_cursor = match gfx.create_cursor(&svg_badge_pointer, scale_factor) {
-            Ok(cursor) => cursor,
-            Err(_) => return Err(CursorControllerError::ControllerPointerCursorCreationFailed),
-        };
-
         controllers_cursors.push(ControllerCursor::new(
-            CursorWrapper::new(controller_cursor, self.redraw_thread_sender.clone()),
-            CursorWrapper::new(controller_pointer_cursor, self.redraw_thread_sender.clone()),
+            CursorState::new(self.redraw_thread_sender.clone(), self.clock.clone()),
             sid,
-            visible_name,
-            self.controllers_cursors_enabled,
-            color,
+            mode,
         ));
-        Ok(())
     }
 
     /// Removes a remote controller from the cursor management system.
@@ -960,10 +687,11 @@ impl CursorController {
             .iter()
             .position(|controller| controller.sid == sid)
         {
-            // take ownership so we can recover color
-            let controller = controllers_cursors.remove(pos);
-            self.available_colors.push_back(controller.color);
-            if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
+            controllers_cursors.remove(pos);
+            if let Err(e) = self
+                .redraw_thread_sender
+                .send(RedrawThreadCommands::Activity)
+            {
                 log::error!("remove_controller: error sending redraw event: {e:?}");
             }
         } else {
@@ -1034,8 +762,8 @@ impl CursorController {
                 continue;
             }
 
-            if !controller.enabled() || controller.pointer_enabled() {
-                log::info!("mouse_click_controller: controller is disabled.");
+            if controller.mode() != CursorMode::Normal {
+                log::info!("mouse_click_controller: controller mode is not Normal.");
                 break;
             }
 
@@ -1127,8 +855,8 @@ impl CursorController {
                 continue;
             }
 
-            if !controller.enabled() || controller.pointer_enabled() {
-                log::info!("scroll_controller: controller is disabled.");
+            if controller.mode() != CursorMode::Normal {
+                log::info!("scroll_controller: controller mode is not Normal.");
                 break;
             }
 
@@ -1185,8 +913,8 @@ impl CursorController {
     /// Enables or disables input processing for all controllers.
     ///
     /// This function controls whether remote controllers can interact with the
-    /// local system. When disabled, all controller input events are ignored and no
-    /// control transfer occurs from any controller.
+    /// local system. When enabled, cursors show in Normal mode. When disabled,
+    /// cursors show in Pointer mode (interaction blocked).
     ///
     /// # Parameters
     ///
@@ -1200,8 +928,17 @@ impl CursorController {
 
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         self.controllers_cursors_enabled = enabled;
+
         for controller in controllers_cursors.iter_mut() {
-            controller.set_enabled(enabled);
+            if enabled {
+                if controller.pointer_mode() {
+                    controller.set_mode(CursorMode::Pointer);
+                } else {
+                    controller.set_mode(CursorMode::Normal);
+                }
+            } else {
+                controller.set_mode(CursorMode::Pointer);
+            }
 
             if controller.has_control() {
                 controller.show();
@@ -1219,16 +956,13 @@ impl CursorController {
         }
     }
 
-    /// Makes a specific controller disabled, this is triggered by an event from the
-    /// controller, while set_controllers_enabled is used to disable all controllers
-    /// and is triggered by the sharer.
-    ///
+    /// Switch pointer mode made by the controller.
     /// # Parameters
     ///
-    /// * `enabled` - Whether to show full cursor (true) or minimal pointer (false)
     /// * `sid` - Session ID identifying which controller to modify
-    pub fn set_controller_pointer_enabled(&mut self, enabled: bool, sid: &str) {
-        log::info!("set_controller_pointer_enabled: {enabled} {sid}");
+    /// * `enabled` - Whether to enable (true) or disable (false) pointer mode for the specified controller
+    pub fn set_controller_pointer(&mut self, enabled: bool, sid: &str) {
+        log::info!("set_controller_pointer: {sid} {enabled}");
 
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -1237,7 +971,7 @@ impl CursorController {
             }
 
             if controller.has_control() {
-                log::info!("set_controller_pointer_enabled: controller {sid} has control, give control back to sharer.");
+                log::info!("set_controller_pointer: controller {sid} has control, give control back to sharer.");
                 controller.show();
                 let mut sharer_cursor = self
                     .remote_control
@@ -1251,49 +985,52 @@ impl CursorController {
                 sharer_cursor.hide(false);
             }
 
-            controller.set_pointer_enabled(enabled);
+            controller.set_pointer_mode(enabled, self.controllers_cursors_enabled);
             break;
         }
     }
 
-    /// Renders all appropriate cursors to the overlay during the graphics draw cycle.
+    /// Updates cursor positions in the ParticipantsManager for rendering.
     ///
-    /// This function is called during each frame rendering to draw the current cursor
-    /// states to the overlay window. It automatically selects which cursors to display
-    /// based on the current control state and individual controller configurations.
+    /// This function translates cursor state to pixel positions and updates the
+    /// ParticipantsManager for iced-based rendering.
     ///
     /// # Parameters
     ///
-    /// * `render_pass` - Active wgpu render pass for drawing operations
-    /// * `gfx` - Graphics context containing shaders, buffers, and render state
+    /// * `participants_manager` - Mutable reference to the ParticipantsManager
     ///
-    pub fn draw(&self, render_pass: &mut wgpu::RenderPass, gfx: &GraphicsContext) {
-        log::trace!("draw cursors");
-        if self.remote_control.is_some() {
-            let sharer_cursor = self
-                .remote_control
-                .as_ref()
-                .unwrap()
-                .sharer_cursor
-                .lock()
-                .unwrap();
-            sharer_cursor.draw(render_pass, gfx);
-        }
-
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            controller.draw(render_pass, gfx);
-        }
-    }
-
-    pub fn get_participant_color(&self, sid: &str) -> Option<&'static str> {
-        let controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter() {
-            if controller.sid == sid {
-                return Some(controller.color);
+    pub fn update_cursors(
+        &self,
+        participants_manager: &mut crate::graphics::graphics_context::participant::ParticipantsManager,
+    ) {
+        // Update sharer cursor
+        if let Some(remote_control) = &self.remote_control {
+            let sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
+            if sharer_cursor.visible() {
+                let local_pos = sharer_cursor.local_position();
+                let pixel_pos = self
+                    .overlay_window
+                    .get_pixel_position(local_pos.x, local_pos.y);
+                participants_manager.set_cursor_position("local", Some(pixel_pos));
+            } else {
+                participants_manager.set_cursor_position("local", None);
             }
         }
-        None
+
+        // Update controller cursors
+        let controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter() {
+            if controller.visible() {
+                let local_pos = controller.local_position();
+                let pixel_pos = self
+                    .overlay_window
+                    .get_pixel_position(local_pos.x, local_pos.y);
+                participants_manager.set_cursor_position(&controller.sid, Some(pixel_pos));
+                participants_manager.set_cursor_mode(&controller.sid, controller.mode());
+            } else {
+                participants_manager.set_cursor_position(&controller.sid, None);
+            }
+        }
     }
 
     pub fn get_overlay_window(&self) -> Arc<OverlayWindow> {
@@ -1310,76 +1047,25 @@ impl CursorController {
     ///
     /// * `position` - The position where the click animation should be displayed
     /// * `sid` - Session ID of the controller triggering the animation
-    pub fn trigger_click_animation(&self, position: Position, sid: &str) {
-        log::debug!("trigger_click_animation: position: {position:?} sid: {sid}");
-        if let Err(e) = self
-            .event_loop_proxy
-            .send_event(UserEvent::EnableClickAnimation(position))
-        {
-            error!("trigger_click_animation: error sending enable click animation: {e:?}");
-        }
-        if let Err(e) = self
-            .redraw_thread_sender
-            .send(RedrawThreadCommands::ClickAnimation(true))
-        {
-            log::error!("trigger_click_animation: error sending click animation event: {e:?}");
-        }
-    }
-
-    pub fn trigger_render(&self) {
-        if let Err(e) = self.redraw_thread_sender.send(RedrawThreadCommands::Redraw) {
-            log::error!("trigger_render: error sending redraw event: {e:?}");
-        }
-    }
-
     pub fn is_controllers_enabled(&self) -> bool {
         self.controllers_cursors_enabled
     }
-}
 
-impl Drop for CursorController {
-    fn drop(&mut self) {
-        if let Some(handle) = self.redraw_thread.take() {
-            let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
-            let _ = handle.join();
+    /// Hides cursors that have been inactive for longer than `CURSOR_HIDE_TIMEOUT`.
+    ///
+    /// This should be called during each redraw cycle, similar to how
+    /// `update_auto_clear` works for drawing paths. Each cursor tracks
+    /// when it was last shown, and cursors exceeding the timeout are
+    /// automatically hidden.
+    pub fn hide_inactive_cursors(&mut self) {
+        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter_mut() {
+            controller.hide_if_expired();
+        }
+
+        if let Some(remote_control) = &self.remote_control {
+            let mut sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
+            sharer_cursor.cursor_state.hide_if_expired();
         }
     }
-}
-
-fn generate_unique_visible_name(name: &str, used_names: &[String]) -> String {
-    let parts: Vec<&str> = name.split_whitespace().collect();
-    let first_name = parts.first().unwrap_or(&name);
-
-    // Try progressively longer candidates
-    let candidates = if parts.len() > 1 {
-        let last_name = parts[1];
-        let mut candidates = vec![first_name.to_string()];
-
-        // Add candidates with increasing characters from last name
-        for i in 1..=last_name.chars().count() {
-            let partial_last_name: String = last_name.chars().take(i).collect();
-            candidates.push(format!("{first_name} {partial_last_name}"));
-        }
-        candidates
-    } else {
-        vec![first_name.to_string()]
-    };
-
-    // Find first unused candidate
-    for candidate in candidates.iter() {
-        if !used_names.contains(candidate) {
-            return candidate.clone();
-        }
-    }
-
-    // Fall back to numbering
-    let base = candidates.last().unwrap().clone();
-    for num in 2.. {
-        let candidate = format!("{base}{num}");
-        if !used_names.contains(&candidate) {
-            return candidate;
-        }
-    }
-
-    unreachable!()
 }
