@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff } from "react-icons/lu";
+import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff, LuWifiOff } from "react-icons/lu";
 import { PiScribbleLoopBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
@@ -26,6 +26,8 @@ import {
   LocalTrack,
   ParticipantEvent,
   AudioPresets,
+  EngineEvent,
+  RemoteParticipant,
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
@@ -63,7 +65,7 @@ export function CallCenter() {
     <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
       {/* Reconnecting Banner */}
       {callTokens.isReconnecting && (
-        <div className="w-full bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center gap-2">
+        <div className="bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
           <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
           <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
         </div>
@@ -97,7 +99,9 @@ export function ConnectedActions() {
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+  const [isRemoteDisconnected, setIsRemoteDisconnected] = useState(false);
   const remoteParticipants = useRemoteParticipants();
+  const room = useRoomContext();
 
   // Find the remote audio participant and check if they have microphone enabled
   const remoteAudioParticipant = remoteParticipants.find(
@@ -107,6 +111,36 @@ export function ConnectedActions() {
 
   useScreenShareListener();
   const handleEndCall = useEndCall();
+
+  // Listen for participant disconnection events
+  useEffect(() => {
+    if (!callParticipant) return;
+
+    const handleParticipantDisconnected = (participant: RemoteParticipant) => {
+      if (participant.identity.includes("audio") && participant.identity.includes(callParticipant.id)) {
+        console.log("Remote participant disconnected:", participant.identity);
+        setIsRemoteDisconnected(true);
+      }
+    };
+
+    const handleParticipantConnected = (participant: RemoteParticipant) => {
+      if (participant.identity.includes("audio") && participant.identity.includes(callParticipant.id)) {
+        console.log("Remote participant connected:", participant.identity);
+        setIsRemoteDisconnected(false);
+      }
+    };
+
+    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+    room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
+
+    // Initialize state based on current participants
+    setIsRemoteDisconnected(false);
+
+    return () => {
+      room.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+      room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
+    };
+  }, [room, callParticipant?.id]);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -126,15 +160,6 @@ export function ConnectedActions() {
     fetchAccessibilityPermission();
   }, [callTokens?.role]);
 
-  // Stop call when teammate disconnects
-  useEffect(() => {
-    if (!callTokens || !callParticipant) return;
-
-    if (!callParticipant.is_active) {
-      handleEndCall();
-    }
-  }, [callParticipant, teammates, callTokens, handleEndCall]);
-
   return (
     <>
       {/* <ConnectionsHealthDebug /> */}
@@ -148,12 +173,19 @@ export function ConnectedActions() {
           <div className="flex flex-col items-start mb-4 col-span-3 relative">
             <div className="relative mt-1">
               {callParticipant && (
-                <HoppAvatar
-                  src={callParticipant?.avatar_url || undefined}
-                  firstName={callParticipant?.first_name}
-                  lastName={callParticipant?.last_name}
-                  isMuted={isRemoteMuted}
-                />
+                <>
+                  <HoppAvatar
+                    src={callParticipant?.avatar_url || undefined}
+                    firstName={callParticipant?.first_name}
+                    lastName={callParticipant?.last_name}
+                    isMuted={isRemoteMuted}
+                  />
+                  {isRemoteDisconnected && (
+                    <div className="absolute -top-1 -right-1 bg-red-500 rounded-full p-1 shadow-md border-2 border-white">
+                      <LuWifiOff className="size-3 text-white" />
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div className="flex flex-col items-start mt-2 w-full">
@@ -703,7 +735,7 @@ function CameraIcon() {
 }
 
 function MediaDevicesSettings() {
-  const { callTokens, setCallTokens, updateCallTokens, livekitUrl } = useStore();
+  const { callTokens, setCallTokens, updateCallTokens, livekitUrl, socketConnected } = useStore();
   const { state: roomState } = useRoomContext();
   const { localParticipant } = useLocalParticipant();
   const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
@@ -721,10 +753,28 @@ function MediaDevicesSettings() {
   const [roomConnected, setRoomConnected] = useState(false);
 
   useEffect(() => {
-    room.on(RoomEvent.Connected, () => {
+    const handleConnected = () => {
       setRoomConnected(true);
-    });
+    };
+
+    room.on(RoomEvent.Connected, handleConnected);
+
+    return () => {
+      room.off(RoomEvent.Connected, handleConnected);
+    };
   }, [room]);
+
+  // Early disconnection detection via SocketService
+  useEffect(() => {
+    if (!callTokens) return;
+
+    if (!socketConnected && !callTokens.isReconnecting) {
+      updateCallTokens({ isReconnecting: true });
+    } else if (socketConnected && callTokens.isReconnecting && roomState === ConnectionState.Connected) {
+      // Socket recovered and LiveKit is still connected — clear the banner
+      updateCallTokens({ isReconnecting: false });
+    }
+  }, [socketConnected, callTokens, updateCallTokens, roomState]);
 
   // Listen to connection state changes and handle reconnection
   useEffect(() => {
@@ -745,8 +795,8 @@ function MediaDevicesSettings() {
           console.error("Reconnection failed:", error);
           updateCallTokens({ isReconnecting: false });
         }
-      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting) {
-        // Successfully reconnected
+      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting && socketConnected) {
+        // Successfully reconnected (both LiveKit and socket are connected)
         console.log("Successfully reconnected!");
         updateCallTokens({ isReconnecting: false });
       }
@@ -757,7 +807,7 @@ function MediaDevicesSettings() {
     return () => {
       room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
     };
-  }, [room, callTokens, updateCallTokens, livekitUrl]);
+  }, [room, callTokens, updateCallTokens, livekitUrl, socketConnected]);
 
   useEffect(() => {
     if (!callTokens) return;
@@ -787,7 +837,7 @@ function MediaDevicesSettings() {
           videoCodec: "h264",
           simulcast: true,
           videoEncoding: {
-            maxBitrate: 1_300_000,
+            maxBitrate: 1_700_000,
           },
           videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
         },
