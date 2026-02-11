@@ -1,7 +1,7 @@
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
-use iced::widget::canvas::{Frame, Path, Stroke};
-use iced::Color;
+use iced::widget::canvas::{Frame, Geometry, Path, Stroke};
+use iced::{Color, Rectangle, Renderer};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -110,7 +110,9 @@ impl ClickAnimationRenderer {
         }
     }
 
-    pub fn draw(&self, frame: &mut Frame) {
+    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let now = self.clock.now();
         for slot in &self.used_slots {
             let anim = &self.click_animations[*slot];
             let instant = match anim.enabled_instant {
@@ -118,7 +120,7 @@ impl ClickAnimationRenderer {
                 None => continue,
             };
 
-            let elapsed = self.clock.now().duration_since(instant).as_millis();
+            let elapsed = now.duration_since(instant).as_millis();
             if elapsed > ANIMATION_DURATION.into() {
                 continue;
             }
@@ -142,5 +144,6 @@ impl ClickAnimationRenderer {
                 );
             }
         }
+        frame.into_geometry()
     }
 }

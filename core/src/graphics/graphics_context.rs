@@ -453,16 +453,6 @@ impl<'a> GraphicsContext<'a> {
         &self.window
     }
 
-    /// Requests to enable a click animation at the specified position.
-    ///
-    /// # Arguments
-    /// * `position` - Screen position where the animation should appear
-    pub fn enable_click_animation(&mut self, position: Position) {
-        log::debug!("GraphicsContext::enable_click_animation: {position:?}");
-        self.click_animation_renderer
-            .enable_click_animation(position);
-    }
-
     /// Adds a new participant with automatic color assignment.
     ///
     /// # Arguments

@@ -52,10 +52,7 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
         let mut geometries = vec![self.marker.draw(renderer, bounds)];
         geometries.extend(self.participants.draw(renderer, bounds));
 
-        let click_geometry = canvas::Cache::new().draw(renderer, bounds.size(), |frame| {
-            self.click_animation_renderer.draw(frame);
-        });
-        geometries.push(click_geometry);
+        geometries.push(self.click_animation_renderer.draw(renderer, bounds));
 
         geometries
     }
