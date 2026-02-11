@@ -1033,7 +1033,7 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 
 	if !hasAccess {
 		_ = notifications.SendTelegramNotification(fmt.Sprintf("Unsubscribed user %s tried to join room %s", user.ID, room.Name), h.Config)
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "trial-ended"})
+		return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "trial-ended"})
 	}
 
 	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
