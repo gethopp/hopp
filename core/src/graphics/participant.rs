@@ -203,6 +203,7 @@ impl ParticipantsManager {
                 "ParticipantsManager::remove_participant: participant {} not found",
                 sid
             );
+            return;
         };
         let participant = participant.unwrap();
         if sid != "local" {
