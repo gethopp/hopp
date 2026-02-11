@@ -558,6 +558,17 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have access to this session")
 	}
 
+	// Check if user has access (paid or active trial)
+	hasAccess, err := checkUserHasAccess(h.DB, user)
+	if err != nil {
+		c.Logger().Error("Error getting user subscription: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")
+	}
+
+	if !hasAccess {
+		return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "trial-ended"})
+	}
+
 	// Generate LiveKit tokens for this room
 	tokens, err := generateLiveKitTokens(&h.ServerState, room.ID, user)
 	if err != nil {
