@@ -6,7 +6,6 @@
 
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
-use crate::utils::svg_renderer::SvgRenderError;
 use crate::UserEvent;
 use std::sync::{
     mpsc::{Receiver, Sender},
@@ -31,7 +30,7 @@ use iced_renderer::IcedRenderer;
 
 #[path = "participant.rs"]
 pub mod participant;
-use participant::ParticipantsManager;
+use participant::{ParticipantError, ParticipantsManager};
 
 pub(crate) enum RedrawThreadCommands {
     Activity,
@@ -473,13 +472,13 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// # Returns
     /// * `Ok(())` - Participant added successfully
-    /// * `Err(OverlayError)` - Failed to add participant (e.g., no colors available)
+    /// * `Err(ParticipantError)` - Failed to add participant (e.g., participant already exists)
     pub fn add_participant(
         &mut self,
         sid: String,
         name: &str,
         auto_clear: bool,
-    ) -> Result<(), SvgRenderError> {
+    ) -> Result<(), ParticipantError> {
         self.participants_manager
             .add_participant(sid, name, auto_clear)
     }

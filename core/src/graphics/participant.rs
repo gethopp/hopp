@@ -8,6 +8,7 @@ use crate::utils::svg_renderer::SvgRenderError;
 use iced::widget::canvas::{Frame, Geometry};
 use iced::{Rectangle, Renderer};
 use std::collections::{HashMap, VecDeque};
+use thiserror::Error;
 
 #[path = "draw.rs"]
 mod draw;
@@ -24,6 +25,15 @@ use crate::room_service::DrawingMode;
 
 const SHARER_COLOR: &str = "#7CCF00";
 const DEFAULT_COLOR: &str = "#FF0000";
+
+/// Errors that can occur during participant management.
+#[derive(Error, Debug)]
+pub enum ParticipantError {
+    #[error("Participant already exists: {0}")]
+    AlreadyExists(String),
+    #[error("SVG render error: {0}")]
+    SvgRender(#[from] SvgRenderError),
+}
 
 /// Generates a unique visible name based on the full name and existing names.
 ///
@@ -162,7 +172,12 @@ impl ParticipantsManager {
         sid: String,
         name: &str,
         auto_clear: bool,
-    ) -> Result<(), SvgRenderError> {
+    ) -> Result<(), ParticipantError> {
+        // Check if participant already exists
+        if self.participants.contains_key(&sid) {
+            return Err(ParticipantError::AlreadyExists(sid));
+        }
+
         let color = if sid == "local" {
             SHARER_COLOR
         } else {
