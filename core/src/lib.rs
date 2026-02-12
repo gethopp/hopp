@@ -36,8 +36,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    AvailableContentMessage, CaptureContent, CursorSocket, Message, ScreenShareMessage,
-    SentryMetadata,
+    AvailableContentMessage, CaptureContent, Message, ScreenShareMessage, SentryMetadata,
+    SocketSender,
 };
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -56,9 +56,6 @@ use winit::platform::macos::EventLoopBuilderExtMacOS;
 use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
-
-/// Timeout in seconds for socket message reception
-const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
@@ -180,12 +177,15 @@ pub struct Application<'a> {
     //screen_capturer: Arc<Mutex<ScreenCapturer>>,
     screen_capturer: Arc<Mutex<Capturer>>,
     _screen_capturer_events: Option<JoinHandle<()>>,
-    socket: CursorSocket,
+    socket: SocketSender,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
 }
+
+// window: winit window
+// window_state: buttons pressed etc
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -247,7 +247,7 @@ impl<'a> Application<'a> {
     /// - Event loop proxy is invalid
     pub fn new(
         input: RenderLoopRunArgs,
-        socket: CursorSocket,
+        socket: SocketSender,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
@@ -765,11 +765,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: No available content");
                     sentry_utils::upload_logs_event("No available content".to_string());
                 }
-                let res =
-                    self.socket
-                        .send_message(Message::AvailableContent(AvailableContentMessage {
-                            content,
-                        }));
+                let res = self
+                    .socket
+                    .send(Message::AvailableContent(AvailableContentMessage {
+                        content,
+                    }));
                 if res.is_err() {
                     log::error!(
                         "user_event: Error sending available content: {:?}",
@@ -794,7 +794,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 if let Err(e) = self
                     .socket
-                    .send_message(Message::StartScreenShareResult(result_message))
+                    .send(Message::StartScreenShareResult(result_message))
                 {
                     error!("user_event: Error sending start screen share result: {e:?}");
                 }
@@ -1467,75 +1467,64 @@ impl RenderEventLoop {
         log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
-        let mut socket = CursorSocket::new_create(&socket_path).map_err(|e| {
+        let (sender, event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
             log::error!("Error creating socket: {e:?}");
-            RenderLoopError::SocketError(e)
-        })?;
-        let socket_clone = socket.duplicate().map_err(|e| {
-            log::error!("Error duplicating socket: {e:?}");
             RenderLoopError::SocketError(e)
         })?;
 
         let event_loop_proxy = self.event_loop.create_proxy();
         /*
-         * Thread for processing messages from the tauri app.
+         * Thread for dispatching socket events to the winit event loop.
          */
-        std::thread::spawn(move || loop {
-            let message = match socket.receive_message_with_timeout(std::time::Duration::from_secs(
-                SOCKET_MESSAGE_TIMEOUT_SECONDS,
-            )) {
-                Ok(message) => message,
-                Err(e) => {
-                    /* When the listener has been disconnected we terminate the process. */
-                    log::error!("RenderEventLoop::run Error receiving message: {e:?}");
-                    let res = event_loop_proxy.send_event(UserEvent::Terminate);
-                    if res.is_err() {
-                        log::error!(
-                            "RenderEventLoop::run Error sending terminate event: {:?}",
-                            res.err()
-                        );
+        std::thread::spawn(move || {
+            for message in event_socket.events.iter() {
+                let user_event = match message {
+                    Message::GetAvailableContent => UserEvent::GetAvailableContent,
+                    Message::StartScreenShare(screen_share_message) => {
+                        UserEvent::ScreenShare(screen_share_message)
                     }
-
-                    /* We want to make sure the process is terminated. */
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                    Message::StopScreenshare => UserEvent::StopScreenShare,
+                    Message::Reset => UserEvent::ResetState,
+                    Message::ControllerCursorEnabled(enabled) => {
+                        UserEvent::ControllerCursorEnabled(enabled)
+                    }
+                    Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                    // Ping is on purpose empty. We use it only for keeping the connection alive.
+                    Message::Ping => {
+                        continue;
+                    }
+                    Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
+                    Message::SentryMetadata(sentry_metadata) => {
+                        UserEvent::SentryMetadata(sentry_metadata)
+                    }
+                    _ => {
+                        log::error!("RenderEventLoop::run Unknown message: {message:?}");
+                        continue;
+                    }
+                };
+                let res = event_loop_proxy.send_event(user_event);
+                if res.is_err() {
+                    log::error!(
+                        "RenderEventLoop::run Error sending user event: {:?}",
+                        res.err()
+                    );
                 }
-            };
-            let user_event = match message {
-                Message::GetAvailableContent => UserEvent::GetAvailableContent,
-                Message::StartScreenShare(screen_share_message) => {
-                    UserEvent::ScreenShare(screen_share_message)
-                }
-                Message::StopScreenshare => UserEvent::StopScreenShare,
-                Message::Reset => UserEvent::ResetState,
-                Message::ControllerCursorEnabled(enabled) => {
-                    UserEvent::ControllerCursorEnabled(enabled)
-                }
-                Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
-                // Ping is on purpose empty. We use it only for stopping the above receive to timeout.
-                Message::Ping => {
-                    continue;
-                }
-                Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
-                Message::SentryMetadata(sentry_metadata) => {
-                    UserEvent::SentryMetadata(sentry_metadata)
-                }
-                _ => {
-                    log::error!("RenderEventLoop::run Unknown message: {message:?}");
-                    continue;
-                }
-            };
-            let res = event_loop_proxy.send_event(user_event);
+            }
+            // Channel closed = disconnect
+            log::error!("RenderEventLoop::run Socket event channel closed, terminating.");
+            let res = event_loop_proxy.send_event(UserEvent::Terminate);
             if res.is_err() {
                 log::error!(
-                    "RenderEventLoop::run Error sending user event: {:?}",
+                    "RenderEventLoop::run Error sending terminate event: {:?}",
                     res.err()
                 );
             }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            std::process::exit(PROCESS_EXIT_CODE_ERROR);
         });
 
         let proxy = self.event_loop.create_proxy();
-        let mut application = Application::new(input, socket_clone, proxy)?;
+        let mut application = Application::new(input, sender, proxy)?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

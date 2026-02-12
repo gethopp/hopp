@@ -83,7 +83,7 @@ async fn internal_test_keyboard_chars(room: &Room) -> io::Result<()> {
 /// Connects screenshare, runs the keyboard character test, and stops screenshare.
 pub async fn test_keyboard_chars() -> io::Result<()> {
     println!("Starting keyboard test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await; // Give time for screenshare to potentially start
 
@@ -98,7 +98,7 @@ pub async fn test_keyboard_chars() -> io::Result<()> {
     internal_test_keyboard_chars(&room).await?;
 
     println!("Stopping screenshare...");
-    screenshare_client::stop_screenshare(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare(&sender)?;
     println!("Screenshare stopped.");
     println!("Keyboard test complete.");
     Ok(())

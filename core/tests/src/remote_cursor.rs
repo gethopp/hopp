@@ -3,7 +3,7 @@ use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use socket_lib::Message;
+use socket_lib::{Message, SocketSender};
 use std::{io, time::Duration};
 use tokio::time::sleep;
 
@@ -248,7 +248,7 @@ async fn internal_cursor_scroll(room: &Room) -> io::Result<()> {
 
 /// Connects screenshare, simulates mouse movement via LiveKit, and stops screenshare.
 pub async fn test_cursor() -> io::Result<()> {
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Test Cursor");
@@ -264,13 +264,13 @@ pub async fn test_cursor() -> io::Result<()> {
     internal_cursor_move(&room, 0.0, 0.2, 0.5).await?;
     internal_cursor_scroll(&room).await?;
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
 
     Ok(())
 }
 
 pub async fn test_cursor_click(x: f64, y: f64) -> io::Result<()> {
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Test Cursor Click");
@@ -282,12 +282,12 @@ pub async fn test_cursor_click(x: f64, y: f64) -> io::Result<()> {
     println!("Connected to room: {}", room.name());
 
     internal_cursor_click(&room, x, y).await?;
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }
 
 pub async fn test_cursor_move() -> io::Result<()> {
-    let (mut cursor_socket, content) = screenshare_client::start_screenshare_session()?;
+    let (sender, event_socket, content) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Test Cursor");
@@ -303,12 +303,13 @@ pub async fn test_cursor_move() -> io::Result<()> {
     while index + 1 < content.len() {
         println!("Moving to next content: {}", content[index].content.id);
         internal_cursor_move(&room, 0.0, 0.2, 0.5).await?;
-        screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+        screenshare_client::stop_screenshare_session(&sender)?;
         index += 1;
         let width = 1920.0;
         let height = 1080.0;
         screenshare_client::request_screenshare(
-            &mut cursor_socket,
+            &sender,
+            &event_socket,
             content[index].content.id,
             width,
             height,
@@ -323,7 +324,7 @@ pub async fn test_cursor_move() -> io::Result<()> {
 
 /// Connects screenshare, simulates mouse scroll events via LiveKit, and stops screenshare.
 pub async fn test_cursor_scroll() -> io::Result<()> {
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Test Cursor Scroll");
@@ -335,7 +336,7 @@ pub async fn test_cursor_scroll() -> io::Result<()> {
     println!("Connected to room: {}", room.name());
 
     internal_cursor_scroll(&room).await?;
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }
 
@@ -343,7 +344,7 @@ pub async fn test_cursor_scroll() -> io::Result<()> {
 pub async fn test_multiple_participants() -> io::Result<()> {
     // Start single screenshare session
     println!("Starting screenshare session...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Create 3 additional room connections for other participants
@@ -425,7 +426,7 @@ pub async fn test_multiple_participants() -> io::Result<()> {
     println!("All squares completed concurrently. Stopping screenshare session...");
 
     // Stop the single screenshare session
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
 
     println!("Screenshare session stopped.");
 
@@ -436,7 +437,7 @@ pub async fn test_multiple_participants() -> io::Result<()> {
 pub async fn test_multiple_cursors_with_control() -> io::Result<()> {
     // Start single screenshare session
     println!("Starting screenshare session for cursor control test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -625,7 +626,7 @@ pub async fn test_multiple_cursors_with_control() -> io::Result<()> {
     println!("All 4 rounds completed successfully. Each participant had control once.");
 
     // Stop the screenshare session
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Screenshare session stopped.");
 
     Ok(())
@@ -634,7 +635,7 @@ pub async fn test_multiple_cursors_with_control() -> io::Result<()> {
 /// Test cursor hiding after 5 seconds of inactivity
 pub async fn test_cursor_hide_on_inactivity() -> io::Result<()> {
     println!("Starting cursor hide inactivity test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Test Cursor Hide");
@@ -658,7 +659,7 @@ pub async fn test_cursor_hide_on_inactivity() -> io::Result<()> {
     println!("5-second inactivity period completed.");
     println!("If the cursor implementation is correct, it should now be hidden.");
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Cursor hide inactivity test completed.");
 
     Ok(())
@@ -667,7 +668,7 @@ pub async fn test_cursor_hide_on_inactivity() -> io::Result<()> {
 /// Test staggered participant joining - one starts, another joins mid-session
 pub async fn test_staggered_participant_joining() -> io::Result<()> {
     println!("Starting staggered participant joining test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -739,7 +740,7 @@ pub async fn test_staggered_participant_joining() -> io::Result<()> {
         }
         Err(e) => {
             println!("Task execution error: {e:?}");
-            screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+            screenshare_client::stop_screenshare_session(&sender)?;
             return Err(io::Error::other(e));
         }
     }
@@ -749,7 +750,7 @@ pub async fn test_staggered_participant_joining() -> io::Result<()> {
     println!("Bob joined mid-session and completed his square.");
     println!("Test demonstrates staggered joining and participant disconnection.");
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Screenshare session stopped.");
 
     Ok(())
@@ -758,7 +759,7 @@ pub async fn test_staggered_participant_joining() -> io::Result<()> {
 /// Test SVG rendering with various Unicode characters and special symbols
 pub async fn test_unicode_character_rendering() -> io::Result<()> {
     println!("Starting Unicode character rendering test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -836,7 +837,7 @@ pub async fn test_unicode_character_rendering() -> io::Result<()> {
     println!("Cursors will remain visible for 15 seconds for observation...");
     sleep(Duration::from_secs(15)).await;
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Unicode rendering test completed.");
 
     Ok(())
@@ -845,7 +846,7 @@ pub async fn test_unicode_character_rendering() -> io::Result<()> {
 /// Test SVG rendering with various name lengths to stress-test text measurement
 pub async fn test_name_length_rendering() -> io::Result<()> {
     println!("Starting name length rendering test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -923,7 +924,7 @@ pub async fn test_name_length_rendering() -> io::Result<()> {
     println!("Cursors will remain visible for 15 seconds for observation...");
     sleep(Duration::from_secs(15)).await;
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Name length rendering test completed.");
 
     Ok(())
@@ -932,7 +933,7 @@ pub async fn test_name_length_rendering() -> io::Result<()> {
 /// Test handling participants with the same first name (original focused test)
 pub async fn test_same_first_name_participants() -> io::Result<()> {
     println!("Starting same first name participants test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -1017,7 +1018,7 @@ pub async fn test_same_first_name_participants() -> io::Result<()> {
     println!("Cursors will remain visible for 10 seconds...");
     sleep(Duration::from_secs(10)).await;
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Screenshare session stopped.");
 
     Ok(())
@@ -1026,7 +1027,7 @@ pub async fn test_same_first_name_participants() -> io::Result<()> {
 /// Test cursor movement around the window edges, starting and ending at [0,0]
 pub async fn test_cursor_window_edges() -> io::Result<()> {
     println!("Starting window edges cursor test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let token = livekit_utils::generate_token("Edge Tracer");
@@ -1041,7 +1042,7 @@ pub async fn test_cursor_window_edges() -> io::Result<()> {
     // Trace the window edges starting from [0,0]
     internal_cursor_trace_window_edges(&room).await?;
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Window edges cursor test completed.");
 
     Ok(())
@@ -1116,7 +1117,7 @@ async fn internal_cursor_trace_window_edges(room: &Room) -> io::Result<()> {
 /// Test concurrent scrolling from two participants in different screen areas
 pub async fn test_concurrent_scrolling() -> io::Result<()> {
     println!("Starting concurrent scrolling test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
@@ -1221,7 +1222,7 @@ pub async fn test_concurrent_scrolling() -> io::Result<()> {
         }
         Err(e) => {
             println!("Task execution error: {e:?}");
-            screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+            screenshare_client::stop_screenshare_session(&sender)?;
             return Err(io::Error::other(e));
         }
     }
@@ -1229,7 +1230,7 @@ pub async fn test_concurrent_scrolling() -> io::Result<()> {
     println!("=== CONCURRENT SCROLLING TEST COMPLETED ===");
     println!("Alice and Bob completed scrolling in opposite directions, then reversed.");
 
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     println!("Screenshare session stopped.");
 
     Ok(())
@@ -1245,7 +1246,7 @@ pub async fn test_concurrent_scrolling() -> io::Result<()> {
 /// - Click: noop (no action, stays pointy finger)
 pub async fn test_transitions_remote_enabled_then_disabled() -> io::Result<()> {
     println!("\n=== TEST: Remote Control Enabled Then Disabled ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     let token = livekit_utils::generate_token("TestUser");
@@ -1279,7 +1280,7 @@ pub async fn test_transitions_remote_enabled_then_disabled() -> io::Result<()> {
 
     // Disable remote control
     println!("\n4. Disable ControllerCursorEnabled - Expected: pointy finger (but no interaction)");
-    cursor_socket.send_message(Message::ControllerCursorEnabled(false))?;
+    sender.send(Message::ControllerCursorEnabled(false))?;
     sleep(Duration::from_millis(1000)).await;
 
     // Move (still pointy finger)
@@ -1294,6 +1295,6 @@ pub async fn test_transitions_remote_enabled_then_disabled() -> io::Result<()> {
     sleep(Duration::from_millis(1000)).await;
 
     println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }

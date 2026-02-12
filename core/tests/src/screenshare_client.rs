@@ -1,29 +1,38 @@
 use crate::livekit_utils;
 use socket_lib::CaptureContent;
-use socket_lib::{Content, ContentType, CursorSocket, Extent, Message, ScreenShareMessage};
+use socket_lib::{
+    Content, ContentType, EventSocket, Extent, Message, ScreenShareMessage, SocketSender,
+};
 use std::env;
 use std::io;
+use std::time::Duration;
 
 /// Creates and connects to the cursor socket.
-pub fn connect_socket() -> io::Result<CursorSocket> {
+pub fn connect_socket() -> io::Result<(SocketSender, EventSocket)> {
     let tmp_folder = std::env::temp_dir();
     // Consider making the socket name configurable or discoverable if needed
     let socket_path = format!("{}/core-socket", tmp_folder.display());
     println!("Connecting to socket: {socket_path}");
-    // Use the function from the new module
-    CursorSocket::new(&socket_path)
+    socket_lib::connect(&socket_path)
 }
 
 /// Sends a request to get available screen content and returns the response.
-pub fn get_available_content(socket: &mut CursorSocket) -> io::Result<Message> {
+pub fn get_available_content(
+    sender: &SocketSender,
+    event_socket: &EventSocket,
+) -> io::Result<Message> {
     let message = Message::GetAvailableContent;
-    socket.send_message(message)?;
-    socket.receive_message()
+    sender.send(message)?;
+    event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| io::Error::other(format!("Failed to receive response: {e:?}")))
 }
 
 /// Sends a request to start screen sharing.
 pub fn request_screenshare(
-    socket: &mut CursorSocket,
+    sender: &SocketSender,
+    event_socket: &EventSocket,
     content_id: u32,
     width: f64,
     height: f64,
@@ -40,9 +49,9 @@ pub fn request_screenshare(
         accessibility_permission: true,
         use_av1: false,
     });
-    socket.send_message(message).unwrap();
+    sender.send(message).unwrap();
 
-    match socket.receive_message() {
+    match event_socket.responses.recv_timeout(Duration::from_secs(5)) {
         Ok(_message) => Ok(()),
         Err(e) => Err(io::Error::other(format!(
             "Failed to receive message: {e:?}"
@@ -51,20 +60,20 @@ pub fn request_screenshare(
 }
 
 /// Sends a request to stop screen sharing.
-pub fn stop_screenshare(socket: &mut CursorSocket) -> io::Result<()> {
+pub fn stop_screenshare(sender: &SocketSender) -> io::Result<()> {
     let message = Message::StopScreenshare;
-    socket.send_message(message)
+    sender.send(message)
 }
 
 pub fn screenshare_test() -> io::Result<()> {
-    let mut socket = connect_socket()?;
+    let (sender, event_socket) = connect_socket()?;
     println!("Connected to socket.");
 
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
 
-    let available_content = match get_available_content(&mut socket)? {
+    let available_content = match get_available_content(&sender, &event_socket)? {
         Message::AvailableContent(available_content) => available_content,
         _ => return Err(io::Error::other("Failed to get available content")),
     };
@@ -73,7 +82,8 @@ pub fn screenshare_test() -> io::Result<()> {
     let width = 1920.0;
     let height = 1080.0;
     request_screenshare(
-        &mut socket,
+        &sender,
+        &event_socket,
         available_content.content[0].content.id,
         width,
         height,
@@ -83,22 +93,22 @@ pub fn screenshare_test() -> io::Result<()> {
     std::thread::sleep(std::time::Duration::from_secs(20)); // Wait for a moment
 
     // Stop screen share
-    stop_screenshare(&mut socket)?;
+    stop_screenshare(&sender)?;
     println!("Screen share stopped.");
 
     Ok(())
 }
 
-pub fn start_screenshare_session() -> io::Result<(CursorSocket, Vec<CaptureContent>)> {
+pub fn start_screenshare_session() -> io::Result<(SocketSender, EventSocket, Vec<CaptureContent>)> {
     println!("Connecting to screenshare socket...");
-    let mut socket = connect_socket()?;
+    let (sender, event_socket) = connect_socket()?;
     println!("Connected to socket.");
 
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
 
-    let available_content = match get_available_content(&mut socket)? {
+    let available_content = match get_available_content(&sender, &event_socket)? {
         Message::AvailableContent(available_content) => available_content,
         _ => return Err(io::Error::other("Failed to get available content")),
     };
@@ -108,19 +118,20 @@ pub fn start_screenshare_session() -> io::Result<(CursorSocket, Vec<CaptureConte
 
     println!("Requesting screenshare start...");
     request_screenshare(
-        &mut socket,
+        &sender,
+        &event_socket,
         available_content.content[0].content.id,
         width,
         height,
     )?;
     println!("Screenshare requested. Waiting a moment for it to initialize...");
     std::thread::sleep(std::time::Duration::from_secs(2));
-    Ok((socket, available_content.content))
+    Ok((sender, event_socket, available_content.content))
 }
 
-pub fn stop_screenshare_session(socket: &mut CursorSocket) -> io::Result<()> {
+pub fn stop_screenshare_session(sender: &SocketSender) -> io::Result<()> {
     println!("Stopping screenshare...");
-    stop_screenshare(socket)?;
+    stop_screenshare(sender)?;
     println!("Screenshare stopped.");
     Ok(())
 }
@@ -128,18 +139,18 @@ pub fn stop_screenshare_session(socket: &mut CursorSocket) -> io::Result<()> {
 /// Tests that get_available_content returns consistent results across multiple calls.
 pub fn test_available_content_consistency() -> io::Result<()> {
     println!("Testing available content consistency...");
-    let mut socket = connect_socket()?;
+    let (sender, event_socket) = connect_socket()?;
     println!("Connected to socket.");
 
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
 
     let mut content_lengths = Vec::new();
 
     // Request available content 10 times
     for i in 1..=10 {
-        let available_content = match get_available_content(&mut socket)? {
+        let available_content = match get_available_content(&sender, &event_socket)? {
             Message::AvailableContent(available_content) => available_content,
             _ => return Err(io::Error::other("Failed to get available content")),
         };
@@ -168,14 +179,14 @@ pub fn test_available_content_consistency() -> io::Result<()> {
 }
 
 pub fn test_every_monitor() -> io::Result<()> {
-    let mut socket = connect_socket()?;
+    let (sender, event_socket) = connect_socket()?;
     println!("Connected to socket.");
 
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
-    socket.send_message(Message::LivekitServerUrl(livekit_server_url))?;
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
 
-    let available_content = match get_available_content(&mut socket)? {
+    let available_content = match get_available_content(&sender, &event_socket)? {
         Message::AvailableContent(available_content) => available_content,
         _ => return Err(io::Error::other("Failed to get available content")),
     };
@@ -199,13 +210,13 @@ pub fn test_every_monitor() -> io::Result<()> {
         // Start screen share
         let width = 1920.0;
         let height = 1080.0;
-        request_screenshare(&mut socket, monitor.content.id, width, height)?;
+        request_screenshare(&sender, &event_socket, monitor.content.id, width, height)?;
         println!("Screen share started for monitor {}.", monitor.content.id);
 
         std::thread::sleep(std::time::Duration::from_secs(10));
 
         // Stop screen share
-        stop_screenshare(&mut socket)?;
+        stop_screenshare(&sender)?;
         println!("Screen share stopped for monitor {}.", monitor.content.id);
 
         // Small delay between monitors
