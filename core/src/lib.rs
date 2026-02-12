@@ -173,6 +173,7 @@ impl<'a> RemoteControl<'a> {
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
     remote_control: Option<RemoteControl<'a>>,
+    // TODO: remove me
     textures_path: String,
     // The arc is needed because we move the object to the
     // thread that checks if the stream has failed.
