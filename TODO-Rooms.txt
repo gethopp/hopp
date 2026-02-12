@@ -1,4 +1,0 @@
-TODO:
-
-1. Background color spills over
-2. Add react-hook form for more homogeneous form validation
