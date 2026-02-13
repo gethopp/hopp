@@ -50,6 +50,18 @@ pub fn request_screenshare(
     }
 }
 
+/// Sends a request to open the camera window.
+pub fn open_camera(socket: &mut CursorSocket) -> io::Result<()> {
+    let message = Message::OpenCamera;
+    socket.send_message(message)
+}
+
+/// Sends a request to open the screensharing window.
+pub fn open_screensharing(socket: &mut CursorSocket) -> io::Result<()> {
+    let message = Message::OpenScreensharing;
+    socket.send_message(message)
+}
+
 /// Sends a request to stop screen sharing.
 pub fn stop_screenshare(socket: &mut CursorSocket) -> io::Result<()> {
     let message = Message::StopScreenshare;

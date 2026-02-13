@@ -126,6 +126,8 @@ pub enum Message {
     LivekitServerUrl(String),
     SentryMetadata(SentryMetadata),
     DrawingEnabled(DrawingEnabled),
+    OpenCamera,
+    OpenScreensharing,
 }
 
 #[derive(Debug)]

@@ -23,9 +23,14 @@ pub mod utils {
     pub mod svg_renderer;
 }
 
+pub(crate) mod camera_window;
+pub(crate) mod components;
 pub(crate) mod overlay_window;
+pub(crate) mod screensharing_window;
 pub(crate) mod window_manager;
+pub(crate) mod windows;
 
+use camera_window::CameraWindow;
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
 use image::GenericImageView;
@@ -35,6 +40,7 @@ use input::mouse::CursorController;
 use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
+use screensharing_window::ScreensharingWindow;
 use socket_lib::{
     AvailableContentMessage, CaptureContent, CursorSocket, Message, ScreenShareMessage,
     SentryMetadata,
@@ -58,7 +64,7 @@ use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
 
 /// Timeout in seconds for socket message reception
-const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 15000;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
@@ -184,6 +190,8 @@ pub struct Application<'a> {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
+    camera_window: Option<CameraWindow>,
+    screensharing_window: Option<ScreensharingWindow>,
 }
 
 #[derive(Error, Debug)]
@@ -269,6 +277,8 @@ impl<'a> Application<'a> {
                 cursor_set_times: 0,
             },
             window_manager: None,
+            camera_window: None,
+            screensharing_window: None,
         })
     }
 
@@ -1056,6 +1066,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .get_pixel_position(point.x, point.y);
                 remote_control.gfx.trigger_click_animation(position);
             }
+            UserEvent::OpenCamera => {
+                log::info!("user_event: OpenCamera");
+                match CameraWindow::new(event_loop) {
+                    Ok(cam) => self.camera_window = Some(cam),
+                    Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                }
+            }
+            UserEvent::OpenScreensharing => {
+                log::info!("user_event: OpenScreensharing");
+                match ScreensharingWindow::new(event_loop) {
+                    Ok(win) => self.screensharing_window = Some(win),
+                    Err(e) => log::error!("Failed to open screensharing window: {e:?}"),
+                }
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1168,6 +1192,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        // Route to camera window if it matches
+        if let Some(camera) = &mut self.camera_window {
+            if camera.window_id() == window_id {
+                camera.handle_window_event(event);
+                return;
+            }
+        }
+
+        // Route to screensharing window if it matches
+        if let Some(ss) = &mut self.screensharing_window {
+            if ss.window_id() == window_id {
+                ss.handle_window_event(event);
+                return;
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -1415,6 +1455,8 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    OpenCamera,
+    OpenScreensharing,
 }
 
 pub struct RenderEventLoop {
@@ -1511,6 +1553,8 @@ impl RenderEventLoop {
                     UserEvent::ControllerCursorEnabled(enabled)
                 }
                 Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                Message::OpenCamera => UserEvent::OpenCamera,
+                Message::OpenScreensharing => UserEvent::OpenScreensharing,
                 // Ping is on purpose empty. We use it only for stopping the above receive to timeout.
                 Message::Ping => {
                     continue;

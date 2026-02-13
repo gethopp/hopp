@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
 
+mod camera;
 mod events;
 mod livekit_utils;
 mod local_drawing;
@@ -9,6 +10,7 @@ mod remote_cursor;
 mod remote_drawing;
 mod remote_keyboard;
 mod screenshare_client;
+mod screensharing;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -51,6 +53,30 @@ enum Commands {
         #[arg(value_enum)]
         test_type: LocalDrawingTest,
     },
+    /// Test camera window functionality
+    Camera {
+        /// Type of camera test to run
+        #[arg(value_enum)]
+        test_type: CameraTest,
+    },
+    /// Test screensharing window functionality
+    ScreensharingWindow {
+        /// Type of screensharing window test to run
+        #[arg(value_enum)]
+        test_type: ScreensharingWindowTest,
+    },
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum CameraTest {
+    /// Open the camera window for manual interaction
+    Open,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum ScreensharingWindowTest {
+    /// Open the screensharing window for manual interaction
+    Open,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -258,6 +284,24 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Drawing test finished.");
+        }
+        Commands::Camera { test_type } => {
+            match test_type {
+                CameraTest::Open => {
+                    println!("Opening camera window...");
+                    camera::test_open_camera()?;
+                }
+            }
+            println!("Camera test finished.");
+        }
+        Commands::ScreensharingWindow { test_type } => {
+            match test_type {
+                ScreensharingWindowTest::Open => {
+                    println!("Opening screensharing window...");
+                    screensharing::test_open_screensharing()?;
+                }
+            }
+            println!("Screensharing window test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {
