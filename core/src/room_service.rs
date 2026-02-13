@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
@@ -7,7 +8,7 @@ use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
-use crate::livekit::audio::AudioPublisher;
+use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -145,6 +146,10 @@ impl RoomService {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
         });
+        let df = DfTract::new(DfParams::default(), &RuntimeParams::default_with_ch(1))
+            .expect("Failed to initialize DeepFilterNet");
+        log::info!("DeepFilterNet model loaded");
+        let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(Some(SendDfTract(df))));
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
         async_runtime.spawn(room_service_commands(
@@ -153,6 +158,7 @@ impl RoomService {
             inner.clone(),
             livekit_server_url,
             event_loop_proxy,
+            shared_df,
         ));
 
         Ok(Self {
@@ -511,6 +517,7 @@ async fn room_service_commands(
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    shared_df: SharedDf,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
@@ -929,7 +936,8 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                match AudioPublisher::publish(room, sample_rate, sample_rx).await {
+                match AudioPublisher::publish(room, sample_rate, sample_rx, shared_df.clone()).await
+                {
                     Ok(publisher) => {
                         audio_publisher = Some(publisher);
                         log::info!("room_service_commands: Audio track published");

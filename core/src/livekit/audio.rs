@@ -1,4 +1,6 @@
-use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
+use std::sync::Arc;
+
+use deep_filter::tract::DfTract;
 use livekit::options::TrackPublishOptions;
 use livekit::track::{LocalAudioTrack, LocalTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
@@ -7,10 +9,12 @@ use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
 use ndarray::Array2;
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
-struct SendDfTract(DfTract);
+pub(crate) struct SendDfTract(pub(crate) DfTract);
 unsafe impl Send for SendDfTract {}
+
+pub(crate) type SharedDf = Arc<std::sync::Mutex<Option<SendDfTract>>>;
 
 const LIVEKIT_SAMPLE_RATE: u32 = 48000;
 const AUDIO_NUM_CHANNELS: u32 = 1;
@@ -23,10 +27,11 @@ pub struct AudioPublisher {
 }
 
 impl AudioPublisher {
-    pub async fn publish(
+    pub(crate) async fn publish(
         room: &Room,
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+        df: SharedDf,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -76,8 +81,12 @@ impl AudioPublisher {
             None
         };
 
-        let processing_task =
-            tokio::spawn(process_audio_samples(sample_rx, native_source, resampler));
+        let processing_task = tokio::spawn(process_audio_samples(
+            sample_rx,
+            native_source,
+            resampler,
+            df,
+        ));
 
         log::info!(
             "AudioPublisher: audio track published (input: {}Hz, output: {}Hz)",
@@ -127,22 +136,9 @@ async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     resampler: Option<FastFixedIn<f64>>,
+    df: SharedDf,
 ) {
     let samples_per_10ms = (LIVEKIT_SAMPLE_RATE / 100) as usize;
-
-    // Initialize DeepFilterNet on a blocking thread so audio processing starts immediately
-    let (df_tx, df_rx) = oneshot::channel::<SendDfTract>();
-    tokio::task::spawn_blocking(move || {
-        let params = DfParams::default();
-        let runtime_params = RuntimeParams::default_with_ch(1);
-        let df = SendDfTract(
-            DfTract::new(params, &runtime_params).expect("Failed to initialize DeepFilterNet"),
-        );
-        log::info!("DeepFilterNet model loaded");
-        let _ = df_tx.send(df);
-    });
-    let mut df: Option<SendDfTract> = None;
-    let mut df_rx = Some(df_rx);
 
     log::info!(
         "Starting audio processing ({}Hz, 1 channel, {} samples per 10ms)",
@@ -158,17 +154,6 @@ async fn process_audio_samples(
             let mut livekit_buf: Vec<i16> = Vec::new();
 
             while let Some(audio_data) = rx.recv().await {
-                // Check if DeepFilterNet finished initializing
-                if df.is_none() {
-                    if let Some(rx) = &mut df_rx {
-                        if let Ok(model) = rx.try_recv() {
-                            df = Some(model);
-                            df_rx = None;
-                            log::info!("DeepFilterNet noise suppression active");
-                        }
-                    }
-                }
-
                 // Convert i16 samples to f64 for resampler
                 for &s in &audio_data {
                     input_buf.push(s as f64 / i16::MAX as f64);
@@ -197,8 +182,11 @@ async fn process_audio_samples(
                 // Send 10ms chunks to LiveKit
                 while livekit_buf.len() >= samples_per_10ms {
                     let mut chunk: Vec<i16> = livekit_buf.drain(..samples_per_10ms).collect();
-                    if let Some(ref mut model) = df {
-                        apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                    {
+                        let mut guard = df.lock().unwrap();
+                        if let Some(ref mut model) = *guard {
+                            apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                        }
                     }
                     capture_frame(&audio_source, chunk, samples_per_10ms).await;
                 }
@@ -208,23 +196,15 @@ async fn process_audio_samples(
             let mut buffer: Vec<i16> = Vec::new();
 
             while let Some(audio_data) = rx.recv().await {
-                // Check if DeepFilterNet finished initializing
-                if df.is_none() {
-                    if let Some(rx) = &mut df_rx {
-                        if let Ok(model) = rx.try_recv() {
-                            df = Some(model);
-                            df_rx = None;
-                            log::info!("DeepFilterNet noise suppression active");
-                        }
-                    }
-                }
-
                 buffer.extend_from_slice(&audio_data);
 
                 while buffer.len() >= samples_per_10ms {
                     let mut chunk: Vec<i16> = buffer.drain(..samples_per_10ms).collect();
-                    if let Some(ref mut model) = df {
-                        apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                    {
+                        let mut guard = df.lock().unwrap();
+                        if let Some(ref mut model) = *guard {
+                            apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                        }
                     }
                     capture_frame(&audio_source, chunk, samples_per_10ms).await;
                 }

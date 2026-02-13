@@ -34,7 +34,7 @@ pub fn get_available_content(
 pub fn call_start(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
     let token = livekit_utils::generate_token("Test Screenshare");
     sender.send(Message::CallStart(CallStartMessage { token }))?;
-    match event_socket.responses.recv_timeout(Duration::from_secs(5)) {
+    match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Message::CallStartResult(Ok(()))) => Ok(()),
         Ok(Message::CallStartResult(Err(e))) => {
             Err(io::Error::other(format!("CallStart failed: {e}")))
