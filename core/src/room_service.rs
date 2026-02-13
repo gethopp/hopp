@@ -146,7 +146,11 @@ impl RoomService {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
         });
-        let df = DfTract::new(DfParams::default(), &RuntimeParams::default_with_ch(1))
+        let mut runtime_params = RuntimeParams::default_with_ch(1);
+        runtime_params.atten_lim_db = 60.0;
+        runtime_params.post_filter_beta = 0.05;
+
+        let df = DfTract::new(DfParams::default(), &runtime_params)
             .expect("Failed to initialize DeepFilterNet");
         log::info!("DeepFilterNet model loaded");
         let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(Some(SendDfTract(df))));

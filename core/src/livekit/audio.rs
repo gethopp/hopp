@@ -20,7 +20,7 @@ pub(crate) type SharedDf = Arc<std::sync::Mutex<Option<SendDfTract>>>;
 const LIVEKIT_SAMPLE_RATE: u32 = 48000;
 const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
-const AUDIO_QUEUE_SIZE: u32 = 1000; // Buffer up to 100 frames (1 second)
+const AUDIO_QUEUE_SIZE: u32 = 100;
 
 pub struct AudioPublisher {
     audio_track: LocalAudioTrack,
@@ -82,7 +82,7 @@ impl AudioPublisher {
             None
         };
 
-        let apm = AudioProcessingModule::new(false, false, false, false);
+        let apm = AudioProcessingModule::new(true, true, false, false);
 
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
@@ -241,7 +241,7 @@ async fn process_audio_samples(
             {
                 let mut guard = df.lock().unwrap();
                 if let Some(ref mut model) = *guard {
-                    apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                    //apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
                 }
             }
             capture_frame(&audio_source, chunk, samples_per_10ms).await;

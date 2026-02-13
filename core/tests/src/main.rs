@@ -57,6 +57,9 @@ enum Commands {
         /// Type of audio test to run
         #[arg(value_enum)]
         test_type: AudioTest,
+        /// Optional mic device ID to use for capture tests
+        #[arg(long)]
+        mic_id: Option<String>,
     },
 }
 
@@ -278,7 +281,7 @@ async fn main() -> io::Result<()> {
             }
             println!("Drawing test finished.");
         }
-        Commands::Audio { test_type } => {
+        Commands::Audio { test_type, mic_id } => {
             match test_type {
                 AudioTest::ListDevices => {
                     println!("Running audio list devices test...");
@@ -294,7 +297,7 @@ async fn main() -> io::Result<()> {
                 }
                 AudioTest::Capture30s => {
                     println!("Running 30s capture test...");
-                    audio_capture::test_capture_30s()?;
+                    audio_capture::test_capture_30s(mic_id.as_deref())?;
                 }
             }
             println!("Audio test finished.");

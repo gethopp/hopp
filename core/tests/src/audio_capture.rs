@@ -165,32 +165,38 @@ pub fn test_mute_unmute() -> io::Result<()> {
     Ok(())
 }
 
-pub fn test_capture_30s() -> io::Result<()> {
+pub fn test_capture_30s(mic_id: Option<&str>) -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
     setup_audio(&sender, &event_socket)?;
 
-    // List devices and pick first one
-    sender.send(Message::ListAudioDevices)?;
-    let response = event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(5))
-        .map_err(|e| io::Error::other(format!("Failed to receive AudioDeviceList: {e:?}")))?;
+    let device_id = if let Some(id) = mic_id {
+        println!("Using explicitly provided device ID: {}", id);
+        id.to_string()
+    } else {
+        // List devices and pick first one
+        sender.send(Message::ListAudioDevices)?;
+        let response = event_socket
+            .responses
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| io::Error::other(format!("Failed to receive AudioDeviceList: {e:?}")))?;
 
-    let devices = match response {
-        Message::AudioDeviceList(devices) => devices,
-        other => {
-            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-        }
+        let devices = match response {
+            Message::AudioDeviceList(devices) => devices,
+            other => {
+                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+            }
+        };
+
+        let device = devices
+            .first()
+            .ok_or_else(|| io::Error::other("No audio devices found"))?;
+
+        println!("Using device: {} (id: {})", device.name, device.id);
+        device.id.clone()
     };
 
-    let device = devices
-        .first()
-        .ok_or_else(|| io::Error::other("No audio devices found"))?;
-
-    println!("Using device: {} (id: {})", device.name, device.id);
-
     sender.send(Message::StartAudioCapture(AudioCaptureMessage {
-        device_id: device.id.clone(),
+        device_id,
     }))?;
 
     let result = event_socket
