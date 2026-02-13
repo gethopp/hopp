@@ -6,8 +6,6 @@ use std::sync::{
 };
 use tokio::sync::mpsc;
 
-const SAMPLE_RATE: u32 = 48000;
-
 pub struct Stream {
     _cpal_stream: cpal::Stream,
     is_running: Arc<AtomicBool>,
@@ -27,32 +25,8 @@ impl Stream {
         log::info!("Device default config: {:?}", supported_config);
 
         let sample_format = supported_config.sample_format();
-
-        // Check if the desired sample rate is supported, otherwise use the default.
-        // We always capture with the device's channel count and downmix to mono via step_by.
         let num_input_channels = supported_config.channels();
-        let sample_rate = {
-            let supported_configs = device
-                .supported_input_configs()
-                .map_err(|e| format!("Failed to get supported input configs: {e}"))?;
-
-            let desired_rate_supported = supported_configs.into_iter().any(|config_range| {
-                config_range.channels() == num_input_channels
-                    && config_range.min_sample_rate() <= SAMPLE_RATE
-                    && config_range.max_sample_rate() >= SAMPLE_RATE
-            });
-
-            if desired_rate_supported {
-                log::info!("Using desired sample rate: {}", SAMPLE_RATE);
-                SAMPLE_RATE
-            } else {
-                log::info!(
-                    "Desired sample rate not supported, using default: {}",
-                    supported_config.sample_rate()
-                );
-                supported_config.sample_rate()
-            }
-        };
+        let sample_rate = supported_config.sample_rate();
 
         let config = StreamConfig {
             channels: num_input_channels,
