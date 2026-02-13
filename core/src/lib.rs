@@ -36,8 +36,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    AvailableContentMessage, CaptureContent, Message, ScreenShareMessage, SentryMetadata,
-    SocketSender,
+    AvailableContentMessage, CallStartMessage, CaptureContent, Message, ScreenShareMessage,
+    SentryMetadata, SocketSender,
 };
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -366,15 +366,6 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.create_room(screenshare_input.token, self.event_loop_proxy.clone());
-        if let Err(error) = res {
-            log::error!("screenshare: error creating room: {error:?}");
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::RoomCreationError);
-        }
-        log::info!("screenshare: room created");
-
         let res = room_service.publish_track(
             extent.width as u32,
             extent.height as u32,
@@ -419,9 +410,6 @@ impl<'a> Application<'a> {
         }
         let mut screen_capturer = screen_capturer.unwrap();
         screen_capturer.stop_capture();
-        if let Some(room_service) = self.room_service.as_mut() {
-            room_service.destroy_room();
-        }
         drop(screen_capturer);
         self.destroy_overlay_window();
     }
@@ -775,6 +763,34 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         "user_event: Error sending available content: {:?}",
                         res.err()
                     );
+                }
+            }
+            UserEvent::CallStart(call_start) => {
+                log::info!("user_event: CallStart");
+                let result = if let Some(room_service) = self.room_service.as_ref() {
+                    match room_service.create_room(call_start.token, self.event_loop_proxy.clone())
+                    {
+                        Ok(_) => {
+                            log::info!("user_event: Room created successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("user_event: Failed to create room: {e:?}");
+                            Err(e.to_string())
+                        }
+                    }
+                } else {
+                    log::error!("user_event: Room service not found for CallStart");
+                    Err(ServerError::RoomServiceNotFound.to_string())
+                };
+                if let Err(e) = self.socket.send(Message::CallStartResult(result)) {
+                    error!("user_event: Error sending CallStartResult: {e:?}");
+                }
+            }
+            UserEvent::CallEnd => {
+                log::info!("user_event: CallEnd");
+                if let Some(room_service) = self.room_service.as_mut() {
+                    room_service.destroy_room();
                 }
             }
             UserEvent::ScreenShare(data) => {
@@ -1394,6 +1410,8 @@ pub enum UserEvent {
     Scroll(ScrollDelta, String),
     GetAvailableContent,
     Terminate,
+    CallStart(CallStartMessage),
+    CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
     RequestRedraw,
@@ -1480,6 +1498,10 @@ impl RenderEventLoop {
             for message in event_socket.events.iter() {
                 let user_event = match message {
                     Message::GetAvailableContent => UserEvent::GetAvailableContent,
+                    Message::CallStart(call_start_message) => {
+                        UserEvent::CallStart(call_start_message)
+                    }
+                    Message::CallEnd => UserEvent::CallEnd,
                     Message::StartScreenShare(screen_share_message) => {
                         UserEvent::ScreenShare(screen_share_message)
                     }

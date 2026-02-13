@@ -98,10 +98,14 @@ pub struct AvailableContentMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenShareMessage {
     pub content: Content,
-    pub token: String,
     pub resolution: Extent,
     pub accessibility_permission: bool,
     pub use_av1: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CallStartMessage {
+    pub token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -119,6 +123,9 @@ pub struct DrawingEnabled {
 pub enum Message {
     GetAvailableContent,
     AvailableContent(AvailableContentMessage),
+    CallStart(CallStartMessage),
+    CallStartResult(Result<(), String>),
+    CallEnd,
     StartScreenShare(ScreenShareMessage),
     StartScreenShareResult(Result<(), String>),
     StopScreenshare,
@@ -134,7 +141,9 @@ impl Message {
     pub fn is_response(&self) -> bool {
         matches!(
             self,
-            Message::AvailableContent(_) | Message::StartScreenShareResult(_)
+            Message::AvailableContent(_)
+                | Message::StartScreenShareResult(_)
+                | Message::CallStartResult(_)
         )
     }
 }
@@ -477,8 +486,17 @@ mod tests {
         client_sender
             .send(Message::StartScreenShareResult(Ok(())))
             .unwrap();
+        client_sender
+            .send(Message::CallStart(CallStartMessage {
+                token: "test-token".to_string(),
+            }))
+            .unwrap();
+        client_sender.send(Message::CallEnd).unwrap();
+        client_sender
+            .send(Message::CallStartResult(Ok(())))
+            .unwrap();
 
-        // Events: GetAvailableContent, Ping
+        // Events: GetAvailableContent, Ping, CallStart, CallEnd
         let msg1 = server_events
             .events
             .recv_timeout(Duration::from_secs(5))
@@ -489,8 +507,18 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg2, Message::Ping));
+        let msg5 = server_events
+            .events
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(msg5, Message::CallStart(_)));
+        let msg6 = server_events
+            .events
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(msg6, Message::CallEnd));
 
-        // Responses: AvailableContent, StartScreenShareResult
+        // Responses: AvailableContent, StartScreenShareResult, CallStartResult
         let msg3 = server_events
             .responses
             .recv_timeout(Duration::from_secs(5))
@@ -501,6 +529,11 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg4, Message::StartScreenShareResult(_)));
+        let msg7 = server_events
+            .responses
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(msg7, Message::CallStartResult(_)));
     }
 
     #[test]

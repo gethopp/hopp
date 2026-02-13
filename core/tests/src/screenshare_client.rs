@@ -1,7 +1,8 @@
 use crate::livekit_utils;
 use socket_lib::CaptureContent;
 use socket_lib::{
-    Content, ContentType, EventSocket, Extent, Message, ScreenShareMessage, SocketSender,
+    CallStartMessage, Content, ContentType, EventSocket, Extent, Message, ScreenShareMessage,
+    SocketSender,
 };
 use std::env;
 use std::io;
@@ -29,6 +30,29 @@ pub fn get_available_content(
         .map_err(|e| io::Error::other(format!("Failed to receive response: {e:?}")))
 }
 
+/// Sends a CallStart message with a token and waits for the result.
+pub fn call_start(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
+    let token = livekit_utils::generate_token("Test Screenshare");
+    sender.send(Message::CallStart(CallStartMessage { token }))?;
+    match event_socket.responses.recv_timeout(Duration::from_secs(5)) {
+        Ok(Message::CallStartResult(Ok(()))) => Ok(()),
+        Ok(Message::CallStartResult(Err(e))) => {
+            Err(io::Error::other(format!("CallStart failed: {e}")))
+        }
+        Ok(msg) => Err(io::Error::other(format!(
+            "Unexpected response to CallStart: {msg:?}"
+        ))),
+        Err(e) => Err(io::Error::other(format!(
+            "Failed to receive CallStartResult: {e:?}"
+        ))),
+    }
+}
+
+/// Sends a CallEnd message.
+pub fn call_end(sender: &SocketSender) -> io::Result<()> {
+    sender.send(Message::CallEnd)
+}
+
 /// Sends a request to start screen sharing.
 pub fn request_screenshare(
     sender: &SocketSender,
@@ -37,14 +61,11 @@ pub fn request_screenshare(
     width: f64,
     height: f64,
 ) -> io::Result<()> {
-    let token = livekit_utils::generate_token("Test Screenshare");
-
     let message = Message::StartScreenShare(ScreenShareMessage {
         content: Content {
-            content_type: ContentType::Display, // Assuming Display type
+            content_type: ContentType::Display,
             id: content_id,
         },
-        token,
         resolution: Extent { width, height },
         accessibility_permission: true,
         use_av1: false,
@@ -78,6 +99,10 @@ pub fn screenshare_test() -> io::Result<()> {
         _ => return Err(io::Error::other("Failed to get available content")),
     };
 
+    // Start call
+    call_start(&sender, &event_socket)?;
+    println!("Call started.");
+
     // Start screen share
     let width = 1920.0;
     let height = 1080.0;
@@ -96,6 +121,10 @@ pub fn screenshare_test() -> io::Result<()> {
     stop_screenshare(&sender)?;
     println!("Screen share stopped.");
 
+    // End call
+    call_end(&sender)?;
+    println!("Call ended.");
+
     Ok(())
 }
 
@@ -112,6 +141,10 @@ pub fn start_screenshare_session() -> io::Result<(SocketSender, EventSocket, Vec
         Message::AvailableContent(available_content) => available_content,
         _ => return Err(io::Error::other("Failed to get available content")),
     };
+
+    // Start the call first
+    call_start(&sender, &event_socket)?;
+    println!("Call started.");
 
     let width = 1920.0;
     let height = 1080.0;
@@ -133,6 +166,9 @@ pub fn stop_screenshare_session(sender: &SocketSender) -> io::Result<()> {
     println!("Stopping screenshare...");
     stop_screenshare(sender)?;
     println!("Screenshare stopped.");
+
+    call_end(sender)?;
+    println!("Call ended.");
     Ok(())
 }
 
@@ -199,6 +235,9 @@ pub fn test_every_monitor() -> io::Result<()> {
 
     println!("Found {} monitors to test.", monitors.len());
 
+    call_start(&sender, &event_socket)?;
+    println!("Call started.");
+
     for (i, monitor) in monitors.iter().enumerate() {
         println!(
             "Testing monitor {}/{} (ID: {})",
@@ -222,6 +261,9 @@ pub fn test_every_monitor() -> io::Result<()> {
         // Small delay between monitors
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+
+    call_end(&sender)?;
+    println!("Call ended.");
 
     println!("✓ Success: All monitors tested.");
     Ok(())
