@@ -5,6 +5,7 @@ use livekit::options::TrackPublishOptions;
 use livekit::track::{LocalAudioTrack, LocalTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
+use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
 use ndarray::Array2;
@@ -81,11 +82,14 @@ impl AudioPublisher {
             None
         };
 
+        let apm = AudioProcessingModule::new(false, false, false, false);
+
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
             native_source,
             resampler,
             df,
+            apm,
         ));
 
         log::info!(
@@ -132,11 +136,67 @@ fn apply_noise_filter(df: &mut DfTract, chunk: &mut [i16], samples_per_10ms: usi
     }
 }
 
+/// Drain 10ms chunks from a resampled buffer, given incoming audio data and a resampler.
+fn drain_resampled_chunks(
+    audio_data: &[i16],
+    input_buf: &mut Vec<f64>,
+    resampler: &mut FastFixedIn<f64>,
+    output_buf: &mut [Vec<f64>],
+    livekit_buf: &mut Vec<i16>,
+    samples_per_10ms: usize,
+) -> Vec<Vec<i16>> {
+    for &s in audio_data {
+        input_buf.push(s as f64 / i16::MAX as f64);
+    }
+
+    let frames_needed = resampler.input_frames_next();
+    while input_buf.len() >= frames_needed {
+        let input_slice = [&input_buf[..frames_needed]];
+
+        match resampler.process_into_buffer(&input_slice, output_buf, None) {
+            Ok((_, out_len)) => {
+                livekit_buf.extend(
+                    output_buf[0][..out_len]
+                        .iter()
+                        .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f64) as i16),
+                );
+            }
+            Err(e) => {
+                log::warn!("Resampling error: {e}");
+            }
+        }
+
+        input_buf.drain(..frames_needed);
+    }
+
+    let mut chunks = Vec::new();
+    while livekit_buf.len() >= samples_per_10ms {
+        chunks.push(livekit_buf.drain(..samples_per_10ms).collect());
+    }
+    chunks
+}
+
+/// Drain 10ms chunks from a passthrough buffer.
+fn drain_passthrough_chunks(
+    audio_data: &[i16],
+    buffer: &mut Vec<i16>,
+    samples_per_10ms: usize,
+) -> Vec<Vec<i16>> {
+    buffer.extend_from_slice(audio_data);
+
+    let mut chunks = Vec::new();
+    while buffer.len() >= samples_per_10ms {
+        chunks.push(buffer.drain(..samples_per_10ms).collect());
+    }
+    chunks
+}
+
 async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     resampler: Option<FastFixedIn<f64>>,
     df: SharedDf,
+    mut apm: AudioProcessingModule,
 ) {
     let samples_per_10ms = (LIVEKIT_SAMPLE_RATE / 100) as usize;
 
@@ -146,69 +206,45 @@ async fn process_audio_samples(
         samples_per_10ms
     );
 
-    match resampler {
-        Some(mut resampler) => {
-            let mut input_buf: Vec<f64> = Vec::new();
-            let output_frames_max = resampler.output_frames_max();
-            let mut output_buf = vec![vec![0f64; output_frames_max]; 1];
-            let mut livekit_buf: Vec<i16> = Vec::new();
+    // Per-branch state
+    let mut resampler = resampler;
+    let mut input_buf: Vec<f64> = Vec::new();
+    let mut output_buf = resampler
+        .as_ref()
+        .map(|r| vec![vec![0f64; r.output_frames_max()]; 1])
+        .unwrap_or_default();
+    let mut livekit_buf: Vec<i16> = Vec::new();
+    let mut passthrough_buf: Vec<i16> = Vec::new();
 
-            while let Some(audio_data) = rx.recv().await {
-                // Convert i16 samples to f64 for resampler
-                for &s in &audio_data {
-                    input_buf.push(s as f64 / i16::MAX as f64);
-                }
+    while let Some(audio_data) = rx.recv().await {
+        let chunks = if let Some(ref mut r) = resampler {
+            drain_resampled_chunks(
+                &audio_data,
+                &mut input_buf,
+                r,
+                &mut output_buf,
+                &mut livekit_buf,
+                samples_per_10ms,
+            )
+        } else {
+            drain_passthrough_chunks(&audio_data, &mut passthrough_buf, samples_per_10ms)
+        };
 
-                let frames_needed = resampler.input_frames_next();
-                while input_buf.len() >= frames_needed {
-                    let input_slice = [&input_buf[..frames_needed]];
-
-                    match resampler.process_into_buffer(&input_slice, &mut output_buf, None) {
-                        Ok((_, out_len)) => {
-                            livekit_buf.extend(
-                                output_buf[0][..out_len]
-                                    .iter()
-                                    .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f64) as i16),
-                            );
-                        }
-                        Err(e) => {
-                            log::warn!("Resampling error: {e}");
-                        }
-                    }
-
-                    input_buf.drain(..frames_needed);
-                }
-
-                // Send 10ms chunks to LiveKit
-                while livekit_buf.len() >= samples_per_10ms {
-                    let mut chunk: Vec<i16> = livekit_buf.drain(..samples_per_10ms).collect();
-                    {
-                        let mut guard = df.lock().unwrap();
-                        if let Some(ref mut model) = *guard {
-                            apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
-                        }
-                    }
-                    capture_frame(&audio_source, chunk, samples_per_10ms).await;
+        for mut chunk in chunks {
+            if let Err(e) = apm.process_stream(
+                &mut chunk,
+                LIVEKIT_SAMPLE_RATE as i32,
+                AUDIO_NUM_CHANNELS as i32,
+            ) {
+                log::warn!("APM process_stream failed: {e}");
+            }
+            {
+                let mut guard = df.lock().unwrap();
+                if let Some(ref mut model) = *guard {
+                    apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
                 }
             }
-        }
-        None => {
-            let mut buffer: Vec<i16> = Vec::new();
-
-            while let Some(audio_data) = rx.recv().await {
-                buffer.extend_from_slice(&audio_data);
-
-                while buffer.len() >= samples_per_10ms {
-                    let mut chunk: Vec<i16> = buffer.drain(..samples_per_10ms).collect();
-                    {
-                        let mut guard = df.lock().unwrap();
-                        if let Some(ref mut model) = *guard {
-                            apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
-                        }
-                    }
-                    capture_frame(&audio_source, chunk, samples_per_10ms).await;
-                }
-            }
+            capture_frame(&audio_source, chunk, samples_per_10ms).await;
         }
     }
 
