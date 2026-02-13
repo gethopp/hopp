@@ -119,6 +119,17 @@ pub struct DrawingEnabled {
     pub permanent: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AudioDevice {
+    pub name: String,
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AudioCaptureMessage {
+    pub device_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
@@ -135,6 +146,13 @@ pub enum Message {
     LivekitServerUrl(String),
     SentryMetadata(SentryMetadata),
     DrawingEnabled(DrawingEnabled),
+    ListAudioDevices,
+    AudioDeviceList(Vec<AudioDevice>),
+    StartAudioCapture(AudioCaptureMessage),
+    StartAudioCaptureResult(Result<(), String>),
+    StopAudioCapture,
+    MuteAudio,
+    UnmuteAudio,
 }
 
 impl Message {
@@ -144,6 +162,8 @@ impl Message {
             Message::AvailableContent(_)
                 | Message::StartScreenShareResult(_)
                 | Message::CallStartResult(_)
+                | Message::AudioDeviceList(_)
+                | Message::StartAudioCaptureResult(_)
         )
     }
 }

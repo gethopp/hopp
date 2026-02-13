@@ -1,3 +1,12 @@
+pub mod audio {
+    pub mod capturer;
+    pub mod stream;
+}
+
+pub mod livekit {
+    pub mod audio;
+}
+
 pub mod room_service;
 
 pub mod input {
@@ -182,6 +191,7 @@ pub struct Application<'a> {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
+    audio_capturer: audio::capturer::Capturer,
 }
 
 // window: winit window
@@ -270,6 +280,7 @@ impl<'a> Application<'a> {
                 cursor_set_times: 0,
             },
             window_manager: None,
+            audio_capturer: audio::capturer::Capturer::new(),
         })
     }
 
@@ -610,6 +621,8 @@ impl<'a> Application<'a> {
     /// - May create new threads for screen capture polling
     /// - Resets all session-specific state to initial values
     fn reset_state(&mut self) {
+        self.audio_capturer.stop_capture();
+
         let capturer_valid = {
             let screen_capturer = self.screen_capturer.lock();
             screen_capturer.is_ok()
@@ -1073,6 +1086,63 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .get_pixel_position(point.x, point.y);
                 remote_control.gfx.trigger_click_animation(position);
             }
+            UserEvent::ListAudioDevices => {
+                log::debug!("user_event: ListAudioDevices");
+                let devices = audio::capturer::Capturer::list_devices();
+                if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
+                    error!("user_event: Error sending audio device list: {e:?}");
+                }
+            }
+            UserEvent::StartAudioCapture(msg) => {
+                log::info!("user_event: StartAudioCapture device_id={}", msg.device_id);
+                let result = (|| -> Result<(), String> {
+                    let room_service = self
+                        .room_service
+                        .as_ref()
+                        .ok_or_else(|| "Room service not found".to_string())?;
+
+                    let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
+
+                    // Start capture first to determine the device sample rate
+                    let sample_rate = self
+                        .audio_capturer
+                        .start_capture(&msg.device_id, sample_tx)?;
+
+                    // Create the AudioPublisher with the detected sample rate
+                    room_service
+                        .publish_audio_track(sample_rate, sample_rx)
+                        .map_err(|e| format!("Failed to publish audio track: {e}"))?;
+
+                    Ok(())
+                })();
+
+                if let Err(ref e) = result {
+                    log::error!("user_event: StartAudioCapture failed: {e}");
+                }
+
+                if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
+                    error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
+                }
+            }
+            UserEvent::StopAudioCapture => {
+                log::info!("user_event: StopAudioCapture");
+                self.audio_capturer.stop_capture();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.unpublish_audio_track();
+                }
+            }
+            UserEvent::MuteAudio => {
+                log::info!("user_event: MuteAudio");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.mute_audio_track();
+                }
+            }
+            UserEvent::UnmuteAudio => {
+                log::info!("user_event: UnmuteAudio");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.unmute_audio_track();
+                }
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1434,6 +1504,11 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    ListAudioDevices,
+    StartAudioCapture(socket_lib::AudioCaptureMessage),
+    StopAudioCapture,
+    MuteAudio,
+    UnmuteAudio,
 }
 
 pub struct RenderEventLoop {
@@ -1511,6 +1586,11 @@ impl RenderEventLoop {
                         UserEvent::ControllerCursorEnabled(enabled)
                     }
                     Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                    Message::ListAudioDevices => UserEvent::ListAudioDevices,
+                    Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
+                    Message::StopAudioCapture => UserEvent::StopAudioCapture,
+                    Message::MuteAudio => UserEvent::MuteAudio,
+                    Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

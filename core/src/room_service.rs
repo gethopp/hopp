@@ -7,6 +7,8 @@ use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
+use crate::livekit::audio::AudioPublisher;
+
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -61,6 +63,13 @@ enum RoomServiceCommand {
     PublishDrawEnd(ClientPoint),
     PublishDrawClearPaths(Vec<u64>),
     PublishDrawClearAllPaths,
+    PublishAudioTrack {
+        sample_rate: u32,
+        sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+    },
+    UnpublishAudioTrack,
+    MuteAudioTrack,
+    UnmuteAudioTrack,
 }
 
 #[derive(Debug)]
@@ -391,6 +400,69 @@ impl RoomService {
             log::error!("publish_draw_clear_all_paths: Error sending command: {e:?}");
         }
     }
+
+    /// Publishes an audio track to the room. Blocks until complete.
+    pub fn publish_audio_track(
+        &self,
+        sample_rate: u32,
+        sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+    ) -> Result<(), RoomServiceError> {
+        log::info!("publish_audio_track with sample_rate: {}", sample_rate);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishAudioTrack {
+                sample_rate,
+                sample_rx,
+            });
+        if let Err(e) = res {
+            return Err(RoomServiceError::PublishTrack(format!(
+                "Failed to send command: {e:?}"
+            )));
+        }
+        let res = self.service_command_res_rx.recv();
+        match res {
+            Ok(RoomServiceCommandResult::Success) => Ok(()),
+            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
+                "Failed to publish audio track".to_string(),
+            )),
+            Err(e) => Err(RoomServiceError::PublishTrack(format!(
+                "Failed to receive result: {e:?}"
+            ))),
+        }
+    }
+
+    /// Unpublishes the audio track from the room.
+    pub fn unpublish_audio_track(&self) {
+        log::info!("unpublish_audio_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnpublishAudioTrack);
+        if let Err(e) = res {
+            log::error!("unpublish_audio_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Mutes the audio track.
+    pub fn mute_audio_track(&self) {
+        log::info!("mute_audio_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::MuteAudioTrack);
+        if let Err(e) = res {
+            log::error!("mute_audio_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Unmutes the audio track.
+    pub fn unmute_audio_track(&self) {
+        log::info!("unmute_audio_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnmuteAudioTrack);
+        if let Err(e) = res {
+            log::error!("unmute_audio_track: Failed to send command: {e:?}");
+        }
+    }
 }
 
 /// Handles room service commands in an async loop.
@@ -441,6 +513,7 @@ async fn room_service_commands(
     event_loop_proxy: EventLoopProxy<UserEvent>,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut audio_publisher: Option<AudioPublisher> = None;
 
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
@@ -580,7 +653,10 @@ async fn room_service_commands(
                     }
                     inner_room.take()
                 };
-                if let Some(room) = room {
+                if let Some(room) = &room {
+                    if let Some(publisher) = audio_publisher.take() {
+                        publisher.unpublish(room).await;
+                    }
                     let res = room.close().await;
                     if let Err(e) = res {
                         log::error!("room_service_commands: Failed to close room: {e:?}");
@@ -839,6 +915,55 @@ async fn room_service_commands(
                     log::error!(
                         "room_service_commands: Failed to publish draw clear all paths: {e:?}"
                     );
+                }
+            }
+            RoomServiceCommand::PublishAudioTrack {
+                sample_rate,
+                sample_rx,
+            } => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::error!("room_service_commands: Room doesn't exist for PublishAudioTrack");
+                    let _ = tx.send(RoomServiceCommandResult::Failure);
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+
+                match AudioPublisher::publish(room, sample_rate, sample_rx).await {
+                    Ok(publisher) => {
+                        audio_publisher = Some(publisher);
+                        log::info!("room_service_commands: Audio track published");
+                        let _ = tx.send(RoomServiceCommandResult::Success);
+                    }
+                    Err(e) => {
+                        log::error!("room_service_commands: Failed to publish audio track: {e}");
+                        let _ = tx.send(RoomServiceCommandResult::Failure);
+                    }
+                }
+            }
+            RoomServiceCommand::UnpublishAudioTrack => {
+                if let Some(publisher) = audio_publisher.take() {
+                    let inner_room = inner.room.lock().await;
+                    if let Some(room) = inner_room.as_ref() {
+                        publisher.unpublish(room).await;
+                    }
+                }
+                log::info!("room_service_commands: Audio track unpublished");
+            }
+            RoomServiceCommand::MuteAudioTrack => {
+                if let Some(publisher) = audio_publisher.as_ref() {
+                    publisher.mute();
+                    log::info!("room_service_commands: Audio track muted");
+                } else {
+                    log::warn!("room_service_commands: No audio track to mute");
+                }
+            }
+            RoomServiceCommand::UnmuteAudioTrack => {
+                if let Some(publisher) = audio_publisher.as_ref() {
+                    publisher.unmute();
+                    log::info!("room_service_commands: Audio track unmuted");
+                } else {
+                    log::warn!("room_service_commands: No audio track to unmute");
                 }
             }
         }

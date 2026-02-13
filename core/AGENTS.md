@@ -62,3 +62,5 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
 - At the end of each plan, give me a list of unresolved questions to answer, if any.
 
+## New folders
+- When creating new folders don't add a `mod.rs` file.

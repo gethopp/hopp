@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
 
+mod audio_capture;
 mod events;
 mod livekit_utils;
 mod local_drawing;
@@ -50,6 +51,12 @@ enum Commands {
         /// Type of local drawing test to run
         #[arg(value_enum)]
         test_type: LocalDrawingTest,
+    },
+    /// Test audio capture functionality
+    Audio {
+        /// Type of audio test to run
+        #[arg(value_enum)]
+        test_type: AudioTest,
     },
 }
 
@@ -113,6 +120,18 @@ enum ScreenshareTest {
     AvailableContent,
     /// Screen share every available monitor for 10 seconds each
     EveryMonitor,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum AudioTest {
+    /// List available audio devices
+    ListDevices,
+    /// Capture from all devices (15s each)
+    CaptureAll,
+    /// Test mute/unmute cycle
+    MuteUnmute,
+    /// Capture for 30 seconds from default device
+    Capture30s,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -258,6 +277,27 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Drawing test finished.");
+        }
+        Commands::Audio { test_type } => {
+            match test_type {
+                AudioTest::ListDevices => {
+                    println!("Running audio list devices test...");
+                    audio_capture::test_list_devices()?;
+                }
+                AudioTest::CaptureAll => {
+                    println!("Running capture all devices test...");
+                    audio_capture::test_capture_all_devices(15)?;
+                }
+                AudioTest::MuteUnmute => {
+                    println!("Running mute/unmute test...");
+                    audio_capture::test_mute_unmute()?;
+                }
+                AudioTest::Capture30s => {
+                    println!("Running 30s capture test...");
+                    audio_capture::test_capture_30s()?;
+                }
+            }
+            println!("Audio test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {
