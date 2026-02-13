@@ -74,3 +74,5 @@ iced = { version = "0.14.0", features = ["canvas", "image", "svg"] }
 iced_core = "0.14.0"
 cpal = "0.17"
 rubato = "0.16"
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model-ll"] }
+ndarray = "0.15"

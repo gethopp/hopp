@@ -1,11 +1,16 @@
+use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
 use livekit::options::TrackPublishOptions;
 use livekit::track::{LocalAudioTrack, LocalTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
+use ndarray::Array2;
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+
+struct SendDfTract(DfTract);
+unsafe impl Send for SendDfTract {}
 
 const LIVEKIT_SAMPLE_RATE: u32 = 48000;
 const AUDIO_NUM_CHANNELS: u32 = 1;
@@ -105,12 +110,39 @@ impl AudioPublisher {
     }
 }
 
+fn apply_noise_filter(df: &mut DfTract, chunk: &mut [i16], samples_per_10ms: usize) {
+    let floats: Vec<f32> = chunk.iter().map(|&s| s as f32 / 32768.0).collect();
+    let noisy = Array2::from_shape_vec((1, samples_per_10ms), floats).expect("shape mismatch");
+    let mut enhanced = Array2::zeros((1, samples_per_10ms));
+    if let Err(e) = df.process(noisy.view(), enhanced.view_mut()) {
+        log::warn!("DeepFilterNet processing failed: {e}");
+    } else {
+        for (i, sample) in chunk.iter_mut().enumerate() {
+            *sample = (enhanced[[0, i]] * 32768.0).clamp(-32768.0, 32767.0) as i16;
+        }
+    }
+}
+
 async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     resampler: Option<FastFixedIn<f64>>,
 ) {
     let samples_per_10ms = (LIVEKIT_SAMPLE_RATE / 100) as usize;
+
+    // Initialize DeepFilterNet on a blocking thread so audio processing starts immediately
+    let (df_tx, df_rx) = oneshot::channel::<SendDfTract>();
+    tokio::task::spawn_blocking(move || {
+        let params = DfParams::default();
+        let runtime_params = RuntimeParams::default_with_ch(1);
+        let df = SendDfTract(
+            DfTract::new(params, &runtime_params).expect("Failed to initialize DeepFilterNet"),
+        );
+        log::info!("DeepFilterNet model loaded");
+        let _ = df_tx.send(df);
+    });
+    let mut df: Option<SendDfTract> = None;
+    let mut df_rx = Some(df_rx);
 
     log::info!(
         "Starting audio processing ({}Hz, 1 channel, {} samples per 10ms)",
@@ -126,6 +158,17 @@ async fn process_audio_samples(
             let mut livekit_buf: Vec<i16> = Vec::new();
 
             while let Some(audio_data) = rx.recv().await {
+                // Check if DeepFilterNet finished initializing
+                if df.is_none() {
+                    if let Some(rx) = &mut df_rx {
+                        if let Ok(model) = rx.try_recv() {
+                            df = Some(model);
+                            df_rx = None;
+                            log::info!("DeepFilterNet noise suppression active");
+                        }
+                    }
+                }
+
                 // Convert i16 samples to f64 for resampler
                 for &s in &audio_data {
                     input_buf.push(s as f64 / i16::MAX as f64);
@@ -133,24 +176,30 @@ async fn process_audio_samples(
 
                 let frames_needed = resampler.input_frames_next();
                 while input_buf.len() >= frames_needed {
-                    let chunk: Vec<f64> = input_buf.drain(..frames_needed).collect();
-                    let input_slice = [chunk.as_slice()];
+                    let input_slice = [&input_buf[..frames_needed]];
 
                     match resampler.process_into_buffer(&input_slice, &mut output_buf, None) {
                         Ok((_, out_len)) => {
-                            for &s in &output_buf[0][..out_len] {
-                                livekit_buf.push((s.clamp(-1.0, 1.0) * i16::MAX as f64) as i16);
-                            }
+                            livekit_buf.extend(
+                                output_buf[0][..out_len]
+                                    .iter()
+                                    .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f64) as i16),
+                            );
                         }
                         Err(e) => {
                             log::warn!("Resampling error: {e}");
                         }
                     }
+
+                    input_buf.drain(..frames_needed);
                 }
 
                 // Send 10ms chunks to LiveKit
                 while livekit_buf.len() >= samples_per_10ms {
-                    let chunk: Vec<i16> = livekit_buf.drain(..samples_per_10ms).collect();
+                    let mut chunk: Vec<i16> = livekit_buf.drain(..samples_per_10ms).collect();
+                    if let Some(ref mut model) = df {
+                        apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                    }
                     capture_frame(&audio_source, chunk, samples_per_10ms).await;
                 }
             }
@@ -159,10 +208,24 @@ async fn process_audio_samples(
             let mut buffer: Vec<i16> = Vec::new();
 
             while let Some(audio_data) = rx.recv().await {
+                // Check if DeepFilterNet finished initializing
+                if df.is_none() {
+                    if let Some(rx) = &mut df_rx {
+                        if let Ok(model) = rx.try_recv() {
+                            df = Some(model);
+                            df_rx = None;
+                            log::info!("DeepFilterNet noise suppression active");
+                        }
+                    }
+                }
+
                 buffer.extend_from_slice(&audio_data);
 
                 while buffer.len() >= samples_per_10ms {
-                    let chunk: Vec<i16> = buffer.drain(..samples_per_10ms).collect();
+                    let mut chunk: Vec<i16> = buffer.drain(..samples_per_10ms).collect();
+                    if let Some(ref mut model) = df {
+                        apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
+                    }
                     capture_frame(&audio_source, chunk, samples_per_10ms).await;
                 }
             }
