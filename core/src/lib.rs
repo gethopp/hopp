@@ -453,6 +453,17 @@ impl<'a> Application<'a> {
         Ok(())
     }
 
+    fn stop_camera(&mut self) {
+        log::info!("stop_camera");
+        {
+            let mut capturer = self.camera_capturer.lock().unwrap();
+            capturer.stop_capture();
+        }
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.unpublish_camera_track();
+        }
+    }
+
     fn stop_screenshare(&mut self) {
         log::info!("stop_screenshare");
         let screen_capturer = self.screen_capturer.lock();
@@ -847,6 +858,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
+                self.stop_camera();
                 if let Some(room_service) = self.room_service.as_mut() {
                     room_service.destroy_room();
                 }
@@ -1251,13 +1263,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
-                {
-                    let mut capturer = self.camera_capturer.lock().unwrap();
-                    capturer.stop_capture();
-                }
-                if let Some(room_service) = self.room_service.as_ref() {
-                    room_service.unpublish_camera_track();
-                }
+                self.stop_camera();
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
