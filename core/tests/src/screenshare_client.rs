@@ -268,3 +268,44 @@ pub fn test_every_monitor() -> io::Result<()> {
     println!("✓ Success: All monitors tested.");
     Ok(())
 }
+
+/// Test call restart cycle: start call, wait 5s, end call, start another call
+pub fn test_call_restart_cycle() -> io::Result<()> {
+    println!("Testing call restart cycle...");
+    let (sender, event_socket) = connect_socket()?;
+    println!("Connected to socket.");
+
+    let livekit_server_url =
+        env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
+
+    // First call
+    println!("Starting first call...");
+    call_start(&sender, &event_socket)?;
+    println!("First call started.");
+
+    println!("Waiting 5 seconds...");
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    println!("Ending first call...");
+    call_end(&sender)?;
+    println!("First call ended.");
+
+    // Small delay before starting second call
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Second call
+    println!("Starting second call...");
+    call_start(&sender, &event_socket)?;
+    println!("Second call started.");
+
+    println!("Waiting 5 seconds...");
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    println!("Ending second call...");
+    call_end(&sender)?;
+    println!("Second call ended.");
+
+    println!("✓ Success: Call restart cycle completed.");
+    Ok(())
+}

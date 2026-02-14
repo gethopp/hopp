@@ -123,6 +123,8 @@ enum ScreenshareTest {
     AvailableContent,
     /// Screen share every available monitor for 10 seconds each
     EveryMonitor,
+    /// Start call, wait 5s, end call, start another call
+    CallRestartCycle,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -256,6 +258,10 @@ async fn main() -> io::Result<()> {
                 ScreenshareTest::EveryMonitor => {
                     println!("Running every monitor screenshare test...");
                     screenshare_client::test_every_monitor()?;
+                }
+                ScreenshareTest::CallRestartCycle => {
+                    println!("Running call restart cycle test...");
+                    screenshare_client::test_call_restart_cycle()?;
                 }
             }
             println!("Screenshare test finished.");
