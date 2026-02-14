@@ -1,5 +1,7 @@
 pub mod audio {
     pub mod capturer;
+    pub mod mixer;
+    pub mod player;
     pub mod stream;
 }
 
@@ -193,6 +195,8 @@ pub struct Application<'a> {
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
+    audio_mixer: audio::mixer::Mixer,
+    audio_player: audio::player::Player,
 }
 
 // window: winit window
@@ -202,6 +206,8 @@ pub struct Application<'a> {
 pub enum ApplicationError {
     #[error("Failed to create room service: {0}")]
     RoomServiceError(#[from] std::io::Error),
+    #[error("Failed to create audio player: {0}")]
+    AudioPlayerError(String),
 }
 
 #[derive(Debug)]
@@ -263,6 +269,10 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
+        let audio_mixer = audio::mixer::Mixer::new(48000);
+        let audio_player = audio::player::Player::new(audio_mixer.clone())
+            .map_err(ApplicationError::AudioPlayerError)?;
+
         Ok(Self {
             remote_control: None,
             textures_path: input.textures_path,
@@ -282,6 +292,8 @@ impl<'a> Application<'a> {
             },
             window_manager: None,
             audio_capturer: audio::capturer::Capturer::new(),
+            audio_mixer,
+            audio_player,
         })
     }
 
