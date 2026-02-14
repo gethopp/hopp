@@ -40,6 +40,7 @@ core-graphics = { version = "0.25.0", features = ["highsierra"] }
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.7"
 objc2-app-kit = "0.3.1"
+objc2-foundation = "0.3.1"
 objc2 = "0.6.1"
 nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-avfoundation"] }
 
@@ -74,7 +75,7 @@ fontdb = "0.23.0"
 arboard = "3.6.1"
 iced_winit = "0.14.0"
 iced_wgpu = "0.14.0"
-iced = { version = "0.14.0", features = ["canvas", "image", "svg"] }
+iced = { version = "0.14.0", features = ["canvas", "image", "svg", "wgpu"] }
 iced_core = "0.14.0"
 cpal = "0.17"
 rubato = "0.16"

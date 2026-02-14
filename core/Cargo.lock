@@ -2550,6 +2550,7 @@ dependencies = [
  "nokhwa",
  "objc2 0.6.2",
  "objc2-app-kit 0.3.1",
+ "objc2-foundation 0.3.1",
  "pollster",
  "raw-window-handle 0.6.2",
  "resvg",

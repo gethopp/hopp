@@ -169,6 +169,8 @@ pub enum Message {
     StartCameraResult(Result<(), String>),
     StopCamera,
     CameraFailed(String),
+    OpenCamera,
+    OpenScreensharing,
 }
 
 impl Message {

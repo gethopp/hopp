@@ -30,6 +30,8 @@ pub mod capture {
 
 pub mod graphics {
     pub mod graphics_context;
+    pub mod yuv_buffer;
+    pub mod yuv_renderer;
 
     #[cfg(target_os = "windows")]
     pub mod direct_composition;
@@ -41,10 +43,15 @@ pub mod utils {
     pub mod svg_renderer;
 }
 
+pub(crate) mod camera_window;
+pub(crate) mod components;
 pub(crate) mod overlay_window;
+pub(crate) mod screensharing_window;
 pub(crate) mod window_manager;
+pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
+use camera_window::CameraWindow;
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
 use image::GenericImageView;
@@ -54,6 +61,7 @@ use input::mouse::CursorController;
 use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
+use screensharing_window::ScreensharingWindow;
 use socket_lib::{
     AvailableContentMessage, CallStartMessage, CameraStartMessage, CaptureContent, Message,
     ScreenShareMessage, SentryMetadata, SocketSender,
@@ -206,6 +214,8 @@ pub struct Application<'a> {
     audio_player: audio::player::Player,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
+    camera_window: Option<CameraWindow>,
+    screensharing_window: Option<ScreensharingWindow>,
 }
 
 // window: winit window
@@ -310,6 +320,8 @@ impl<'a> Application<'a> {
             _camera_capturer_events: Some(std::thread::spawn(move || {
                 poll_camera_stream(camera_capturer_clone)
             })),
+            camera_window: None,
+            screensharing_window: None,
         })
     }
 
@@ -1228,6 +1240,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     room_service.unpublish_camera_track();
                 }
             }
+            UserEvent::OpenCamera => {
+                log::info!("user_event: OpenCamera");
+                match CameraWindow::new(event_loop) {
+                    Ok(cam) => self.camera_window = Some(cam),
+                    Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                }
+            }
+            UserEvent::OpenScreensharing => {
+                log::info!("user_event: OpenScreensharing");
+                match ScreensharingWindow::new(event_loop) {
+                    Ok(win) => self.screensharing_window = Some(win),
+                    Err(e) => log::error!("Failed to open screensharing window: {e:?}"),
+                }
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1340,6 +1366,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        // Route to camera window if it matches
+        if let Some(camera) = &mut self.camera_window {
+            if camera.window_id() == window_id {
+                camera.handle_window_event(event);
+                return;
+            }
+        }
+
+        // Route to screensharing window if it matches
+        if let Some(ss) = &mut self.screensharing_window {
+            if ss.window_id() == window_id {
+                ss.handle_window_event(event);
+                return;
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -1597,6 +1639,8 @@ pub enum UserEvent {
     ListCameras,
     StartCamera(CameraStartMessage),
     StopCamera,
+    OpenCamera,
+    OpenScreensharing,
 }
 
 pub struct RenderEventLoop {
@@ -1682,6 +1726,8 @@ impl RenderEventLoop {
                     Message::ListCameras => UserEvent::ListCameras,
                     Message::StartCamera(msg) => UserEvent::StartCamera(msg),
                     Message::StopCamera => UserEvent::StopCamera,
+                    Message::OpenCamera => UserEvent::OpenCamera,
+                    Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

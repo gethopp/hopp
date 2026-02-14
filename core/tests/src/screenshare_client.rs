@@ -80,6 +80,16 @@ pub fn request_screenshare(
     }
 }
 
+/// Sends a request to open the camera window.
+pub fn open_camera(sender: &SocketSender) -> io::Result<()> {
+    sender.send(Message::OpenCamera)
+}
+
+/// Sends a request to open the screensharing window.
+pub fn open_screensharing(sender: &SocketSender) -> io::Result<()> {
+    sender.send(Message::OpenScreensharing)
+}
+
 /// Sends a request to stop screen sharing.
 pub fn stop_screenshare(sender: &SocketSender) -> io::Result<()> {
     let message = Message::StopScreenshare;
