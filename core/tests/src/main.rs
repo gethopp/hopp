@@ -93,6 +93,9 @@ enum Commands {
         /// Optional mic device ID to use
         #[arg(long)]
         mic_id: Option<String>,
+        /// Optional participant display name
+        #[arg(long, default_value = "Test Camera")]
+        name: String,
     },
 }
 
@@ -400,9 +403,13 @@ async fn main() -> io::Result<()> {
         Commands::Call {
             camera_name,
             mic_id,
+            name,
         } => {
-            println!("Joining call with camera and mic (Ctrl-C to stop)...");
-            camera::test_call(camera_name.as_deref(), mic_id.as_deref())?;
+            println!(
+                "Joining call as '{}' with camera and mic (Ctrl-C to stop)...",
+                name
+            );
+            camera::test_call(camera_name.as_deref(), mic_id.as_deref(), &name)?;
             println!("Call test finished.");
         }
         Commands::LocalDrawing { test_type } => {

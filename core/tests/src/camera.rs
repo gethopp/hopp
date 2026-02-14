@@ -6,16 +6,16 @@ use std::env;
 use std::io;
 use std::time::Duration;
 
-fn setup_camera(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
+fn setup_camera(sender: &SocketSender, event_socket: &EventSocket, name: &str) -> io::Result<()> {
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     sender.send(Message::LivekitServerUrl(livekit_server_url))?;
-    call_start_with_name(sender, event_socket, "Test Camera")
+    call_start_with_name(sender, event_socket, name)
 }
 
 pub fn test_list_cameras() -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
-    setup_camera(&sender, &event_socket)?;
+    setup_camera(&sender, &event_socket, "Test Camera")?;
 
     sender.send(Message::ListCameras)?;
     let response = event_socket
@@ -41,7 +41,7 @@ pub fn test_list_cameras() -> io::Result<()> {
 
 pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
-    setup_camera(&sender, &event_socket)?;
+    setup_camera(&sender, &event_socket, "Test Camera")?;
 
     let device_name = if let Some(name) = camera_name {
         println!("Using explicitly provided camera: {}", name);
@@ -174,11 +174,11 @@ pub async fn test_camera_track_subscribe() -> io::Result<()> {
 }
 
 /// Joins a call with camera and mic, stays until Ctrl-C.
-pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>) -> io::Result<()> {
+pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>, name: &str) -> io::Result<()> {
     println!("\n=== TEST: Call with Camera + Mic ===");
 
     let (sender, event_socket) = connect_socket()?;
-    setup_camera(&sender, &event_socket)?;
+    setup_camera(&sender, &event_socket, name)?;
 
     // Start camera
     let device_name = if let Some(name) = camera_name {
