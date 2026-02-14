@@ -1504,8 +1504,11 @@ async fn handle_room_events(
                         participant_identity
                     );
 
-                    let mut audio_stream =
-                        NativeAudioStream::new(audio_track.rtc_track(), 48000, 1);
+                    let mut audio_stream = NativeAudioStream::new(
+                        audio_track.rtc_track(),
+                        crate::livekit::audio::LIVEKIT_SAMPLE_RATE as i32,
+                        crate::livekit::audio::AUDIO_NUM_CHANNELS as i32,
+                    );
 
                     let stream_key = participant_identity.clone();
                     let mixer_clone = mixer.clone();

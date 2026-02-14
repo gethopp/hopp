@@ -269,7 +269,7 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_mixer = audio::mixer::Mixer::new(48000);
+        let audio_mixer = audio::mixer::Mixer::new(livekit::audio::LIVEKIT_SAMPLE_RATE);
         let audio_player = audio::player::Player::new(audio_mixer.clone())
             .map_err(ApplicationError::AudioPlayerError)?;
 

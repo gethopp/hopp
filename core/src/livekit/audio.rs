@@ -17,8 +17,8 @@ unsafe impl Send for SendDfTract {}
 
 pub(crate) type SharedDf = Arc<std::sync::Mutex<Option<SendDfTract>>>;
 
-const LIVEKIT_SAMPLE_RATE: u32 = 48000;
-const AUDIO_NUM_CHANNELS: u32 = 1;
+pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
+pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
 const AUDIO_QUEUE_SIZE: u32 = 100;
 
