@@ -1242,9 +1242,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
-                match CameraWindow::new(event_loop) {
-                    Ok(cam) => self.camera_window = Some(cam),
-                    Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                if self.camera_window.is_some() {
+                    log::info!("user_event: Camera window already exists, skipping");
+                    return;
+                }
+                if let Some(room_service) = self.room_service.as_ref() {
+                    let participants = room_service.participants();
+                    match CameraWindow::new(event_loop, participants) {
+                        Ok(cam) => self.camera_window = Some(cam),
+                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                    }
+                } else {
+                    log::warn!("user_event: room service is none, cannot open camera window");
                 }
             }
             UserEvent::OpenScreensharing => {

@@ -65,13 +65,15 @@ impl VideoBuffer {
     }
 }
 
-/// Triple-buffered video frame manager using ring buffer logic.
-/// Allows lock-free coordination between writer (LiveKit frame receiver) and reader (renderer).
+/// Double-buffered video frame manager.
+///
+/// Writer writes to `buffers[write_index]`, then swaps `write_index`.
+/// Reader reads from `buffers[1 - write_index]` (the last completed frame).
+/// No contention: writer and reader always access different slots.
 #[derive(Debug)]
 pub struct VideoBufferManager {
-    buffers: [Mutex<VideoBuffer>; 3],
+    buffers: [Mutex<VideoBuffer>; 2],
     write_index: AtomicUsize,
-    read_index: AtomicUsize,
 }
 
 impl VideoBufferManager {
@@ -80,30 +82,26 @@ impl VideoBufferManager {
             buffers: [
                 Mutex::new(VideoBuffer::default()),
                 Mutex::new(VideoBuffer::default()),
-                Mutex::new(VideoBuffer::default()),
             ],
             write_index: AtomicUsize::new(0),
-            read_index: AtomicUsize::new(0),
         }
     }
 
-    /// Returns the buffer to write into (next slot after write_index, avoiding read_index if possible)
+    /// Returns the buffer to write into (the current write slot).
     pub fn write_buffer(&self) -> &Mutex<VideoBuffer> {
-        let write_idx = self.write_index.load(Ordering::Acquire);
-        &self.buffers[write_idx]
+        let idx = self.write_index.load(Ordering::Acquire);
+        &self.buffers[idx]
     }
 
-    /// Advances the write index to the next buffer slot
+    /// Swaps the write index so the just-written buffer becomes the read buffer.
     pub fn advance_write(&self) {
         let current = self.write_index.load(Ordering::Acquire);
-        let next = (current + 1) % 3;
-        self.write_index.store(next, Ordering::Release);
+        self.write_index.store(1 - current, Ordering::Release);
     }
 
-    /// Returns the latest available frame by swapping read_index to write_index
+    /// Returns the latest completed frame (the slot the writer is NOT writing to).
     pub fn latest_frame(&self) -> &Mutex<VideoBuffer> {
         let write_idx = self.write_index.load(Ordering::Acquire);
-        self.read_index.store(write_idx, Ordering::Release);
-        &self.buffers[write_idx]
+        &self.buffers[1 - write_idx]
     }
 }

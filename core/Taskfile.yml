@@ -33,6 +33,12 @@ tasks:
       - |
         cargo build --target {{.DEFAULT_TARGET}}
 
+  run_clone:
+    desc: Run the clone process.
+    cmds:
+      - |
+        ./target/debug/hopp_core --socket-path "/var/folders/9p/djx82snj5s39rxr_sl2htb4w0000gn/T/core-socket-clone" --textures-path $(pwd)/resources
+
   release:
     desc: Builds release core process, it takes two argument vars, OS (mac | win) and AARCH (arm64 | x64)
     vars:

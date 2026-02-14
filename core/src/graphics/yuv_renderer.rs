@@ -2,11 +2,11 @@
 //!
 //! Implements `iced::widget::shader::Program` and the associated `Primitive`/`Pipeline`
 //! traits to render YUV I420 frames via a custom WGSL shader. Each participant tile
-//! uses a `YuvVideoProgram` that reads from a shared `YuvBuffer` and renders through
+//! uses a `YuvVideoProgram` that reads from a `VideoBufferManager` and renders through
 //! the GPU with center-crop aspect-ratio correction.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use iced::mouse;
 use iced::widget::shader;
@@ -14,7 +14,7 @@ use iced::Rectangle;
 use iced_wgpu::primitive;
 use wgpu;
 
-use super::yuv_buffer::YuvBuffer;
+use crate::livekit::video::VideoBufferManager;
 
 // ── Params uniform matching the WGSL struct ─────────────────────────────────
 
@@ -85,6 +85,7 @@ impl YuvPipeline {
         width: u32,
         height: u32,
     ) -> &mut ParticipantGpuState {
+        log::info!("ensure_textures: width {width} height {height}");
         let needs_create = match self.participants.get(&participant_id) {
             Some(state) => state.dims != (width, height),
             None => true,
@@ -197,31 +198,43 @@ impl YuvPipeline {
     }
 
     /// Upload YUV plane data to GPU textures for the given participant.
+    /// Accepts raw slices and dimensions directly to avoid intermediate copies.
     fn upload_yuv(
         &mut self,
         participant_id: u64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        buf: &YuvBuffer,
+        width: u32,
+        height: u32,
+        stride_y: u32,
+        stride_u: u32,
+        stride_v: u32,
+        y_data: &[u8],
+        u_data: &[u8],
+        v_data: &[u8],
         tile_width: u32,
         tile_height: u32,
         corner_radius: f32,
     ) {
-        let state = self.ensure_textures(participant_id, device, buf.width, buf.height);
+        if width == 0 || height == 0 {
+            return;
+        }
 
-        let y_tex_w = align_to(buf.width, 256);
-        let uv_tex_w = align_to(buf.width / 2, 256);
+        let state = self.ensure_textures(participant_id, device, width, height);
+
+        let y_tex_w = align_to(width, 256);
+        let uv_tex_w = align_to(width / 2, 256);
 
         // Upload Y plane (pad rows to aligned width)
         {
-            let mut padded = vec![0u8; (y_tex_w * buf.height) as usize];
-            for row in 0..buf.height {
-                let src_start = (row * buf.stride_y) as usize;
-                let src_end = src_start + buf.width as usize;
+            let mut padded = vec![0u8; (y_tex_w * height) as usize];
+            for row in 0..height {
+                let src_start = (row * stride_y) as usize;
+                let src_end = src_start + width as usize;
                 let dst_start = (row * y_tex_w) as usize;
-                let dst_end = dst_start + buf.width as usize;
-                if src_end <= buf.y.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&buf.y[src_start..src_end]);
+                let dst_end = dst_start + width as usize;
+                if src_end <= y_data.len() {
+                    padded[dst_start..dst_end].copy_from_slice(&y_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -235,11 +248,11 @@ impl YuvPipeline {
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(y_tex_w),
-                    rows_per_image: Some(buf.height),
+                    rows_per_image: Some(height),
                 },
                 wgpu::Extent3d {
                     width: y_tex_w,
-                    height: buf.height,
+                    height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -247,16 +260,16 @@ impl YuvPipeline {
 
         // Upload U plane
         {
-            let uv_h = buf.height / 2;
-            let uv_w = buf.width / 2;
+            let uv_h = height / 2;
+            let uv_w = width / 2;
             let mut padded = vec![128u8; (uv_tex_w * uv_h) as usize];
             for row in 0..uv_h {
-                let src_start = (row * buf.stride_u) as usize;
+                let src_start = (row * stride_u) as usize;
                 let src_end = src_start + uv_w as usize;
                 let dst_start = (row * uv_tex_w) as usize;
                 let dst_end = dst_start + uv_w as usize;
-                if src_end <= buf.u.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&buf.u[src_start..src_end]);
+                if src_end <= u_data.len() {
+                    padded[dst_start..dst_end].copy_from_slice(&u_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -282,16 +295,16 @@ impl YuvPipeline {
 
         // Upload V plane
         {
-            let uv_h = buf.height / 2;
-            let uv_w = buf.width / 2;
+            let uv_h = height / 2;
+            let uv_w = width / 2;
             let mut padded = vec![128u8; (uv_tex_w * uv_h) as usize];
             for row in 0..uv_h {
-                let src_start = (row * buf.stride_v) as usize;
+                let src_start = (row * stride_v) as usize;
                 let src_end = src_start + uv_w as usize;
                 let dst_start = (row * uv_tex_w) as usize;
                 let dst_end = dst_start + uv_w as usize;
-                if src_end <= buf.v.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&buf.v[src_start..src_end]);
+                if src_end <= v_data.len() {
+                    padded[dst_start..dst_end].copy_from_slice(&v_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -316,14 +329,12 @@ impl YuvPipeline {
         }
 
         // Update params uniform
-        // Use integer ratio for tile aspect to avoid float in uniform
-        // Multiply by 1000 for precision
         let tile_aspect_num = (tile_width as f32 * 1000.0) as u32;
         let tile_aspect_den = (tile_height.max(1) as f32 * 1000.0) as u32;
 
         let params = Params {
-            src_w: buf.width,
-            src_h: buf.height,
+            src_w: width,
+            src_h: height,
             y_tex_w,
             uv_tex_w,
             tile_aspect_num,
@@ -468,7 +479,7 @@ impl primitive::Pipeline for YuvPipeline {
 #[derive(Debug)]
 pub struct YuvVideoPrimitive {
     participant_id: u64,
-    /// Snapshot of YUV data (cloned from the shared buffer)
+    /// Snapshot of YUV data (cloned from the video buffer)
     y_data: Vec<u8>,
     u_data: Vec<u8>,
     v_data: Vec<u8>,
@@ -480,7 +491,7 @@ pub struct YuvVideoPrimitive {
     tile_width: u32,
     tile_height: u32,
     corner_radius: f32,
-    dirty: bool,
+    has_data: bool,
 }
 
 impl primitive::Primitive for YuvVideoPrimitive {
@@ -494,28 +505,22 @@ impl primitive::Primitive for YuvVideoPrimitive {
         _bounds: &Rectangle,
         _viewport: &iced_wgpu::graphics::Viewport,
     ) {
-        if !self.dirty && pipeline.participants.contains_key(&self.participant_id) {
+        if !self.has_data && pipeline.participants.contains_key(&self.participant_id) {
             return;
         }
-
-        // Build a temporary YuvBuffer for the upload
-        let buf = YuvBuffer {
-            width: self.src_width,
-            height: self.src_height,
-            stride_y: self.stride_y,
-            stride_u: self.stride_u,
-            stride_v: self.stride_v,
-            y: self.y_data.clone(),
-            u: self.u_data.clone(),
-            v: self.v_data.clone(),
-            dirty: self.dirty,
-        };
 
         pipeline.upload_yuv(
             self.participant_id,
             device,
             queue,
-            &buf,
+            self.src_width,
+            self.src_height,
+            self.stride_y,
+            self.stride_u,
+            self.stride_v,
+            &self.y_data,
+            &self.u_data,
+            &self.v_data,
             self.tile_width,
             self.tile_height,
             self.corner_radius,
@@ -541,10 +546,10 @@ impl primitive::Primitive for YuvVideoPrimitive {
 /// An iced shader `Program` that renders a participant's YUV video frame.
 ///
 /// Each participant tile in the camera window uses its own `YuvVideoProgram`
-/// instance, which reads from the participant's shared `YuvBuffer`.
+/// instance, which reads from the participant's `VideoBufferManager`.
 pub struct YuvVideoProgram {
     pub participant_id: u64,
-    pub buffer: Arc<Mutex<YuvBuffer>>,
+    pub buffer: Arc<VideoBufferManager>,
     pub corner_radius: f32,
 }
 
@@ -566,7 +571,10 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
         _cursor: mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        let buf = self.buffer.lock().unwrap();
+        let frame_lock = self.buffer.latest_frame();
+        let buf = frame_lock.lock().unwrap();
+
+        let has_data = buf.width > 0 && buf.height > 0;
 
         YuvVideoPrimitive {
             participant_id: self.participant_id,
@@ -581,7 +589,7 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
             tile_width: bounds.width.max(1.0) as u32,
             tile_height: bounds.height.max(1.0) as u32,
             corner_radius: self.corner_radius,
-            dirty: buf.dirty,
+            has_data,
         }
     }
 }

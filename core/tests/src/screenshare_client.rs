@@ -10,11 +10,11 @@ use std::time::Duration;
 
 /// Creates and connects to the cursor socket.
 pub fn connect_socket() -> io::Result<(SocketSender, EventSocket)> {
-    let tmp_folder = std::env::temp_dir();
-    // Consider making the socket name configurable or discoverable if needed
-    let socket_path = format!("{}/core-socket", tmp_folder.display());
+    let socket_path = crate::SOCKET_PATH
+        .get()
+        .expect("SOCKET_PATH not initialized");
     println!("Connecting to socket: {socket_path}");
-    socket_lib::connect(&socket_path)
+    socket_lib::connect(socket_path)
 }
 
 /// Sends a request to get available screen content and returns the response.
@@ -32,7 +32,15 @@ pub fn get_available_content(
 
 /// Sends a CallStart message with a token and waits for the result.
 pub fn call_start(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
-    let token = livekit_utils::generate_token("Test Screenshare");
+    call_start_with_name(sender, event_socket, "Test Screenshare")
+}
+
+pub fn call_start_with_name(
+    sender: &SocketSender,
+    event_socket: &EventSocket,
+    name: &str,
+) -> io::Result<()> {
+    let token = livekit_utils::generate_token(name);
     sender.send(Message::CallStart(CallStartMessage { token }))?;
     match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Message::CallStartResult(Ok(()))) => Ok(()),

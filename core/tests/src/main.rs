@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
+use std::sync::OnceLock;
+
+pub static SOCKET_PATH: OnceLock<String> = OnceLock::new();
 
 mod audio_capture;
 mod camera;
@@ -16,6 +19,10 @@ mod screensharing;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Custom socket path (defaults to $TMPDIR/core-socket)
+    #[arg(long, global = true)]
+    socket_path: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -77,6 +84,15 @@ enum Commands {
         /// Type of screensharing window test to run
         #[arg(value_enum)]
         test_type: ScreensharingWindowTest,
+    },
+    /// Join a call with camera and mic, stay until Ctrl-C
+    Call {
+        /// Optional camera name to use
+        #[arg(long)]
+        camera_name: Option<String>,
+        /// Optional mic device ID to use
+        #[arg(long)]
+        mic_id: Option<String>,
     },
 }
 
@@ -189,6 +205,11 @@ enum DrawingTest {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    let socket_path = args
+        .socket_path
+        .unwrap_or_else(|| format!("{}/core-socket", std::env::temp_dir().display()));
+    SOCKET_PATH.set(socket_path).unwrap();
 
     // Handle different commands
     match args.command {
@@ -375,6 +396,14 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Screensharing window test finished.");
+        }
+        Commands::Call {
+            camera_name,
+            mic_id,
+        } => {
+            println!("Joining call with camera and mic (Ctrl-C to stop)...");
+            camera::test_call(camera_name.as_deref(), mic_id.as_deref())?;
+            println!("Call test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {

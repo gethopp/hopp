@@ -111,7 +111,7 @@ struct RoomServiceInner {
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
-    participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
+    participants: Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
@@ -165,7 +165,7 @@ impl RoomService {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
             camera_buffer_source: Arc::new(std::sync::Mutex::new(None)),
-            participants: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
             mixer,
         });
         let mut runtime_params = RuntimeParams::default_with_ch(1);
@@ -531,6 +531,11 @@ impl RoomService {
             .expect("get_camera_buffer_source: Buffer source not found (this shouldn't happen)")
     }
 
+    /// Returns a shared reference to the participants map.
+    pub fn participants(&self) -> Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>> {
+        self.inner.participants.clone()
+    }
+
     /// Unmutes the audio track.
     pub fn unmute_audio_track(&self) {
         log::info!("unmute_audio_track");
@@ -616,7 +621,7 @@ async fn room_service_commands(
 
                 // Clear participants when joining a new room
                 {
-                    let mut participants = inner.participants.lock().unwrap();
+                    let mut participants = inner.participants.write().unwrap();
                     participants.clear();
                 }
 
@@ -845,7 +850,7 @@ async fn room_service_commands(
 
                     // Check if already in HashMap
                     {
-                        let participants = inner.participants.lock().unwrap();
+                        let participants = inner.participants.read().unwrap();
                         if participants.contains_key(&sid) {
                             continue;
                         }
@@ -863,7 +868,7 @@ async fn room_service_commands(
 
                     // Insert into HashMap
                     {
-                        let mut participants = inner.participants.lock().unwrap();
+                        let mut participants = inner.participants.write().unwrap();
                         let new_participant =
                             RemoteParticipantInfo::new(name.clone(), muted, is_speaking);
                         log::info!(
@@ -1351,7 +1356,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
-    participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
+    participants: Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
 ) {
     while let Some(msg) = receiver.recv().await {
@@ -1475,7 +1480,7 @@ async fn handle_room_events(
 
                 // Check if already in HashMap
                 {
-                    let participants_guard = participants.lock().unwrap();
+                    let participants_guard = participants.read().unwrap();
                     if participants_guard.contains_key(&sid) {
                         continue;
                     }
@@ -1493,7 +1498,7 @@ async fn handle_room_events(
 
                 // Insert into HashMap
                 {
-                    let mut participants_guard = participants.lock().unwrap();
+                    let mut participants_guard = participants.write().unwrap();
                     participants_guard.insert(
                         sid.clone(),
                         RemoteParticipantInfo::new(name.clone(), muted, is_speaking),
@@ -1519,7 +1524,7 @@ async fn handle_room_events(
 
                 // Remove from HashMap
                 {
-                    let mut participants_guard = participants.lock().unwrap();
+                    let mut participants_guard = participants.write().unwrap();
                     participants_guard.remove(&sid);
                 }
 
@@ -1556,7 +1561,7 @@ async fn handle_room_events(
             }
             RoomEvent::ActiveSpeakersChanged { speakers } => {
                 log::info!("handle_room_events: Active speakers changed");
-                let mut participants_guard = participants.lock().unwrap();
+                let mut participants_guard = participants.write().unwrap();
 
                 // First, set all participants to not speaking
                 for info in participants_guard.values_mut() {
@@ -1584,7 +1589,7 @@ async fn handle_room_events(
                     let sid = participant.sid().as_str().to_string();
                     log::info!("handle_room_events: Audio track muted for {}", sid);
 
-                    let mut participants_guard = participants.lock().unwrap();
+                    let mut participants_guard = participants.write().unwrap();
                     if let Some(info) = participants_guard.get_mut(&sid) {
                         info.set_muted(true);
                     }
@@ -1602,7 +1607,7 @@ async fn handle_room_events(
                     let sid = participant.sid().as_str().to_string();
                     log::info!("handle_room_events: Audio track unmuted for {}", sid);
 
-                    let mut participants_guard = participants.lock().unwrap();
+                    let mut participants_guard = participants.write().unwrap();
                     if let Some(info) = participants_guard.get_mut(&sid) {
                         info.set_muted(false);
                     }
@@ -1613,7 +1618,9 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::TrackSubscribed {
-                track, participant, ..
+                track,
+                publication,
+                participant,
             } => {
                 log::info!(
                     "handle_room_events: Track subscribed from {}: {} ({:?})",
@@ -1656,17 +1663,32 @@ async fn handle_room_events(
                         });
                     }
                     livekit::track::RemoteTrack::Video(video_track) => {
+                        if publication.source() != TrackSource::Camera {
+                            log::info!(
+                                "handle_room_events: Ignoring non-camera video track: {} ({:?})",
+                                video_track.name(),
+                                publication.source()
+                            );
+                            continue;
+                        }
+
                         let participant_sid = participant.sid().as_str().to_string();
                         log::info!(
                             "handle_room_events: Setting up camera stream for participant: {}",
                             participant_sid
                         );
 
+                        if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
+                            log::error!(
+                                "handle_room_events: Failed to send OpenCamera event: {e:?}"
+                            );
+                        }
+
                         let manager = Arc::new(VideoBufferManager::new());
 
                         // Store manager in participant
                         {
-                            let mut participants_guard = participants.lock().unwrap();
+                            let mut participants_guard = participants.write().unwrap();
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.set_camera_buffers(manager.clone());
                             }
@@ -1716,7 +1738,9 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::TrackUnsubscribed {
-                track, participant, ..
+                track,
+                publication,
+                participant,
             } => {
                 log::info!(
                     "handle_room_events: Track unsubscribed from {}: {} ({:?})",
@@ -1725,15 +1749,15 @@ async fn handle_room_events(
                     track.kind()
                 );
 
-                if let livekit::track::RemoteTrack::Video(video_track) = track {
-                    if video_track.name() == CAMERA_TRACK_NAME {
+                if let livekit::track::RemoteTrack::Video(_) = track {
+                    if publication.source() == TrackSource::Camera {
                         let participant_sid = participant.sid().as_str().to_string();
                         log::info!(
                             "handle_room_events: Clearing camera buffers for participant: {}",
                             participant_sid
                         );
 
-                        let mut participants_guard = participants.lock().unwrap();
+                        let mut participants_guard = participants.write().unwrap();
                         if let Some(info) = participants_guard.get_mut(&participant_sid) {
                             info.clear_camera_buffers();
                         }
