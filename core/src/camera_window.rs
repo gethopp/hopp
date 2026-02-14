@@ -822,10 +822,7 @@ fn create_participant_grid<'a>(
     let participants_guard = participants.read().unwrap();
 
     // Sort participants by name for stable ordering, skip local participant without camera
-    let mut sorted: Vec<(&String, &ParticipantInfo)> = participants_guard
-        .iter()
-        .filter(|(sid, info)| *sid != "local" || info.camera_buffers().is_some())
-        .collect();
+    let mut sorted: Vec<(&String, &ParticipantInfo)> = participants_guard.iter().collect();
     sorted.sort_by(|a, b| a.1.name().cmp(b.1.name()));
 
     let participant_count = sorted.len();
@@ -894,11 +891,13 @@ fn create_participant_grid<'a>(
         for _ in 0..tiles_per_row {
             if let Some((sid, info)) = participants_iter.next() {
                 let id = sid_to_id(sid);
+                let camera_buffers = info.camera_buffers();
+                let buffers = camera_buffers.as_ref().as_ref().cloned();
                 row_tiles.push(participant_card(
                     id,
                     info.name(),
                     info.is_speaking(),
-                    info.camera_buffers(),
+                    buffers,
                     tile_size,
                     is_small_window,
                 ));

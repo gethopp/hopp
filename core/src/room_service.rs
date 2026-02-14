@@ -538,13 +538,14 @@ impl RoomService {
 
     /// Returns the local participant's camera VideoBufferManager, creating it if needed.
     pub fn local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
-        let mut participants = self.inner.participants.write().unwrap();
+        let participants = self.inner.participants.read().unwrap();
         log::info!(
             "local_camera_buffer_manager: participants keys: {:?}",
             participants.keys().collect::<Vec<_>>()
         );
-        let info = participants.get_mut("local")?;
-        info.camera_buffers()
+        let info = participants.get("local")?;
+        let buffers = info.camera_buffers();
+        buffers.as_ref().as_ref().cloned()
     }
 
     /// Unmutes the audio track.
@@ -666,7 +667,7 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, false, false),
+                        ParticipantInfo::new(user_name, false, false, true),
                     );
                 }
 
@@ -892,7 +893,7 @@ async fn room_service_commands(
                     {
                         let mut participants = inner.participants.write().unwrap();
                         let new_participant =
-                            ParticipantInfo::new(name.clone(), muted, is_speaking);
+                            ParticipantInfo::new(name.clone(), muted, is_speaking, false);
                         log::info!(
                             "handle_room_events: participant to be added {:?}",
                             new_participant
@@ -1523,7 +1524,7 @@ async fn handle_room_events(
                     let mut participants_guard = participants.write().unwrap();
                     participants_guard.insert(
                         sid.clone(),
-                        ParticipantInfo::new(name.clone(), muted, is_speaking),
+                        ParticipantInfo::new(name.clone(), muted, is_speaking, false),
                     );
                 }
 

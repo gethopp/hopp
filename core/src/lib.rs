@@ -1205,6 +1205,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .ok_or_else(|| "Room service not found".to_string())?;
 
                     let video_buffer_manager = room_service.local_camera_buffer_manager();
+                    log::info!(
+                        "start_camera: videao buffer manager {:?}",
+                        video_buffer_manager
+                    );
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(
@@ -1229,6 +1233,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 if let Err(ref e) = result {
                     log::error!("user_event: StartCamera failed: {e}");
+                }
+
+                // Open camera window if camera started successfully
+                if result.is_ok() && self.camera_window.is_none() {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        let participants = room_service.participants();
+                        match CameraWindow::new(event_loop, participants) {
+                            Ok(cam) => {
+                                log::info!("user_event: Camera window opened for local camera");
+                                self.camera_window = Some(cam);
+                            }
+                            Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                        }
+                    }
                 }
 
                 if let Err(e) = self.socket.send(Message::StartCameraResult(result)) {

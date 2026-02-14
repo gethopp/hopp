@@ -7,16 +7,21 @@ pub struct ParticipantInfo {
     name: String,
     muted: bool,
     is_speaking: bool,
-    camera_buffers: Option<Arc<VideoBufferManager>>,
+    camera_buffers: Arc<Option<Arc<VideoBufferManager>>>,
 }
 
 impl ParticipantInfo {
-    pub fn new(name: String, muted: bool, is_speaking: bool) -> Self {
+    pub fn new(name: String, muted: bool, is_speaking: bool, is_local: bool) -> Self {
+        let camera_buffers = if is_local {
+            Arc::new(Some(Arc::new(VideoBufferManager::new())))
+        } else {
+            Arc::new(None)
+        };
         Self {
             name,
             muted,
             is_speaking,
-            camera_buffers: None,
+            camera_buffers,
         }
     }
 
@@ -40,15 +45,15 @@ impl ParticipantInfo {
         self.is_speaking = is_speaking;
     }
 
-    pub fn camera_buffers(&self) -> Option<Arc<VideoBufferManager>> {
+    pub fn camera_buffers(&self) -> Arc<Option<Arc<VideoBufferManager>>> {
         self.camera_buffers.clone()
     }
 
     pub fn set_camera_buffers(&mut self, buffers: Arc<VideoBufferManager>) {
-        self.camera_buffers = Some(buffers);
+        self.camera_buffers = Arc::new(Some(buffers));
     }
 
     pub fn clear_camera_buffers(&mut self) {
-        self.camera_buffers = None;
+        self.camera_buffers = Arc::new(None);
     }
 }
