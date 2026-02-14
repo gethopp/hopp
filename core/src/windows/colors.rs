@@ -509,37 +509,25 @@ impl ColorToken {
     }
 }
 
-/// Convert an sRGB gamma-encoded component to linear RGB.
+/// Parses a hex color string to an iced [`Color`].
 ///
-/// Hex color values are specified in sRGB space, but iced_wgpu renders to an
-/// sRGB surface (`Bgra8UnormSrgb`) which applies gamma encoding on output.
-/// Without this conversion the sRGB values are gamma-encoded twice, making
-/// every colour appear significantly lighter than intended (e.g. Slate600
-/// `#45556c` would display as ~`#8E9CAE`).
-pub fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// Parses a hex color string (sRGB) to iced::Color (linear RGB).
+/// The surface format is non-sRGB (`Bgra8Unorm`) to match iced 0.14's default
+/// `GAMMA_CORRECTION = false` (`web-colors` enabled).  Hex values are already
+/// in sRGB space and the surface stores them as-is, so no conversion is needed.
 fn parse_hex_color(hex: &str) -> Color {
     let hex = hex.trim_start_matches('#');
 
     match hex.len() {
         6 => {
-            let r = srgb_to_linear(u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0);
-            let g = srgb_to_linear(u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0);
-            let b = srgb_to_linear(u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0);
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0;
             Color::from_rgb(r, g, b)
         }
         8 => {
-            let r = srgb_to_linear(u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0);
-            let g = srgb_to_linear(u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0);
-            let b = srgb_to_linear(u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0);
-            // Alpha is not gamma-encoded; it stays linear
+            let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
+            let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
+            let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0;
             let a = u8::from_str_radix(&hex[6..8], 16).unwrap_or(255) as f32 / 255.0;
             Color::from_rgba(r, g, b, a)
         }

@@ -11,9 +11,10 @@
 //! - Pill-shaped control buttons with solid/gradient backgrounds
 //! - Responsive participant grid with name labels and speaking indicators
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use iced::widget::{button, column, container, row, svg, text, Space};
+use iced::widget::{button, column, container, row, shader, svg, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
     Size as IcedSize,
@@ -35,6 +36,8 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use thiserror::Error;
 
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
+use crate::graphics::yuv_buffer::{self, YuvBuffer};
+use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
@@ -75,37 +78,77 @@ const ICON_PHONE_OFF: &[u8] = include_bytes!("../resources/icons/phone-off.svg")
 
 // ── Participant data ────────────────────────────────────────────────────────
 
+/// Video frame dimensions for synthetic test pattern.
+const TEST_FRAME_WIDTH: u32 = 640;
+const TEST_FRAME_HEIGHT: u32 = 480;
+
+/// Target frame rate for the synthetic test pattern feeder.
+const TEST_FRAME_RATE_MS: u64 = 33; // ~30fps
+
 struct Participant {
-    name: &'static str,
+    name: String,
     is_speaking: bool,
+    /// `None` means no video feed — show a default placeholder background.
+    yuv_buffer: Option<Arc<Mutex<YuvBuffer>>>,
+    /// Unique ID for GPU texture keying in the shader pipeline.
+    id: u64,
 }
 
-const PARTICIPANTS: &[Participant] = &[
-    Participant {
-        name: "Iason P.",
-        is_speaking: false,
-    },
-    Participant {
-        name: "Costa A.",
-        is_speaking: false,
-    },
-    Participant {
-        name: "Κωσταντινος Α.",
-        is_speaking: false,
-    },
-    Participant {
-        name: "Ιασων",
-        is_speaking: false,
-    },
-    Participant {
-        name: "陽翔 Haruto",
-        is_speaking: true,
-    },
-    Participant {
-        name: "عبد المنعم",
-        is_speaking: false,
-    },
-];
+/// Initial participant list for testing/demo purposes.
+fn create_demo_participants() -> Vec<Participant> {
+    let names = [
+        ("Iason P.", false),
+        ("Costa A.", false),
+        ("Κωσταντινος Α.", false),
+        ("Ιασων", false),
+        ("陽翔 Haruto", true),
+        ("عبد المنعم", false),
+    ];
+
+    names
+        .iter()
+        .enumerate()
+        .map(|(idx, (name, is_speaking))| {
+            // Last participant has no video buffer to test the fallback background
+            let yuv_buffer = if idx == names.len() - 1 {
+                None
+            } else {
+                Some(Arc::new(Mutex::new(YuvBuffer::new(
+                    TEST_FRAME_WIDTH,
+                    TEST_FRAME_HEIGHT,
+                ))))
+            };
+            Participant {
+                name: name.to_string(),
+                is_speaking: *is_speaking,
+                yuv_buffer,
+                id: idx as u64,
+            }
+        })
+        .collect()
+}
+
+/// Start a background thread that feeds synthetic YUV test frames to a buffer.
+///
+/// The thread generates animated SMPTE color bars at ~30fps, writing
+/// I420 frames into the shared `YuvBuffer`. Each participant gets a
+/// unique `frame_offset` so their patterns are visually distinct.
+fn start_test_frame_feeder(
+    buffer: Arc<Mutex<YuvBuffer>>,
+    frame_offset: u64,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut frame_num: u64 = frame_offset * 30; // offset so each participant looks different
+        loop {
+            {
+                let mut buf = buffer.lock().unwrap();
+                yuv_buffer::generate_test_frame(&mut buf, frame_num);
+            }
+            frame_num += 1;
+            std::thread::sleep(Duration::from_millis(TEST_FRAME_RATE_MS));
+        }
+    })
+}
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -133,16 +176,18 @@ pub enum CameraMessage {
 
 // ── Application state for the camera UI ────────────────────────────────────
 
-#[derive(Debug)]
 struct CameraState {
     // Viewport logical size for responsive layout
     viewport_size: IcedSize,
+    // Dynamic participant list with YUV buffers
+    participants: Vec<Participant>,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
             viewport_size: IcedSize::new(CAMERA_WINDOW_WIDTH as f32, CAMERA_WINDOW_HEIGHT as f32),
+            participants: create_demo_participants(),
         }
     }
 }
@@ -171,6 +216,8 @@ pub struct CameraWindow {
     modifiers: ModifiersState,
     state: CameraState,
     resized: bool,
+    /// Frame feeder thread handles (kept alive for the window's lifetime).
+    _frame_feeders: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl CameraWindow {
@@ -241,7 +288,12 @@ impl CameraWindow {
         })?;
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats[0];
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(caps.formats[0]);
 
         let physical_size = window.inner_size();
         let surface_config = wgpu::SurfaceConfiguration {
@@ -283,6 +335,17 @@ impl CameraWindow {
         let mut state = CameraState::default();
         state.viewport_size = IcedSize::new(logical.width as f32, logical.height as f32);
 
+        // Spawn frame feeder threads for each participant that has a YUV buffer
+        let frame_feeders: Vec<std::thread::JoinHandle<()>> = state
+            .participants
+            .iter()
+            .filter_map(|p| {
+                p.yuv_buffer
+                    .as_ref()
+                    .map(|buf| start_test_frame_feeder(Arc::clone(buf), p.id))
+            })
+            .collect();
+
         Ok(Self {
             window,
             surface,
@@ -298,6 +361,7 @@ impl CameraWindow {
             modifiers: ModifiersState::default(),
             state,
             resized: false,
+            _frame_feeders: frame_feeders,
         })
     }
 
@@ -445,7 +509,7 @@ impl CameraWindow {
         .align_y(Alignment::Center);
 
         // ── Participant grid ─────────────────────────────────────────────
-        let video_grid = create_participant_grid(state.viewport_size);
+        let video_grid = create_participant_grid(state.viewport_size, &state.participants);
 
         // ── Main layout ─────────────────────────────────────────────────
         let content = column![header, video_grid]
@@ -564,6 +628,9 @@ impl CameraWindow {
 
         self.window.pre_present_notify();
         output.present();
+
+        // Request continuous redraws for animated video frames
+        self.window.request_redraw();
     }
 }
 
@@ -687,11 +754,11 @@ fn truncate_name(name: &str) -> String {
 ///
 /// Uses gradient backgrounds with the Lime palette when speaking
 /// or the Slate palette when not, matching the iced-poc name_label style.
-fn name_label(
-    name: &'static str,
+fn name_label<'a>(
+    name: &str,
     is_small_window: bool,
     is_speaking: bool,
-) -> iced::Element<'static, CameraMessage, Theme, iced::Renderer> {
+) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let font_size = if is_small_window { 12 } else { 16 };
     let padding = if is_small_window {
         Padding::from([4, 10])
@@ -736,55 +803,60 @@ fn name_label(
     .into()
 }
 
+/// Tile corner radius for participant cards.
+const TILE_RADIUS: f32 = 8.0;
+
 /// Create a participant card tile.
 ///
-/// Matches the iced-poc participant_card:
-/// - Colored placeholder background (since we don't have real camera images yet)
+/// If the participant has a YUV buffer, renders GPU-accelerated video via the
+/// shader widget. Otherwise, falls back to a solid Slate900 placeholder.
 /// - Overlaid name label at bottom-left
 /// - Shadow on outer container
-/// - Clipped with rounded corners
-fn participant_card(
-    name: &'static str,
+/// - Clipped with rounded corners (8px radius)
+fn participant_card<'a>(
+    participant: &'a Participant,
     tile_size: f32,
     is_small_window: bool,
-    is_speaking: bool,
-    color_index: usize,
-) -> iced::Element<'static, CameraMessage, Theme, iced::Renderer> {
+) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     // Adjust padding based on window size
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
-    let tile_radius = 12.0;
+    let name = participant.name.clone();
+    let is_speaking = participant.is_speaking;
 
-    // Placeholder colors for participant tiles (varied Slate shades)
-    let tile_colors = [
-        ColorToken::Slate800,
-        ColorToken::Slate700,
-        ColorToken::Gray800,
-        ColorToken::Slate800,
-        ColorToken::Gray700,
-        ColorToken::Slate700,
-    ];
-    let bg_color = tile_colors[color_index % tile_colors.len()].to_color();
-
-    // Background layer (placeholder for camera feed)
-    let bg_container = container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(Background::Color(bg_color)),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: tile_radius.into(),
-            },
-            shadow: ShadowToken::Md.to_shadow(),
-            ..Default::default()
-        });
+    // Background layer: GPU video if buffer exists, Slate900 fallback otherwise
+    let bg_element: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
+        if let Some(ref buffer) = participant.yuv_buffer {
+            let video_program = YuvVideoProgram {
+                participant_id: participant.id,
+                buffer: Arc::clone(buffer),
+                corner_radius: TILE_RADIUS,
+            };
+            let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
+                .width(Length::Fill)
+                .height(Length::Fill);
+            video_bg.into()
+        } else {
+            // Default placeholder background when no video buffer
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(ColorToken::Slate900.to_color())),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: TILE_RADIUS.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        };
 
     // Overlay with name label at bottom-left
     let overlay = container(
         column![
             Space::new().height(Length::Fill),
-            name_label(name, is_small_window, is_speaking),
+            name_label(&name, is_small_window, is_speaking),
         ]
         .width(Length::Fill),
     )
@@ -792,32 +864,35 @@ fn participant_card(
     .height(Length::Fill)
     .padding(overlay_padding);
 
-    // Stack background and overlay — enforce 1:1 aspect ratio on the stack itself
-    let stacked = container(iced::widget::stack![bg_container, overlay])
-        .width(Length::Fixed(tile_size))
-        .height(Length::Fixed(tile_size));
-
-    // Outer container with shadow
-    container(stacked)
+    // Stack background and overlay, clip to rounded rect so the shader
+    // output is masked to the tile radius.
+    let stacked = container(iced::widget::stack![bg_element, overlay])
         .width(Length::Fixed(tile_size))
         .height(Length::Fixed(tile_size))
         .style(move |_theme: &Theme| container::Style {
             background: None,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: TILE_RADIUS.into(),
+            },
             shadow: ShadowToken::Xl.to_shadow(),
             ..Default::default()
         })
-        .clip(true)
-        .into()
+        .clip(true);
+
+    stacked.into()
 }
 
 /// Create the responsive participant grid.
 ///
 /// Calculates optimal grid layout based on available size, maximizing tile size
 /// while ensuring all participants are visible. Matches the iced-poc algorithm.
-fn create_participant_grid(
+fn create_participant_grid<'a>(
     available_size: IcedSize,
-) -> iced::Element<'static, CameraMessage, Theme, iced::Renderer> {
-    let participant_count = PARTICIPANTS.len();
+    participants: &'a [Participant],
+) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    let participant_count = participants.len();
     if participant_count == 0 {
         return Space::new().into();
     }
@@ -873,33 +948,27 @@ fn create_participant_grid(
     let v_padding = ((grid_area_height - grid_content_height) / 2.0).max(MIN_GRID_PADDING);
 
     // Create rows of participants
-    let mut rows: Vec<iced::Element<'static, CameraMessage, Theme, iced::Renderer>> = Vec::new();
-    let mut participants_iter = PARTICIPANTS.iter().enumerate();
+    let mut rows_vec: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> = Vec::new();
+    let mut participants_iter = participants.iter();
 
     for _ in 0..num_rows {
-        let mut row_tiles: Vec<iced::Element<'static, CameraMessage, Theme, iced::Renderer>> =
+        let mut row_tiles: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
             Vec::new();
 
         for _ in 0..tiles_per_row {
-            if let Some((idx, participant)) = participants_iter.next() {
-                row_tiles.push(participant_card(
-                    participant.name,
-                    tile_size,
-                    is_small_window,
-                    participant.is_speaking,
-                    idx,
-                ));
+            if let Some(participant) = participants_iter.next() {
+                row_tiles.push(participant_card(participant, tile_size, is_small_window));
             }
         }
 
         if !row_tiles.is_empty() {
             let participant_row = row(row_tiles).spacing(TILE_SPACING);
-            rows.push(participant_row.into());
+            rows_vec.push(participant_row.into());
         }
     }
 
     // Create the grid column
-    let grid = column(rows)
+    let grid = column(rows_vec)
         .spacing(TILE_SPACING)
         .align_x(Alignment::Center);
 

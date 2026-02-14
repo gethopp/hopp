@@ -12,6 +12,8 @@ pub mod capture {
 
 pub mod graphics {
     pub mod graphics_context;
+    pub mod yuv_buffer;
+    pub mod yuv_renderer;
 
     #[cfg(target_os = "windows")]
     pub mod direct_composition;

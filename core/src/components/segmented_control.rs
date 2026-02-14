@@ -6,8 +6,8 @@
 
 use std::time::Instant;
 
-use iced::widget::{button, container, row, stack, svg, Space};
-use iced::{Background, Border, Color, Length, Shadow, Theme};
+use iced::widget::{button, container, row, stack, svg, text, tooltip, Space};
+use iced::{Background, Border, Color, Length, Padding, Shadow, Theme};
 
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
@@ -27,6 +27,8 @@ pub struct SegmentedButton {
     pub id: &'static str,
     /// SVG icon bytes (embedded at compile time).
     pub icon: &'static [u8],
+    /// Optional description shown as a tooltip on hover.
+    pub description: Option<&'static str>,
 }
 
 /// Tracks the sliding animation between tabs.
@@ -85,7 +87,7 @@ pub fn tick_animation(anim: &mut Option<SegmentedControlAnim>) {
 /// * `on_select`  – closure that maps a button id to a message.
 ///
 /// ## Design specs (approx):
-/// - Container: Slate800 bg, radius 30, height 26
+/// - Container: Gray600 bg, radius 30, height 26
 /// - Active indicator: Slate400 bg, white 20% border, radius 30
 /// - Inactive tabs: transparent bg
 /// - Active icon: white 100%, Inactive icon: Gray400
@@ -113,7 +115,7 @@ pub fn segmented_control<'a, Message: Clone + 'a>(
                 width: 1.0,
                 radius: 30.0.into(),
             },
-            shadow: ShadowToken::Xl.to_shadow(),
+            shadow: ShadowToken::Xs.to_shadow(),
             ..Default::default()
         });
 
@@ -131,7 +133,13 @@ pub fn segmented_control<'a, Message: Clone + 'a>(
     for (i, btn) in buttons.iter().enumerate() {
         let is_active = i == active_idx;
         let msg = on_select(btn.id);
-        tab_buttons.push(tab_button(btn.icon, is_active, is_animating, msg));
+        tab_buttons.push(tab_button(
+            btn.icon,
+            is_active,
+            is_animating,
+            msg,
+            btn.description,
+        ));
     }
 
     let buttons_layer = container(row(tab_buttons))
@@ -144,7 +152,7 @@ pub fn segmented_control<'a, Message: Clone + 'a>(
         .width(Length::Fixed(total_width))
         .height(Length::Fixed(TAB_HEIGHT))
         .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(ColorToken::Slate800.to_color())),
+            background: Some(Background::Color(ColorToken::Gray600.to_color())),
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
@@ -185,11 +193,15 @@ fn ease_out_cubic(t: f32) -> f32 {
 ///
 /// When `is_animating` is true, hover / press visual feedback is suppressed so
 /// the sliding indicator animation stays clean.
+///
+/// If `description` is `Some`, the button is wrapped in a tooltip that appears
+/// below the control on hover.
 fn tab_button<'a, Message: Clone + 'a>(
     icon_data: &'static [u8],
     is_active: bool,
     is_animating: bool,
     on_press: Message,
+    description: Option<&'static str>,
 ) -> iced::Element<'a, Message, Theme, iced::Renderer> {
     let icon_handle = svg::Handle::from_memory(icon_data);
     let icon_color = if is_active {
@@ -204,7 +216,7 @@ fn tab_button<'a, Message: Clone + 'a>(
             color: Some(icon_color),
         });
 
-    button(
+    let btn = button(
         container(icon)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -243,6 +255,32 @@ fn tab_button<'a, Message: Clone + 'a>(
             shadow: Shadow::default(),
             snap: false,
         }
-    })
-    .into()
+    });
+
+    match description {
+        Some(desc) => {
+            let tooltip_content = container(
+                text(desc)
+                    .size(12)
+                    .color(Color::WHITE),
+            )
+            .padding(Padding::from([4.0, 8.0]))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(ColorToken::Gray600.to_color())),
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                shadow: ShadowToken::Xs.to_shadow(),
+                ..Default::default()
+            });
+
+            tooltip(btn, tooltip_content, tooltip::Position::Bottom)
+                .gap(4)
+                .snap_within_viewport(true)
+                .into()
+        }
+        None => btn.into(),
+    }
 }
