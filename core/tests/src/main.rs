@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
 
 mod audio_capture;
+mod camera;
 mod events;
 mod livekit_utils;
 mod local_drawing;
@@ -60,6 +61,15 @@ enum Commands {
         /// Optional mic device ID to use for capture tests
         #[arg(long)]
         mic_id: Option<String>,
+    },
+    /// Test camera capture functionality
+    Camera {
+        /// Type of camera test to run
+        #[arg(value_enum)]
+        test_type: CameraTest,
+        /// Optional camera name to use
+        #[arg(long)]
+        camera_name: Option<String>,
     },
 }
 
@@ -137,6 +147,14 @@ enum AudioTest {
     MuteUnmute,
     /// Capture for 30 seconds from default device
     Capture30s,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum CameraTest {
+    /// List available cameras
+    ListDevices,
+    /// Share camera for 30 seconds
+    Share30s,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -307,6 +325,22 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Audio test finished.");
+        }
+        Commands::Camera {
+            test_type,
+            camera_name,
+        } => {
+            match test_type {
+                CameraTest::ListDevices => {
+                    println!("Running camera list devices test...");
+                    camera::test_list_cameras()?;
+                }
+                CameraTest::Share30s => {
+                    println!("Running camera 30s test...");
+                    camera::test_camera_30s(camera_name.as_deref())?;
+                }
+            }
+            println!("Camera test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {

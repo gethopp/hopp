@@ -130,6 +130,16 @@ pub struct AudioCaptureMessage {
     pub device_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CameraDevice {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CameraStartMessage {
+    pub device_name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
@@ -153,6 +163,12 @@ pub enum Message {
     StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
+    ListCameras,
+    CameraList(Vec<CameraDevice>),
+    StartCamera(CameraStartMessage),
+    StartCameraResult(Result<(), String>),
+    StopCamera,
+    CameraFailed(String),
 }
 
 impl Message {
@@ -164,6 +180,8 @@ impl Message {
                 | Message::CallStartResult(_)
                 | Message::AudioDeviceList(_)
                 | Message::StartAudioCaptureResult(_)
+                | Message::CameraList(_)
+                | Message::StartCameraResult(_)
         )
     }
 }

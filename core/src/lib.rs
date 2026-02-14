@@ -18,6 +18,11 @@ pub mod input {
     pub mod mouse;
 }
 
+pub mod camera {
+    pub mod capturer;
+    pub mod stream;
+}
+
 pub mod capture {
     pub mod capturer;
 }
@@ -38,6 +43,7 @@ pub mod utils {
 pub(crate) mod overlay_window;
 pub(crate) mod window_manager;
 
+use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
 use image::GenericImageView;
@@ -48,8 +54,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    AvailableContentMessage, CallStartMessage, CaptureContent, Message, ScreenShareMessage,
-    SentryMetadata, SocketSender,
+    AvailableContentMessage, CallStartMessage, CameraStartMessage, CaptureContent, Message,
+    ScreenShareMessage, SentryMetadata, SocketSender,
 };
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -197,6 +203,8 @@ pub struct Application<'a> {
     audio_capturer: audio::capturer::Capturer,
     audio_mixer: audio::mixer::Mixer,
     audio_player: audio::player::Player,
+    camera_capturer: Arc<Mutex<CameraCapturer>>,
+    _camera_capturer_events: Option<JoinHandle<()>>,
 }
 
 // window: winit window
@@ -273,6 +281,9 @@ impl<'a> Application<'a> {
         let audio_player = audio::player::Player::new(audio_mixer.clone())
             .map_err(ApplicationError::AudioPlayerError)?;
 
+        let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
+        let camera_capturer_clone = camera_capturer.clone();
+
         Ok(Self {
             remote_control: None,
             textures_path: input.textures_path,
@@ -294,6 +305,10 @@ impl<'a> Application<'a> {
             audio_capturer: audio::capturer::Capturer::new(),
             audio_mixer,
             audio_player,
+            camera_capturer: camera_capturer.clone(),
+            _camera_capturer_events: Some(std::thread::spawn(move || {
+                poll_camera_stream(camera_capturer_clone)
+            })),
         })
     }
 
@@ -635,6 +650,10 @@ impl<'a> Application<'a> {
     /// - Resets all session-specific state to initial values
     fn reset_state(&mut self) {
         self.audio_capturer.stop_capture();
+        {
+            let mut camera_capturer = self.camera_capturer.lock().unwrap();
+            camera_capturer.stop_capture();
+        }
 
         let capturer_valid = {
             let screen_capturer = self.screen_capturer.lock();
@@ -1157,6 +1176,57 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     room_service.unmute_audio_track();
                 }
             }
+            UserEvent::ListCameras => {
+                log::debug!("user_event: ListCameras");
+                let devices = CameraCapturer::list_devices();
+                if let Err(e) = self.socket.send(Message::CameraList(devices)) {
+                    error!("user_event: Error sending camera list: {e:?}");
+                }
+            }
+            UserEvent::StartCamera(msg) => {
+                log::info!("user_event: StartCamera device='{}'", msg.device_name);
+                let result = (|| -> Result<(), String> {
+                    let room_service = self
+                        .room_service
+                        .as_ref()
+                        .ok_or_else(|| "Room service not found".to_string())?;
+
+                    let (width, height) = {
+                        let mut capturer = self.camera_capturer.lock().unwrap();
+                        capturer.start_capture(&msg.device_name, self.socket.clone())?
+                    };
+
+                    room_service
+                        .publish_camera_track(width, height)
+                        .map_err(|e| format!("Failed to publish camera track: {e}"))?;
+
+                    let source = room_service.get_camera_buffer_source();
+                    {
+                        let capturer = self.camera_capturer.lock().unwrap();
+                        capturer.set_buffer_source(source);
+                    }
+
+                    Ok(())
+                })();
+
+                if let Err(ref e) = result {
+                    log::error!("user_event: StartCamera failed: {e}");
+                }
+
+                if let Err(e) = self.socket.send(Message::StartCameraResult(result)) {
+                    error!("user_event: Error sending StartCameraResult: {e:?}");
+                }
+            }
+            UserEvent::StopCamera => {
+                log::info!("user_event: StopCamera");
+                {
+                    let mut capturer = self.camera_capturer.lock().unwrap();
+                    capturer.stop_capture();
+                }
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.unpublish_camera_track();
+                }
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1523,6 +1593,9 @@ pub enum UserEvent {
     StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
+    ListCameras,
+    StartCamera(CameraStartMessage),
+    StopCamera,
 }
 
 pub struct RenderEventLoop {
@@ -1605,6 +1678,9 @@ impl RenderEventLoop {
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
+                    Message::ListCameras => UserEvent::ListCameras,
+                    Message::StartCamera(msg) => UserEvent::StartCamera(msg),
+                    Message::StopCamera => UserEvent::StopCamera,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

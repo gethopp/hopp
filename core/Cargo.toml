@@ -21,6 +21,7 @@ codegen-units = 1
 exclude = [ "tests" ]
 
 [target.'cfg(target_os = "windows")'.dependencies]
+nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-msmf"] }
 windows = { version = "0.58.0", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Direct2D_Common",
@@ -40,9 +41,11 @@ core-foundation = "0.10.0"
 core-foundation-sys = "0.8.7"
 objc2-app-kit = "0.3.1"
 objc2 = "0.6.1"
+nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-avfoundation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.21.1"
+nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-v4l"] }
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -77,3 +80,4 @@ cpal = "0.17"
 rubato = "0.16"
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model-ll"] }
 ndarray = "0.15"
+yuv-sys = "0.3"

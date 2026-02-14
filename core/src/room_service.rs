@@ -29,6 +29,9 @@ const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
 const MAX_FRAMERATE: f64 = 40.0;
+const CAMERA_TRACK_NAME: &str = "camera";
+const CAMERA_MAX_BITRATE: u64 = 1_700_000;
+const CAMERA_MAX_FRAMERATE: f64 = 30.0;
 
 // Bitrate constants (in bits per second)
 const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
@@ -75,6 +78,11 @@ enum RoomServiceCommand {
     UnpublishAudioTrack,
     MuteAudioTrack,
     UnmuteAudioTrack,
+    PublishCameraTrack {
+        width: u32,
+        height: u32,
+    },
+    UnpublishCameraTrack,
 }
 
 #[derive(Debug)]
@@ -100,6 +108,7 @@ struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
+    camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
 }
@@ -152,6 +161,7 @@ impl RoomService {
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
+            camera_buffer_source: Arc::new(std::sync::Mutex::new(None)),
             participants: Arc::new(std::sync::Mutex::new(HashMap::new())),
             mixer,
         });
@@ -471,6 +481,51 @@ impl RoomService {
         if let Err(e) = res {
             log::error!("mute_audio_track: Failed to send command: {e:?}");
         }
+    }
+
+    /// Publishes a camera video track. Blocks until complete.
+    pub fn publish_camera_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
+        log::info!("publish_camera_track: {width}x{height}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishCameraTrack { width, height });
+        if let Err(e) = res {
+            return Err(RoomServiceError::PublishTrack(format!(
+                "Failed to send command: {e:?}"
+            )));
+        }
+        let res = self.service_command_res_rx.recv();
+        match res {
+            Ok(RoomServiceCommandResult::Success) => Ok(()),
+            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
+                "Failed to publish camera track".to_string(),
+            )),
+            Err(e) => Err(RoomServiceError::PublishTrack(format!(
+                "Failed to receive result: {e:?}"
+            ))),
+        }
+    }
+
+    /// Unpublishes the camera track from the room.
+    pub fn unpublish_camera_track(&self) {
+        log::info!("unpublish_camera_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnpublishCameraTrack);
+        if let Err(e) = res {
+            log::error!("unpublish_camera_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Retrieves the camera video source buffer.
+    pub fn get_camera_buffer_source(&self) -> NativeVideoSource {
+        log::info!("get_camera_buffer_source");
+        let buffer_source = {
+            let inner = self.inner.camera_buffer_source.lock().unwrap();
+            inner.clone()
+        };
+        buffer_source
+            .expect("get_camera_buffer_source: Buffer source not found (this shouldn't happen)")
     }
 
     /// Unmutes the audio track.
@@ -1019,6 +1074,73 @@ async fn room_service_commands(
                 } else {
                     log::warn!("room_service_commands: No audio track to unmute");
                 }
+            }
+            RoomServiceCommand::PublishCameraTrack { width, height } => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::error!("room_service_commands: Room doesn't exist for PublishCameraTrack");
+                    let _ = tx.send(RoomServiceCommandResult::Failure);
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+
+                let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
+                let track = LocalVideoTrack::create_video_track(
+                    CAMERA_TRACK_NAME,
+                    RtcVideoSource::Native(buffer_source.clone()),
+                );
+
+                let res = room
+                    .local_participant()
+                    .publish_track(
+                        LocalTrack::Video(track),
+                        TrackPublishOptions {
+                            source: TrackSource::Camera,
+                            video_codec: VideoCodec::H264,
+                            simulcast: true,
+                            video_encoding: Some(VideoEncoding {
+                                max_bitrate: CAMERA_MAX_BITRATE,
+                                max_framerate: CAMERA_MAX_FRAMERATE,
+                            }),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish camera track: {e:?}");
+                    let _ = tx.send(RoomServiceCommandResult::Failure);
+                    continue;
+                }
+
+                let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
+                *inner_buffer_source = Some(buffer_source);
+
+                log::info!("room_service_commands: Camera track published");
+                let _ = tx.send(RoomServiceCommandResult::Success);
+            }
+            RoomServiceCommand::UnpublishCameraTrack => {
+                let inner_room = inner.room.lock().await;
+                if let Some(room) = inner_room.as_ref() {
+                    // Find and unpublish camera track
+                    let local_participant = room.local_participant();
+                    for (sid, publication) in local_participant.track_publications() {
+                        if publication.name() == CAMERA_TRACK_NAME {
+                            log::info!("room_service_commands: Unpublishing camera track: {}", sid);
+                            let res = local_participant.unpublish_track(&sid).await;
+                            if let Err(e) = res {
+                                log::error!(
+                                    "room_service_commands: Failed to unpublish camera track: {e:?}"
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
+                *inner_buffer_source = None;
+                log::info!("room_service_commands: Camera track unpublished");
             }
         }
     }

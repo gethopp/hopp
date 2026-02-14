@@ -1,0 +1,99 @@
+use crate::screenshare_client::{call_start, connect_socket};
+use socket_lib::{CameraStartMessage, EventSocket, Message, SocketSender};
+use std::env;
+use std::io;
+use std::time::Duration;
+
+fn setup_camera(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
+    let livekit_server_url =
+        env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+    sender.send(Message::LivekitServerUrl(livekit_server_url))?;
+    call_start(sender, event_socket)
+}
+
+pub fn test_list_cameras() -> io::Result<()> {
+    let (sender, event_socket) = connect_socket()?;
+    setup_camera(&sender, &event_socket)?;
+
+    sender.send(Message::ListCameras)?;
+    let response = event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| io::Error::other(format!("Failed to receive CameraList: {e:?}")))?;
+
+    match response {
+        Message::CameraList(devices) => {
+            println!("Found {} cameras:", devices.len());
+            for device in &devices {
+                println!("  {}", device.name);
+            }
+            assert!(!devices.is_empty(), "Expected at least one camera");
+        }
+        other => {
+            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
+    let (sender, event_socket) = connect_socket()?;
+    setup_camera(&sender, &event_socket)?;
+
+    let device_name = if let Some(name) = camera_name {
+        println!("Using explicitly provided camera: {}", name);
+        name.to_string()
+    } else {
+        sender.send(Message::ListCameras)?;
+        let response = event_socket
+            .responses
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| io::Error::other(format!("Failed to receive CameraList: {e:?}")))?;
+
+        let devices = match response {
+            Message::CameraList(devices) => devices,
+            other => {
+                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+            }
+        };
+
+        let device = devices
+            .first()
+            .ok_or_else(|| io::Error::other("No cameras found"))?;
+
+        println!("Using camera: {}", device.name);
+        device.name.clone()
+    };
+
+    sender.send(Message::StartCamera(CameraStartMessage {
+        device_name: device_name.clone(),
+    }))?;
+
+    let result = event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?;
+
+    match result {
+        Message::StartCameraResult(Ok(())) => {
+            println!("Camera started successfully");
+        }
+        Message::StartCameraResult(Err(e)) => {
+            return Err(io::Error::other(format!("Camera start failed: {e}")));
+        }
+        other => {
+            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+        }
+    }
+
+    println!("Capturing for 30s...");
+    std::thread::sleep(Duration::from_secs(30));
+
+    println!("Stopping camera...");
+    sender.send(Message::StopCamera)?;
+    std::thread::sleep(Duration::from_secs(1));
+
+    println!("Camera 30s test complete");
+    Ok(())
+}
