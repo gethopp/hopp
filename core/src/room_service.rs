@@ -1667,9 +1667,21 @@ async fn handle_room_events(
                         // Create stop channel
                         let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
 
-                        // Store stop channel in participant info
+                        // Store stop channel in participant info, creating participant if needed
                         {
                             let mut participants_guard = participants.write().unwrap();
+
+                            if !participants_guard.contains_key(&participant_sid) {
+                                log::info!(
+                                    "handle_room_events: Creating participant {} from audio track subscription",
+                                    participant_sid
+                                );
+                                participants_guard.insert(
+                                    participant_sid.clone(),
+                                    ParticipantInfo::from_remote_participant(&participant, false),
+                                );
+                            }
+
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.set_audio_stop_tx(stop_tx);
                             }
