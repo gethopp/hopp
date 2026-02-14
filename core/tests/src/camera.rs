@@ -1,4 +1,6 @@
+use crate::livekit_utils;
 use crate::screenshare_client::{call_start, connect_socket};
+use livekit::prelude::*;
 use socket_lib::{CameraStartMessage, EventSocket, Message, SocketSender};
 use std::env;
 use std::io;
@@ -95,5 +97,78 @@ pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     std::thread::sleep(Duration::from_secs(1));
 
     println!("Camera 30s test complete");
+    Ok(())
+}
+
+pub async fn test_camera_track_subscribe() -> io::Result<()> {
+    let token = livekit_utils::generate_token("Test Camera Track");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .map_err(io::Error::other)?;
+
+    println!("Connected to room: {}", room.name());
+    println!("Waiting for camera tracks to be subscribed...");
+
+    // Listen for track events
+    while let Some(event) = rx.recv().await {
+        match event {
+            RoomEvent::TrackSubscribed {
+                track,
+                participant,
+                publication,
+            } => {
+                if track.kind() == TrackKind::Video {
+                    println!(
+                        "Camera track subscribed from participant '{}' (sid: {}): track name '{}', publication name '{}'",
+                        participant.identity(),
+                        participant.sid(),
+                        track.name(),
+                        publication.name()
+                    );
+                }
+            }
+            RoomEvent::TrackUnsubscribed {
+                track, participant, ..
+            } => {
+                if track.kind() == TrackKind::Video {
+                    println!(
+                        "Camera track unsubscribed from participant '{}': track name '{}'",
+                        participant.identity(),
+                        track.name()
+                    );
+                }
+            }
+            RoomEvent::TrackUnpublished {
+                publication,
+                participant,
+            } => {
+                if publication.kind() == TrackKind::Video {
+                    println!(
+                        "Camera track unpublished from participant '{}': publication name '{}'",
+                        participant.identity(),
+                        publication.name()
+                    );
+                }
+            }
+            RoomEvent::ParticipantConnected(participant) => {
+                println!(
+                    "Participant connected: '{}' (sid: {})",
+                    participant.identity(),
+                    participant.sid()
+                );
+            }
+            RoomEvent::ParticipantDisconnected(participant) => {
+                println!(
+                    "Participant disconnected: '{}' (sid: {})",
+                    participant.identity(),
+                    participant.sid()
+                );
+            }
+            _ => {}
+        }
+    }
+
     Ok(())
 }

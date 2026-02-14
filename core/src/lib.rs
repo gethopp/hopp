@@ -8,6 +8,7 @@ pub mod audio {
 pub mod livekit {
     pub mod audio;
     pub mod participant;
+    pub mod video;
 }
 
 pub mod room_service;

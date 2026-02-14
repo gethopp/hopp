@@ -1,8 +1,13 @@
-#[derive(Debug, Clone)]
+use std::sync::Arc;
+
+use crate::livekit::video::VideoBufferManager;
+
+#[derive(Debug)]
 pub struct RemoteParticipantInfo {
     name: String,
     muted: bool,
     is_speaking: bool,
+    camera_buffers: Option<Arc<VideoBufferManager>>,
 }
 
 impl RemoteParticipantInfo {
@@ -11,6 +16,7 @@ impl RemoteParticipantInfo {
             name,
             muted,
             is_speaking,
+            camera_buffers: None,
         }
     }
 
@@ -32,5 +38,17 @@ impl RemoteParticipantInfo {
 
     pub fn set_is_speaking(&mut self, is_speaking: bool) {
         self.is_speaking = is_speaking;
+    }
+
+    pub fn camera_buffers(&self) -> Option<Arc<VideoBufferManager>> {
+        self.camera_buffers.clone()
+    }
+
+    pub fn set_camera_buffers(&mut self, buffers: Arc<VideoBufferManager>) {
+        self.camera_buffers = Some(buffers);
+    }
+
+    pub fn clear_camera_buffers(&mut self) {
+        self.camera_buffers = None;
     }
 }

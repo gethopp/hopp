@@ -11,6 +11,7 @@ use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
 use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
 use crate::livekit::participant::RemoteParticipantInfo;
+use crate::livekit::video::VideoBufferManager;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -19,6 +20,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::{audio, ParticipantData, UserEvent};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
+use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio_stream::StreamExt;
 
 // Constants for magic values
@@ -111,6 +113,7 @@ struct RoomServiceInner {
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
+    // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -1619,44 +1622,149 @@ async fn handle_room_events(
                     track.kind()
                 );
 
-                if let livekit::track::RemoteTrack::Audio(audio_track) = track {
-                    let participant_identity = participant.identity().to_string();
-                    log::info!(
-                        "handle_room_events: Setting up audio stream for participant: {}",
-                        participant_identity
-                    );
-
-                    let mut audio_stream = NativeAudioStream::new(
-                        audio_track.rtc_track(),
-                        crate::livekit::audio::LIVEKIT_SAMPLE_RATE as i32,
-                        crate::livekit::audio::AUDIO_NUM_CHANNELS as i32,
-                    );
-
-                    let stream_key = participant_identity.clone();
-                    let mixer_clone = mixer.clone();
-
-                    tokio::spawn(async move {
+                match track {
+                    livekit::track::RemoteTrack::Audio(audio_track) => {
+                        let participant_identity = participant.identity().to_string();
                         log::info!(
-                            "handle_room_events: Starting audio stream processing for participant: {}",
-                            stream_key
+                            "handle_room_events: Setting up audio stream for participant: {}",
+                            participant_identity
                         );
 
-                        while let Some(audio_frame) = audio_stream.next().await {
-                            mixer_clone.add_audio_data(audio_frame.data.as_ref());
+                        let mut audio_stream = NativeAudioStream::new(
+                            audio_track.rtc_track(),
+                            crate::livekit::audio::LIVEKIT_SAMPLE_RATE as i32,
+                            crate::livekit::audio::AUDIO_NUM_CHANNELS as i32,
+                        );
 
-                            log::debug!(
-                                "handle_room_events: Received audio frame from {}: {} samples",
-                                stream_key,
-                                audio_frame.data.len()
+                        let stream_key = participant_identity.clone();
+                        let mixer_clone = mixer.clone();
+
+                        tokio::spawn(async move {
+                            log::info!(
+                                "handle_room_events: Starting audio stream processing for participant: {}",
+                                stream_key
                             );
+
+                            while let Some(audio_frame) = audio_stream.next().await {
+                                mixer_clone.add_audio_data(audio_frame.data.as_ref());
+                            }
+
+                            log::info!(
+                                "handle_room_events: Audio stream ended for participant: {}",
+                                stream_key
+                            );
+                        });
+                    }
+                    livekit::track::RemoteTrack::Video(video_track) => {
+                        let participant_sid = participant.sid().as_str().to_string();
+                        log::info!(
+                            "handle_room_events: Setting up camera stream for participant: {}",
+                            participant_sid
+                        );
+
+                        let manager = Arc::new(VideoBufferManager::new());
+
+                        // Store manager in participant
+                        {
+                            let mut participants_guard = participants.lock().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                                info.set_camera_buffers(manager.clone());
+                            }
                         }
 
-                        log::info!(
-                            "handle_room_events: Audio stream ended for participant: {}",
-                            stream_key
-                        );
-                    });
+                        let stream_key = participant_sid.clone();
+
+                        tokio::spawn(async move {
+                            log::info!(
+                                    "handle_room_events: Starting camera stream processing for participant: {}",
+                                    stream_key
+                                );
+
+                            let mut sink = NativeVideoStream::new(video_track.rtc_track());
+                            let mut frames = 0u64;
+
+                            while let Some(frame) = sink.next().await {
+                                let i420 = frame.buffer.to_i420();
+                                let width = frame.buffer.width();
+                                let height = frame.buffer.height();
+
+                                let buf = manager.write_buffer();
+                                {
+                                    let mut guard = buf.lock().unwrap();
+                                    guard.copy_from_i420(&i420, width, height);
+                                }
+                                manager.advance_write();
+
+                                frames += 1;
+                                if frames % 100 == 0 {
+                                    log::info!(
+                                            "handle_room_events: Received {} camera frames from {} ({}x{})",
+                                            frames,
+                                            stream_key,
+                                            width,
+                                            height
+                                        );
+                                }
+                            }
+
+                            log::info!(
+                                "handle_room_events: Camera stream ended for participant: {}",
+                                stream_key
+                            );
+                        });
+                    }
                 }
+            }
+            RoomEvent::TrackUnsubscribed {
+                track, participant, ..
+            } => {
+                log::info!(
+                    "handle_room_events: Track unsubscribed from {}: {} ({:?})",
+                    participant.identity(),
+                    track.name(),
+                    track.kind()
+                );
+
+                if let livekit::track::RemoteTrack::Video(video_track) = track {
+                    if video_track.name() == CAMERA_TRACK_NAME {
+                        let participant_sid = participant.sid().as_str().to_string();
+                        log::info!(
+                            "handle_room_events: Clearing camera buffers for participant: {}",
+                            participant_sid
+                        );
+
+                        let mut participants_guard = participants.lock().unwrap();
+                        if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                            info.clear_camera_buffers();
+                        }
+                    }
+                }
+            }
+            RoomEvent::TrackUnpublished {
+                publication,
+                participant,
+            } => {
+                log::info!(
+                    "handle_room_events: Track unpublished from {}: {} ({:?})",
+                    participant.identity(),
+                    publication.name(),
+                    publication.kind()
+                );
+
+                // if publication.kind() == livekit::track::TrackKind::Video
+                //     && publication.name() == CAMERA_TRACK_NAME
+                // {
+                //     let participant_sid = participant.sid().as_str().to_string();
+                //     log::info!(
+                //         "handle_room_events: Clearing camera buffers for participant: {}",
+                //         participant_sid
+                //     );
+
+                //     let mut participants_guard = participants.lock().unwrap();
+                //     if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                //         info.clear_camera_buffers();
+                //     }
+                // }
             }
             _ => {}
         }

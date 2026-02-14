@@ -155,6 +155,8 @@ enum CameraTest {
     ListDevices,
     /// Share camera for 30 seconds
     Share30s,
+    /// Subscribe to camera tracks and log when received
+    TrackSubscribe,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -338,6 +340,10 @@ async fn main() -> io::Result<()> {
                 CameraTest::Share30s => {
                     println!("Running camera 30s test...");
                     camera::test_camera_30s(camera_name.as_deref())?;
+                }
+                CameraTest::TrackSubscribe => {
+                    println!("Running camera track subscribe test...");
+                    camera::test_camera_track_subscribe().await?;
                 }
             }
             println!("Camera test finished.");
