@@ -2,12 +2,29 @@ use std::sync::Arc;
 
 use crate::livekit::video::VideoBufferManager;
 
-#[derive(Debug)]
 pub struct ParticipantInfo {
     name: String,
     muted: bool,
     is_speaking: bool,
     camera_buffers: Arc<Option<Arc<VideoBufferManager>>>,
+}
+
+impl std::fmt::Debug for ParticipantInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParticipantInfo")
+            .field("name", &self.name)
+            .field("muted", &self.muted)
+            .field("is_speaking", &self.is_speaking)
+            .field(
+                "camera_buffers",
+                &if self.camera_buffers.is_some() {
+                    "Some(VideoBufferManager)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl ParticipantInfo {
