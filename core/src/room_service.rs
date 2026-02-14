@@ -1509,22 +1509,12 @@ async fn handle_room_events(
                     }
                 }
 
-                // Get initial state from LiveKit
-                let is_speaking = participant.is_speaking();
-                let mut muted = false;
-                for (_, publication) in participant.track_publications() {
-                    if publication.kind() == livekit::track::TrackKind::Audio {
-                        muted = publication.is_muted();
-                        break;
-                    }
-                }
-
                 // Insert into HashMap
                 {
                     let mut participants_guard = participants.write().unwrap();
                     participants_guard.insert(
                         sid.clone(),
-                        ParticipantInfo::new(name.clone(), muted, is_speaking, false),
+                        ParticipantInfo::from_remote_participant(&participant, false),
                     );
                 }
 
@@ -1545,9 +1535,13 @@ async fn handle_room_events(
 
                 log::info!("handle_room_events: Participant disconnected: {}", sid);
 
-                // Remove from HashMap
+                // Stop streams and remove from HashMap
                 {
                     let mut participants_guard = participants.write().unwrap();
+                    if let Some(info) = participants_guard.get_mut(&sid) {
+                        info.stop_audio_stream();
+                        info.stop_camera_stream();
+                    }
                     participants_guard.remove(&sid);
                 }
 
@@ -1654,6 +1648,7 @@ async fn handle_room_events(
 
                 match track {
                     livekit::track::RemoteTrack::Audio(audio_track) => {
+                        let participant_sid = participant.sid().as_str().to_string();
                         let participant_identity = participant.identity().to_string();
                         log::info!(
                             "handle_room_events: Setting up audio stream for participant: {}",
@@ -1669,14 +1664,36 @@ async fn handle_room_events(
                         let stream_key = participant_identity.clone();
                         let mixer_clone = mixer.clone();
 
+                        // Create stop channel
+                        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
+
+                        // Store stop channel in participant info
+                        {
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                                info.set_audio_stop_tx(stop_tx);
+                            }
+                        }
+
                         tokio::spawn(async move {
                             log::info!(
                                 "handle_room_events: Starting audio stream processing for participant: {}",
                                 stream_key
                             );
 
-                            while let Some(audio_frame) = audio_stream.next().await {
-                                mixer_clone.add_audio_data(audio_frame.data.as_ref());
+                            loop {
+                                tokio::select! {
+                                    Some(audio_frame) = audio_stream.next() => {
+                                        mixer_clone.add_audio_data(audio_frame.data.as_ref());
+                                    }
+                                    _ = stop_rx.recv() => {
+                                        log::info!(
+                                            "handle_room_events: Received stop signal for audio stream: {}",
+                                            stream_key
+                                        );
+                                        break;
+                                    }
+                                }
                             }
 
                             log::info!(
@@ -1709,15 +1726,39 @@ async fn handle_room_events(
 
                         let manager = Arc::new(VideoBufferManager::new());
 
-                        // Store manager in participant
+                        // Store manager in participant, creating participant if needed
                         {
                             let mut participants_guard = participants.write().unwrap();
+
+                            // Create participant if not in list
+                            if !participants_guard.contains_key(&participant_sid) {
+                                log::info!(
+                                    "handle_room_events: Creating participant {} from track subscription",
+                                    participant_sid
+                                );
+                                participants_guard.insert(
+                                    participant_sid.clone(),
+                                    ParticipantInfo::from_remote_participant(&participant, true),
+                                );
+                            }
+
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.set_camera_buffers(manager.clone());
                             }
                         }
 
                         let stream_key = participant_sid.clone();
+
+                        // Create stop channel
+                        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
+
+                        // Store stop channel in participant info
+                        {
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                                info.set_camera_stop_tx(stop_tx);
+                            }
+                        }
 
                         tokio::spawn(async move {
                             log::info!(
@@ -1728,27 +1769,38 @@ async fn handle_room_events(
                             let mut sink = NativeVideoStream::new(video_track.rtc_track());
                             let mut frames = 0u64;
 
-                            while let Some(frame) = sink.next().await {
-                                let i420 = frame.buffer.to_i420();
-                                let width = frame.buffer.width();
-                                let height = frame.buffer.height();
+                            loop {
+                                tokio::select! {
+                                    Some(frame) = sink.next() => {
+                                        let i420 = frame.buffer.to_i420();
+                                        let width = frame.buffer.width();
+                                        let height = frame.buffer.height();
 
-                                let buf = manager.write_buffer();
-                                {
-                                    let mut guard = buf.lock().unwrap();
-                                    guard.copy_from_i420(&i420, width, height);
-                                }
-                                manager.advance_write();
+                                        let buf = manager.write_buffer();
+                                        {
+                                            let mut guard = buf.lock().unwrap();
+                                            guard.copy_from_i420(&i420, width, height);
+                                        }
+                                        manager.advance_write();
 
-                                frames += 1;
-                                if frames % 100 == 0 {
-                                    log::info!(
-                                            "handle_room_events: Received {} camera frames from {} ({}x{})",
-                                            frames,
-                                            stream_key,
-                                            width,
-                                            height
+                                        frames += 1;
+                                        if frames % 100 == 0 {
+                                            log::info!(
+                                                    "handle_room_events: Received {} camera frames from {} ({}x{})",
+                                                    frames,
+                                                    stream_key,
+                                                    width,
+                                                    height
+                                                );
+                                        }
+                                    }
+                                    _ = stop_rx.recv() => {
+                                        log::info!(
+                                            "handle_room_events: Received stop signal for camera stream: {}",
+                                            stream_key
                                         );
+                                        break;
+                                    }
                                 }
                             }
 
@@ -1772,17 +1824,32 @@ async fn handle_room_events(
                     track.kind()
                 );
 
-                if let livekit::track::RemoteTrack::Video(_) = track {
-                    if publication.source() == TrackSource::Camera {
-                        let participant_sid = participant.sid().as_str().to_string();
+                let participant_sid = participant.sid().as_str().to_string();
+
+                match track {
+                    livekit::track::RemoteTrack::Video(_) => {
+                        if publication.source() == TrackSource::Camera {
+                            log::info!(
+                                "handle_room_events: Stopping camera stream for participant: {}",
+                                participant_sid
+                            );
+
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                                info.stop_camera_stream();
+                                info.clear_camera_buffers();
+                            }
+                        }
+                    }
+                    livekit::track::RemoteTrack::Audio(_) => {
                         log::info!(
-                            "handle_room_events: Clearing camera buffers for participant: {}",
+                            "handle_room_events: Stopping audio stream for participant: {}",
                             participant_sid
                         );
 
                         let mut participants_guard = participants.write().unwrap();
                         if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                            info.clear_camera_buffers();
+                            info.stop_audio_stream();
                         }
                     }
                 }

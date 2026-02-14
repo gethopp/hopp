@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::livekit::video::VideoBufferManager;
 
@@ -7,6 +8,8 @@ pub struct ParticipantInfo {
     muted: bool,
     is_speaking: bool,
     camera_buffers: Arc<Option<Arc<VideoBufferManager>>>,
+    audio_stop_tx: Option<mpsc::UnboundedSender<()>>,
+    camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
 }
 
 impl std::fmt::Debug for ParticipantInfo {
@@ -28,8 +31,8 @@ impl std::fmt::Debug for ParticipantInfo {
 }
 
 impl ParticipantInfo {
-    pub fn new(name: String, muted: bool, is_speaking: bool, is_local: bool) -> Self {
-        let camera_buffers = if is_local {
+    pub fn new(name: String, muted: bool, is_speaking: bool, create_buffers: bool) -> Self {
+        let camera_buffers = if create_buffers {
             Arc::new(Some(Arc::new(VideoBufferManager::new())))
         } else {
             Arc::new(None)
@@ -39,7 +42,30 @@ impl ParticipantInfo {
             muted,
             is_speaking,
             camera_buffers,
+            audio_stop_tx: None,
+            camera_stop_tx: None,
         }
+    }
+
+    /// Creates a ParticipantInfo from a LiveKit remote participant.
+    /// Extracts name, muted state (from audio tracks), and speaking state.
+    pub fn from_remote_participant(
+        participant: &livekit::participant::RemoteParticipant,
+        create_buffers: bool,
+    ) -> Self {
+        let name = participant.name();
+        let is_speaking = participant.is_speaking();
+
+        // Check if any audio track is muted
+        let mut muted = false;
+        for (_, publication) in participant.track_publications() {
+            if publication.kind() == livekit::track::TrackKind::Audio {
+                muted = publication.is_muted();
+                break;
+            }
+        }
+
+        Self::new(name.clone(), muted, is_speaking, create_buffers)
     }
 
     pub fn name(&self) -> &str {
@@ -72,5 +98,25 @@ impl ParticipantInfo {
 
     pub fn clear_camera_buffers(&mut self) {
         self.camera_buffers = Arc::new(None);
+    }
+
+    pub fn set_audio_stop_tx(&mut self, tx: mpsc::UnboundedSender<()>) {
+        self.audio_stop_tx = Some(tx);
+    }
+
+    pub fn set_camera_stop_tx(&mut self, tx: mpsc::UnboundedSender<()>) {
+        self.camera_stop_tx = Some(tx);
+    }
+
+    pub fn stop_audio_stream(&mut self) {
+        if let Some(tx) = self.audio_stop_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    pub fn stop_camera_stream(&mut self) {
+        if let Some(tx) = self.camera_stop_tx.take() {
+            let _ = tx.send(());
+        }
     }
 }
