@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 /// Simple audio mixer that combines audio from multiple sources into a single buffer.
 /// Supports mono audio only.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Mixer {
     buffer: Arc<Mutex<VecDeque<i16>>>,
     max_buffer_size: usize,

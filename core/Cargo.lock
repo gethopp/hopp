@@ -2389,6 +2389,7 @@ dependencies = [
  "sysinfo",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "wgpu",
  "windows 0.58.0",
  "winit",

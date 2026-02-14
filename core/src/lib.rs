@@ -916,7 +916,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
-                let room_service = RoomService::new(url, self.event_loop_proxy.clone());
+                let room_service =
+                    RoomService::new(url, self.event_loop_proxy.clone(), self.audio_mixer.clone());
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",

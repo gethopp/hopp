@@ -17,7 +17,9 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
-use crate::{ParticipantData, UserEvent};
+use crate::{audio, ParticipantData, UserEvent};
+use livekit::webrtc::audio_stream::native::NativeAudioStream;
+use tokio_stream::StreamExt;
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -99,6 +101,7 @@ struct RoomServiceInner {
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
+    mixer: audio::mixer::Mixer,
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -140,6 +143,7 @@ impl RoomService {
     pub fn new(
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        mixer: audio::mixer::Mixer,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -149,6 +153,7 @@ impl RoomService {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
             participants: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            mixer,
         });
         let mut runtime_params = RuntimeParams::default_with_ch(1);
         runtime_params.atten_lim_db = 60.0;
@@ -587,6 +592,7 @@ async fn room_service_commands(
                     event_loop_proxy,
                     user_sid,
                     inner.participants.clone(),
+                    inner.mixer.clone(),
                 ));
 
                 let mut inner_room = inner.room.lock().await;
@@ -1221,6 +1227,7 @@ async fn handle_room_events(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
     participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
+    mixer: audio::mixer::Mixer,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -1478,6 +1485,52 @@ async fn handle_room_events(
                         "handle_room_events: Participants state: {:?}",
                         *participants_guard
                     );
+                }
+            }
+            RoomEvent::TrackSubscribed {
+                track, participant, ..
+            } => {
+                log::info!(
+                    "handle_room_events: Track subscribed from {}: {} ({:?})",
+                    participant.identity(),
+                    track.name(),
+                    track.kind()
+                );
+
+                if let livekit::track::RemoteTrack::Audio(audio_track) = track {
+                    let participant_identity = participant.identity().to_string();
+                    log::info!(
+                        "handle_room_events: Setting up audio stream for participant: {}",
+                        participant_identity
+                    );
+
+                    let mut audio_stream =
+                        NativeAudioStream::new(audio_track.rtc_track(), 48000, 1);
+
+                    let stream_key = participant_identity.clone();
+                    let mixer_clone = mixer.clone();
+
+                    tokio::spawn(async move {
+                        log::info!(
+                            "handle_room_events: Starting audio stream processing for participant: {}",
+                            stream_key
+                        );
+
+                        while let Some(audio_frame) = audio_stream.next().await {
+                            mixer_clone.add_audio_data(audio_frame.data.as_ref());
+
+                            log::debug!(
+                                "handle_room_events: Received audio frame from {}: {} samples",
+                                stream_key,
+                                audio_frame.data.len()
+                            );
+                        }
+
+                        log::info!(
+                            "handle_room_events: Audio stream ended for participant: {}",
+                            stream_key
+                        );
+                    });
                 }
             }
             _ => {}

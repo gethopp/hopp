@@ -60,6 +60,7 @@ log = "0.4.22"
 base64 = "0.22.1"
 livekit = { git = "https://github.com/gethopp/rust-sdks", branch = "hopp", features = ["native-tls"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 dirs = "5.0.1"
 socket_lib = { path = "socket_lib" }
 sentry_utils = { path = "sentry_utils" }
