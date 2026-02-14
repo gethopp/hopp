@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
@@ -9,6 +10,7 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
 use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
+use crate::livekit::participant::RemoteParticipantInfo;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -96,6 +98,7 @@ struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
+    participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -145,15 +148,17 @@ impl RoomService {
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             buffer_source: Arc::new(std::sync::Mutex::new(None)),
+            participants: Arc::new(std::sync::Mutex::new(HashMap::new())),
         });
         let mut runtime_params = RuntimeParams::default_with_ch(1);
         runtime_params.atten_lim_db = 60.0;
         runtime_params.post_filter_beta = 0.05;
 
-        let df = DfTract::new(DfParams::default(), &runtime_params)
-            .expect("Failed to initialize DeepFilterNet");
-        log::info!("DeepFilterNet model loaded");
-        let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(Some(SendDfTract(df))));
+        //let df = DfTract::new(DfParams::default(), &runtime_params)
+        //    .expect("Failed to initialize DeepFilterNet");
+        //log::info!("DeepFilterNet model loaded");
+        //let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(Some(SendDfTract(df))));
+        let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(None));
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
         async_runtime.spawn(room_service_commands(
@@ -546,6 +551,12 @@ async fn room_service_commands(
                     }
                 }
 
+                // Clear participants when joining a new room
+                {
+                    let mut participants = inner.participants.lock().unwrap();
+                    participants.clear();
+                }
+
                 let url = livekit_server_url.clone();
 
                 let connect_result = Room::connect(&url, &token, RoomOptions::default()).await;
@@ -571,7 +582,12 @@ async fn room_service_commands(
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
-                tokio::spawn(handle_room_events(rx, event_loop_proxy, user_sid));
+                tokio::spawn(handle_room_events(
+                    rx,
+                    event_loop_proxy,
+                    user_sid,
+                    inner.participants.clone(),
+                ));
 
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
@@ -757,27 +773,47 @@ async fn room_service_commands(
                 }
                 let room = room.as_ref().unwrap();
                 for participant in room.remote_participants() {
-                    log::info!(
-                        "room_service_commands: Participant: {}",
-                        participant.1.sid()
-                    );
+                    let remote_participant = participant.1;
+                    let sid = remote_participant.sid().as_str().to_string();
+                    let name = remote_participant.name();
 
-                    let name = participant.1.name();
-                    if participant.0.as_str().contains("audio")
-                        || participant.0.as_str().contains("camera")
-                        || name.is_empty()
+                    log::info!("room_service_commands: Participant: {}", sid);
+
+                    // Check if already in HashMap
                     {
-                        continue;
+                        let participants = inner.participants.lock().unwrap();
+                        if participants.contains_key(&sid) {
+                            continue;
+                        }
+                    }
+
+                    // Get initial state from LiveKit
+                    let is_speaking = remote_participant.is_speaking();
+                    let mut muted = false;
+                    for (_, publication) in remote_participant.track_publications() {
+                        if publication.kind() == livekit::track::TrackKind::Audio {
+                            muted = publication.is_muted();
+                            break;
+                        }
+                    }
+
+                    // Insert into HashMap
+                    {
+                        let mut participants = inner.participants.lock().unwrap();
+                        let new_participant =
+                            RemoteParticipantInfo::new(name.clone(), muted, is_speaking);
+                        log::info!(
+                            "handle_room_events: participant to be added {:?}",
+                            new_participant
+                        );
+                        participants.insert(sid.clone(), new_participant);
                     }
 
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantConnected(
-                        ParticipantData {
-                            name,
-                            sid: participant.1.sid().as_str().to_string(),
-                        },
+                        ParticipantData { name, sid },
                     )) {
                         log::error!(
-                            "handle_room_events: Failed to send participant disconnected event: {e:?}"
+                            "handle_room_events: Failed to send participant connected event: {e:?}"
                         );
                     }
                 }
@@ -1184,6 +1220,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
+    participants: Arc<std::sync::Mutex<HashMap<String, RemoteParticipantInfo>>>,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -1299,25 +1336,42 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantConnected(participant) => {
-                log::info!(
-                    "handle_room_events: Participant connected: {}",
-                    participant.sid()
-                );
-
+                let sid = participant.sid().as_str().to_string();
                 let name = participant.name();
-                let participant_id = participant.identity().as_str().to_string();
-                if participant_id.contains("audio")
-                    || participant_id.contains("camera")
-                    || name.is_empty()
+
+                log::info!("handle_room_events: Participant connected: {}", sid);
+
+                // Check if already in HashMap
                 {
-                    log::debug!("handle_room_events: Skipping participant: {participant:?}");
-                    continue;
+                    let participants_guard = participants.lock().unwrap();
+                    if participants_guard.contains_key(&sid) {
+                        continue;
+                    }
+                }
+
+                // Get initial state from LiveKit
+                let is_speaking = participant.is_speaking();
+                let mut muted = false;
+                for (_, publication) in participant.track_publications() {
+                    if publication.kind() == livekit::track::TrackKind::Audio {
+                        muted = publication.is_muted();
+                        break;
+                    }
+                }
+
+                // Insert into HashMap
+                {
+                    let mut participants_guard = participants.lock().unwrap();
+                    participants_guard.insert(
+                        sid.clone(),
+                        RemoteParticipantInfo::new(name.clone(), muted, is_speaking),
+                    );
                 }
 
                 if let Err(e) =
                     event_loop_proxy.send_event(UserEvent::ParticipantConnected(ParticipantData {
                         name,
-                        sid: participant.sid().as_str().to_string(),
+                        sid,
                     }))
                 {
                     log::error!(
@@ -1326,16 +1380,19 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantDisconnected(participant) => {
-                log::info!(
-                    "handle_room_events: Participant disconnected: {}",
-                    participant.sid()
-                );
+                let sid = participant.sid().as_str().to_string();
+                let name = participant.name();
+
+                log::info!("handle_room_events: Participant disconnected: {}", sid);
+
+                // Remove from HashMap
+                {
+                    let mut participants_guard = participants.lock().unwrap();
+                    participants_guard.remove(&sid);
+                }
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
-                    ParticipantData {
-                        name: participant.name(),
-                        sid: participant.sid().as_str().to_string(),
-                    },
+                    ParticipantData { name, sid },
                 )) {
                     log::error!(
                         "handle_room_events: Failed to send participant disconnected event: {e:?}"
@@ -1365,9 +1422,68 @@ async fn handle_room_events(
                     }
                 }
             }
+            RoomEvent::ActiveSpeakersChanged { speakers } => {
+                log::info!("handle_room_events: Active speakers changed");
+                let mut participants_guard = participants.lock().unwrap();
+
+                // First, set all participants to not speaking
+                for info in participants_guard.values_mut() {
+                    info.set_is_speaking(false);
+                }
+
+                // Then set active speakers to speaking
+                for speaker in speakers {
+                    let sid = speaker.sid().as_str().to_string();
+                    if let Some(info) = participants_guard.get_mut(&sid) {
+                        info.set_is_speaking(true);
+                    }
+                }
+
+                log::info!(
+                    "handle_room_events: Participants state: {:?}",
+                    *participants_guard
+                );
+            }
+            RoomEvent::TrackMuted {
+                participant,
+                publication,
+            } => {
+                if publication.kind() == livekit::track::TrackKind::Audio {
+                    let sid = participant.sid().as_str().to_string();
+                    log::info!("handle_room_events: Audio track muted for {}", sid);
+
+                    let mut participants_guard = participants.lock().unwrap();
+                    if let Some(info) = participants_guard.get_mut(&sid) {
+                        info.set_muted(true);
+                    }
+                    log::info!(
+                        "handle_room_events: Participants state: {:?}",
+                        *participants_guard
+                    );
+                }
+            }
+            RoomEvent::TrackUnmuted {
+                participant,
+                publication,
+            } => {
+                if publication.kind() == livekit::track::TrackKind::Audio {
+                    let sid = participant.sid().as_str().to_string();
+                    log::info!("handle_room_events: Audio track unmuted for {}", sid);
+
+                    let mut participants_guard = participants.lock().unwrap();
+                    if let Some(info) = participants_guard.get_mut(&sid) {
+                        info.set_muted(false);
+                    }
+                    log::info!(
+                        "handle_room_events: Participants state: {:?}",
+                        *participants_guard
+                    );
+                }
+            }
             _ => {}
         }
     }
+    log::info!("handle_room_events: ended")
 }
 
 async fn stats_loop(inner: Arc<RoomServiceInner>) {

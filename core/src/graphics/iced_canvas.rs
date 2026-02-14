@@ -73,8 +73,6 @@ impl OverlaySurface {
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
-        log::debug!("OverlaySurface::view");
-
         canvas(OverlaySurfaceCanvas::new(
             &self.marker,
             participants,

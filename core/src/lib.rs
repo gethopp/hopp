@@ -5,6 +5,7 @@ pub mod audio {
 
 pub mod livekit {
     pub mod audio;
+    pub mod participant;
 }
 
 pub mod room_service;
