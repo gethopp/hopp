@@ -85,7 +85,6 @@ impl YuvPipeline {
         width: u32,
         height: u32,
     ) -> &mut ParticipantGpuState {
-        log::info!("ensure_textures: width {width} height {height}");
         let needs_create = match self.participants.get(&participant_id) {
             Some(state) => state.dims != (width, height),
             None => true,

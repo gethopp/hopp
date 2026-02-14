@@ -10,7 +10,7 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
 use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
-use crate::livekit::participant::RemoteParticipantInfo;
+use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
 
 use serde::{Deserialize, Serialize};
@@ -111,7 +111,7 @@ struct RoomServiceInner {
     room: Mutex<Option<Room>>,
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
-    participants: Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>>,
+    participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
@@ -532,8 +532,19 @@ impl RoomService {
     }
 
     /// Returns a shared reference to the participants map.
-    pub fn participants(&self) -> Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>> {
+    pub fn participants(&self) -> Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>> {
         self.inner.participants.clone()
+    }
+
+    /// Returns the local participant's camera VideoBufferManager, creating it if needed.
+    pub fn local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
+        let mut participants = self.inner.participants.write().unwrap();
+        log::info!(
+            "local_camera_buffer_manager: participants keys: {:?}",
+            participants.keys().collect::<Vec<_>>()
+        );
+        let info = participants.get_mut("local")?;
+        info.camera_buffers()
     }
 
     /// Unmutes the audio track.
@@ -648,6 +659,17 @@ async fn room_service_commands(
                 }
 
                 let user_sid = room.local_participant().sid().as_str().to_string();
+                let user_name = room.local_participant().name();
+
+                // Insert local participant into participants map
+                {
+                    let mut participants = inner.participants.write().unwrap();
+                    participants.insert(
+                        "local".to_string(),
+                        ParticipantInfo::new(user_name, false, false),
+                    );
+                }
+
                 // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
                 tokio::spawn(handle_room_events(
@@ -870,7 +892,7 @@ async fn room_service_commands(
                     {
                         let mut participants = inner.participants.write().unwrap();
                         let new_participant =
-                            RemoteParticipantInfo::new(name.clone(), muted, is_speaking);
+                            ParticipantInfo::new(name.clone(), muted, is_speaking);
                         log::info!(
                             "handle_room_events: participant to be added {:?}",
                             new_participant
@@ -1356,7 +1378,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
-    participants: Arc<std::sync::RwLock<HashMap<String, RemoteParticipantInfo>>>,
+    participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::Mixer,
 ) {
     while let Some(msg) = receiver.recv().await {
@@ -1501,7 +1523,7 @@ async fn handle_room_events(
                     let mut participants_guard = participants.write().unwrap();
                     participants_guard.insert(
                         sid.clone(),
-                        RemoteParticipantInfo::new(name.clone(), muted, is_speaking),
+                        ParticipantInfo::new(name.clone(), muted, is_speaking),
                     );
                 }
 

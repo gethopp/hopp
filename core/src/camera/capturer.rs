@@ -3,6 +3,8 @@ use socket_lib::{CameraDevice, Message, SocketSender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
+use crate::livekit::video::VideoBufferManager;
+
 use super::stream::{CameraStream, CameraStreamMessage};
 
 const MAX_CAMERA_FAILURES_BEFORE_STOP: u32 = 5;
@@ -40,12 +42,13 @@ impl CameraCapturer {
         &mut self,
         device_name: &str,
         socket: SocketSender,
+        video_buffer_manager: Option<Arc<VideoBufferManager>>,
     ) -> Result<(u32, u32), String> {
         self.stop_capture();
         self.socket = Some(socket);
 
         log::info!("CameraCapturer::start_capture: device='{device_name}'");
-        let stream = CameraStream::new(device_name, self.tx.clone())?;
+        let stream = CameraStream::new(device_name, self.tx.clone(), video_buffer_manager)?;
         let extent = stream.extent();
         self.stream = Some(stream);
         Ok(extent)

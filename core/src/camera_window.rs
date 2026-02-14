@@ -37,7 +37,7 @@ use thiserror::Error;
 
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
-use crate::livekit::participant::RemoteParticipantInfo;
+use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
@@ -138,14 +138,14 @@ pub struct CameraWindow {
     modifiers: ModifiersState,
     state: CameraState,
     resized: bool,
-    participants: Arc<RwLock<HashMap<String, RemoteParticipantInfo>>>,
+    participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
 }
 
 impl CameraWindow {
     /// Create a new camera window with wgpu surface and iced renderer.
     pub fn new(
         event_loop: &ActiveEventLoop,
-        participants: Arc<RwLock<HashMap<String, RemoteParticipantInfo>>>,
+        participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     ) -> Result<Self, CameraWindowError> {
         log::info!("CameraWindow::new");
 
@@ -380,7 +380,7 @@ impl CameraWindow {
     /// - Responsive participant grid with name labels
     fn view<'a>(
         state: &CameraState,
-        participants: &'a Arc<RwLock<HashMap<String, RemoteParticipantInfo>>>,
+        participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
         // ── Control buttons (matching iced-poc control_button) ────────────
         let mic_button = control_button(
@@ -817,18 +817,21 @@ fn sid_to_id(sid: &str) -> u64 {
 /// while ensuring all participants are visible. Matches the iced-poc algorithm.
 fn create_participant_grid<'a>(
     available_size: IcedSize,
-    participants: &'a Arc<RwLock<HashMap<String, RemoteParticipantInfo>>>,
+    participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
-    let participant_count = participants_guard.len();
+    // Sort participants by name for stable ordering, skip local participant without camera
+    let mut sorted: Vec<(&String, &ParticipantInfo)> = participants_guard
+        .iter()
+        .filter(|(sid, info)| *sid != "local" || info.camera_buffers().is_some())
+        .collect();
+    sorted.sort_by(|a, b| a.1.name().cmp(b.1.name()));
+
+    let participant_count = sorted.len();
     if participant_count == 0 {
         return Space::new().into();
     }
-
-    // Sort participants by name for stable ordering
-    let mut sorted: Vec<(&String, &RemoteParticipantInfo)> = participants_guard.iter().collect();
-    sorted.sort_by(|a, b| a.1.name().cmp(b.1.name()));
 
     // Subtract header height from vertical space, then apply grid padding
     let available_width = available_size.width - (MIN_GRID_PADDING * 2.0);

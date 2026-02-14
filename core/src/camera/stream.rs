@@ -12,6 +12,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::livekit::video::VideoBufferManager;
+
 const CAMERA_FPS: u32 = 30;
 const CAMERA_WIDTH: u32 = 1280;
 const CAMERA_HEIGHT: u32 = 720;
@@ -27,6 +29,7 @@ pub struct CameraStream {
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffer_source: Arc<Mutex<Option<NativeVideoSource>>>,
+    video_buffer_manager: Option<Arc<VideoBufferManager>>,
     width: u32,
     height: u32,
     device_name: String,
@@ -37,6 +40,7 @@ impl CameraStream {
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
+        video_buffer_manager: Option<Arc<VideoBufferManager>>,
     ) -> Result<Self, String> {
         let cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -58,6 +62,7 @@ impl CameraStream {
         // Try YUYV first, then MJPEG, then accept any
         let camera = Self::try_open_camera(&index, FrameFormat::YUYV)
             .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG))
+            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12))
             .or_else(|_| {
                 let format = RequestedFormat::new::<RgbFormat>(
                     RequestedFormatType::AbsoluteHighestFrameRate,
@@ -81,6 +86,7 @@ impl CameraStream {
             tx: None,
             error_tx,
             buffer_source: Arc::new(Mutex::new(None)),
+            video_buffer_manager,
             width,
             height,
             device_name: device_name.to_string(),
@@ -114,6 +120,7 @@ impl CameraStream {
         self.tx = Some(tx);
 
         let buffer_source = self.buffer_source.clone();
+        let video_buffer_manager = self.video_buffer_manager.clone();
         let error_tx = self.error_tx.clone();
         let failures_count = self.failures_count.clone();
         let width = self.width;
@@ -122,12 +129,13 @@ impl CameraStream {
         let handle = std::thread::spawn(move || {
             let frame_duration = Duration::from_micros(1_000_000 / CAMERA_FPS as u64);
 
-            // Pre-allocate RGB decode buffer once (only used for non-YUYV formats)
-            let mut rgb_buf = if frame_format != FrameFormat::YUYV {
-                vec![0u8; (width * height * 3) as usize]
-            } else {
-                vec![]
-            };
+            // Pre-allocate RGB decode buffer once (only used for generic formats)
+            let mut rgb_buf =
+                if frame_format != FrameFormat::YUYV && frame_format != FrameFormat::NV12 {
+                    vec![0u8; (width * height * 3) as usize]
+                } else {
+                    vec![]
+                };
 
             loop {
                 let frame_start = Instant::now();
@@ -152,6 +160,7 @@ impl CameraStream {
                         if let Some(source) = source {
                             let frame = match frame_format {
                                 FrameFormat::YUYV => yuyv_to_i420(buf.buffer(), width, height),
+                                FrameFormat::NV12 => nv12_to_i420(buf.buffer(), width, height),
                                 _ => match buf.decode_image_to_buffer::<RgbFormat>(&mut rgb_buf) {
                                     Ok(()) => rgb_to_i420(&rgb_buf, width, height),
                                     Err(e) => {
@@ -161,6 +170,12 @@ impl CameraStream {
                                 },
                             };
                             source.capture_frame(&frame);
+                            if let Some(ref manager) = video_buffer_manager {
+                                let mut write_buf = manager.write_buffer().lock().unwrap();
+                                write_buf.copy_from_i420(&frame.buffer, width, height);
+                                drop(write_buf);
+                                manager.advance_write();
+                            }
                         }
                     }
                     Err(e) => {
@@ -219,9 +234,10 @@ impl CameraStream {
 
         let index = camera_info.index().clone();
 
-        // Try YUYV first, then MJPEG, then accept any
+        // Try YUYV first, then MJPEG, then NV12, then accept any
         let camera = Self::try_open_camera(&index, FrameFormat::YUYV)
             .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG))
+            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12))
             .or_else(|_| {
                 let format = RequestedFormat::new::<RgbFormat>(
                     RequestedFormatType::AbsoluteHighestFrameRate,
@@ -235,6 +251,7 @@ impl CameraStream {
             tx: None,
             error_tx: self.error_tx.clone(),
             buffer_source: self.buffer_source.clone(),
+            video_buffer_manager: self.video_buffer_manager.clone(),
             width: self.width,
             height: self.height,
             device_name: self.device_name.clone(),
@@ -243,6 +260,38 @@ impl CameraStream {
 
         new_stream.start_capture_with_camera(camera)?;
         Ok(new_stream)
+    }
+}
+
+fn nv12_to_i420(nv12: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> {
+    let mut i420 = I420Buffer::new(width, height);
+    let (stride_y, stride_u, stride_v) = i420.strides();
+    let (data_y, data_u, data_v) = i420.data_mut();
+    let src_stride_y = width as i32;
+    let src_stride_uv = width as i32;
+    let uv_offset = (width * height) as usize;
+
+    unsafe {
+        yuv_sys::rs_NV12ToI420(
+            nv12.as_ptr(),
+            src_stride_y,
+            nv12[uv_offset..].as_ptr(),
+            src_stride_uv,
+            data_y.as_mut_ptr(),
+            stride_y as i32,
+            data_u.as_mut_ptr(),
+            stride_u as i32,
+            data_v.as_mut_ptr(),
+            stride_v as i32,
+            width as i32,
+            height as i32,
+        );
+    }
+
+    VideoFrame {
+        rotation: VideoRotation::VideoRotation0,
+        buffer: i420,
+        timestamp_us: 0,
     }
 }
 

@@ -3,14 +3,14 @@ use std::sync::Arc;
 use crate::livekit::video::VideoBufferManager;
 
 #[derive(Debug)]
-pub struct RemoteParticipantInfo {
+pub struct ParticipantInfo {
     name: String,
     muted: bool,
     is_speaking: bool,
     camera_buffers: Option<Arc<VideoBufferManager>>,
 }
 
-impl RemoteParticipantInfo {
+impl ParticipantInfo {
     pub fn new(name: String, muted: bool, is_speaking: bool) -> Self {
         Self {
             name,
