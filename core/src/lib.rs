@@ -1205,10 +1205,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .ok_or_else(|| "Room service not found".to_string())?;
 
                     let video_buffer_manager = room_service.local_camera_buffer_manager();
-                    log::info!(
-                        "start_camera: videao buffer manager {:?}",
-                        video_buffer_manager
-                    );
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(
