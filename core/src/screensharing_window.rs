@@ -56,8 +56,8 @@ const HEADER_CHROME_HEIGHT: f32 = 42.0;
 /// Header right padding (less than content so the cog sits closer to the window edge)
 const HEADER_RIGHT_PADDING: f32 = 4.0;
 
-/// Target redraw interval: 40 FPS
-const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 40);
+/// Target redraw interval: 60 FPS
+const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
 
 const ICON_COG: &[u8] = include_bytes!("../resources/icons/cog.svg");
 const ICON_WAND: &[u8] = include_bytes!("../resources/icons/wand.svg");

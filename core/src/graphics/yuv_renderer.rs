@@ -45,6 +45,9 @@ struct ParticipantGpuState {
     bind_group: wgpu::BindGroup,
     params_buf: wgpu::Buffer,
     dims: (u32, u32),
+    /// Reusable scratch buffer for row-padding during texture upload.
+    /// Sized to the largest plane (Y) and reused for U/V planes.
+    pad_buffer: Vec<u8>,
 }
 
 // ── Pipeline (shared GPU state) ─────────────────────────────────────────────
@@ -180,6 +183,9 @@ impl YuvPipeline {
                 ],
             });
 
+            // Pre-allocate the scratch pad for the largest plane (Y).
+            let pad_buffer = vec![0u8; (y_tex_w * height) as usize];
+
             self.participants.insert(
                 participant_id,
                 ParticipantGpuState {
@@ -189,6 +195,7 @@ impl YuvPipeline {
                     bind_group,
                     params_buf,
                     dims: (width, height),
+                    pad_buffer,
                 },
             );
         }
@@ -224,16 +231,21 @@ impl YuvPipeline {
         let y_tex_w = align_to(width, 256);
         let uv_tex_w = align_to(width / 2, 256);
 
+        // Reuse the pre-allocated scratch buffer for all three plane uploads.
+        let y_padded_len = (y_tex_w * height) as usize;
+        let pad = &mut state.pad_buffer;
+
         // Upload Y plane (pad rows to aligned width)
         {
-            let mut padded = vec![0u8; (y_tex_w * height) as usize];
+            pad.resize(y_padded_len, 0);
+            pad.fill(0);
             for row in 0..height {
                 let src_start = (row * stride_y) as usize;
                 let src_end = src_start + width as usize;
                 let dst_start = (row * y_tex_w) as usize;
                 let dst_end = dst_start + width as usize;
                 if src_end <= y_data.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&y_data[src_start..src_end]);
+                    pad[dst_start..dst_end].copy_from_slice(&y_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -243,7 +255,7 @@ impl YuvPipeline {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &padded,
+                pad,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(y_tex_w),
@@ -257,18 +269,20 @@ impl YuvPipeline {
             );
         }
 
-        // Upload U plane
+        // Upload U plane (reuse pad buffer — UV planes are smaller than Y)
         {
             let uv_h = height / 2;
             let uv_w = width / 2;
-            let mut padded = vec![128u8; (uv_tex_w * uv_h) as usize];
+            let uv_padded_len = (uv_tex_w * uv_h) as usize;
+            pad.resize(uv_padded_len, 128);
+            pad.fill(128);
             for row in 0..uv_h {
                 let src_start = (row * stride_u) as usize;
                 let src_end = src_start + uv_w as usize;
                 let dst_start = (row * uv_tex_w) as usize;
                 let dst_end = dst_start + uv_w as usize;
                 if src_end <= u_data.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&u_data[src_start..src_end]);
+                    pad[dst_start..dst_end].copy_from_slice(&u_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -278,7 +292,7 @@ impl YuvPipeline {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &padded,
+                pad,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(uv_tex_w),
@@ -296,14 +310,16 @@ impl YuvPipeline {
         {
             let uv_h = height / 2;
             let uv_w = width / 2;
-            let mut padded = vec![128u8; (uv_tex_w * uv_h) as usize];
+            let uv_padded_len = (uv_tex_w * uv_h) as usize;
+            pad.resize(uv_padded_len, 128);
+            pad.fill(128);
             for row in 0..uv_h {
                 let src_start = (row * stride_v) as usize;
                 let src_end = src_start + uv_w as usize;
                 let dst_start = (row * uv_tex_w) as usize;
                 let dst_end = dst_start + uv_w as usize;
                 if src_end <= v_data.len() {
-                    padded[dst_start..dst_end].copy_from_slice(&v_data[src_start..src_end]);
+                    pad[dst_start..dst_end].copy_from_slice(&v_data[src_start..src_end]);
                 }
             }
             queue.write_texture(
@@ -313,7 +329,7 @@ impl YuvPipeline {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &padded,
+                pad,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(uv_tex_w),
@@ -470,27 +486,28 @@ impl primitive::Pipeline for YuvPipeline {
 
 // ── Primitive ────────────────────────────────────────────────────────────────
 
-/// A snapshot of YUV frame data ready for GPU upload and rendering.
+/// YUV frame reference ready for GPU upload and rendering.
 ///
-/// Created each frame by `YuvVideoProgram::draw()`. Holds a copy of the
-/// YUV plane data (to avoid holding the mutex during GPU operations) and
-/// the tile dimensions for center-crop computation.
-#[derive(Debug)]
+/// Created each frame by `YuvVideoProgram::draw()`. Holds an `Arc` to the
+/// double-buffered video manager so `prepare()` can lock the read buffer and
+/// upload directly to the GPU — avoiding a ~3 MB clone per frame.
 pub struct YuvVideoPrimitive {
     participant_id: u64,
-    /// Snapshot of YUV data (cloned from the video buffer)
-    y_data: Vec<u8>,
-    u_data: Vec<u8>,
-    v_data: Vec<u8>,
-    src_width: u32,
-    src_height: u32,
-    stride_y: u32,
-    stride_u: u32,
-    stride_v: u32,
+    /// Reference to the double-buffered video manager (zero-copy path).
+    buffer: Arc<VideoBufferManager>,
     tile_width: u32,
     tile_height: u32,
     corner_radius: f32,
     has_data: bool,
+}
+
+impl std::fmt::Debug for YuvVideoPrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("YuvVideoPrimitive")
+            .field("participant_id", &self.participant_id)
+            .field("has_data", &self.has_data)
+            .finish()
+    }
 }
 
 impl primitive::Primitive for YuvVideoPrimitive {
@@ -508,18 +525,26 @@ impl primitive::Primitive for YuvVideoPrimitive {
             return;
         }
 
+        // Lock the read buffer directly and upload to GPU — no intermediate clone.
+        let frame_lock = self.buffer.latest_frame();
+        let buf = frame_lock.lock().unwrap();
+
+        if buf.width == 0 || buf.height == 0 {
+            return;
+        }
+
         pipeline.upload_yuv(
             self.participant_id,
             device,
             queue,
-            self.src_width,
-            self.src_height,
-            self.stride_y,
-            self.stride_u,
-            self.stride_v,
-            &self.y_data,
-            &self.u_data,
-            &self.v_data,
+            buf.width,
+            buf.height,
+            buf.stride_y,
+            buf.stride_u,
+            buf.stride_v,
+            &buf.y,
+            &buf.u,
+            &buf.v,
             self.tile_width,
             self.tile_height,
             self.corner_radius,
@@ -570,21 +595,15 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
         _cursor: mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        let frame_lock = self.buffer.latest_frame();
-        let buf = frame_lock.lock().unwrap();
-
-        let has_data = buf.width > 0 && buf.height > 0;
+        let has_data = {
+            let frame_lock = self.buffer.latest_frame();
+            let buf = frame_lock.lock().unwrap();
+            buf.width > 0 && buf.height > 0
+        };
 
         YuvVideoPrimitive {
             participant_id: self.participant_id,
-            y_data: buf.y.clone(),
-            u_data: buf.u.clone(),
-            v_data: buf.v.clone(),
-            src_width: buf.width,
-            src_height: buf.height,
-            stride_y: buf.stride_y,
-            stride_u: buf.stride_u,
-            stride_v: buf.stride_v,
+            buffer: self.buffer.clone(),
             tile_width: bounds.width.max(1.0) as u32,
             tile_height: bounds.height.max(1.0) as u32,
             corner_radius: self.corner_radius,
