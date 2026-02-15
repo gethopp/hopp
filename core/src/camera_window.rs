@@ -13,8 +13,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant as StdInstant};
 
-use iced::widget::{button, column, container, row, shader, svg, text, Space};
+use iced::widget::{button, column, container, row, shader, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
     Size as IcedSize,
@@ -29,20 +30,19 @@ use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
 use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use thiserror::Error;
 
-use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
+use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
-
-// ── Window dimensions ───────────────────────────────────────────────────────
+use crate::UserEvent;
 
 /// Initial camera window dimensions (logical pixels).
 const CAMERA_WINDOW_WIDTH: f64 = 1035.0;
@@ -52,7 +52,8 @@ const CAMERA_WINDOW_HEIGHT: f64 = 555.0;
 const CAMERA_WINDOW_MIN_WIDTH: f64 = 400.0;
 const CAMERA_WINDOW_MIN_HEIGHT: f64 = 400.0;
 
-// ── Layout constants (matching iced-poc main.rs) ─────────────────────────────
+/// Target redraw interval: 60 FPS
+const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 30);
 
 const CONTENT_PADDING: f32 = 12.0;
 
@@ -68,14 +69,11 @@ const HEADER_HEIGHT: f32 = (44.0 / 1.5) + (CONTENT_PADDING * 2.0);
 const SMALL_WIDTH_THRESHOLD: f32 = 450.0;
 const SMALL_HEIGHT_THRESHOLD: f32 = 600.0;
 
-// ── SVG icon bytes embedded at compile time ─────────────────────────────────
-
-const ICON_MICROPHONE: &[u8] = include_bytes!("../resources/icons/microphone.svg");
-const ICON_SCREEN_SHARE: &[u8] = include_bytes!("../resources/icons/screen-share.svg");
-const ICON_VIDEO: &[u8] = include_bytes!("../resources/icons/video.svg");
-const ICON_PHONE_OFF: &[u8] = include_bytes!("../resources/icons/phone-off.svg");
-
-// ── Errors ──────────────────────────────────────────────────────────────────
+const ICON_MICROPHONE_ON: char = '\u{F105}';
+const ICON_MICROPHONE_OFF: char = '\u{F106}';
+const ICON_SCREEN_SHARE: char = '\u{F102}';
+const ICON_VIDEO: char = '\u{F101}';
+const ICON_PHONE_OFF: char = '\u{F103}';
 
 #[derive(Error, Debug)]
 pub enum CameraWindowError {
@@ -89,8 +87,6 @@ pub enum CameraWindowError {
     DeviceRequest,
 }
 
-// ── Iced messages ───────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub enum CameraMessage {
     MicToggle,
@@ -98,8 +94,6 @@ pub enum CameraMessage {
     VideoToggle,
     EndCall,
 }
-
-// ── Application state for the camera UI ────────────────────────────────────
 
 struct CameraState {
     // Viewport logical size for responsive layout
@@ -113,8 +107,6 @@ impl Default for CameraState {
         }
     }
 }
-
-// ── Button background types (from iced-poc control_button pattern) ──────────
 
 enum ButtonBackground {
     Solid(ColorToken),
@@ -138,7 +130,9 @@ pub struct CameraWindow {
     modifiers: ModifiersState,
     state: CameraState,
     resized: bool,
+    last_redraw: StdInstant,
     participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl CameraWindow {
@@ -146,6 +140,7 @@ impl CameraWindow {
     pub fn new(
         event_loop: &ActiveEventLoop,
         participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, CameraWindowError> {
         log::info!("CameraWindow::new");
 
@@ -274,7 +269,9 @@ impl CameraWindow {
             modifiers: ModifiersState::default(),
             state,
             resized: false,
+            last_redraw: StdInstant::now(),
             participants,
+            event_loop_proxy,
         })
     }
 
@@ -283,59 +280,75 @@ impl CameraWindow {
         self.window.id()
     }
 
+    /// Request a redraw of the camera window.
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    /// Returns the instant when the next redraw should occur.
+    pub fn next_redraw_at(&self) -> StdInstant {
+        self.last_redraw + REDRAW_INTERVAL
+    }
+
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
     pub fn handle_window_event(&mut self, event: WindowEvent) {
-        // Convert winit event to iced event
-        if let Some(iced_event) = conversion::window_event(
-            event.clone(),
-            self.window.scale_factor() as f32,
-            self.modifiers,
-        ) {
-            match iced_event {
-                Event::Mouse(mouse_event) => {
-                    self.cursor = match mouse_event {
-                        iced::mouse::Event::CursorMoved { position } => {
-                            mouse::Cursor::Available(position)
-                        }
-                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                        _ => self.cursor,
-                    };
-                }
-                _ => {}
-            }
+        let is_redraw = matches!(event, WindowEvent::RedrawRequested);
 
-            // Build user interface, process the event, and collect messages
-            let mut messages: Vec<CameraMessage> = Vec::new();
-
-            let cache = self.cache.take().unwrap_or_default();
-            let mut interface = UserInterface::build(
-                Self::view(&self.state, &self.participants),
-                self.viewport.logical_size(),
-                cache,
-                &mut self.renderer,
-            );
-
-            let iced_event = conversion::window_event(
+        // Process interactive events (mouse, keyboard, etc.) through the iced pipeline.
+        // Skip RedrawRequested — redraw() builds its own UI internally, so processing
+        // it here would double-build the widget tree on every frame.
+        if !is_redraw {
+            if let Some(iced_event) = conversion::window_event(
                 event.clone(),
                 self.window.scale_factor() as f32,
                 self.modifiers,
-            );
-            if let Some(ev) = iced_event {
-                let (_, statuses) = interface.update(
-                    &[ev],
-                    self.cursor,
+            ) {
+                match iced_event {
+                    Event::Mouse(mouse_event) => {
+                        self.cursor = match mouse_event {
+                            iced::mouse::Event::CursorMoved { position } => {
+                                mouse::Cursor::Available(position)
+                            }
+                            iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                            _ => self.cursor,
+                        };
+                    }
+                    _ => {}
+                }
+
+                // Build user interface, process the event, and collect messages
+                let mut messages: Vec<CameraMessage> = Vec::new();
+
+                let cache = self.cache.take().unwrap_or_default();
+                let mut interface = UserInterface::build(
+                    Self::view(&self.state, &self.participants),
+                    self.viewport.logical_size(),
+                    cache,
                     &mut self.renderer,
-                    &mut self.clipboard,
-                    &mut messages,
                 );
-                let _ = statuses;
-            }
 
-            self.cache = Some(interface.into_cache());
+                let iced_event = conversion::window_event(
+                    event.clone(),
+                    self.window.scale_factor() as f32,
+                    self.modifiers,
+                );
+                if let Some(ev) = iced_event {
+                    let (_, statuses) = interface.update(
+                        &[ev],
+                        self.cursor,
+                        &mut self.renderer,
+                        &mut self.clipboard,
+                        &mut messages,
+                    );
+                    let _ = statuses;
+                }
 
-            // Process collected messages
-            for msg in messages {
-                self.update(msg);
+                self.cache = Some(interface.into_cache());
+
+                // Process collected messages
+                for msg in messages {
+                    self.update(msg);
+                }
             }
         }
 
@@ -358,15 +371,18 @@ impl CameraWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
-                self.redraw();
+                if self.last_redraw.elapsed() >= REDRAW_INTERVAL {
+                    self.redraw();
+                    self.last_redraw = StdInstant::now();
+                }
+                // Don't call window.request_redraw() here — it wakes the event loop
+                // immediately, creating a busy-loop. Frame scheduling is handled
+                // by Application::about_to_wait() via ControlFlow::WaitUntil.
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
             }
-            _ => {
-                // Request redraw for any event that might change UI state
-                self.window.request_redraw();
-            }
+            _ => {}
         }
     }
 
@@ -382,12 +398,24 @@ impl CameraWindow {
         state: &CameraState,
         participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
-        // ── Control buttons (matching iced-poc control_button) ────────────
-        let mic_button = control_button(
-            ICON_MICROPHONE,
-            ButtonBackground::Solid(ColorToken::Orange500),
-            CameraMessage::MicToggle,
-        );
+        // ── Control buttons ────────────────────────────────────────────────
+        let is_muted = participants
+            .read()
+            .ok()
+            .and_then(|p| p.get("local").map(|info| info.muted()))
+            .unwrap_or(false);
+
+        let mic_bg = if is_muted {
+            ButtonBackground::Solid(ColorToken::Gray400)
+        } else {
+            ButtonBackground::Solid(ColorToken::Orange500)
+        };
+        let mic_icon = if is_muted {
+            ICON_MICROPHONE_OFF
+        } else {
+            ICON_MICROPHONE_ON
+        };
+        let mic_button = control_button(mic_icon, mic_bg, CameraMessage::MicToggle);
 
         let screen_button = control_button(
             ICON_SCREEN_SHARE,
@@ -456,16 +484,37 @@ impl CameraWindow {
     fn update(&mut self, message: CameraMessage) {
         match message {
             CameraMessage::MicToggle => {
-                log::info!("CameraWindow: mic toggle requested");
+                let is_muted = self
+                    .participants
+                    .read()
+                    .ok()
+                    .and_then(|p| p.get("local").map(|info| info.muted()))
+                    .unwrap_or(false);
+
+                let event = if is_muted {
+                    UserEvent::UnmuteAudio
+                } else {
+                    UserEvent::MuteAudio
+                };
+                log::info!("CameraWindow: mic toggle -> {:?}", event);
+                if let Err(e) = self.event_loop_proxy.send_event(event) {
+                    log::error!("CameraWindow: failed to send mic toggle event: {e:?}");
+                }
             }
             CameraMessage::ScreenShare => {
                 log::info!("CameraWindow: screen share requested");
             }
             CameraMessage::VideoToggle => {
-                log::info!("CameraWindow: video toggle requested");
+                log::info!("CameraWindow: video toggle -> StopCamera");
+                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::StopCamera) {
+                    log::error!("CameraWindow: failed to send StopCamera event: {e:?}");
+                }
             }
             CameraMessage::EndCall => {
-                log::info!("CameraWindow: end call requested");
+                log::info!("CameraWindow: end call -> CallEnd");
+                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::CallEnd) {
+                    log::error!("CameraWindow: failed to send CallEnd event: {e:?}");
+                }
             }
         }
     }
@@ -544,33 +593,32 @@ impl CameraWindow {
 
         self.window.pre_present_notify();
         output.present();
-
-        // Request continuous redraws for animated video frames
-        self.window.request_redraw();
     }
 }
 
 // ── Styling helper functions (ported from iced-poc main.rs) ─────────────────
 
-/// Create a control button with an SVG icon.
+/// Create a pill-shaped control button with an icon-font glyph.
 ///
-/// Matches the iced-poc main.rs `control_button` function exactly:
-/// - SVG icon at 24/1.5 = 16px
+/// Renders the icon via `text()` using the icons font (ICONS_FONT).
+/// - Icon at 16px logical
 /// - Button width 60/1.5 = 40px, height 44/1.5 ≈ 29.3px
 /// - Pill-shaped with 10px radius
 /// - Solid or gradient background with hover/press states
 fn control_button(
-    icon_data: &'static [u8],
+    icon_char: char,
     bg: ButtonBackground,
     message: CameraMessage,
 ) -> iced::Element<'static, CameraMessage, Theme, iced::Renderer> {
-    let icon_handle = svg::Handle::from_memory(icon_data);
-    let icon = svg(icon_handle)
-        .width(Length::Fixed(24.0 / 1.5))
-        .height(Length::Fixed(24.0 / 1.5));
+    let icon_text = text(icon_char.to_string())
+        .font(ICONS_FONT)
+        .size(16.0)
+        .color(Color::WHITE)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
 
     button(
-        container(icon)
+        container(icon_text)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
@@ -633,7 +681,6 @@ fn control_button(
                     ),
                     _ => (*top, *bottom),
                 };
-                // Gradient from top to bottom (180deg = PI radians)
                 let grad = gradient::Linear::new(Radians(std::f32::consts::PI))
                     .add_stop(0.0, adjusted_top)
                     .add_stop(1.0, adjusted_bottom);
@@ -656,11 +703,11 @@ fn control_button(
     .into()
 }
 
-/// Truncate a name to a maximum of 10 characters, adding "..." if truncated.
+/// Truncate a name to a maximum of 16 characters, adding "..." if truncated.
 fn truncate_name(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
-    if chars.len() > 10 {
-        chars[..10].iter().collect::<String>() + "..."
+    if chars.len() > 16 {
+        chars[..16].iter().collect::<String>() + "..."
     } else {
         name.to_string()
     }

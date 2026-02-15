@@ -859,6 +859,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
                 self.stop_camera();
+                self.camera_window = None;
                 if let Some(room_service) = self.room_service.as_mut() {
                     room_service.destroy_room();
                 }
@@ -1243,11 +1244,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: StartCamera failed: {e}");
                 }
 
-                // Open camera window if camera started successfully
+                // Open camera window if camera started successfully and window is enabled
                 if result.is_ok() && self.camera_window.is_none() {
                     if let Some(room_service) = self.room_service.as_ref() {
                         let participants = room_service.participants();
-                        match CameraWindow::new(event_loop, participants) {
+                        match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone()) {
                             Ok(cam) => {
                                 log::info!("user_event: Camera window opened for local camera");
                                 self.camera_window = Some(cam);
@@ -1264,6 +1265,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
+                self.camera_window = None;
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
@@ -1273,7 +1275,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(event_loop, participants) {
+                    match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone()) {
                         Ok(cam) => self.camera_window = Some(cam),
                         Err(e) => log::error!("Failed to open camera window: {e:?}"),
                     }
@@ -1597,6 +1599,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // We use explicitly WaitUntil to avoid busy-looping
+        // and super high CPU usage.
+        // Source: https://stackoverflow.com/a/76105294
+        use winit::event_loop::ControlFlow;
+
+        if let Some(camera) = &self.camera_window {
+            let next = camera.next_redraw_at();
+            let now = std::time::Instant::now();
+            if now >= next {
+                camera.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }
