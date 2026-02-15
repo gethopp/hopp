@@ -1236,6 +1236,11 @@ async fn room_service_commands(
             RoomServiceCommand::MuteAudioTrack => {
                 if let Some(publisher) = audio_publisher.as_ref() {
                     publisher.mute();
+                    if let Ok(mut participants) = inner.participants.write() {
+                        if let Some(local) = participants.get_mut("local") {
+                            local.set_muted(true);
+                        }
+                    }
                     log::info!("room_service_commands: Audio track muted");
                 } else {
                     log::warn!("room_service_commands: No audio track to mute");
@@ -1244,6 +1249,11 @@ async fn room_service_commands(
             RoomServiceCommand::UnmuteAudioTrack => {
                 if let Some(publisher) = audio_publisher.as_ref() {
                     publisher.unmute();
+                    if let Ok(mut participants) = inner.participants.write() {
+                        if let Some(local) = participants.get_mut("local") {
+                            local.set_muted(false);
+                        }
+                    }
                     log::info!("room_service_commands: Audio track unmuted");
                 } else {
                     log::warn!("room_service_commands: No audio track to unmute");

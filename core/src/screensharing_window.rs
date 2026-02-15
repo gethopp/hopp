@@ -16,6 +16,7 @@ use iced::widget::{column, container, row, shader, stack, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
 };
+use iced_core::clipboard::Kind;
 use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::{Shell, Viewport};
 use iced_wgpu::Engine;
@@ -25,9 +26,9 @@ use iced_winit::core::{window, Event, Size, Theme};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, ModifiersState};
 #[cfg(not(target_os = "macos"))]
 use winit::window::{CursorIcon, CustomCursor};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -401,6 +402,8 @@ impl ScreensharingWindow {
         // Logical size: 30×30 points (matching the SVG viewBox).
         const CURSOR_LOGICAL_SIZE: f64 = 30.0;
 
+        // TODO(@konsalex): Extract in core init, to avoid re-rasterizing the cursors
+        // on every window creation.
         // On macOS, rasterize at 4× the logical size for maximum crispness,
         // then create native NSCursors with the point size set to 30×30.
         #[cfg(target_os = "macos")]
@@ -799,6 +802,39 @@ impl ScreensharingWindow {
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                // Only handle Copy/Paste/Cut events when the user is inside the
+                // screen-sharing area, and they are in control mode.
+                if !self.mouse_in_participant_area || self.state.active_tab != "control" {
+                    return;
+                }
+
+                if event.state == ElementState::Pressed {
+                    let ctrl_or_cmd = if cfg!(target_os = "macos") {
+                        self.modifiers.super_key()
+                    } else {
+                        self.modifiers.control_key()
+                    };
+
+                    if ctrl_or_cmd {
+                        match event.logical_key.as_ref() {
+                            // Will send a command to remote participant's screen
+                            // to copy their selected text
+                            Key::Character("c") => {
+                                println!("Copy triggered!");
+                            }
+                            Key::Character("v") => {
+                                println!("Paste triggered!");
+                                // Get from clipboard manager the text
+                                let clipboard_text =
+                                    self.clipboard.read(Kind::Standard).unwrap_or_default();
+                                println!("Clipboard text: {}", clipboard_text);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
             _ => {
                 // Request redraw for any event that might change UI state

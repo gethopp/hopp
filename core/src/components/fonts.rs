@@ -20,10 +20,14 @@ pub const GEIST_MEDIUM: Font = Font {
     style: iced::font::Style::Normal,
 };
 
+/// Icons icon-font (woff).
+pub const ICONS_FONT: Font = Font::with_name("icons");
+
 pub const GEIST_REGULAR_BYTES: &[u8] =
     include_bytes!("../../resources/fonts/geist/Geist-Regular.otf");
 pub const GEIST_MEDIUM_BYTES: &[u8] =
     include_bytes!("../../resources/fonts/geist/Geist-Medium.otf");
+pub const ICONS_FONT_BYTES: &[u8] = include_bytes!("../../resources/icons-font-ttf/icons.ttf");
 
 /// Register Geist font data with the global iced font system.
 ///
@@ -34,4 +38,5 @@ pub fn load_fonts() {
         .expect("Failed to lock font system");
     font_system.load_font(Cow::Borrowed(GEIST_REGULAR_BYTES));
     font_system.load_font(Cow::Borrowed(GEIST_MEDIUM_BYTES));
+    font_system.load_font(Cow::Borrowed(ICONS_FONT_BYTES));
 }

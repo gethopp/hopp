@@ -1,0 +1,31 @@
+@font-face {
+    font-family: "icons";
+    src: url("./icons.ttf?213b30d540655dba4ef17f89ec2d0371") format("truetype");
+}
+
+i[class^="icon-"]:before, i[class*=" icon-"]:before {
+    font-family: icons !important;
+    font-style: normal;
+    font-weight: normal !important;
+    font-variant: normal;
+    text-transform: none;
+    line-height: 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.icon-video:before {
+    content: "\f101";
+}
+.icon-screen-share:before {
+    content: "\f102";
+}
+.icon-phone-off:before {
+    content: "\f103";
+}
+.icon-microphone-on:before {
+    content: "\f105";
+}
+.icon-microphone-off:before {
+    content: "\f106";
+}

@@ -321,3 +321,22 @@ sequenceDiagram
         }
     }}%%
 ```
+
+### Icon support
+
+To have smooth icons across various DPI scales, we have a folder under `resources/icons-font` that are the icons that we want to generate as ttf icon-fonts inside `resources/icons-font-ttf`.
+
+We use [fantasticon](https://github.com/tancredi/fantasticon) to generate the ttf icon-fonts.
+
+To run:
+
+```bash
+fantasticon icons-font -c .fantasticonrc.cjs -o icons-font-ttf
+```
+
+When you add a new icon in the `icons-font` folder, you need to update the `codepoints` in the `.fantasticonrc.cjs` file.
+
+Also , if the icons are anticipated to have an "on/off" state, you need to add the `on` and `off` variants to the icon, or leave at least two numbers for the next codepoint, so we could add this in the future, just to be readable.
+
+> [!NOTE]  
+> To work properly, icons should be 200x200px and not use strokes. In Figma use `Outline Stroke` in your vector and then export as SVG.
