@@ -100,6 +100,16 @@ pub enum ScreensharingMessage {
     TabSelected(&'static str),
 }
 
+// ── Input events to forward to room service ─────────────────────────────────
+
+#[derive(Debug)]
+pub(crate) enum ScreenShareInputEvent {
+    CursorMoved { x: f64, y: f64 },
+    MouseClick(crate::room_service::MouseClickData),
+    Scroll(crate::room_service::WheelDelta),
+    KeyInput(crate::room_service::KeystrokeData),
+}
+
 // ── Application state for the screensharing UI ─────────────────────────────
 
 struct ScreensharingState {
@@ -517,11 +527,13 @@ impl ScreensharingWindow {
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
-    pub fn handle_window_event(&mut self, event: WindowEvent) {
-        // Participant area event gating: update cursor-in-rect state and log input
+    /// Returns an optional input event to be forwarded to room service.
+    pub fn handle_window_event(&mut self, event: WindowEvent) -> Option<ScreenShareInputEvent> {
+        // Participant area event gating: update cursor-in-rect state and capture input
         // when inside the participant image area. All events still flow to iced.
         let scale_factor = self.window.scale_factor() as f32;
         let rect = self.participant_image_rect();
+        let mut input_event = None;
 
         match &event {
             WindowEvent::CursorMoved { position, .. } => {
@@ -536,14 +548,17 @@ impl ScreensharingWindow {
                 if was_inside != inside {
                     self.update_cursor();
                 }
-                if inside && !was_inside {
-                    let pct_x = (logical_x - rect.x) / rect.width;
-                    let pct_y = (logical_y - rect.y) / rect.height;
-                    log::debug!(
-                        "ScreensharingWindow: cursor entered participant area at ({:.3}, {:.3})",
-                        pct_x,
-                        pct_y
-                    );
+                if inside {
+                    let pct_x = ((logical_x - rect.x) / rect.width) as f64;
+                    let pct_y = ((logical_y - rect.y) / rect.height) as f64;
+                    input_event = Some(ScreenShareInputEvent::CursorMoved { x: pct_x, y: pct_y });
+                    if !was_inside {
+                        log::debug!(
+                            "ScreensharingWindow: cursor entered participant area at ({:.3}, {:.3})",
+                            pct_x,
+                            pct_y
+                        );
+                    }
                 } else if !inside && was_inside {
                     log::debug!("ScreensharingWindow: cursor left participant area");
                 }
@@ -572,11 +587,38 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area {
                     let (pct_x, pct_y) = match &self.cursor {
                         mouse::Cursor::Available(pos) => (
-                            (pos.x - rect.x) / rect.width,
-                            (pos.y - rect.y) / rect.height,
+                            ((pos.x - rect.x) / rect.width) as f64,
+                            ((pos.y - rect.y) / rect.height) as f64,
                         ),
                         _ => (0.0, 0.0),
                     };
+
+                    // Map winit button to u32: Left=0, Right=1, Middle=2
+                    let button_num = match button {
+                        winit::event::MouseButton::Left => 0,
+                        winit::event::MouseButton::Right => 1,
+                        winit::event::MouseButton::Middle => 2,
+                        winit::event::MouseButton::Back => 3,
+                        winit::event::MouseButton::Forward => 4,
+                        winit::event::MouseButton::Other(n) => *n as u32,
+                    };
+
+                    let down = state.is_pressed();
+
+                    input_event = Some(ScreenShareInputEvent::MouseClick(
+                        crate::room_service::MouseClickData {
+                            x: pct_x,
+                            y: pct_y,
+                            button: button_num,
+                            clicks: 1,
+                            down,
+                            shift: self.modifiers.shift_key(),
+                            meta: self.modifiers.super_key(),
+                            ctrl: self.modifiers.control_key(),
+                            alt: self.modifiers.alt_key(),
+                        },
+                    ));
+
                     log::debug!(
                         "ScreensharingWindow: [participant_area] mouse button {:?} {:?} at ({:.3}, {:.3})",
                         button,
@@ -594,6 +636,19 @@ impl ScreensharingWindow {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if self.mouse_in_participant_area {
+                    // Extract delta_x and delta_y from the scroll delta
+                    let (delta_x, delta_y) = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(x, y) => (*x as f64, *y as f64),
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
+                    };
+
+                    input_event = Some(ScreenShareInputEvent::Scroll(
+                        crate::room_service::WheelDelta {
+                            deltaX: delta_x,
+                            deltaY: delta_y,
+                        },
+                    ));
+
                     log::debug!(
                         "ScreensharingWindow: [participant_area] scroll delta {:?}",
                         delta
@@ -606,6 +661,21 @@ impl ScreensharingWindow {
                 event: key_event, ..
             } => {
                 if self.mouse_in_participant_area {
+                    // Extract key string from logical_key
+                    let key_str = format!("{:?}", key_event.logical_key);
+                    let down = key_event.state.is_pressed();
+
+                    input_event = Some(ScreenShareInputEvent::KeyInput(
+                        crate::room_service::KeystrokeData {
+                            key: vec![key_str.clone()],
+                            meta: self.modifiers.super_key(),
+                            ctrl: self.modifiers.control_key(),
+                            shift: self.modifiers.shift_key(),
+                            alt: self.modifiers.alt_key(),
+                            down,
+                        },
+                    ));
+
                     log::debug!(
                         "ScreensharingWindow: [participant_area] key {:?} {:?}",
                         key_event.logical_key,
@@ -717,6 +787,8 @@ impl ScreensharingWindow {
                 self.window.request_redraw();
             }
         }
+
+        input_event
     }
 
     fn view<'a>(

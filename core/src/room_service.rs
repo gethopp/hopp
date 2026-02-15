@@ -83,6 +83,13 @@ enum RoomServiceCommand {
     },
     UnpublishCameraTrack,
     UnpublishScreenShareTrack,
+    PublishMouseClick(MouseClickData),
+    PublishMouseVisible(MouseVisibleData),
+    PublishKeystroke(KeystrokeData),
+    PublishWheelEvent(WheelDelta),
+    PublishAddToClipboard(AddToClipboardData),
+    PublishPasteFromClipboard(PasteFromClipboardData),
+    PublishClickAnimation(ClientPoint),
 }
 
 #[derive(Debug)]
@@ -539,6 +546,83 @@ impl RoomService {
             .send(RoomServiceCommand::UnpublishScreenShareTrack);
         if let Err(e) = res {
             log::error!("unpublish_screen_share_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a mouse click event to the room.
+    pub fn publish_mouse_click(&self, data: MouseClickData) {
+        log::debug!("publish_mouse_click: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishMouseClick(data));
+        if let Err(e) = res {
+            log::error!("publish_mouse_click: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes mouse visibility state to the room.
+    pub fn publish_mouse_visible(&self, data: MouseVisibleData) {
+        log::debug!("publish_mouse_visible: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishMouseVisible(data));
+        if let Err(e) = res {
+            log::error!("publish_mouse_visible: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a keystroke event to the room.
+    pub fn publish_keystroke(&self, data: KeystrokeData) {
+        log::debug!("publish_keystroke: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishKeystroke(data));
+        if let Err(e) = res {
+            log::error!("publish_keystroke: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a wheel/scroll event to the room.
+    pub fn publish_wheel_event(&self, data: WheelDelta) {
+        log::debug!("publish_wheel_event: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishWheelEvent(data));
+        if let Err(e) = res {
+            log::error!("publish_wheel_event: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes an add to clipboard event to the room.
+    pub fn publish_add_to_clipboard(&self, data: AddToClipboardData) {
+        log::debug!("publish_add_to_clipboard");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishAddToClipboard(data));
+        if let Err(e) = res {
+            log::error!("publish_add_to_clipboard: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a paste from clipboard event to the room.
+    pub fn publish_paste_from_clipboard(&self, data: PasteFromClipboardData) {
+        log::debug!("publish_paste_from_clipboard");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishPasteFromClipboard(data));
+        if let Err(e) = res {
+            log::error!("publish_paste_from_clipboard: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a click animation event to the room.
+    pub fn publish_click_animation(&self, point: ClientPoint) {
+        log::debug!("publish_click_animation: {point:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishClickAnimation(point));
+        if let Err(e) = res {
+            log::error!("publish_click_animation: Failed to send command: {e:?}");
         }
     }
 
@@ -1253,6 +1337,182 @@ async fn room_service_commands(
                 *inner_buffer_source = None;
 
                 log::info!("room_service_commands: Screen share track unpublished");
+            }
+            RoomServiceCommand::PublishMouseClick(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishMouseClick");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::MouseClick(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish mouse click: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishMouseVisible(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishMouseVisible");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::MouseVisible(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish mouse visible: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishKeystroke(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishKeystroke");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::Keystroke(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish keystroke: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishWheelEvent(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishWheelEvent");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::WheelEvent(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish wheel event: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishAddToClipboard(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishAddToClipboard"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::AddToClipboard(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish add to clipboard: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishPasteFromClipboard(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishPasteFromClipboard"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::PasteFromClipboard(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!(
+                        "room_service_commands: Failed to publish paste from clipboard: {e:?}"
+                    );
+                }
+            }
+            RoomServiceCommand::PublishClickAnimation(point) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishClickAnimation"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::ClickAnimation(point);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish click animation: {e:?}");
+                }
             }
         }
     }

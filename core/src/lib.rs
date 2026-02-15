@@ -1454,7 +1454,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // Route to screensharing window if it matches
         if let Some(ss) = &mut self.screensharing_window {
             if ss.window_id() == window_id {
-                ss.handle_window_event(event);
+                let input_event = ss.handle_window_event(event);
+                // Mutable borrow on ss is dropped here
+                if let Some(event) = input_event {
+                    if let Some(rs) = &self.room_service {
+                        match event {
+                            screensharing_window::ScreenShareInputEvent::CursorMoved { x, y } => {
+                                rs.publish_sharer_location(x, y, true);
+                            }
+                            screensharing_window::ScreenShareInputEvent::MouseClick(data) => {
+                                rs.publish_mouse_click(data);
+                            }
+                            screensharing_window::ScreenShareInputEvent::Scroll(data) => {
+                                rs.publish_wheel_event(data);
+                            }
+                            screensharing_window::ScreenShareInputEvent::KeyInput(data) => {
+                                rs.publish_keystroke(data);
+                            }
+                        }
+                    }
+                }
                 return;
             }
         }
