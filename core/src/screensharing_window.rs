@@ -11,6 +11,7 @@
 //! - Pill-shaped control buttons with solid/gradient backgrounds
 
 use std::sync::Arc;
+use std::time::{Duration, Instant as StdInstant};
 
 use iced::widget::{column, container, row, shader, stack, text, Space};
 use iced::{
@@ -54,6 +55,9 @@ const CONTENT_PADDING: f32 = 12.0;
 const HEADER_CHROME_HEIGHT: f32 = 42.0;
 /// Header right padding (less than content so the cog sits closer to the window edge)
 const HEADER_RIGHT_PADDING: f32 = 4.0;
+
+/// Target redraw interval: 40 FPS
+const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 40);
 
 const ICON_COG: &[u8] = include_bytes!("../resources/icons/cog.svg");
 const ICON_WAND: &[u8] = include_bytes!("../resources/icons/wand.svg");
@@ -248,6 +252,7 @@ pub struct ScreensharingWindow {
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
+    last_redraw: StdInstant,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
@@ -466,6 +471,7 @@ impl ScreensharingWindow {
             resized: false,
             mouse_in_participant_area: false,
             screen_share_buffer,
+            last_redraw: StdInstant::now(),
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
@@ -482,6 +488,15 @@ impl ScreensharingWindow {
     /// The winit `WindowId` for event routing.
     pub fn window_id(&self) -> WindowId {
         self.window.id()
+    }
+
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    /// Returns the instant when the next redraw should occur.
+    pub fn next_redraw_at(&self) -> StdInstant {
+        self.last_redraw + REDRAW_INTERVAL
     }
 
     /// Update window cursor based on active tab and mouse position.
@@ -798,7 +813,10 @@ impl ScreensharingWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
-                self.redraw();
+                if self.last_redraw.elapsed() >= REDRAW_INTERVAL {
+                    self.redraw();
+                    self.last_redraw = StdInstant::now();
+                }
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
@@ -807,7 +825,7 @@ impl ScreensharingWindow {
                 // Only handle Copy/Paste/Cut events when the user is inside the
                 // screen-sharing area, and they are in control mode.
                 if !self.mouse_in_participant_area || self.state.active_tab != "control" {
-                    return;
+                    return None;
                 }
 
                 if event.state == ElementState::Pressed {

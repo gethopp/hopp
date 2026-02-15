@@ -1677,12 +1677,32 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // Source: https://stackoverflow.com/a/76105294
         use winit::event_loop::ControlFlow;
 
+        let now = std::time::Instant::now();
+        let mut next_redraw: Option<std::time::Instant> = None;
+
+        // Handle camera window
         if let Some(camera) = &self.camera_window {
-            let next = camera.next_redraw_at();
-            let now = std::time::Instant::now();
-            if now >= next {
+            let camera_next = camera.next_redraw_at();
+            if now >= camera_next {
                 camera.request_redraw();
             }
+            next_redraw = Some(camera_next);
+        }
+
+        // Handle screensharing window
+        if let Some(screensharing) = &self.screensharing_window {
+            let ss_next = screensharing.next_redraw_at();
+            if now >= ss_next {
+                screensharing.request_redraw();
+            }
+            next_redraw = match next_redraw {
+                Some(existing) => Some(existing.min(ss_next)),
+                None => Some(ss_next),
+            };
+        }
+
+        // Set control flow based on earliest next redraw
+        if let Some(next) = next_redraw {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next));
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
