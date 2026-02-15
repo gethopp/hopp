@@ -12,10 +12,9 @@
 
 use std::sync::Arc;
 
-use iced::widget::{column, container, image as image_widget, row, stack, text, Space};
+use iced::widget::{column, container, row, shader, stack, text, Space};
 use iced::{
-    gradient, Alignment, Background, Border, Color, ContentFit, Length, Padding, Pixels, Radians,
-    Rectangle,
+    gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
 };
 use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::{Shell, Viewport};
@@ -38,11 +37,11 @@ use thiserror::Error;
 use fontdb::Database;
 use resvg::{tiny_skia, usvg};
 
-use crate::components::dropdown::{self as dropdown_mod, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
 };
+use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
@@ -62,8 +61,6 @@ const ICON_CLICKER: &[u8] = include_bytes!("../resources/icons/clicker.svg");
 const CURSOR_ICON_POINTER: &[u8] =
     include_bytes!("../resources/icons/local-participant-cursor.svg");
 const CURSOR_ICON_PENCIL: &[u8] = include_bytes!("../resources/icons/local-participant-pencil.svg");
-const PARTICIPANT1_IMG: &[u8] = include_bytes!("../resources/icons/participant1.png");
-const PARTICIPANT2_IMG: &[u8] = include_bytes!("../resources/icons/participant2.png");
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
@@ -96,77 +93,36 @@ pub enum ScreensharingWindowError {
     DeviceRequest,
 }
 
-// ── Dropdown menu item definitions ──────────────────────────────────────────
-
-const DROPDOWN_ITEMS: &[DropdownItemDef] = &[
-    DropdownItemDef {
-        label: "Participant 1",
-        icon: ICON_COG,
-    },
-    DropdownItemDef {
-        label: "Participant 2",
-        icon: ICON_COG,
-    },
-];
-
-/// Items shown below the divider in the dropdown menu.
-const DROPDOWN_ITEMS_SECONDARY: &[DropdownItemDef] = &[DropdownItemDef {
-    label: "Interesting button",
-    icon: ICON_COG,
-}];
-
 // ── Iced messages ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub enum ScreensharingMessage {
     TabSelected(&'static str),
-    ToggleDropdown,
-    DismissDropdown,
-    DropdownItemClicked(usize),
 }
 
 // ── Application state for the screensharing UI ─────────────────────────────
 
 struct ScreensharingState {
     active_tab: &'static str,
-    dropdown_open: bool,
     /// Animation state for the segmented-control indicator slide.
     tab_anim: Option<SegmentedControlAnim>,
-    /// 0 = participant1, 1 = participant2
-    current_participant: usize,
-    /// Cached image handle — created once per participant switch, reused every frame.
-    participant_handle: image_widget::Handle,
-    /// Cached image width/height ratio (iw/ih) — avoids decoding during resize.
+    /// Stream aspect ratio (width/height) — repurposed from img_aspect.
     img_aspect: f64,
+    /// Last known stream dimensions for change detection.
+    last_stream_width: u32,
+    last_stream_height: u32,
 }
 
 impl Default for ScreensharingState {
     fn default() -> Self {
-        let (handle, aspect) = participant_handle_and_aspect(PARTICIPANT1_IMG);
         Self {
             active_tab: SEGMENTED_BUTTONS[0].id,
-            dropdown_open: false,
             tab_anim: None,
-            current_participant: 0,
-            participant_handle: handle,
-            img_aspect: aspect,
+            img_aspect: 16.0 / 9.0,
+            last_stream_width: 0,
+            last_stream_height: 0,
         }
     }
-}
-
-/// Compute window dimensions and aspect ratio from image bytes.
-/// Returns (window_width, window_height, aspect_ratio).
-fn image_window_geometry(img_bytes: &[u8], target_width: f64) -> (f64, f64, f64) {
-    use image::GenericImageView;
-    let img = image::load_from_memory(img_bytes).expect("load participant image");
-    let (iw, ih) = img.dimensions();
-    let img_aspect = iw as f64 / ih as f64;
-
-    let content_w = target_width - (CONTENT_PADDING as f64 * 2.0);
-    let content_h = content_w / img_aspect;
-    let win_w = target_width;
-    let win_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-    (win_w, win_h, win_w / win_h)
 }
 
 /// Rasterize SVG bytes to straight-alpha RGBA at the given pixel size.
@@ -261,25 +217,6 @@ fn create_macos_cursor(
     }
 }
 
-/// Decode participant image to an opaque RGBA handle and return (handle, img_aspect).
-fn participant_handle_and_aspect(img_bytes: &'static [u8]) -> (image_widget::Handle, f64) {
-    use image::GenericImageView;
-    match image::load_from_memory(img_bytes) {
-        Ok(img) => {
-            let (iw, ih) = img.dimensions();
-            let aspect = iw as f64 / ih as f64;
-            let mut rgba = img.to_rgba8();
-            for px in rgba.pixels_mut() {
-                px.0[3] = 255; // fully opaque
-            }
-            let handle =
-                image_widget::Handle::from_rgba(rgba.width(), rgba.height(), rgba.into_raw());
-            (handle, aspect)
-        }
-        Err(_) => (image_widget::Handle::from_bytes(img_bytes), 16.0 / 9.0),
-    }
-}
-
 // ── ScreensharingWindow ─────────────────────────────────────────────────────
 
 pub struct ScreensharingWindow {
@@ -319,10 +256,17 @@ impl ScreensharingWindow {
         log::info!("ScreensharingWindow::new");
 
         // ── Create winit window ──────────────────────────────────────────
-        let (init_w, init_h, _) =
-            image_window_geometry(PARTICIPANT1_IMG, SCREENSHARING_WINDOW_WIDTH);
-        let (min_w, min_h, _) =
-            image_window_geometry(PARTICIPANT1_IMG, SCREENSHARING_WINDOW_MIN_WIDTH);
+        // Initial window: use 16:9 default aspect
+        let default_aspect = 16.0 / 9.0;
+        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+        let content_h = content_w / default_aspect;
+        let init_w = SCREENSHARING_WINDOW_WIDTH;
+        let init_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+
+        let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+        let min_content_h = min_content_w / default_aspect;
+        let min_w = SCREENSHARING_WINDOW_MIN_WIDTH;
+        let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
 
         let attrs = WindowAttributes::default()
             .with_title("Hopp Screensharing")
@@ -701,7 +645,7 @@ impl ScreensharingWindow {
 
             let cache = self.cache.take().unwrap_or_default();
             let mut interface = UserInterface::build(
-                Self::view(&self.state),
+                Self::view(&self.state, &self.screen_share_buffer),
                 self.viewport.logical_size(),
                 cache,
                 &mut self.renderer,
@@ -775,9 +719,10 @@ impl ScreensharingWindow {
         }
     }
 
-    fn view(
-        state: &ScreensharingState,
-    ) -> iced::Element<'_, ScreensharingMessage, Theme, iced::Renderer> {
+    fn view<'a>(
+        state: &'a ScreensharingState,
+        screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
+    ) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
         // ── Name label (left of header, after traffic lights) ───────────
         let name_label = container(
             text("Costa's Screen")
@@ -799,23 +744,15 @@ impl ScreensharingWindow {
             ScreensharingMessage::TabSelected,
         );
 
-        let dropdown_btn = dropdown_mod::dropdown_trigger_button(
-            ICON_COG,
-            state.dropdown_open,
-            ScreensharingMessage::ToggleDropdown,
-        );
-
         // ── Header: stack-based layout so the segmented control is truly
-        //    centered across the full window width, independent of name/cog widths.
-        //    Layer 1: name on the left, cog on the right
+        //    centered across the full window width, independent of name width.
+        //    Layer 1: name on the left
         //    Layer 2: segmented control absolutely centered
         let header_ends = row![
             Space::new().width(Length::Fixed(68.0)), // Space for native macOS traffic lights
             Space::new().width(Length::Fixed(0.0)),  // gap before name
             name_label,
             Space::new().width(Length::Fill),
-            dropdown_btn,
-            Space::new().width(Length::Fixed(2.0)), // Right spacing for cog alignment
         ]
         .align_y(Alignment::Center)
         .width(Length::Fill);
@@ -835,32 +772,50 @@ impl ScreensharingWindow {
                 left: CONTENT_PADDING,
             });
 
-        // ── Content area (participant image) ─────────────────────────────
-        let participant_img = image_widget(state.participant_handle.clone())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .content_fit(ContentFit::Cover);
+        // ── Content area (video stream) ──────────────────────────────────
+        // Check if buffer has data by peeking at the latest frame
+        let has_data = {
+            let frame_lock = screen_share_buffer.latest_frame();
+            let buf = frame_lock.lock().unwrap();
+            buf.width > 0 && buf.height > 0
+        };
 
-        let content_area = container(
-            container(
-                container(participant_img)
+        let video_content: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
+            if has_data {
+                shader::<ScreensharingMessage, _>(YuvVideoProgram {
+                    participant_id: 0,
+                    buffer: screen_share_buffer.clone(),
+                    corner_radius: 12.0,
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            } else {
+                // Show placeholder when no data
+                container(text(""))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(ColorToken::Slate800.to_color())),
-                border: Border {
-                    color: ColorToken::Slate600.to_color(),
-                    width: 1.0,
-                    radius: 12.0.into(),
-                },
-                ..Default::default()
-            })
-            .clip(true),
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(Background::Color(ColorToken::Slate800.to_color())),
+                        ..Default::default()
+                    })
+                    .into()
+            };
+
+        let content_area = container(
+            container(video_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(ColorToken::Slate800.to_color())),
+                    border: Border {
+                        color: ColorToken::Slate600.to_color(),
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .clip(true),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -875,7 +830,7 @@ impl ScreensharingWindow {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let outer_frame = container(main_content)
+        container(main_content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme: &Theme| container::Style {
@@ -890,32 +845,8 @@ impl ScreensharingWindow {
                     Some(Background::Color(ColorToken::Slate600.to_color()))
                 },
                 ..Default::default()
-            });
-
-        // ── Dropdown overlay (conditionally shown via stack) ────────────
-        if state.dropdown_open {
-            // The header height is approximately CONTENT_PADDING*2 + button_height
-            let dropdown_top_offset = CONTENT_PADDING * 2.0 + 12.0;
-
-            let menu = dropdown_mod::dropdown_menu(
-                DROPDOWN_ITEMS,
-                DROPDOWN_ITEMS_SECONDARY,
-                ScreensharingMessage::DropdownItemClicked,
-            );
-
-            // Align dropdown right edge with cog button: header right padding + gap after cog
-            let dropdown_right_padding = HEADER_RIGHT_PADDING + 2.0;
-
-            dropdown_mod::dropdown_overlay(
-                outer_frame.into(),
-                menu,
-                ScreensharingMessage::DismissDropdown,
-                dropdown_top_offset,
-                dropdown_right_padding,
-            )
-        } else {
-            outer_frame.into()
-        }
+            })
+            .into()
     }
 
     /// Handle a screensharing UI message (state update).
@@ -927,46 +858,6 @@ impl ScreensharingWindow {
                 self.state.active_tab = id;
                 self.update_cursor();
                 log::info!("ScreensharingWindow: tab selected = {}", id);
-            }
-            ScreensharingMessage::ToggleDropdown => {
-                self.state.dropdown_open = !self.state.dropdown_open;
-                log::info!(
-                    "ScreensharingWindow: dropdown_open = {}",
-                    self.state.dropdown_open
-                );
-            }
-            ScreensharingMessage::DismissDropdown => {
-                self.state.dropdown_open = false;
-                log::info!("ScreensharingWindow: dropdown dismissed");
-            }
-            ScreensharingMessage::DropdownItemClicked(index) => {
-                if matches!(index, 0 | 1) {
-                    let img_bytes = if index == 0 {
-                        PARTICIPANT1_IMG
-                    } else {
-                        PARTICIPANT2_IMG
-                    };
-                    self.state.current_participant = index;
-                    let (handle, aspect) = participant_handle_and_aspect(img_bytes);
-                    self.state.participant_handle = handle;
-                    self.state.img_aspect = aspect;
-                    let (w, h, _) = image_window_geometry(img_bytes, SCREENSHARING_WINDOW_WIDTH);
-                    #[cfg(target_os = "macos")]
-                    {
-                        // Update the OS-enforced aspect ratio + min size for the new image.
-                        set_macos_window_aspect_ratio(&self.window, w, h);
-
-                        let saved_pos = self.window.outer_position();
-                        let _ = self
-                            .window
-                            .request_inner_size(winit::dpi::LogicalSize::new(w, h));
-                        // Restore top-left so the window doesn't jump vertically.
-                        if let Ok(pos) = saved_pos {
-                            self.window.set_outer_position(pos);
-                        }
-                    }
-                }
-                self.state.dropdown_open = false;
             }
         }
     }
@@ -1003,6 +894,62 @@ impl ScreensharingWindow {
             self.resized = false;
         }
 
+        // Check if stream dimensions changed and update window size
+        {
+            let frame_lock = self.screen_share_buffer.latest_frame();
+            let buf = frame_lock.lock().unwrap();
+            let stream_w = buf.width;
+            let stream_h = buf.height;
+
+            if stream_w > 0
+                && stream_h > 0
+                && (stream_w != self.state.last_stream_width
+                    || stream_h != self.state.last_stream_height)
+            {
+                // Stream dimensions changed — update aspect ratio and resize window
+                let aspect = stream_w as f64 / stream_h as f64;
+                self.state.img_aspect = aspect;
+                self.state.last_stream_width = stream_w;
+                self.state.last_stream_height = stream_h;
+
+                let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+                let content_h = content_w / aspect;
+                let w = SCREENSHARING_WINDOW_WIDTH;
+                let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+
+                #[cfg(target_os = "macos")]
+                {
+                    // Update the OS-enforced aspect ratio + min size for the new stream.
+                    set_macos_window_aspect_ratio(&self.window, w, h);
+
+                    let saved_pos = self.window.outer_position();
+                    let _ = self
+                        .window
+                        .request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                    // Restore top-left so the window doesn't jump vertically.
+                    if let Ok(pos) = saved_pos {
+                        self.window.set_outer_position(pos);
+                    }
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = self
+                        .window
+                        .request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                }
+
+                log::info!(
+                    "ScreensharingWindow: stream dimensions changed to {}x{}, aspect={:.3}, window size={:.1}x{:.1}",
+                    stream_w,
+                    stream_h,
+                    aspect,
+                    w,
+                    h
+                );
+            }
+        }
+
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -1017,7 +964,7 @@ impl ScreensharingWindow {
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.state),
+            Self::view(&self.state, &self.screen_share_buffer),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,
