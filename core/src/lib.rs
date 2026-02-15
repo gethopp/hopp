@@ -465,6 +465,14 @@ impl<'a> Application<'a> {
         }
     }
 
+    fn stop_mic(&mut self) {
+        log::info!("stop_mic");
+        self.audio_capturer.stop_capture();
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.unpublish_audio_track();
+        }
+    }
+
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
         self.screensharing_window = None;
@@ -682,11 +690,8 @@ impl<'a> Application<'a> {
     /// - May create new threads for screen capture polling
     /// - Resets all session-specific state to initial values
     fn reset_state(&mut self) {
-        self.audio_capturer.stop_capture();
-        {
-            let mut camera_capturer = self.camera_capturer.lock().unwrap();
-            camera_capturer.stop_capture();
-        }
+        self.stop_mic();
+        self.stop_camera();
 
         let capturer_valid = {
             let screen_capturer = self.screen_capturer.lock();
@@ -1194,10 +1199,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::StopAudioCapture => {
                 log::info!("user_event: StopAudioCapture");
-                self.audio_capturer.stop_capture();
-                if let Some(room_service) = self.room_service.as_ref() {
-                    room_service.unpublish_audio_track();
-                }
+                self.stop_mic();
             }
             UserEvent::MuteAudio => {
                 log::info!("user_event: MuteAudio");

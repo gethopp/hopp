@@ -887,21 +887,25 @@ async fn room_service_commands(
                     inner_room.take()
                 };
                 if let Some(room) = &room {
-                    if let Some(publisher) = audio_publisher.take() {
-                        publisher.unpublish(room).await;
-                    }
                     let res = room.close().await;
                     if let Err(e) = res {
                         log::error!("room_service_commands: Failed to close room: {e:?}");
                     }
                 }
 
-                let _buffer_source = {
+                // Clean up screen share buffer source
+                {
                     let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                    inner_buffer_source.take()
-                };
+                    inner_buffer_source.take();
+                }
 
-                // Clean up screen share resources
+                // Clean up camera buffer source
+                {
+                    let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
+                    inner_buffer_source.take();
+                }
+
+                // Clean up remote screen share resources
                 {
                     let mut stop_tx_guard = inner.remote_screen_share.stop_tx.lock().unwrap();
                     if let Some(tx) = stop_tx_guard.take() {
@@ -916,6 +920,14 @@ async fn room_service_commands(
                         .lock()
                         .unwrap()
                         .take();
+                }
+
+                // Clean up local participant camera buffers
+                {
+                    let mut participants = inner.participants.write().unwrap();
+                    if let Some(info) = participants.get_mut("local") {
+                        info.clear_camera_buffers();
+                    }
                 }
             }
             RoomServiceCommand::PublishSharerLocation(x, y, _pointer) => {
