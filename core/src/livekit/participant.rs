@@ -8,7 +8,7 @@ pub struct ParticipantInfo {
     name: String,
     muted: bool,
     is_speaking: bool,
-    camera_buffers: Arc<Option<Arc<VideoBufferManager>>>,
+    camera_buffers: Option<Arc<VideoBufferManager>>,
     audio_handle: Option<AudioTrackHandle>,
     camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
 }
@@ -34,9 +34,9 @@ impl std::fmt::Debug for ParticipantInfo {
 impl ParticipantInfo {
     pub fn new(name: String, muted: bool, is_speaking: bool, create_buffers: bool) -> Self {
         let camera_buffers = if create_buffers {
-            Arc::new(Some(Arc::new(VideoBufferManager::new())))
+            Some(Arc::new(VideoBufferManager::new()))
         } else {
-            Arc::new(None)
+            None
         };
         Self {
             name,
@@ -89,16 +89,16 @@ impl ParticipantInfo {
         self.is_speaking = is_speaking;
     }
 
-    pub fn camera_buffers(&self) -> Arc<Option<Arc<VideoBufferManager>>> {
+    pub fn camera_buffers(&self) -> Option<Arc<VideoBufferManager>> {
         self.camera_buffers.clone()
     }
 
     pub fn set_camera_buffers(&mut self, buffers: Arc<VideoBufferManager>) {
-        self.camera_buffers = Arc::new(Some(buffers));
+        self.camera_buffers = Some(buffers);
     }
 
     pub fn clear_camera_buffers(&mut self) {
-        self.camera_buffers = Arc::new(None);
+        self.camera_buffers = None;
     }
 
     pub fn set_audio_handle(&mut self, handle: AudioTrackHandle) {

@@ -892,12 +892,11 @@ fn create_participant_grid<'a>(
             if let Some((sid, info)) = participants_iter.next() {
                 let id = sid_to_id(sid);
                 let camera_buffers = info.camera_buffers();
-                let buffers = camera_buffers.as_ref().as_ref().cloned();
                 row_tiles.push(participant_card(
                     id,
                     info.name(),
                     info.is_speaking(),
-                    buffers,
+                    camera_buffers,
                     tile_size,
                     is_small_window,
                 ));

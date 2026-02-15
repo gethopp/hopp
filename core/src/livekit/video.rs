@@ -70,6 +70,7 @@ impl VideoBuffer {
 /// Writer writes to `buffers[write_index]`, then swaps `write_index`.
 /// Reader reads from `buffers[1 - write_index]` (the last completed frame).
 /// No contention: writer and reader always access different slots.
+///
 #[derive(Debug)]
 pub struct VideoBufferManager {
     buffers: [Mutex<VideoBuffer>; 2],

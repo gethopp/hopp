@@ -29,7 +29,7 @@ pub struct CameraStream {
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffer_source: Arc<Mutex<Option<NativeVideoSource>>>,
-    video_buffer_manager: Option<Arc<VideoBufferManager>>,
+    video_buffer_manager: Arc<VideoBufferManager>,
     width: u32,
     height: u32,
     device_name: String,
@@ -40,7 +40,7 @@ impl CameraStream {
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
-        video_buffer_manager: Option<Arc<VideoBufferManager>>,
+        video_buffer_manager: Arc<VideoBufferManager>,
     ) -> Result<Self, String> {
         let cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -170,12 +170,11 @@ impl CameraStream {
                                 },
                             };
                             source.capture_frame(&frame);
-                            if let Some(ref manager) = video_buffer_manager {
-                                let mut write_buf = manager.write_buffer().lock().unwrap();
-                                write_buf.copy_from_i420(&frame.buffer, width, height);
-                                drop(write_buf);
-                                manager.advance_write();
-                            }
+
+                            let mut write_buf = video_buffer_manager.write_buffer().lock().unwrap();
+                            write_buf.copy_from_i420(&frame.buffer, width, height);
+                            drop(write_buf);
+                            video_buffer_manager.advance_write();
                         }
                     }
                     Err(e) => {

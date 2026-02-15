@@ -42,7 +42,7 @@ impl CameraCapturer {
         &mut self,
         device_name: &str,
         socket: SocketSender,
-        video_buffer_manager: Option<Arc<VideoBufferManager>>,
+        video_buffer_manager: Arc<VideoBufferManager>,
     ) -> Result<(u32, u32), String> {
         self.stop_capture();
         self.socket = Some(socket);

@@ -1216,7 +1216,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .as_ref()
                         .ok_or_else(|| "Room service not found".to_string())?;
 
-                    let video_buffer_manager = room_service.local_camera_buffer_manager();
+                    // Create the buffer manager for local participant before starting capture
+                    let video_buffer_manager = room_service
+                        .create_local_camera_buffer_manager()
+                        .ok_or_else(|| {
+                            "Failed to create local camera buffer manager".to_string()
+                        })?;
+
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(

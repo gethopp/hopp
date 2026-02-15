@@ -535,16 +535,13 @@ impl RoomService {
         self.inner.participants.clone()
     }
 
-    /// Returns the local participant's camera VideoBufferManager, creating it if needed.
-    pub fn local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
-        let participants = self.inner.participants.read().unwrap();
-        log::info!(
-            "local_camera_buffer_manager: participants keys: {:?}",
-            participants.keys().collect::<Vec<_>>()
-        );
-        let info = participants.get("local")?;
-        let buffers = info.camera_buffers();
-        buffers.as_ref().as_ref().cloned()
+    /// Creates and sets a camera buffer manager for the local participant.
+    pub fn create_local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
+        let manager = Arc::new(VideoBufferManager::new());
+        let mut participants = self.inner.participants.write().unwrap();
+        let info = participants.get_mut("local")?;
+        info.set_camera_buffers(manager.clone());
+        Some(manager)
     }
 
     /// Unmutes the audio track.
@@ -666,7 +663,7 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, false, false, true),
+                        ParticipantInfo::new(user_name, false, false, false),
                     );
                 }
 
@@ -1170,6 +1167,13 @@ async fn room_service_commands(
 
                 let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
                 *inner_buffer_source = None;
+
+                // Clear the buffer manager from the local participant
+                let mut participants = inner.participants.write().unwrap();
+                if let Some(info) = participants.get_mut("local") {
+                    info.clear_camera_buffers();
+                }
+
                 log::info!("room_service_commands: Camera track unpublished");
             }
         }
@@ -1858,7 +1862,9 @@ async fn handle_room_events(
                 //     }
                 // }
             }
-            _ => {}
+            _ => {
+                log::info!("message: {:?}", msg);
+            }
         }
     }
     log::info!("handle_room_events: ended")
