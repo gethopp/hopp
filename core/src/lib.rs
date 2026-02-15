@@ -874,6 +874,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: CallEnd");
                 self.stop_camera();
                 self.stop_screenshare();
+                self.stop_mic();
                 if let Some(room_service) = self.room_service.as_mut() {
                     room_service.destroy_room();
                 }
