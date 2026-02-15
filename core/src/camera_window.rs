@@ -788,18 +788,37 @@ fn participant_card<'a>(
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
     let name_owned = name.to_string();
 
-    // Background layer: GPU video if buffer exists, Slate900 fallback otherwise
+    // Background layer: GPU video if buffer exists and is active, Slate900 fallback otherwise
     let bg_element: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
         if let Some(buffers) = camera_buffers {
-            let video_program = YuvVideoProgram {
-                participant_id,
-                buffer: buffers,
-                corner_radius: TILE_RADIUS,
-            };
-            let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
-                .width(Length::Fill)
-                .height(Length::Fill);
-            video_bg.into()
+            // Check if the stream is inactive
+            if buffers.is_inactive() {
+                // Use placeholder when stream is inactive
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(ColorToken::Slate900.to_color())),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: TILE_RADIUS.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            } else {
+                // Render video when stream is active
+                let video_program = YuvVideoProgram {
+                    participant_id,
+                    buffer: buffers,
+                    corner_radius: TILE_RADIUS,
+                };
+                let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+                video_bg.into()
+            }
         } else {
             // Default placeholder background when no video buffer
             container(Space::new())
@@ -939,12 +958,11 @@ fn create_participant_grid<'a>(
             if let Some((sid, info)) = participants_iter.next() {
                 let id = sid_to_id(sid);
                 let camera_buffers = info.camera_buffers();
-                let buffers = camera_buffers.as_ref().as_ref().cloned();
                 row_tiles.push(participant_card(
                     id,
                     info.name(),
                     info.is_speaking(),
-                    buffers,
+                    camera_buffers,
                     tile_size,
                     is_small_window,
                 ));

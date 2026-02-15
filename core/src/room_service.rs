@@ -11,7 +11,7 @@ use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
 use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
 use crate::livekit::participant::ParticipantInfo;
-use crate::livekit::video::VideoBufferManager;
+use crate::livekit::video::{process_camera_stream, VideoBufferManager};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -19,8 +19,6 @@ use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
 use crate::{audio, ParticipantData, UserEvent};
-use livekit::webrtc::video_stream::native::NativeVideoStream;
-use tokio_stream::StreamExt;
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -84,6 +82,14 @@ enum RoomServiceCommand {
         height: u32,
     },
     UnpublishCameraTrack,
+    UnpublishScreenShareTrack,
+    PublishMouseClick(MouseClickData),
+    PublishMouseVisible(MouseVisibleData),
+    PublishKeystroke(KeystrokeData),
+    PublishWheelEvent(WheelDelta),
+    PublishAddToClipboard(AddToClipboardData),
+    PublishPasteFromClipboard(PasteFromClipboardData),
+    PublishClickAnimation(ClientPoint),
 }
 
 #[derive(Debug)]
@@ -100,6 +106,13 @@ pub enum RoomServiceError {
     PublishTrack(String),
 }
 
+#[derive(Debug)]
+struct RemoteScreenShare {
+    buffer: Arc<std::sync::Mutex<Option<Arc<VideoBufferManager>>>>,
+    stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
+    publisher_sid: Arc<std::sync::Mutex<Option<String>>>,
+}
+
 /*
  * This struct is used for handling room events and functions
  * from a thread in the async runtime.
@@ -112,6 +125,7 @@ struct RoomServiceInner {
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::AudioMixerHandle,
+    remote_screen_share: RemoteScreenShare,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
@@ -166,6 +180,11 @@ impl RoomService {
             camera_buffer_source: Arc::new(std::sync::Mutex::new(None)),
             participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
             mixer,
+            remote_screen_share: RemoteScreenShare {
+                buffer: Arc::new(std::sync::Mutex::new(None)),
+                stop_tx: Arc::new(std::sync::Mutex::new(None)),
+                publisher_sid: Arc::new(std::sync::Mutex::new(None)),
+            },
         });
         let mut runtime_params = RuntimeParams::default_with_ch(1);
         runtime_params.atten_lim_db = 60.0;
@@ -519,6 +538,94 @@ impl RoomService {
         }
     }
 
+    /// Unpublishes the screen share track from the room.
+    pub fn unpublish_screen_share_track(&self) {
+        log::info!("unpublish_screen_share_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnpublishScreenShareTrack);
+        if let Err(e) = res {
+            log::error!("unpublish_screen_share_track: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a mouse click event to the room.
+    pub fn publish_mouse_click(&self, data: MouseClickData) {
+        log::debug!("publish_mouse_click: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishMouseClick(data));
+        if let Err(e) = res {
+            log::error!("publish_mouse_click: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes mouse visibility state to the room.
+    pub fn publish_mouse_visible(&self, data: MouseVisibleData) {
+        log::debug!("publish_mouse_visible: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishMouseVisible(data));
+        if let Err(e) = res {
+            log::error!("publish_mouse_visible: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a keystroke event to the room.
+    pub fn publish_keystroke(&self, data: KeystrokeData) {
+        log::debug!("publish_keystroke: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishKeystroke(data));
+        if let Err(e) = res {
+            log::error!("publish_keystroke: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a wheel/scroll event to the room.
+    pub fn publish_wheel_event(&self, data: WheelDelta) {
+        log::debug!("publish_wheel_event: {data:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishWheelEvent(data));
+        if let Err(e) = res {
+            log::error!("publish_wheel_event: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes an add to clipboard event to the room.
+    pub fn publish_add_to_clipboard(&self, data: AddToClipboardData) {
+        log::debug!("publish_add_to_clipboard");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishAddToClipboard(data));
+        if let Err(e) = res {
+            log::error!("publish_add_to_clipboard: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a paste from clipboard event to the room.
+    pub fn publish_paste_from_clipboard(&self, data: PasteFromClipboardData) {
+        log::debug!("publish_paste_from_clipboard");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishPasteFromClipboard(data));
+        if let Err(e) = res {
+            log::error!("publish_paste_from_clipboard: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes a click animation event to the room.
+    pub fn publish_click_animation(&self, point: ClientPoint) {
+        log::debug!("publish_click_animation: {point:?}");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishClickAnimation(point));
+        if let Err(e) = res {
+            log::error!("publish_click_animation: Failed to send command: {e:?}");
+        }
+    }
+
     /// Retrieves the camera video source buffer.
     pub fn get_camera_buffer_source(&self) -> NativeVideoSource {
         log::info!("get_camera_buffer_source");
@@ -535,16 +642,19 @@ impl RoomService {
         self.inner.participants.clone()
     }
 
-    /// Returns the local participant's camera VideoBufferManager, creating it if needed.
-    pub fn local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
-        let participants = self.inner.participants.read().unwrap();
-        log::info!(
-            "local_camera_buffer_manager: participants keys: {:?}",
-            participants.keys().collect::<Vec<_>>()
-        );
-        let info = participants.get("local")?;
-        let buffers = info.camera_buffers();
-        buffers.as_ref().as_ref().cloned()
+    /// Creates and sets a camera buffer manager for the local participant.
+    pub fn create_local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
+        let manager = Arc::new(VideoBufferManager::new());
+        let mut participants = self.inner.participants.write().unwrap();
+        let info = participants.get_mut("local")?;
+        info.set_camera_buffers(manager.clone());
+        Some(manager)
+    }
+
+    /// Returns the remote screen share buffer if available.
+    pub fn screen_share_buffer(&self) -> Option<Arc<VideoBufferManager>> {
+        let buffer = self.inner.remote_screen_share.buffer.lock().unwrap();
+        buffer.clone()
     }
 
     /// Unmutes the audio track.
@@ -666,7 +776,7 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, false, false, true),
+                        ParticipantInfo::new(user_name, false, false, false),
                     );
                 }
 
@@ -678,6 +788,11 @@ async fn room_service_commands(
                     user_sid,
                     inner.participants.clone(),
                     inner.mixer.clone(),
+                    RemoteScreenShare {
+                        buffer: inner.remote_screen_share.buffer.clone(),
+                        stop_tx: inner.remote_screen_share.stop_tx.clone(),
+                        publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
+                    },
                 ));
 
                 let mut inner_room = inner.room.lock().await;
@@ -772,19 +887,48 @@ async fn room_service_commands(
                     inner_room.take()
                 };
                 if let Some(room) = &room {
-                    if let Some(publisher) = audio_publisher.take() {
-                        publisher.unpublish(room).await;
-                    }
                     let res = room.close().await;
                     if let Err(e) = res {
                         log::error!("room_service_commands: Failed to close room: {e:?}");
                     }
                 }
 
-                let _buffer_source = {
+                // Clean up screen share buffer source
+                {
                     let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                    inner_buffer_source.take()
-                };
+                    inner_buffer_source.take();
+                }
+
+                // Clean up camera buffer source
+                {
+                    let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
+                    inner_buffer_source.take();
+                }
+
+                // Clean up remote screen share resources
+                {
+                    let mut stop_tx_guard = inner.remote_screen_share.stop_tx.lock().unwrap();
+                    if let Some(tx) = stop_tx_guard.take() {
+                        let _ = tx.send(());
+                    }
+                }
+                {
+                    inner.remote_screen_share.buffer.lock().unwrap().take();
+                    inner
+                        .remote_screen_share
+                        .publisher_sid
+                        .lock()
+                        .unwrap()
+                        .take();
+                }
+
+                // Clean up local participant camera buffers
+                {
+                    let mut participants = inner.participants.write().unwrap();
+                    if let Some(info) = participants.get_mut("local") {
+                        info.clear_camera_buffers();
+                    }
+                }
             }
             RoomServiceCommand::PublishSharerLocation(x, y, _pointer) => {
                 let inner_room = inner.room.lock().await;
@@ -1180,7 +1324,217 @@ async fn room_service_commands(
 
                 let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
                 *inner_buffer_source = None;
+
+                // Clear the buffer manager from the local participant
+                let mut participants = inner.participants.write().unwrap();
+                if let Some(info) = participants.get_mut("local") {
+                    info.clear_camera_buffers();
+                }
+
                 log::info!("room_service_commands: Camera track unpublished");
+            }
+            RoomServiceCommand::UnpublishScreenShareTrack => {
+                let inner_room = inner.room.lock().await;
+                if let Some(room) = inner_room.as_ref() {
+                    // Find and unpublish screen share track
+                    let local_participant = room.local_participant();
+                    for (sid, publication) in local_participant.track_publications() {
+                        if publication.name() == VIDEO_TRACK_NAME {
+                            log::info!(
+                                "room_service_commands: Unpublishing screen share track: {}",
+                                sid
+                            );
+                            let res = local_participant.unpublish_track(&sid).await;
+                            if let Err(e) = res {
+                                log::error!(
+                                    "room_service_commands: Failed to unpublish screen share track: {e:?}"
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
+                *inner_buffer_source = None;
+
+                log::info!("room_service_commands: Screen share track unpublished");
+            }
+            RoomServiceCommand::PublishMouseClick(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishMouseClick");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::MouseClick(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish mouse click: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishMouseVisible(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishMouseVisible");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::MouseVisible(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish mouse visible: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishKeystroke(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishKeystroke");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::Keystroke(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish keystroke: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishWheelEvent(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist for PublishWheelEvent");
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::WheelEvent(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish wheel event: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishAddToClipboard(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishAddToClipboard"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::AddToClipboard(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish add to clipboard: {e:?}");
+                }
+            }
+            RoomServiceCommand::PublishPasteFromClipboard(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishPasteFromClipboard"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::PasteFromClipboard(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!(
+                        "room_service_commands: Failed to publish paste from clipboard: {e:?}"
+                    );
+                }
+            }
+            RoomServiceCommand::PublishClickAnimation(point) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishClickAnimation"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::ClickAnimation(point);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish click animation: {e:?}");
+                }
             }
         }
     }
@@ -1390,6 +1744,7 @@ async fn handle_room_events(
     user_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::AudioMixerHandle,
+    remote_screen_share: RemoteScreenShare,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -1691,7 +2046,72 @@ async fn handle_room_events(
                         }
                     }
                     livekit::track::RemoteTrack::Video(video_track) => {
-                        if publication.source() != TrackSource::Camera {
+                        if publication.source() == TrackSource::Screenshare {
+                            let publisher_sid = participant.sid().as_str().to_string();
+                            log::info!(
+                                "handle_room_events: Setting up screen share stream: {} from {}",
+                                video_track.name(),
+                                publisher_sid,
+                            );
+
+                            // Stop any existing screen share task
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                if let Some(tx) = stop_tx_guard.take() {
+                                    log::info!(
+                                        "handle_room_events: Stopping existing screen share task"
+                                    );
+                                    let _ = tx.send(());
+                                }
+                            }
+
+                            // Reuse existing buffer or create one
+                            let manager = {
+                                let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
+                                if let Some(existing) = buffer_guard.as_ref() {
+                                    existing.clone()
+                                } else {
+                                    let new = Arc::new(VideoBufferManager::new());
+                                    *buffer_guard = Some(new.clone());
+                                    new
+                                }
+                            };
+
+                            // Store publisher SID
+                            {
+                                let mut sid_guard =
+                                    remote_screen_share.publisher_sid.lock().unwrap();
+                                *sid_guard = Some(publisher_sid.clone());
+                            }
+
+                            // Create new stop channel
+                            let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                *stop_tx_guard = Some(stop_tx);
+                            }
+
+                            let stream_key = format!("screenshare_{}", publisher_sid);
+
+                            // Spawn processing task
+                            tokio::spawn(process_camera_stream(
+                                video_track,
+                                manager,
+                                stop_rx,
+                                stream_key,
+                            ));
+
+                            // Send event to open screen share window
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow)
+                            {
+                                log::error!(
+                                    "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
+                                );
+                            }
+
+                            continue;
+                        } else if publication.source() != TrackSource::Camera {
                             log::info!(
                                 "handle_room_events: Ignoring non-camera video track: {} ({:?})",
                                 video_track.name(),
@@ -1738,7 +2158,7 @@ async fn handle_room_events(
                         let stream_key = participant_sid.clone();
 
                         // Create stop channel
-                        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
+                        let (stop_tx, stop_rx) = mpsc::unbounded_channel();
 
                         // Store stop channel in participant info
                         {
@@ -1748,55 +2168,12 @@ async fn handle_room_events(
                             }
                         }
 
-                        tokio::spawn(async move {
-                            log::info!(
-                                    "handle_room_events: Starting camera stream processing for participant: {}",
-                                    stream_key
-                                );
-
-                            let mut sink = NativeVideoStream::new(video_track.rtc_track());
-                            let mut frames = 0u64;
-
-                            loop {
-                                tokio::select! {
-                                    Some(frame) = sink.next() => {
-                                        let i420 = frame.buffer.to_i420();
-                                        let width = frame.buffer.width();
-                                        let height = frame.buffer.height();
-
-                                        let buf = manager.write_buffer();
-                                        {
-                                            let mut guard = buf.lock().unwrap();
-                                            guard.copy_from_i420(&i420, width, height);
-                                        }
-                                        manager.advance_write();
-
-                                        frames += 1;
-                                        if frames % 100 == 0 {
-                                            log::info!(
-                                                    "handle_room_events: Received {} camera frames from {} ({}x{})",
-                                                    frames,
-                                                    stream_key,
-                                                    width,
-                                                    height
-                                                );
-                                        }
-                                    }
-                                    _ = stop_rx.recv() => {
-                                        log::info!(
-                                            "handle_room_events: Received stop signal for camera stream: {}",
-                                            stream_key
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-
-                            log::info!(
-                                "handle_room_events: Camera stream ended for participant: {}",
-                                stream_key
-                            );
-                        });
+                        tokio::spawn(process_camera_stream(
+                            video_track,
+                            manager,
+                            stop_rx,
+                            stream_key,
+                        ));
                     }
                 }
             }
@@ -1826,6 +2203,46 @@ async fn handle_room_events(
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.stop_camera_stream();
                                 info.clear_camera_buffers();
+                            }
+                        } else if publication.source() == TrackSource::Screenshare {
+                            let unsub_sid = participant.sid().as_str().to_string();
+                            log::info!(
+                                "handle_room_events: Screen share unsubscribed from {}",
+                                unsub_sid,
+                            );
+
+                            // Only clean up if this is the current publisher
+                            let is_current = {
+                                let sid_guard = remote_screen_share.publisher_sid.lock().unwrap();
+                                sid_guard.as_deref() == Some(unsub_sid.as_str())
+                            };
+
+                            if !is_current {
+                                log::info!(
+                                    "handle_room_events: Ignoring unsub from non-current publisher {}",
+                                    unsub_sid,
+                                );
+                                continue;
+                            }
+
+                            // Send stop signal
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                if let Some(tx) = stop_tx_guard.take() {
+                                    let _ = tx.send(());
+                                }
+                            }
+
+                            // Clear publisher SID (keep the buffer for reuse)
+                            {
+                                remote_screen_share.publisher_sid.lock().unwrap().take();
+                            }
+
+                            // Close the screen share window
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                            {
+                                log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
                             }
                         }
                     }
@@ -1868,7 +2285,9 @@ async fn handle_room_events(
                 //     }
                 // }
             }
-            _ => {}
+            _ => {
+                log::info!("message: {:?}", msg);
+            }
         }
     }
     log::info!("handle_room_events: ended")

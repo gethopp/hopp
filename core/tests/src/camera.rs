@@ -174,7 +174,12 @@ pub async fn test_camera_track_subscribe() -> io::Result<()> {
 }
 
 /// Joins a call with camera and mic, stays until Ctrl-C.
-pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>, name: &str) -> io::Result<()> {
+pub fn test_call(
+    camera_name: Option<&str>,
+    mic_id: Option<&str>,
+    name: &str,
+    screenshare: bool,
+) -> io::Result<()> {
     println!("\n=== TEST: Call with Camera + Mic ===");
 
     let (sender, event_socket) = connect_socket()?;
@@ -267,6 +272,37 @@ pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>, name: &str) ->
         }
     }
 
+    // Start screen sharing if requested
+    if screenshare {
+        println!("Starting screen share...");
+        let available_content = screenshare_client::get_available_content(&sender, &event_socket)?;
+        match available_content {
+            Message::AvailableContent(content_msg) => {
+                if let Some(capture_content) = content_msg.content.first() {
+                    println!("Using display: {}", capture_content.content.id);
+
+                    // Use default resolution for screenshare
+                    let width = 1920.0;
+                    let height = 1080.0;
+
+                    screenshare_client::request_screenshare(
+                        &sender,
+                        &event_socket,
+                        capture_content.content.id,
+                        width,
+                        height,
+                    )?;
+                    println!("Screen share started successfully");
+                } else {
+                    return Err(io::Error::other("No displays found"));
+                }
+            }
+            other => {
+                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+            }
+        }
+    }
+
     println!("In call with camera and mic. Press Ctrl-C to stop.");
 
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
@@ -278,6 +314,9 @@ pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>, name: &str) ->
     shutdown_rx.recv().ok();
     println!("\nCtrl-C received, stopping...");
 
+    if screenshare {
+        sender.send(Message::StopScreenshare)?;
+    }
     sender.send(Message::StopCamera)?;
     sender.send(Message::StopAudioCapture)?;
     std::thread::sleep(Duration::from_secs(1));
