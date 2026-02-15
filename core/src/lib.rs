@@ -210,7 +210,7 @@ pub struct Application<'a> {
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
-    audio_mixer: audio::mixer::Mixer,
+    audio_mixer: audio::mixer::AudioMixerHandle,
     audio_player: audio::player::Player,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
@@ -288,7 +288,7 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_mixer = audio::mixer::Mixer::new(livekit::audio::LIVEKIT_SAMPLE_RATE);
+        let audio_mixer = audio::mixer::AudioMixerHandle::new();
         let audio_player = audio::player::Player::new(audio_mixer.clone())
             .map_err(ApplicationError::AudioPlayerError)?;
 

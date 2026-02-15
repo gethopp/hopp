@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use deep_filter::tract::DfTract;
 use livekit::options::TrackPublishOptions;
-use livekit::track::{LocalAudioTrack, LocalTrack, TrackSource};
+use livekit::track::{LocalAudioTrack, LocalTrack, RemoteAudioTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::native::apm::AudioProcessingModule;
@@ -11,6 +11,9 @@ use livekit::Room;
 use ndarray::Array2;
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
+
+use crate::audio::mixer::{AudioMixerHandle, AudioSource};
 
 pub(crate) struct SendDfTract(pub(crate) DfTract);
 unsafe impl Send for SendDfTract {}
@@ -249,6 +252,56 @@ async fn process_audio_samples(
     }
 
     log::info!("Audio processing stopped");
+}
+
+/// Handle for a remote audio track subscription.
+/// On drop, removes the source from the mixer and aborts the receive task.
+pub struct AudioTrackHandle {
+    ssrc: i32,
+    mixer: AudioMixerHandle,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for AudioTrackHandle {
+    fn drop(&mut self) {
+        self.task.abort();
+        self.mixer.remove_source(self.ssrc);
+        log::info!("AudioTrackHandle dropped, ssrc={}", self.ssrc);
+    }
+}
+
+/// Sets up a remote audio track to feed into the native AudioMixer.
+/// Returns a handle that cleans up automatically on drop.
+pub fn play_remote_audio_track(
+    track: RemoteAudioTrack,
+    mixer: AudioMixerHandle,
+    participant_id: &str,
+) -> AudioTrackHandle {
+    let ssrc = mixer.next_ssrc();
+    let source = AudioSource::new(ssrc, LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS);
+
+    mixer.add_source(source.clone());
+
+    let mut stream = livekit::webrtc::audio_stream::native::NativeAudioStream::new(
+        track.rtc_track(),
+        LIVEKIT_SAMPLE_RATE as i32,
+        AUDIO_NUM_CHANNELS as i32,
+    );
+
+    let stream_key = participant_id.to_string();
+    let task = tokio::spawn(async move {
+        log::info!(
+            "Starting audio receive loop for {} (ssrc={})",
+            stream_key,
+            ssrc
+        );
+        while let Some(frame) = stream.next().await {
+            source.receive(&frame);
+        }
+        log::info!("Audio receive loop ended for {}", stream_key);
+    });
+
+    AudioTrackHandle { ssrc, mixer, task }
 }
 
 async fn capture_frame(

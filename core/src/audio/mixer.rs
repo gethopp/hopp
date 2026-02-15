@@ -1,71 +1,111 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Simple audio mixer that combines audio from multiple sources into a single buffer.
-/// Supports mono audio only.
-#[derive(Clone, Debug)]
-pub struct Mixer {
-    buffer: Arc<Mutex<VecDeque<i16>>>,
-    max_buffer_size: usize,
+use livekit::webrtc::audio_frame::AudioFrame;
+use livekit::webrtc::native::audio_mixer;
+
+const MAX_BUFFERED_FRAMES: usize = 10;
+
+/// Wrapper around LiveKit's native AudioMixer that properly sums
+/// multiple audio streams using WebRTC's C++ mixer.
+#[derive(Clone)]
+pub struct AudioMixerHandle {
+    inner: Arc<Mutex<audio_mixer::AudioMixer>>,
+    next_ssrc: Arc<AtomicI32>,
 }
 
-impl Mixer {
-    /// Creates a new audio mixer.
-    ///
-    /// # Arguments
-    /// * `sample_rate` - Sample rate in Hz (e.g., 48000)
-    ///
-    /// # Returns
-    /// A new Mixer instance with a 1-second buffer capacity
-    pub fn new(sample_rate: u32) -> Self {
-        // 1 second buffer for mono audio
-        let max_buffer_size = sample_rate as usize;
+impl std::fmt::Debug for AudioMixerHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioMixerHandle").finish()
+    }
+}
 
+impl AudioMixerHandle {
+    pub fn new() -> Self {
         Self {
-            buffer: Arc::new(Mutex::new(VecDeque::with_capacity(max_buffer_size))),
-            max_buffer_size,
+            inner: Arc::new(Mutex::new(audio_mixer::AudioMixer::new())),
+            next_ssrc: Arc::new(AtomicI32::new(1)),
         }
     }
 
-    /// Adds audio data to the mixer buffer.
-    /// If the buffer exceeds max_buffer_size, oldest samples are dropped.
-    ///
-    /// # Arguments
-    /// * `data` - Audio samples as i16
-    pub fn add_audio_data(&self, data: &[i16]) {
-        let mut buffer = self.buffer.lock().unwrap();
+    pub fn add_source(&self, source: AudioSource) {
+        let mut mixer = self.inner.lock().unwrap();
+        mixer.add_source(source);
+    }
 
-        // Add new samples
-        buffer.extend(data.iter().copied());
+    pub fn remove_source(&self, ssrc: i32) {
+        let mut mixer = self.inner.lock().unwrap();
+        mixer.remove_source(ssrc);
+    }
 
-        // Cap buffer size by removing oldest samples
-        while buffer.len() > self.max_buffer_size {
-            buffer.pop_front();
+    /// Mix all sources and return the mixed audio samples.
+    /// The returned slice is valid until the next call to mix.
+    pub fn mix(&self, num_channels: usize) -> Vec<i16> {
+        let mut mixer = self.inner.lock().unwrap();
+        let samples = mixer.mix(num_channels);
+        samples.to_vec()
+    }
+
+    pub fn next_ssrc(&self) -> i32 {
+        self.next_ssrc.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+/// An audio source that feeds frames from a remote participant
+/// into the native AudioMixer.
+#[derive(Clone)]
+pub struct AudioSource {
+    ssrc: i32,
+    sample_rate: u32,
+    num_channels: u32,
+    buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+}
+
+impl AudioSource {
+    pub fn new(ssrc: i32, sample_rate: u32, num_channels: u32) -> Self {
+        Self {
+            ssrc,
+            sample_rate,
+            num_channels,
+            buffer: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
-    /// Gets the requested number of samples from the buffer.
-    /// If not enough samples are available, fills the rest with silence (zeros).
-    ///
-    /// # Arguments
-    /// * `count` - Number of samples to retrieve
-    ///
-    /// # Returns
-    /// Vector of i16 samples, padded with silence if needed
-    pub fn get_samples(&self, count: usize) -> Vec<i16> {
-        let mut buffer = self.buffer.lock().unwrap();
-        let mut samples = Vec::with_capacity(count);
+    pub fn ssrc(&self) -> i32 {
+        self.ssrc
+    }
 
-        // Drain available samples
-        for _ in 0..count {
-            if let Some(sample) = buffer.pop_front() {
-                samples.push(sample);
-            } else {
-                // Fill remaining with silence
-                samples.push(0);
-            }
+    /// Push a received audio frame's data into the buffer.
+    pub fn receive(&self, frame: &AudioFrame) {
+        let mut buf = self.buffer.lock().unwrap();
+        buf.push_back(frame.data.to_vec());
+        // Cap buffer to avoid unbounded growth
+        while buf.len() > MAX_BUFFERED_FRAMES {
+            buf.pop_front();
         }
+    }
+}
 
-        samples
+impl audio_mixer::AudioMixerSource for AudioSource {
+    fn ssrc(&self) -> i32 {
+        self.ssrc
+    }
+
+    fn preferred_sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn get_audio_frame_with_info(&self, _target_sample_rate: u32) -> Option<AudioFrame<'_>> {
+        let mut buf = self.buffer.lock().unwrap();
+        let data = buf.pop_front()?;
+        let samples_per_channel = data.len() as u32 / self.num_channels;
+        Some(AudioFrame {
+            data: Cow::Owned(data),
+            sample_rate: self.sample_rate,
+            num_channels: self.num_channels,
+            samples_per_channel,
+        })
     }
 }

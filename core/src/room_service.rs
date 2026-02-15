@@ -19,7 +19,6 @@ use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
 use crate::{audio, ParticipantData, UserEvent};
-use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio_stream::StreamExt;
 
@@ -112,7 +111,7 @@ struct RoomServiceInner {
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::Mixer,
+    mixer: audio::mixer::AudioMixerHandle,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
@@ -155,7 +154,7 @@ impl RoomService {
     pub fn new(
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-        mixer: audio::mixer::Mixer,
+        mixer: audio::mixer::AudioMixerHandle,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -1380,7 +1379,7 @@ async fn handle_room_events(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::Mixer,
+    mixer: audio::mixer::AudioMixerHandle,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -1655,19 +1654,13 @@ async fn handle_room_events(
                             participant_identity
                         );
 
-                        let mut audio_stream = NativeAudioStream::new(
-                            audio_track.rtc_track(),
-                            crate::livekit::audio::LIVEKIT_SAMPLE_RATE as i32,
-                            crate::livekit::audio::AUDIO_NUM_CHANNELS as i32,
+                        let handle = crate::livekit::audio::play_remote_audio_track(
+                            audio_track,
+                            mixer.clone(),
+                            &participant_identity,
                         );
 
-                        let stream_key = participant_identity.clone();
-                        let mixer_clone = mixer.clone();
-
-                        // Create stop channel
-                        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
-
-                        // Store stop channel in participant info, creating participant if needed
+                        // Store handle in participant info, creating participant if needed
                         {
                             let mut participants_guard = participants.write().unwrap();
 
@@ -1683,36 +1676,9 @@ async fn handle_room_events(
                             }
 
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                info.set_audio_stop_tx(stop_tx);
+                                info.set_audio_handle(handle);
                             }
                         }
-
-                        tokio::spawn(async move {
-                            log::info!(
-                                "handle_room_events: Starting audio stream processing for participant: {}",
-                                stream_key
-                            );
-
-                            loop {
-                                tokio::select! {
-                                    Some(audio_frame) = audio_stream.next() => {
-                                        mixer_clone.add_audio_data(audio_frame.data.as_ref());
-                                    }
-                                    _ = stop_rx.recv() => {
-                                        log::info!(
-                                            "handle_room_events: Received stop signal for audio stream: {}",
-                                            stream_key
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-
-                            log::info!(
-                                "handle_room_events: Audio stream ended for participant: {}",
-                                stream_key
-                            );
-                        });
                     }
                     livekit::track::RemoteTrack::Video(video_track) => {
                         if publication.source() != TrackSource::Camera {

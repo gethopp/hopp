@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::livekit::audio::AudioTrackHandle;
 use crate::livekit::video::VideoBufferManager;
 
 pub struct ParticipantInfo {
@@ -8,7 +9,7 @@ pub struct ParticipantInfo {
     muted: bool,
     is_speaking: bool,
     camera_buffers: Arc<Option<Arc<VideoBufferManager>>>,
-    audio_stop_tx: Option<mpsc::UnboundedSender<()>>,
+    audio_handle: Option<AudioTrackHandle>,
     camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
 }
 
@@ -42,7 +43,7 @@ impl ParticipantInfo {
             muted,
             is_speaking,
             camera_buffers,
-            audio_stop_tx: None,
+            audio_handle: None,
             camera_stop_tx: None,
         }
     }
@@ -100,8 +101,8 @@ impl ParticipantInfo {
         self.camera_buffers = Arc::new(None);
     }
 
-    pub fn set_audio_stop_tx(&mut self, tx: mpsc::UnboundedSender<()>) {
-        self.audio_stop_tx = Some(tx);
+    pub fn set_audio_handle(&mut self, handle: AudioTrackHandle) {
+        self.audio_handle = Some(handle);
     }
 
     pub fn set_camera_stop_tx(&mut self, tx: mpsc::UnboundedSender<()>) {
@@ -109,9 +110,8 @@ impl ParticipantInfo {
     }
 
     pub fn stop_audio_stream(&mut self) {
-        if let Some(tx) = self.audio_stop_tx.take() {
-            let _ = tx.send(());
-        }
+        // Dropping the handle removes source from mixer and aborts task
+        self.audio_handle.take();
     }
 
     pub fn stop_camera_stream(&mut self) {

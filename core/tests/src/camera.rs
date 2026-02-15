@@ -206,21 +206,21 @@ pub fn test_call(camera_name: Option<&str>, mic_id: Option<&str>, name: &str) ->
         device.name.clone()
     };
 
-    sender.send(Message::StartCamera(CameraStartMessage { device_name }))?;
+    //sender.send(Message::StartCamera(CameraStartMessage { device_name }))?;
 
-    match event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
-    {
-        Message::StartCameraResult(Ok(())) => println!("Camera started successfully"),
-        Message::StartCameraResult(Err(e)) => {
-            return Err(io::Error::other(format!("Camera start failed: {e}")));
-        }
-        other => {
-            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-        }
-    }
+    //match event_socket
+    //    .responses
+    //    .recv_timeout(Duration::from_secs(10))
+    //    .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
+    //{
+    //    Message::StartCameraResult(Ok(())) => println!("Camera started successfully"),
+    //    Message::StartCameraResult(Err(e)) => {
+    //        return Err(io::Error::other(format!("Camera start failed: {e}")));
+    //    }
+    //    other => {
+    //        return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+    //    }
+    //}
 
     // Start mic
     let device_id = if let Some(id) = mic_id {
