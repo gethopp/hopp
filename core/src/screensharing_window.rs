@@ -661,8 +661,26 @@ impl ScreensharingWindow {
                 event: key_event, ..
             } => {
                 if self.mouse_in_participant_area {
-                    // Extract key string from logical_key
-                    let key_str = format!("{:?}", key_event.logical_key);
+                    // Extract key string to match the format expected by keyboard.rs.
+                    // We need strings like "Enter", "Tab", "a", "A", etc., not control characters.
+                    use winit::keyboard::Key;
+                    let key_str = match &key_event.logical_key {
+                        // For character keys, use the character directly
+                        Key::Character(s) => s.to_string(),
+                        // For named keys (Enter, Tab, Escape, etc.), use the Debug format
+                        // which produces strings like "Enter", "Tab", "ArrowLeft", etc.
+                        Key::Named(named) => format!("{:?}", named),
+                        // For dead keys, use the character if available, otherwise "Dead"
+                        Key::Dead(ch) => {
+                            if let Some(c) = ch {
+                                c.to_string()
+                            } else {
+                                "Dead".to_string()
+                            }
+                        }
+                        Key::Unidentified(_) => "Unidentified".to_string(),
+                    };
+
                     let down = key_event.state.is_pressed();
 
                     input_event = Some(ScreenShareInputEvent::KeyInput(
