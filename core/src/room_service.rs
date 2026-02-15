@@ -82,6 +82,7 @@ enum RoomServiceCommand {
         height: u32,
     },
     UnpublishCameraTrack,
+    UnpublishScreenShareTrack,
 }
 
 #[derive(Debug)]
@@ -98,6 +99,13 @@ pub enum RoomServiceError {
     PublishTrack(String),
 }
 
+#[derive(Debug)]
+struct RemoteScreenShare {
+    buffer: Arc<std::sync::Mutex<Option<Arc<VideoBufferManager>>>>,
+    stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
+    publisher_sid: Arc<std::sync::Mutex<Option<String>>>,
+}
+
 /*
  * This struct is used for handling room events and functions
  * from a thread in the async runtime.
@@ -110,6 +118,7 @@ struct RoomServiceInner {
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::AudioMixerHandle,
+    remote_screen_share: RemoteScreenShare,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
@@ -164,6 +173,11 @@ impl RoomService {
             camera_buffer_source: Arc::new(std::sync::Mutex::new(None)),
             participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
             mixer,
+            remote_screen_share: RemoteScreenShare {
+                buffer: Arc::new(std::sync::Mutex::new(None)),
+                stop_tx: Arc::new(std::sync::Mutex::new(None)),
+                publisher_sid: Arc::new(std::sync::Mutex::new(None)),
+            },
         });
         let mut runtime_params = RuntimeParams::default_with_ch(1);
         runtime_params.atten_lim_db = 60.0;
@@ -517,6 +531,17 @@ impl RoomService {
         }
     }
 
+    /// Unpublishes the screen share track from the room.
+    pub fn unpublish_screen_share_track(&self) {
+        log::info!("unpublish_screen_share_track");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnpublishScreenShareTrack);
+        if let Err(e) = res {
+            log::error!("unpublish_screen_share_track: Failed to send command: {e:?}");
+        }
+    }
+
     /// Retrieves the camera video source buffer.
     pub fn get_camera_buffer_source(&self) -> NativeVideoSource {
         log::info!("get_camera_buffer_source");
@@ -540,6 +565,12 @@ impl RoomService {
         let info = participants.get_mut("local")?;
         info.set_camera_buffers(manager.clone());
         Some(manager)
+    }
+
+    /// Returns the remote screen share buffer if available.
+    pub fn screen_share_buffer(&self) -> Option<Arc<VideoBufferManager>> {
+        let buffer = self.inner.remote_screen_share.buffer.lock().unwrap();
+        buffer.clone()
     }
 
     /// Unmutes the audio track.
@@ -673,6 +704,11 @@ async fn room_service_commands(
                     user_sid,
                     inner.participants.clone(),
                     inner.mixer.clone(),
+                    RemoteScreenShare {
+                        buffer: inner.remote_screen_share.buffer.clone(),
+                        stop_tx: inner.remote_screen_share.stop_tx.clone(),
+                        publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
+                    },
                 ));
 
                 let mut inner_room = inner.room.lock().await;
@@ -780,6 +816,23 @@ async fn room_service_commands(
                     let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
                     inner_buffer_source.take()
                 };
+
+                // Clean up screen share resources
+                {
+                    let mut stop_tx_guard = inner.remote_screen_share.stop_tx.lock().unwrap();
+                    if let Some(tx) = stop_tx_guard.take() {
+                        let _ = tx.send(());
+                    }
+                }
+                {
+                    inner.remote_screen_share.buffer.lock().unwrap().take();
+                    inner
+                        .remote_screen_share
+                        .publisher_sid
+                        .lock()
+                        .unwrap()
+                        .take();
+                }
             }
             RoomServiceCommand::PublishSharerLocation(x, y, _pointer) => {
                 let inner_room = inner.room.lock().await;
@@ -1174,6 +1227,33 @@ async fn room_service_commands(
 
                 log::info!("room_service_commands: Camera track unpublished");
             }
+            RoomServiceCommand::UnpublishScreenShareTrack => {
+                let inner_room = inner.room.lock().await;
+                if let Some(room) = inner_room.as_ref() {
+                    // Find and unpublish screen share track
+                    let local_participant = room.local_participant();
+                    for (sid, publication) in local_participant.track_publications() {
+                        if publication.name() == VIDEO_TRACK_NAME {
+                            log::info!(
+                                "room_service_commands: Unpublishing screen share track: {}",
+                                sid
+                            );
+                            let res = local_participant.unpublish_track(&sid).await;
+                            if let Err(e) = res {
+                                log::error!(
+                                    "room_service_commands: Failed to unpublish screen share track: {e:?}"
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
+                *inner_buffer_source = None;
+
+                log::info!("room_service_commands: Screen share track unpublished");
+            }
         }
     }
 }
@@ -1382,6 +1462,7 @@ async fn handle_room_events(
     user_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::AudioMixerHandle,
+    remote_screen_share: RemoteScreenShare,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -1683,7 +1764,72 @@ async fn handle_room_events(
                         }
                     }
                     livekit::track::RemoteTrack::Video(video_track) => {
-                        if publication.source() != TrackSource::Camera {
+                        if publication.source() == TrackSource::Screenshare {
+                            let publisher_sid = participant.sid().as_str().to_string();
+                            log::info!(
+                                "handle_room_events: Setting up screen share stream: {} from {}",
+                                video_track.name(),
+                                publisher_sid,
+                            );
+
+                            // Stop any existing screen share task
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                if let Some(tx) = stop_tx_guard.take() {
+                                    log::info!(
+                                        "handle_room_events: Stopping existing screen share task"
+                                    );
+                                    let _ = tx.send(());
+                                }
+                            }
+
+                            // Reuse existing buffer or create one
+                            let manager = {
+                                let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
+                                if let Some(existing) = buffer_guard.as_ref() {
+                                    existing.clone()
+                                } else {
+                                    let new = Arc::new(VideoBufferManager::new());
+                                    *buffer_guard = Some(new.clone());
+                                    new
+                                }
+                            };
+
+                            // Store publisher SID
+                            {
+                                let mut sid_guard =
+                                    remote_screen_share.publisher_sid.lock().unwrap();
+                                *sid_guard = Some(publisher_sid.clone());
+                            }
+
+                            // Create new stop channel
+                            let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                *stop_tx_guard = Some(stop_tx);
+                            }
+
+                            let stream_key = format!("screenshare_{}", publisher_sid);
+
+                            // Spawn processing task
+                            tokio::spawn(process_camera_stream(
+                                video_track,
+                                manager,
+                                stop_rx,
+                                stream_key,
+                            ));
+
+                            // Send event to open screen share window
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow)
+                            {
+                                log::error!(
+                                    "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
+                                );
+                            }
+
+                            continue;
+                        } else if publication.source() != TrackSource::Camera {
                             log::info!(
                                 "handle_room_events: Ignoring non-camera video track: {} ({:?})",
                                 video_track.name(),
@@ -1775,6 +1921,46 @@ async fn handle_room_events(
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.stop_camera_stream();
                                 info.clear_camera_buffers();
+                            }
+                        } else if publication.source() == TrackSource::Screenshare {
+                            let unsub_sid = participant.sid().as_str().to_string();
+                            log::info!(
+                                "handle_room_events: Screen share unsubscribed from {}",
+                                unsub_sid,
+                            );
+
+                            // Only clean up if this is the current publisher
+                            let is_current = {
+                                let sid_guard = remote_screen_share.publisher_sid.lock().unwrap();
+                                sid_guard.as_deref() == Some(unsub_sid.as_str())
+                            };
+
+                            if !is_current {
+                                log::info!(
+                                    "handle_room_events: Ignoring unsub from non-current publisher {}",
+                                    unsub_sid,
+                                );
+                                continue;
+                            }
+
+                            // Send stop signal
+                            {
+                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                                if let Some(tx) = stop_tx_guard.take() {
+                                    let _ = tx.send(());
+                                }
+                            }
+
+                            // Clear publisher SID (keep the buffer for reuse)
+                            {
+                                remote_screen_share.publisher_sid.lock().unwrap().take();
+                            }
+
+                            // Close the screen share window
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                            {
+                                log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
                             }
                         }
                     }

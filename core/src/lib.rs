@@ -381,6 +381,7 @@ impl<'a> Application<'a> {
         );
 
         self.stop_screenshare();
+        self.close_screensharing_window();
 
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
         /*
@@ -464,6 +465,11 @@ impl<'a> Application<'a> {
         }
     }
 
+    fn close_screensharing_window(&mut self) {
+        log::info!("close_screensharing_window");
+        self.screensharing_window = None;
+    }
+
     fn stop_screenshare(&mut self) {
         log::info!("stop_screenshare");
         let screen_capturer = self.screen_capturer.lock();
@@ -474,6 +480,9 @@ impl<'a> Application<'a> {
         let mut screen_capturer = screen_capturer.unwrap();
         screen_capturer.stop_capture();
         drop(screen_capturer);
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.unpublish_screen_share_track();
+        }
         self.destroy_overlay_window();
     }
 
@@ -859,6 +868,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
                 self.stop_camera();
+                self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_mut() {
                     room_service.destroy_room();
                 }
@@ -1289,10 +1299,37 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
-                match ScreensharingWindow::new(event_loop) {
+                // For the sharer's local screensharing UI, create a dummy buffer
+                let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
+                match ScreensharingWindow::new(event_loop, buffer) {
                     Ok(win) => self.screensharing_window = Some(win),
                     Err(e) => log::error!("Failed to open screensharing window: {e:?}"),
                 }
+            }
+            UserEvent::OpenScreenShareWindow => {
+                log::info!("user_event: OpenScreenShareWindow");
+                if self.screensharing_window.is_some() {
+                    log::info!("user_event: Screensharing window already exists, skipping");
+                    return;
+                }
+                // Stop any active local screenshare before opening remote view
+                self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                        match ScreensharingWindow::new(event_loop, screen_share_buffer) {
+                            Ok(win) => self.screensharing_window = Some(win),
+                            Err(e) => log::error!("Failed to open screen share window: {e:?}"),
+                        }
+                    } else {
+                        log::warn!("user_event: No screen share buffer available");
+                    }
+                } else {
+                    log::warn!("user_event: Room service not available");
+                }
+            }
+            UserEvent::CloseScreenShareWindow => {
+                log::info!("user_event: CloseScreenShareWindow");
+                self.close_screensharing_window();
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
@@ -1681,6 +1718,8 @@ pub enum UserEvent {
     StopCamera,
     OpenCamera,
     OpenScreensharing,
+    OpenScreenShareWindow,
+    CloseScreenShareWindow,
 }
 
 pub struct RenderEventLoop {

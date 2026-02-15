@@ -299,6 +299,7 @@ pub struct ScreensharingWindow {
     resized: bool,
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
+    screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
@@ -311,7 +312,10 @@ pub struct ScreensharingWindow {
 
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
-    pub fn new(event_loop: &ActiveEventLoop) -> Result<Self, ScreensharingWindowError> {
+    pub fn new(
+        event_loop: &ActiveEventLoop,
+        screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
+    ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
         // ── Create winit window ──────────────────────────────────────────
@@ -504,6 +508,7 @@ impl ScreensharingWindow {
             state: ScreensharingState::default(),
             resized: false,
             mouse_in_participant_area: false,
+            screen_share_buffer,
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
@@ -590,13 +595,13 @@ impl ScreensharingWindow {
                 if inside && !was_inside {
                     let pct_x = (logical_x - rect.x) / rect.width;
                     let pct_y = (logical_y - rect.y) / rect.height;
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: cursor entered participant area at ({:.3}, {:.3})",
                         pct_x,
                         pct_y
                     );
                 } else if !inside && was_inside {
-                    log::warn!("ScreensharingWindow: cursor left participant area");
+                    log::debug!("ScreensharingWindow: cursor left participant area");
                 }
             }
             // Reset when cursor leaves the window — winit skips the final
@@ -605,7 +610,7 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area {
                     self.mouse_in_participant_area = false;
                     self.update_cursor();
-                    log::warn!("ScreensharingWindow: cursor left participant area (CursorLeft)");
+                    log::debug!("ScreensharingWindow: cursor left participant area (CursorLeft)");
                 }
             }
             // Also reset when the window loses focus so stale state doesn't
@@ -614,7 +619,7 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area {
                     self.mouse_in_participant_area = false;
                     self.update_cursor();
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: cursor left participant area (window unfocused)"
                     );
                 }
@@ -628,7 +633,7 @@ impl ScreensharingWindow {
                         ),
                         _ => (0.0, 0.0),
                     };
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: [participant_area] mouse button {:?} {:?} at ({:.3}, {:.3})",
                         button,
                         state,
@@ -636,7 +641,7 @@ impl ScreensharingWindow {
                         pct_y
                     );
                 } else {
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: [outside] mouse {:?} {:?} ignored",
                         button,
                         state
@@ -645,25 +650,25 @@ impl ScreensharingWindow {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if self.mouse_in_participant_area {
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: [participant_area] scroll delta {:?}",
                         delta
                     );
                 } else {
-                    log::warn!("ScreensharingWindow: [outside] scroll ignored");
+                    log::debug!("ScreensharingWindow: [outside] scroll ignored");
                 }
             }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
                 if self.mouse_in_participant_area {
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: [participant_area] key {:?} {:?}",
                         key_event.logical_key,
                         key_event.state
                     );
                 } else {
-                    log::warn!(
+                    log::debug!(
                         "ScreensharingWindow: [outside] key {:?} ignored",
                         key_event.logical_key
                     );
