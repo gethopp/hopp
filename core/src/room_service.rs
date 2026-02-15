@@ -11,7 +11,7 @@ use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
 use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
 use crate::livekit::participant::ParticipantInfo;
-use crate::livekit::video::VideoBufferManager;
+use crate::livekit::video::{process_camera_stream, VideoBufferManager};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -19,8 +19,6 @@ use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
 use crate::{audio, ParticipantData, UserEvent};
-use livekit::webrtc::video_stream::native::NativeVideoStream;
-use tokio_stream::StreamExt;
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -1732,7 +1730,7 @@ async fn handle_room_events(
                         let stream_key = participant_sid.clone();
 
                         // Create stop channel
-                        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
+                        let (stop_tx, stop_rx) = mpsc::unbounded_channel();
 
                         // Store stop channel in participant info
                         {
@@ -1742,55 +1740,12 @@ async fn handle_room_events(
                             }
                         }
 
-                        tokio::spawn(async move {
-                            log::info!(
-                                    "handle_room_events: Starting camera stream processing for participant: {}",
-                                    stream_key
-                                );
-
-                            let mut sink = NativeVideoStream::new(video_track.rtc_track());
-                            let mut frames = 0u64;
-
-                            loop {
-                                tokio::select! {
-                                    Some(frame) = sink.next() => {
-                                        let i420 = frame.buffer.to_i420();
-                                        let width = frame.buffer.width();
-                                        let height = frame.buffer.height();
-
-                                        let buf = manager.write_buffer();
-                                        {
-                                            let mut guard = buf.lock().unwrap();
-                                            guard.copy_from_i420(&i420, width, height);
-                                        }
-                                        manager.advance_write();
-
-                                        frames += 1;
-                                        if frames % 100 == 0 {
-                                            log::info!(
-                                                    "handle_room_events: Received {} camera frames from {} ({}x{})",
-                                                    frames,
-                                                    stream_key,
-                                                    width,
-                                                    height
-                                                );
-                                        }
-                                    }
-                                    _ = stop_rx.recv() => {
-                                        log::info!(
-                                            "handle_room_events: Received stop signal for camera stream: {}",
-                                            stream_key
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-
-                            log::info!(
-                                "handle_room_events: Camera stream ended for participant: {}",
-                                stream_key
-                            );
-                        });
+                        tokio::spawn(process_camera_stream(
+                            video_track,
+                            manager,
+                            stop_rx,
+                            stream_key,
+                        ));
                     }
                 }
             }

@@ -1,6 +1,11 @@
+use livekit::track::RemoteVideoTrack;
 use livekit::webrtc::video_frame::I420Buffer;
+use livekit::webrtc::video_stream::native::NativeVideoStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
+use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
 
 /// A buffer holding YUV420 planar video data
 #[derive(Debug)]
@@ -75,6 +80,7 @@ impl VideoBuffer {
 pub struct VideoBufferManager {
     buffers: [Mutex<VideoBuffer>; 2],
     write_index: AtomicUsize,
+    inactive: std::sync::atomic::AtomicBool,
 }
 
 impl VideoBufferManager {
@@ -85,11 +91,13 @@ impl VideoBufferManager {
                 Mutex::new(VideoBuffer::default()),
             ],
             write_index: AtomicUsize::new(0),
+            inactive: std::sync::atomic::AtomicBool::new(true),
         }
     }
 
     /// Returns the buffer to write into (the current write slot).
     pub fn write_buffer(&self) -> &Mutex<VideoBuffer> {
+        self.inactive.store(false, Ordering::Release);
         let idx = self.write_index.load(Ordering::Acquire);
         &self.buffers[idx]
     }
@@ -105,4 +113,97 @@ impl VideoBufferManager {
         let write_idx = self.write_index.load(Ordering::Acquire);
         &self.buffers[1 - write_idx]
     }
+
+    /// Returns true if the stream is inactive (no frames received recently).
+    pub fn is_inactive(&self) -> bool {
+        self.inactive.load(Ordering::Acquire)
+    }
+
+    /// Mark the stream as inactive.
+    pub fn set_inactive(&self, inactive: bool) {
+        self.inactive.store(inactive, Ordering::Release);
+    }
+}
+
+/// Process camera stream frames with a 5-second timeout.
+///
+/// Receives frames from the video track and writes them to the buffer manager.
+/// If no frames are received for 5 seconds, marks the manager as inactive.
+/// The stream continues running until:
+/// - The stream ends naturally
+/// - A stop signal is received via stop_rx
+pub async fn process_camera_stream(
+    video_track: RemoteVideoTrack,
+    manager: Arc<VideoBufferManager>,
+    mut stop_rx: mpsc::UnboundedReceiver<()>,
+    stream_key: String,
+) {
+    log::info!(
+        "process_camera_stream: Starting camera stream processing for participant: {}",
+        stream_key
+    );
+
+    let mut sink = NativeVideoStream::new(video_track.rtc_track());
+    let mut frames = 0u64;
+    let timeout_duration = std::time::Duration::from_secs(5);
+
+    loop {
+        tokio::select! {
+            result = tokio::time::timeout(timeout_duration, sink.next()) => {
+                match result {
+                    Ok(Some(frame)) => {
+                        let i420 = frame.buffer.to_i420();
+                        let width = frame.buffer.width();
+                        let height = frame.buffer.height();
+
+                        let buf = manager.write_buffer();
+                        {
+                            let mut guard = buf.lock().unwrap();
+                            guard.copy_from_i420(&i420, width, height);
+                        }
+                        manager.advance_write();
+
+                        frames += 1;
+                        if frames % 100 == 0 {
+                            log::info!(
+                                "process_camera_stream: Received {} camera frames from {} ({}x{})",
+                                frames,
+                                stream_key,
+                                width,
+                                height
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "process_camera_stream: Stream ended for participant: {}",
+                            stream_key
+                        );
+                        break;
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "process_camera_stream: No frames received for 5 seconds from {}, marking as inactive",
+                            stream_key
+                        );
+                        manager.set_inactive(true);
+                        // Continue waiting for frames instead of breaking
+                    }
+                }
+            }
+            _ = stop_rx.recv() => {
+                log::info!(
+                    "process_camera_stream: Received stop signal for camera stream: {}",
+                    stream_key
+                );
+                break;
+            }
+        }
+    }
+
+    manager.set_inactive(true);
+    log::info!(
+        "process_camera_stream: Camera stream ended for participant: {}",
+        stream_key
+    );
 }
