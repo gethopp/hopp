@@ -64,3 +64,7 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 
 ## New folders
 - When creating new folders don't add a `mod.rs` file.
+
+## Avoid at all costs
+- Running cargo fmt
+- Running cargo clippy
