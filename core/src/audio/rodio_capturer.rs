@@ -11,6 +11,23 @@ use tokio::sync::mpsc;
 const TARGET_SAMPLE_RATE: u32 = 16000;
 const TARGET_CHANNELS: u16 = 1;
 
+// Create an enum to handle both resampled and non-resampled cases
+enum MicSource {
+    Direct(rodio::microphone::Microphone),
+    Resampled(SampleRateConverter<rodio::microphone::Microphone>),
+}
+
+impl Iterator for MicSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            MicSource::Direct(m) => m.next(),
+            MicSource::Resampled(r) => r.next(),
+        }
+    }
+}
+
 pub struct AudioDevice {
     pub input: Input,
 }
@@ -60,9 +77,15 @@ impl RodioCapturer {
                 .find(|dev| dev.input.to_string() == name)
                 .ok_or_else(|| format!("Device not found: {}. Call list_sources() first.", name))?;
 
-            builder
-                .device(device.input.clone())
-                .map_err(|e| format!("Failed to set device: {}", e))?
+            match builder.device(device.input.clone()) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::warn!("Failed to set device: {}, falling back to default", e);
+                    builder
+                        .default_device()
+                        .map_err(|e| format!("Failed to get default device: {}", e))?
+                }
+            }
         } else {
             builder
                 .default_device()
@@ -99,9 +122,8 @@ impl RodioCapturer {
 
         // Wrap mic in SampleRateConverter if sample rate differs
         let needs_sample_rate_conversion = actual_sample_rate != TARGET_SAMPLE_RATE;
-        let needs_channel_conversion = actual_channels.get() != TARGET_CHANNELS;
 
-        if needs_sample_rate_conversion || needs_channel_conversion {
+        if needs_sample_rate_conversion || actual_channels.get() != TARGET_CHANNELS {
             log::info!(
                 "Audio conversion: {}Hz {}ch → {}Hz {}ch",
                 actual_sample_rate,
@@ -109,23 +131,6 @@ impl RodioCapturer {
                 TARGET_SAMPLE_RATE,
                 TARGET_CHANNELS
             );
-        }
-
-        // Create an enum to handle both resampled and non-resampled cases
-        enum MicSource {
-            Direct(rodio::microphone::Microphone),
-            Resampled(SampleRateConverter<rodio::microphone::Microphone>),
-        }
-
-        impl Iterator for MicSource {
-            type Item = f32;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                match self {
-                    MicSource::Direct(m) => m.next(),
-                    MicSource::Resampled(r) => r.next(),
-                }
-            }
         }
 
         let source = if needs_sample_rate_conversion {
@@ -171,18 +176,12 @@ impl RodioCapturer {
                     break;
                 }
 
-                // Convert to mono if needed (average channels)
-                let output: Vec<i16> = if needs_channel_conversion {
-                    sampled
-                        .chunks(actual_channels.get() as usize)
-                        .map(|chunk| {
-                            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
-                            (sum / chunk.len() as i32) as i16
-                        })
-                        .collect()
-                } else {
-                    sampled
-                };
+                // Convert to mono by taking only the first channel
+                let output: Vec<i16> = sampled
+                    .iter()
+                    .step_by(actual_channels.get() as usize)
+                    .copied()
+                    .collect();
 
                 if sample_tx.send(output).is_err() {
                     // receiver has dropped or is not consuming
