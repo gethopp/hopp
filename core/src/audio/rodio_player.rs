@@ -38,7 +38,6 @@ impl RodioPlayer {
 mod tests {
     use super::*;
     use crate::audio::rodio_capturer::RodioCapturer;
-    use crate::audio::rodio_mixer::RodioAudioSource;
     use std::time::Duration;
 
     #[test]
@@ -52,14 +51,8 @@ mod tests {
         let player = RodioPlayer::new().expect("Failed to create player");
         let mixer = player.mixer();
 
-        let source1 = RodioAudioSource::new(16000, 1);
-        let source2 = RodioAudioSource::new(16000, 1);
-
-        let s1 = source1.clone();
-        let s2 = source2.clone();
-
-        mixer.add_source(&source1);
-        mixer.add_source(&source2);
+        let s1 = mixer.add_source(16000, 1);
+        let s2 = mixer.add_source(16000, 1);
 
         capturer1.start_capture(None, tx1).expect("capture 1");
         capturer2.start_capture(None, tx2).expect("capture 2");
