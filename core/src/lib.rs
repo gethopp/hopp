@@ -3,6 +3,8 @@ pub mod audio {
     pub mod mixer;
     pub mod player;
     pub mod rodio_capturer;
+    pub mod rodio_mixer;
+    pub mod rodio_player;
     pub mod stream;
 }
 
