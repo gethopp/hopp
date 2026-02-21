@@ -169,24 +169,29 @@ pub fn test_capture_30s(mic_name: Option<&str>) -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
     setup_audio(&sender, &event_socket)?;
 
+    // List devices first
+    sender.send(Message::ListAudioDevices)?;
+    let response = event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|e| io::Error::other(format!("Failed to receive AudioDeviceList: {e:?}")))?;
+
+    let devices = match response {
+        Message::AudioDeviceList(devices) => devices,
+        other => {
+            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+        }
+    };
+
+    println!("Found {} audio devices:", devices.len());
+    for device in &devices {
+        println!("  {}", device.name);
+    }
+
     let device_name = if let Some(name) = mic_name {
         println!("Using explicitly provided device: {}", name);
         name.to_string()
     } else {
-        // List devices and pick first one
-        sender.send(Message::ListAudioDevices)?;
-        let response = event_socket
-            .responses
-            .recv_timeout(Duration::from_secs(5))
-            .map_err(|e| io::Error::other(format!("Failed to receive AudioDeviceList: {e:?}")))?;
-
-        let devices = match response {
-            Message::AudioDeviceList(devices) => devices,
-            other => {
-                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-            }
-        };
-
         let device = devices
             .first()
             .ok_or_else(|| io::Error::other("No audio devices found"))?;

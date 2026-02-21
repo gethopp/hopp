@@ -45,6 +45,12 @@ mod tests {
         let mut capturer1 = Capturer::new();
         let mut capturer2 = Capturer::new();
 
+        let sources = capturer1.list_sources();
+        println!("Available audio input devices:");
+        for device in &sources {
+            println!("  - {}", device);
+        }
+
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
 

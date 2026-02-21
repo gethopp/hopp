@@ -285,6 +285,11 @@ mod tests {
         let (sample_tx, mut sample_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let mut capturer = Capturer::new();
+        let sources = capturer.list_sources();
+        println!("Available audio input devices:");
+        for device in &sources {
+            println!("  - {}", device);
+        }
         let sample_rate = capturer
             .start_capture(None, sample_tx)
             .expect("Failed to start capture with default device");
