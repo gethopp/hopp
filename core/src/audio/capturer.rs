@@ -96,7 +96,7 @@ impl Capturer {
         let target_sample_rate = NonZero::new(TARGET_SAMPLE_RATE).unwrap();
         let target_channels = NonZero::new(TARGET_CHANNELS).unwrap();
 
-        let mut mic = match builder
+        let mic = match builder
             .default_config()
             .and_then(|b| b.try_sample_rate(target_sample_rate))
             .and_then(|b| b.try_channels(target_channels))
@@ -174,7 +174,6 @@ impl Capturer {
                     break;
                 }
 
-                // Collect samples, downmix to mono, and convert f32→i16 in a single pass
                 output.clear();
                 let mut sample_idx = 0;
                 let mut got_any = false;
