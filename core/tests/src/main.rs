@@ -66,7 +66,7 @@ enum Commands {
         /// Type of audio test to run
         #[arg(value_enum)]
         test_type: AudioTest,
-        /// Optional mic device ID to use for capture tests
+        /// Optional mic device name to use for capture tests
         #[arg(long)]
         mic_id: Option<String>,
     },
@@ -90,7 +90,7 @@ enum Commands {
         /// Optional camera name to use
         #[arg(long)]
         camera_name: Option<String>,
-        /// Optional mic device ID to use
+        /// Optional mic device name to use
         #[arg(long)]
         mic_id: Option<String>,
         /// Optional participant display name

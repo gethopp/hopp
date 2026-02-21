@@ -2,10 +2,6 @@ pub mod audio {
     pub mod capturer;
     pub mod mixer;
     pub mod player;
-    pub mod rodio_capturer;
-    pub mod rodio_mixer;
-    pub mod rodio_player;
-    pub mod stream;
 }
 
 pub mod livekit {
@@ -213,7 +209,6 @@ pub struct Application<'a> {
     local_drawing: LocalDrawing,
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
-    audio_mixer: audio::mixer::AudioMixerHandle,
     audio_player: audio::player::Player,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
@@ -291,9 +286,8 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_mixer = audio::mixer::AudioMixerHandle::new();
-        let audio_player = audio::player::Player::new(audio_mixer.clone())
-            .map_err(ApplicationError::AudioPlayerError)?;
+        let audio_player =
+            audio::player::Player::new().map_err(ApplicationError::AudioPlayerError)?;
 
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();
@@ -317,7 +311,6 @@ impl<'a> Application<'a> {
             },
             window_manager: None,
             audio_capturer: audio::capturer::Capturer::new(),
-            audio_mixer,
             audio_player,
             camera_capturer: camera_capturer.clone(),
             _camera_capturer_events: Some(std::thread::spawn(move || {
@@ -979,8 +972,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
-                let room_service =
-                    RoomService::new(url, self.event_loop_proxy.clone(), self.audio_mixer.clone());
+
+                let room_service = RoomService::new(
+                    url,
+                    self.event_loop_proxy.clone(),
+                    self.audio_player.mixer().clone(),
+                );
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",
@@ -1165,13 +1162,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ListAudioDevices => {
                 log::debug!("user_event: ListAudioDevices");
-                let devices = audio::capturer::Capturer::list_devices();
+                let devices: Vec<socket_lib::AudioDevice> = self
+                    .audio_capturer
+                    .list_sources()
+                    .into_iter()
+                    .map(|name| socket_lib::AudioDevice { name })
+                    .collect();
                 if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
                     error!("user_event: Error sending audio device list: {e:?}");
                 }
             }
             UserEvent::StartAudioCapture(msg) => {
-                log::info!("user_event: StartAudioCapture device_id={}", msg.device_id);
+                log::info!(
+                    "user_event: StartAudioCapture device_name={}",
+                    msg.device_name
+                );
                 let result = (|| -> Result<(), String> {
                     let room_service = self
                         .room_service
@@ -1180,10 +1185,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
 
-                    // Start capture first to determine the device sample rate
                     let sample_rate = self
                         .audio_capturer
-                        .start_capture(&msg.device_id, sample_tx)?;
+                        .start_capture(Some(&msg.device_name), sample_tx)?;
 
                     // Create the AudioPublisher with the detected sample rate
                     room_service

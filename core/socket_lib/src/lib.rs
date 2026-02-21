@@ -122,12 +122,11 @@ pub struct DrawingEnabled {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioDevice {
     pub name: String,
-    pub id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioCaptureMessage {
-    pub device_id: String,
+    pub device_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

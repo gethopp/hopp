@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
@@ -9,7 +8,7 @@ use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
-use crate::livekit::audio::{AudioPublisher, SendDfTract, SharedDf};
+use crate::livekit::audio::AudioPublisher;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_camera_stream, VideoBufferManager};
 
@@ -124,7 +123,7 @@ struct RoomServiceInner {
     buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::AudioMixerHandle,
+    mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
@@ -168,7 +167,7 @@ impl RoomService {
     pub fn new(
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-        mixer: audio::mixer::AudioMixerHandle,
+        mixer: audio::mixer::MixerHandle,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -186,15 +185,6 @@ impl RoomService {
                 publisher_sid: Arc::new(std::sync::Mutex::new(None)),
             },
         });
-        let mut runtime_params = RuntimeParams::default_with_ch(1);
-        runtime_params.atten_lim_db = 60.0;
-        runtime_params.post_filter_beta = 0.05;
-
-        //let df = DfTract::new(DfParams::default(), &runtime_params)
-        //    .expect("Failed to initialize DeepFilterNet");
-        //log::info!("DeepFilterNet model loaded");
-        //let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(Some(SendDfTract(df))));
-        let shared_df: SharedDf = Arc::new(std::sync::Mutex::new(None));
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
         async_runtime.spawn(room_service_commands(
@@ -203,7 +193,6 @@ impl RoomService {
             inner.clone(),
             livekit_server_url,
             event_loop_proxy,
-            shared_df,
         ));
 
         Ok(Self {
@@ -715,7 +704,6 @@ async fn room_service_commands(
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    shared_df: SharedDf,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
@@ -1211,8 +1199,7 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                match AudioPublisher::publish(room, sample_rate, sample_rx, shared_df.clone()).await
-                {
+                match AudioPublisher::publish(room, sample_rate, sample_rx).await {
                     Ok(publisher) => {
                         audio_publisher = Some(publisher);
                         log::info!("room_service_commands: Audio track published");
@@ -1743,7 +1730,7 @@ async fn handle_room_events(
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::AudioMixerHandle,
+    mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
 ) {
     while let Some(msg) = receiver.recv().await {

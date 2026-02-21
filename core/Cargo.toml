@@ -77,9 +77,5 @@ iced_winit = "0.14.0"
 iced_wgpu = "0.14.0"
 iced = { version = "0.14.0", features = ["canvas", "image", "svg", "wgpu"] }
 iced_core = "0.14.0"
-cpal = "0.17"
-rubato = "0.16"
-deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model-ll"] }
-ndarray = "0.15"
 yuv-sys = "0.3"
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }

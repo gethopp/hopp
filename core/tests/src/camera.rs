@@ -185,52 +185,52 @@ pub fn test_call(
     let (sender, event_socket) = connect_socket()?;
     setup_camera(&sender, &event_socket, name)?;
 
-    // Start camera
-    let device_name = if let Some(name) = camera_name {
-        println!("Using explicitly provided camera: {}", name);
-        name.to_string()
-    } else {
-        sender.send(Message::ListCameras)?;
-        let response = event_socket
-            .responses
-            .recv_timeout(Duration::from_secs(5))
-            .map_err(|e| io::Error::other(format!("Failed to receive CameraList: {e:?}")))?;
+    //// Start camera
+    //let device_name = if let Some(name) = camera_name {
+    //    println!("Using explicitly provided camera: {}", name);
+    //    name.to_string()
+    //} else {
+    //    sender.send(Message::ListCameras)?;
+    //    let response = event_socket
+    //        .responses
+    //        .recv_timeout(Duration::from_secs(5))
+    //        .map_err(|e| io::Error::other(format!("Failed to receive CameraList: {e:?}")))?;
 
-        let devices = match response {
-            Message::CameraList(devices) => devices,
-            other => {
-                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-            }
-        };
+    //    let devices = match response {
+    //        Message::CameraList(devices) => devices,
+    //        other => {
+    //            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+    //        }
+    //    };
 
-        let device = devices
-            .first()
-            .ok_or_else(|| io::Error::other("No cameras found"))?;
+    //    let device = devices
+    //        .first()
+    //        .ok_or_else(|| io::Error::other("No cameras found"))?;
 
-        println!("Using camera: {}", device.name);
-        device.name.clone()
-    };
+    //    println!("Using camera: {}", device.name);
+    //    device.name.clone()
+    //};
 
-    sender.send(Message::StartCamera(CameraStartMessage { device_name }))?;
+    //sender.send(Message::StartCamera(CameraStartMessage { device_name }))?;
 
-    match event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
-    {
-        Message::StartCameraResult(Ok(())) => println!("Camera started successfully"),
-        Message::StartCameraResult(Err(e)) => {
-            return Err(io::Error::other(format!("Camera start failed: {e}")));
-        }
-        other => {
-            return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-        }
-    }
+    //match event_socket
+    //    .responses
+    //    .recv_timeout(Duration::from_secs(10))
+    //    .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
+    //{
+    //    Message::StartCameraResult(Ok(())) => println!("Camera started successfully"),
+    //    Message::StartCameraResult(Err(e)) => {
+    //        return Err(io::Error::other(format!("Camera start failed: {e}")));
+    //    }
+    //    other => {
+    //        return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+    //    }
+    //}
 
     // Start mic
-    let device_id = if let Some(id) = mic_id {
-        println!("Using explicitly provided mic: {}", id);
-        id.to_string()
+    let device_name = if let Some(name) = mic_id {
+        println!("Using explicitly provided mic: {}", name);
+        name.to_string()
     } else {
         sender.send(Message::ListAudioDevices)?;
         let response = event_socket
@@ -249,12 +249,12 @@ pub fn test_call(
             .first()
             .ok_or_else(|| io::Error::other("No audio devices found"))?;
 
-        println!("Using mic: {} (id: {})", device.name, device.id);
-        device.id.clone()
+        println!("Using mic: {}", device.name);
+        device.name.clone()
     };
 
     sender.send(Message::StartAudioCapture(AudioCaptureMessage {
-        device_id,
+        device_name,
     }))?;
 
     match event_socket

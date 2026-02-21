@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use deep_filter::tract::DfTract;
 use livekit::options::TrackPublishOptions;
 use livekit::track::{LocalAudioTrack, LocalTrack, RemoteAudioTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
@@ -8,19 +5,13 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
-use ndarray::Array2;
-use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
-use crate::audio::mixer::{AudioMixerHandle, AudioSource};
+use crate::audio::capturer::SAMPLES_DIVIDER;
+use crate::audio::mixer::{AudioSource, MixerHandle};
 
-pub(crate) struct SendDfTract(pub(crate) DfTract);
-unsafe impl Send for SendDfTract {}
-
-pub(crate) type SharedDf = Arc<std::sync::Mutex<Option<SendDfTract>>>;
-
-pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
+pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
 const AUDIO_QUEUE_SIZE: u32 = 100;
@@ -35,7 +26,6 @@ impl AudioPublisher {
         room: &Room,
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
-        df: SharedDf,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -44,7 +34,7 @@ impl AudioPublisher {
         };
         let native_source = NativeAudioSource::new(
             audio_source_options,
-            LIVEKIT_SAMPLE_RATE,
+            sample_rate,
             AUDIO_NUM_CHANNELS,
             AUDIO_QUEUE_SIZE,
         );
@@ -65,41 +55,16 @@ impl AudioPublisher {
             .await
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
 
-        let resampler = if sample_rate != LIVEKIT_SAMPLE_RATE {
-            let chunk_size = 1024;
-            let resampler = FastFixedIn::<f64>::new(
-                LIVEKIT_SAMPLE_RATE as f64 / sample_rate as f64,
-                1.0,
-                PolynomialDegree::Linear,
-                chunk_size,
-                1,
-            )
-            .map_err(|e| format!("Failed to create resampler: {e}"))?;
-            log::info!(
-                "AudioPublisher: resampling from {}Hz to {}Hz",
-                sample_rate,
-                LIVEKIT_SAMPLE_RATE
-            );
-            Some(resampler)
-        } else {
-            None
-        };
-
         let apm = AudioProcessingModule::new(true, true, false, false);
 
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
             native_source,
-            resampler,
-            df,
+            sample_rate,
             apm,
         ));
 
-        log::info!(
-            "AudioPublisher: audio track published (input: {}Hz, output: {}Hz)",
-            sample_rate,
-            LIVEKIT_SAMPLE_RATE
-        );
+        log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
 
         Ok(Self {
             audio_track: track,
@@ -126,128 +91,34 @@ impl AudioPublisher {
     }
 }
 
-fn apply_noise_filter(df: &mut DfTract, chunk: &mut [i16], samples_per_10ms: usize) {
-    let floats: Vec<f32> = chunk.iter().map(|&s| s as f32 / 32768.0).collect();
-    let noisy = Array2::from_shape_vec((1, samples_per_10ms), floats).expect("shape mismatch");
-    let mut enhanced = Array2::zeros((1, samples_per_10ms));
-    if let Err(e) = df.process(noisy.view(), enhanced.view_mut()) {
-        log::warn!("DeepFilterNet processing failed: {e}");
-    } else {
-        for (i, sample) in chunk.iter_mut().enumerate() {
-            *sample = (enhanced[[0, i]] * 32768.0).clamp(-32768.0, 32767.0) as i16;
-        }
-    }
-}
-
-/// Drain 10ms chunks from a resampled buffer, given incoming audio data and a resampler.
-fn drain_resampled_chunks(
-    audio_data: &[i16],
-    input_buf: &mut Vec<f64>,
-    resampler: &mut FastFixedIn<f64>,
-    output_buf: &mut [Vec<f64>],
-    livekit_buf: &mut Vec<i16>,
-    samples_per_10ms: usize,
-) -> Vec<Vec<i16>> {
-    for &s in audio_data {
-        input_buf.push(s as f64 / i16::MAX as f64);
-    }
-
-    let frames_needed = resampler.input_frames_next();
-    while input_buf.len() >= frames_needed {
-        let input_slice = [&input_buf[..frames_needed]];
-
-        match resampler.process_into_buffer(&input_slice, output_buf, None) {
-            Ok((_, out_len)) => {
-                livekit_buf.extend(
-                    output_buf[0][..out_len]
-                        .iter()
-                        .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f64) as i16),
-                );
-            }
-            Err(e) => {
-                log::warn!("Resampling error: {e}");
-            }
-        }
-
-        input_buf.drain(..frames_needed);
-    }
-
-    let mut chunks = Vec::new();
-    while livekit_buf.len() >= samples_per_10ms {
-        chunks.push(livekit_buf.drain(..samples_per_10ms).collect());
-    }
-    chunks
-}
-
-/// Drain 10ms chunks from a passthrough buffer.
-fn drain_passthrough_chunks(
-    audio_data: &[i16],
-    buffer: &mut Vec<i16>,
-    samples_per_10ms: usize,
-) -> Vec<Vec<i16>> {
-    buffer.extend_from_slice(audio_data);
-
-    let mut chunks = Vec::new();
-    while buffer.len() >= samples_per_10ms {
-        chunks.push(buffer.drain(..samples_per_10ms).collect());
-    }
-    chunks
-}
-
 async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
-    resampler: Option<FastFixedIn<f64>>,
-    df: SharedDf,
+    sample_rate: u32,
     mut apm: AudioProcessingModule,
 ) {
-    let samples_per_10ms = (LIVEKIT_SAMPLE_RATE / 100) as usize;
-
+    let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
     log::info!(
-        "Starting audio processing ({}Hz, 1 channel, {} samples per 10ms)",
-        LIVEKIT_SAMPLE_RATE,
-        samples_per_10ms
+        "Starting audio processing ({}Hz, {} samples per 10ms)",
+        sample_rate,
+        samples_per_unit
     );
 
-    // Per-branch state
-    let mut resampler = resampler;
-    let mut input_buf: Vec<f64> = Vec::new();
-    let mut output_buf = resampler
-        .as_ref()
-        .map(|r| vec![vec![0f64; r.output_frames_max()]; 1])
-        .unwrap_or_default();
-    let mut livekit_buf: Vec<i16> = Vec::new();
-    let mut passthrough_buf: Vec<i16> = Vec::new();
+    let mut buffer: Vec<i16> = Vec::new();
+    let mut chunk = vec![0i16; samples_per_unit];
 
     while let Some(audio_data) = rx.recv().await {
-        let chunks = if let Some(ref mut r) = resampler {
-            drain_resampled_chunks(
-                &audio_data,
-                &mut input_buf,
-                r,
-                &mut output_buf,
-                &mut livekit_buf,
-                samples_per_10ms,
-            )
-        } else {
-            drain_passthrough_chunks(&audio_data, &mut passthrough_buf, samples_per_10ms)
-        };
+        buffer.extend_from_slice(&audio_data);
 
-        for mut chunk in chunks {
-            if let Err(e) = apm.process_stream(
-                &mut chunk,
-                LIVEKIT_SAMPLE_RATE as i32,
-                AUDIO_NUM_CHANNELS as i32,
-            ) {
+        while buffer.len() >= samples_per_unit {
+            chunk.copy_from_slice(&buffer[..samples_per_unit]);
+            buffer.drain(..samples_per_unit);
+            if let Err(e) =
+                apm.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32)
+            {
                 log::warn!("APM process_stream failed: {e}");
             }
-            {
-                let mut guard = df.lock().unwrap();
-                if let Some(ref mut model) = *guard {
-                    //apply_noise_filter(&mut model.0, &mut chunk, samples_per_10ms);
-                }
-            }
-            capture_frame(&audio_source, chunk, samples_per_10ms).await;
+            capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }
 
@@ -257,30 +128,26 @@ async fn process_audio_samples(
 /// Handle for a remote audio track subscription.
 /// On drop, removes the source from the mixer and aborts the receive task.
 pub struct AudioTrackHandle {
-    ssrc: i32,
-    mixer: AudioMixerHandle,
+    _source: AudioSource,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl Drop for AudioTrackHandle {
     fn drop(&mut self) {
         self.task.abort();
-        self.mixer.remove_source(self.ssrc);
-        log::info!("AudioTrackHandle dropped, ssrc={}", self.ssrc);
+        log::info!("AudioTrackHandle dropped");
     }
 }
 
-/// Sets up a remote audio track to feed into the native AudioMixer.
+/// Sets up a remote audio track to feed into the rodio mixer.
 /// Returns a handle that cleans up automatically on drop.
 pub fn play_remote_audio_track(
     track: RemoteAudioTrack,
-    mixer: AudioMixerHandle,
+    mixer: MixerHandle,
     participant_id: &str,
 ) -> AudioTrackHandle {
-    let ssrc = mixer.next_ssrc();
-    let source = AudioSource::new(ssrc, LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS);
-
-    mixer.add_source(source.clone());
+    let source = mixer.add_source(LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS as u16);
+    let source_clone = source.clone();
 
     let mut stream = livekit::webrtc::audio_stream::native::NativeAudioStream::new(
         track.rtc_track(),
@@ -290,28 +157,28 @@ pub fn play_remote_audio_track(
 
     let stream_key = participant_id.to_string();
     let task = tokio::spawn(async move {
-        log::info!(
-            "Starting audio receive loop for {} (ssrc={})",
-            stream_key,
-            ssrc
-        );
+        log::info!("Starting audio receive loop for {}", stream_key);
         while let Some(frame) = stream.next().await {
-            source.receive(&frame);
+            source_clone.push_samples(&frame.data);
         }
         log::info!("Audio receive loop ended for {}", stream_key);
     });
 
-    AudioTrackHandle { ssrc, mixer, task }
+    AudioTrackHandle {
+        _source: source,
+        task,
+    }
 }
 
 async fn capture_frame(
     audio_source: &NativeAudioSource,
-    data: Vec<i16>,
+    data: &[i16],
     samples_per_channel: usize,
+    sample_rate: u32,
 ) {
     let audio_frame = AudioFrame {
         data: data.into(),
-        sample_rate: LIVEKIT_SAMPLE_RATE,
+        sample_rate,
         num_channels: AUDIO_NUM_CHANNELS,
         samples_per_channel: samples_per_channel as u32,
     };

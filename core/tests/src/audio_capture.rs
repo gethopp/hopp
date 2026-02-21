@@ -26,7 +26,7 @@ pub fn test_list_devices() -> io::Result<()> {
         Message::AudioDeviceList(devices) => {
             println!("Found {} audio devices:", devices.len());
             for device in &devices {
-                println!("  [{}] {}", device.id, device.name);
+                println!("  {}", device.name);
             }
             assert!(!devices.is_empty(), "Expected at least one audio device");
         }
@@ -63,10 +63,10 @@ pub fn test_capture_all_devices(duration_secs: u64) -> io::Result<()> {
     );
 
     for device in &devices {
-        println!("Capturing from: {} (id {})", device.name, device.id);
+        println!("Capturing from: {}", device.name);
 
         sender.send(Message::StartAudioCapture(AudioCaptureMessage {
-            device_id: device.id.clone(),
+            device_name: device.name.clone(),
         }))?;
 
         let result = event_socket
@@ -122,11 +122,11 @@ pub fn test_mute_unmute() -> io::Result<()> {
         .first()
         .ok_or_else(|| io::Error::other("No audio devices found"))?;
 
-    println!("Using device: {} (id: {})", device.name, device.id);
+    println!("Using device: {}", device.name);
 
     // Start capture
     sender.send(Message::StartAudioCapture(AudioCaptureMessage {
-        device_id: device.id.clone(),
+        device_name: device.name.clone(),
     }))?;
 
     let result = event_socket
@@ -165,13 +165,13 @@ pub fn test_mute_unmute() -> io::Result<()> {
     Ok(())
 }
 
-pub fn test_capture_30s(mic_id: Option<&str>) -> io::Result<()> {
+pub fn test_capture_30s(mic_name: Option<&str>) -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
     setup_audio(&sender, &event_socket)?;
 
-    let device_id = if let Some(id) = mic_id {
-        println!("Using explicitly provided device ID: {}", id);
-        id.to_string()
+    let device_name = if let Some(name) = mic_name {
+        println!("Using explicitly provided device: {}", name);
+        name.to_string()
     } else {
         // List devices and pick first one
         sender.send(Message::ListAudioDevices)?;
@@ -191,12 +191,12 @@ pub fn test_capture_30s(mic_id: Option<&str>) -> io::Result<()> {
             .first()
             .ok_or_else(|| io::Error::other("No audio devices found"))?;
 
-        println!("Using device: {} (id: {})", device.name, device.id);
-        device.id.clone()
+        println!("Using device: {}", device.name);
+        device.name.clone()
     };
 
     sender.send(Message::StartAudioCapture(AudioCaptureMessage {
-        device_id,
+        device_name,
     }))?;
 
     let result = event_socket
