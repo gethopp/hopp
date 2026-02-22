@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
 const TARGET_CHANNELS: u16 = 1;
-pub const SAMPLES_DIVIDER: u32 = 25;
+pub const SAMPLES_DIVIDER: u32 = 100;
 
 // Create an enum to handle both resampled and non-resampled cases
 enum MicSource {
@@ -149,7 +149,7 @@ impl Capturer {
             MicSource::Direct(mic)
         };
 
-        let buffer_frames = (TARGET_SAMPLE_RATE / SAMPLES_DIVIDER) as usize; // 40ms worth of frames
+        let buffer_frames = (TARGET_SAMPLE_RATE / SAMPLES_DIVIDER) as usize;
         let num_channels = actual_channels.get() as usize;
         let take_count = buffer_frames * num_channels;
 
