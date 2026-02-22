@@ -58,11 +58,15 @@ const HEADER_RIGHT_PADDING: f32 = 4.0;
 
 /// Target redraw interval: 60 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
+/// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
+const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 
 const ICON_COG: &[u8] = include_bytes!("../resources/icons/cog.svg");
-const ICON_WAND: &[u8] = include_bytes!("../resources/icons/wand.svg");
-const ICON_PENCIL: &[u8] = include_bytes!("../resources/icons/pencil.svg");
-const ICON_CLICKER: &[u8] = include_bytes!("../resources/icons/clicker.svg");
+
+/// Icon font codepoints for segmented control (from icons-font).
+const ICON_REMOTE_CONTROL: char = '\u{F107}';
+const ICON_PEN: char = '\u{F109}';
+const ICON_CLICK_POINTER: char = '\u{F108}';
 const CURSOR_ICON_POINTER: &[u8] =
     include_bytes!("../resources/icons/local-participant-cursor.svg");
 const CURSOR_ICON_PENCIL: &[u8] = include_bytes!("../resources/icons/local-participant-pencil.svg");
@@ -71,17 +75,17 @@ const CURSOR_ICON_PENCIL: &[u8] = include_bytes!("../resources/icons/local-parti
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
     SegmentedButton {
         id: "control",
-        icon: ICON_WAND,
+        icon_char: ICON_REMOTE_CONTROL,
         description: Some("Remote control"),
     },
     SegmentedButton {
         id: "draw",
-        icon: ICON_PENCIL,
+        icon_char: ICON_PEN,
         description: Some("Draw"),
     },
     SegmentedButton {
         id: "point",
-        icon: ICON_CLICKER,
+        icon_char: ICON_CLICK_POINTER,
         description: Some("Click animation"),
     },
 ];
@@ -263,6 +267,9 @@ pub struct ScreensharingWindow {
     custom_cursor_pencil: winit::window::CustomCursor,
 }
 
+// TODO(@konsalex): Things looks stretched out when
+// (for sure in non-retina displays) when we resize the window. This needs to be fixed.
+// Example: https://share.cleanshot.com/fgYwrMBM
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
     pub fn new(
@@ -305,6 +312,8 @@ impl ScreensharingWindow {
             ScreensharingWindowError::WindowCreation
         })?;
         let window = Arc::new(window);
+        // Bring to front when window is created
+        window.focus_window();
 
         // ── wgpu setup ───────────────────────────────────────────────────
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -927,9 +936,10 @@ impl ScreensharingWindow {
         let video_content: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
             if has_data {
                 shader::<ScreensharingMessage, _>(YuvVideoProgram {
-                    participant_id: 0,
+                    participant_id: SCREENSHARE_STREAM_ID,
                     buffer: screen_share_buffer.clone(),
                     corner_radius: 12.0,
+                    stretch_to_fill: true,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -1321,7 +1331,7 @@ fn set_macos_window_aspect_ratio(window: &Window, width: f64, height: f64) {
         let min_h = min_w * (height / width);
         ns_window.setMinSize(NSSize::new(min_w, min_h));
 
-        log::info!(
+        log::warn!(
             "set_macos_window_aspect_ratio: aspect={:.1}x{:.1}, minSize={:.1}x{:.1}",
             width,
             height,

@@ -6,9 +6,10 @@
 
 use std::time::Instant;
 
-use iced::widget::{button, container, row, stack, svg, text, tooltip, Space};
-use iced::{Background, Border, Color, Length, Padding, Shadow, Theme};
+use iced::widget::{button, container, row, stack, text, tooltip, Space};
+use iced::{Alignment, Background, Border, Color, Length, Padding, Shadow, Theme};
 
+use crate::components::fonts::ICONS_FONT;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
@@ -25,8 +26,8 @@ const ANIM_DURATION_MS: u128 = 200;
 pub struct SegmentedButton {
     /// Unique identifier for this button, returned via the `on_select` callback.
     pub id: &'static str,
-    /// SVG icon bytes (embedded at compile time).
-    pub icon: &'static [u8],
+    /// Icon character from the icon font (ICONS_FONT).
+    pub icon_char: char,
     /// Optional description shown as a tooltip on hover.
     pub description: Option<&'static str>,
 }
@@ -134,7 +135,7 @@ pub fn segmented_control<'a, Message: Clone + 'a>(
         let is_active = i == active_idx;
         let msg = on_select(btn.id);
         tab_buttons.push(tab_button(
-            btn.icon,
+            btn.icon_char,
             is_active,
             is_animating,
             msg,
@@ -197,24 +198,23 @@ fn ease_out_cubic(t: f32) -> f32 {
 /// If `description` is `Some`, the button is wrapped in a tooltip that appears
 /// below the control on hover.
 fn tab_button<'a, Message: Clone + 'a>(
-    icon_data: &'static [u8],
+    icon_char: char,
     is_active: bool,
     is_animating: bool,
     on_press: Message,
     description: Option<&'static str>,
 ) -> iced::Element<'a, Message, Theme, iced::Renderer> {
-    let icon_handle = svg::Handle::from_memory(icon_data);
     let icon_color = if is_active {
         Color::WHITE
     } else {
         ColorToken::Gray400.to_color()
     };
-    let icon = svg(icon_handle)
-        .width(Length::Fixed(20.0))
-        .height(Length::Fixed(20.0))
-        .style(move |_theme: &Theme, _status| svg::Style {
-            color: Some(icon_color),
-        });
+    let icon = text(icon_char.to_string())
+        .font(ICONS_FONT)
+        .size(18.0)
+        .color(icon_color)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
 
     let btn = button(
         container(icon)

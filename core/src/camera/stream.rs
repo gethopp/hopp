@@ -356,6 +356,7 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
             .iter()
             .map(|c| socket_lib::CameraDevice {
                 name: c.human_name(),
+                id: c.index().to_string(),
             })
             .collect(),
         Err(e) => {

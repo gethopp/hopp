@@ -101,7 +101,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   // that will unsubscribe from the socket when the component unmounts
   useEffect(() => {
     // Add listener for call response
-    socketService.on(callbackIdRef.current, (data: TWebSocketMessage) => {
+    socketService.on(callbackIdRef.current, async (data: TWebSocketMessage) => {
       if (!isCalling) return;
 
       switch (data.type) {
@@ -136,13 +136,13 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.success(`${props.user.first_name} accepted your call`, {
             duration: 1500,
           });
-          tauriUtils.callStarted(props.user.id);
           break;
         case "call_tokens":
           setCalling(null);
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
+          await tauriUtils.callStarted(data.payload.audioToken);
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
@@ -150,9 +150,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             hasCameraEnabled: false,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
-            cameraTrackId: null,
-            cameraWindowOpen: false,
-            krispToggle: true,
+            participants: [],
           });
           break;
       }

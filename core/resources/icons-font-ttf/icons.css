@@ -1,31 +1,41 @@
 @font-face {
-    font-family: "icons";
-    src: url("./icons.ttf?213b30d540655dba4ef17f89ec2d0371") format("truetype");
+  font-family: "icons";
+  src: url("./icons.ttf?0671a1f7b169b2a3d69755f3027e6319") format("truetype");
 }
 
-i[class^="icon-"]:before, i[class*=" icon-"]:before {
-    font-family: icons !important;
-    font-style: normal;
-    font-weight: normal !important;
-    font-variant: normal;
-    text-transform: none;
-    line-height: 1;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+i[class^="icon-"]:before,
+i[class*=" icon-"]:before {
+  font-family: icons !important;
+  font-style: normal;
+  font-weight: normal !important;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .icon-video:before {
-    content: "\f101";
+  content: "\f101";
 }
 .icon-screen-share:before {
-    content: "\f102";
+  content: "\f102";
 }
 .icon-phone-off:before {
-    content: "\f103";
+  content: "\f103";
 }
 .icon-microphone-on:before {
-    content: "\f105";
+  content: "\f105";
 }
 .icon-microphone-off:before {
-    content: "\f106";
+  content: "\f106";
+}
+.icon-remote-control:before {
+  content: "\f107";
+}
+.icon-click-pointer:before {
+  content: "\f108";
+}
+.icon-pen:before {
+  content: "\f109";
 }

@@ -5,11 +5,11 @@
 Hopp is an open-source **pair programming** app with:
 
 - High-quality, low-latency screen sharing (WebRTC)
-- Multi-user rooms (“mob programming”)
+- Multi-user rooms ("mob programming")
 - Remote control (mouse/keyboard) and remote cursors
 - Team/workspace concepts (users, teams, invitations)
 
-The desktop app is built with **Tauri** and a separate Rust “core process” (`hopp_core`). WebRTC infrastructure is powered by **LiveKit**.
+The desktop app is built with **Tauri** and a separate Rust "core process" (`hopp_core`). WebRTC infrastructure is powered by **LiveKit**.
 
 ## Tech Stack
 
@@ -51,11 +51,14 @@ This repo is a monorepo (Yarn workspaces) with multiple runtimes.
 
 ### Core Process (`/core`)
 
-- **Rust** “core engine” (`hopp_core`) handling:
+- **Rust** "core engine" (`hopp_core`) handling:
   - Screen capture + streaming integration with LiveKit
   - Remote cursor rendering overlay
   - Remote input control (mouse/keyboard)
-- The Tauri app launches the core process and communicates over a socket.
+  - **Camera window** — standalone GPU-rendered window (winit + iced + wgpu) showing a participant video grid with mic/video/screenshare/end-call controls. Owned by `Application.camera_window`.
+  - **Screensharing window** — standalone GPU-rendered window (winit + iced + wgpu) showing the remote screen share stream with a segmented control (Remote Control / Draw / Click Animation) and input event forwarding to the sharer via `RoomService`. Owned by `Application.screensharing_window`.
+- Both windows are **native OS windows**, not Tauri webviews. They use `iced` for the widget tree, `wgpu` for GPU rendering, and `winit` for the event loop. The core `Application` struct implements `winit::ApplicationHandler` and routes `WindowEvent`s to the correct window by `WindowId`.
+- The Tauri app launches the core process as a sidecar and communicates over a local socket (see IPC section below).
 
 ### Web App (`/web-app`)
 
@@ -63,11 +66,66 @@ This repo is a monorepo (Yarn workspaces) with multiple runtimes.
 - Routing: React Router (`react-router-dom`)
 - Data fetching: TanStack React Query (and generated OpenAPI types)
 - UI: Radix + Headless UI; styling via Tailwind CSS
-- Build output is bundled as a single-file asset and injected into the backend’s `backend/web/*.html`
+- Build output is bundled as a single-file asset and injected into the backend's `backend/web/*.html`
 
 ### Documentation (`/docs`)
 
 - **Astro + Starlight** (Tailwind)
+
+## Tauri ↔ Core IPC Architecture
+
+The desktop app has a three-layer communication model:
+
+```
+Tauri UI (React)  ←→  Tauri Backend (Rust)  ←→  Core Process (Rust)
+   (webview)            (tauri commands)          (hopp_core sidecar)
+```
+
+### Tauri UI → Tauri Backend (Commands)
+
+The React frontend calls Tauri commands via `invoke()`. All commands and their argument/return types are defined in `tauri/src/core_payloads.ts` inside the `CommandMap` interface. A typed wrapper `typedInvoke<K>()` provides compile-time type safety:
+
+```typescript
+// tauri/src/core_payloads.ts
+export function typedInvoke<K extends keyof CommandMap>(
+  cmd: K,
+  ...args: InvokeArgs<K>
+): Promise<CommandMap[K]["return"]>;
+```
+
+When adding a new Tauri command, add its entry to `CommandMap` in `core_payloads.ts` and the corresponding `#[tauri::command]` function in `tauri/src-tauri/src/main.rs`.
+
+### Tauri Backend ↔ Core Process (Socket IPC)
+
+Communication uses `socket_lib` (`core/socket_lib/src/lib.rs`):
+
+- **Transport**: Unix domain socket (macOS/Linux) or localhost TCP (Windows).
+- **Protocol**: Length-prefixed JSON. Each message is serialized via `serde_json`, prefixed with a `usize` length in little-endian bytes.
+- **Message enum**: `socket_lib::Message` — all variants are defined in `core/socket_lib/src/lib.rs`. This is the single source of truth for the IPC contract.
+- **Routing**: The `EventSocket` splits incoming messages into two channels:
+  - `events` — fire-and-forget messages (e.g. `Ping`, `CallStart`, `OpenCamera`)
+  - `responses` — request/response pairs (e.g. `GetAvailableContent` → `AvailableContent`, `StartScreenShare` → `StartScreenShareResult`)
+  - `Message::is_response()` determines which channel receives a message.
+- **Pattern**: Tauri backend sends a `Message` via `SocketSender`, then either ignores the result (fire-and-forget) or blocks on `event_socket.responses.recv_timeout()` for request/response commands.
+
+### Core Process → Tauri UI (Event Forwarding)
+
+Some events originate in the core process (e.g. participant state changes, role changes, call ended from camera/screensharing window). These flow:
+
+1. Core sends a `Message` variant (e.g. `ParticipantsSnapshot`, `RoleChange`, `CallEnded`) back over the socket.
+2. The Tauri backend's `forward_core_events()` thread receives it from the `events` channel.
+3. It calls `app.emit("core_<event_name>", payload)` to broadcast to all Tauri webview windows.
+4. The React frontend listens via `listen("core_<event_name>", callback)` from `@tauri-apps/api/event`.
+
+Some of the current forwarded events for example: `core_participants_snapshot`, `core_role_change`, `core_camera_failed`, `core_call_ended`.
+
+### Adding a New Message
+
+1. Add the variant to `enum Message` in `core/socket_lib/src/lib.rs` (and any associated struct).
+2. If the message is a response, add it to `Message::is_response()`.
+3. Handle it in `core/src/lib.rs` (`user_event` or `handle_message`).
+4. If it flows to Tauri UI: handle it in `forward_core_events()` in `tauri/src-tauri/src/main.rs` and `listen()` in the frontend.
+5. Mirror any new structs in `tauri/src/core_payloads.ts` for frontend type safety.
 
 ## Project Conventions
 
@@ -92,6 +150,7 @@ This repo is a monorepo (Yarn workspaces) with multiple runtimes.
   - `web-app/`: browser app/UI that can also be served/embedded via the backend
 - **API contracts**:
   - The OpenAPI spec (`backend/api-files/openapi.yaml`) is treated as the contract; type-safe clients are generated from it.
+  - The socket IPC contract is `socket_lib::Message` enum; the TypeScript mirror is `CommandMap` + struct interfaces in `tauri/src/core_payloads.ts`.
 - **Local dev ergonomics**:
   - `task` is used to coordinate multi-service dev (backend + livekit + webapp builds).
   - Web app assets are built and injected into `backend/web/` for backend-driven pages.
@@ -120,7 +179,7 @@ This repo is a monorepo (Yarn workspaces) with multiple runtimes.
 - **LiveKit**:
   - Used for media (video) and data channels (control events, cursor positions, etc.).
 - **Desktop UX**:
-  - Tauri provides tray/window surfaces; `hopp_core` does capture + overlay rendering and interacts with OS APIs.
+  - Tauri provides tray/main-window surfaces; `hopp_core` owns the camera and screensharing windows (native GPU-rendered) and interacts with OS APIs.
 
 ## Important Constraints
 

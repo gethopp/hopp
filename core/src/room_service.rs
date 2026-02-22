@@ -657,6 +657,21 @@ impl RoomService {
         buffer.clone()
     }
 
+    /// Returns whether the local audio track is currently muted.
+    pub fn is_audio_muted(&self) -> bool {
+        if let Ok(participants) = self.inner.participants.read() {
+            if let Some(local) = participants.get("local") {
+                return local.muted();
+            }
+        }
+        true
+    }
+
+    /// Builds a snapshot of all participants for forwarding to Tauri.
+    pub fn participants_snapshot(&self) -> Vec<socket_lib::CoreParticipantState> {
+        build_participants_snapshot(&self.inner.participants)
+    }
+
     /// Unmutes the audio track.
     pub fn unmute_audio_track(&self) {
         log::info!("unmute_audio_track");
@@ -703,6 +718,48 @@ impl RoomService {
 /// * `IterateParticipants` - Iterates over the participants in the room and sends an event
 ///   to the event loop for each participant that is not an audio participant.
 ///
+
+/// Builds a deduplicated snapshot of participant states from the internal HashMap.
+/// Each user may have multiple LiveKit participants (audio, video, camera);
+/// this groups them by user ID and uses the audio participant's mute status.
+fn build_participants_snapshot(
+    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+) -> Vec<socket_lib::CoreParticipantState> {
+    let guard = participants.read().unwrap();
+    let mut seen: HashMap<String, socket_lib::CoreParticipantState> = HashMap::new();
+
+    for info in guard.values() {
+        let identity = info.identity();
+        // Identity format: "room:<roomId>:<userId>:<trackType>"
+        let parts: Vec<&str> = identity.split(':').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let user_id = parts[2];
+        let track_type = parts[3];
+
+        let entry =
+            seen.entry(user_id.to_string())
+                .or_insert_with(|| socket_lib::CoreParticipantState {
+                    identity: identity.to_string(),
+                    name: info.name().to_string(),
+                    connected: true,
+                    muted: false,
+                    has_camera: false,
+                    is_screensharing: false,
+                });
+
+        if track_type == "audio" {
+            entry.muted = info.muted();
+        }
+
+        entry.has_camera = entry.has_camera || info.camera_buffers().is_some();
+        entry.is_screensharing = entry.is_screensharing || info.is_screensharing();
+    }
+
+    seen.into_values().collect()
+}
+
 /// # Error Handling
 ///
 /// The function logs errors for individual command failures but continues processing
@@ -769,6 +826,7 @@ async fn room_service_commands(
                 }
 
                 let user_sid = room.local_participant().sid().as_str().to_string();
+                let user_identity = room.local_participant().identity().as_str().to_string();
                 let user_name = room.local_participant().name();
 
                 // Insert local participant into participants map
@@ -776,7 +834,7 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, false, false, false),
+                        ParticipantInfo::new(user_identity, user_name, false, false, false),
                     );
                 }
 
@@ -1007,9 +1065,11 @@ async fn room_service_commands(
                     continue;
                 }
                 let room = room.as_ref().unwrap();
+                let mut any_new = false;
                 for participant in room.remote_participants() {
                     let remote_participant = participant.1;
                     let sid = remote_participant.sid().as_str().to_string();
+                    let identity = remote_participant.identity().as_str().to_string();
                     let name = remote_participant.name();
 
                     log::info!("room_service_commands: Participant: {}", sid);
@@ -1022,33 +1082,39 @@ async fn room_service_commands(
                         }
                     }
 
-                    // Get initial state from LiveKit
-                    let is_speaking = remote_participant.is_speaking();
-                    let mut muted = false;
-                    for (_, publication) in remote_participant.track_publications() {
-                        if publication.kind() == livekit::track::TrackKind::Audio {
-                            muted = publication.is_muted();
-                            break;
-                        }
-                    }
-
                     // Insert into HashMap
                     {
                         let mut participants = inner.participants.write().unwrap();
                         let new_participant =
-                            ParticipantInfo::new(name.clone(), muted, is_speaking, false);
+                            ParticipantInfo::from_remote_participant(&remote_participant, false);
                         log::info!(
-                            "handle_room_events: participant to be added {:?}",
+                            "room_service_commands: participant to be added {:?}",
                             new_participant
                         );
                         participants.insert(sid.clone(), new_participant);
                     }
 
+                    any_new = true;
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantConnected(
-                        ParticipantData { name, sid },
+                        ParticipantData {
+                            name,
+                            identity,
+                            sid,
+                        },
                     )) {
                         log::error!(
-                            "handle_room_events: Failed to send participant connected event: {e:?}"
+                            "room_service_commands: Failed to send participant connected event: {e:?}"
+                        );
+                    }
+                }
+
+                if any_new {
+                    let snapshot = build_participants_snapshot(&inner.participants);
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                    {
+                        log::error!(
+                            "room_service_commands: Failed to send participants snapshot: {e:?}"
                         );
                     }
                 }
@@ -1241,6 +1307,16 @@ async fn room_service_commands(
                             local.set_muted(true);
                         }
                     }
+
+                    let snapshot = build_participants_snapshot(&inner.participants);
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                    {
+                        log::error!(
+                            "room_service_commands: Failed to send participants snapshot: {e:?}"
+                        );
+                    }
+
                     log::info!("room_service_commands: Audio track muted");
                 } else {
                     log::warn!("room_service_commands: No audio track to mute");
@@ -1254,6 +1330,16 @@ async fn room_service_commands(
                             local.set_muted(false);
                         }
                     }
+
+                    let snapshot = build_participants_snapshot(&inner.participants);
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                    {
+                        log::error!(
+                            "room_service_commands: Failed to send participants snapshot: {e:?}"
+                        );
+                    }
+
                     log::info!("room_service_commands: Audio track unmuted");
                 } else {
                     log::warn!("room_service_commands: No audio track to unmute");
@@ -1324,12 +1410,6 @@ async fn room_service_commands(
 
                 let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
                 *inner_buffer_source = None;
-
-                // Clear the buffer manager from the local participant
-                let mut participants = inner.participants.write().unwrap();
-                if let Some(info) = participants.get_mut("local") {
-                    info.clear_camera_buffers();
-                }
 
                 log::info!("room_service_commands: Camera track unpublished");
             }
@@ -1861,6 +1941,7 @@ async fn handle_room_events(
             }
             RoomEvent::ParticipantConnected(participant) => {
                 let sid = participant.sid().as_str().to_string();
+                let identity = participant.identity().as_str().to_string();
                 let name = participant.name();
 
                 log::info!("handle_room_events: Participant connected: {}", sid);
@@ -1885,6 +1966,7 @@ async fn handle_room_events(
                 if let Err(e) =
                     event_loop_proxy.send_event(UserEvent::ParticipantConnected(ParticipantData {
                         name,
+                        identity: identity.clone(),
                         sid,
                     }))
                 {
@@ -1892,9 +1974,17 @@ async fn handle_room_events(
                         "handle_room_events: Failed to send participant connected event: {e:?}"
                     );
                 }
+
+                let snapshot = build_participants_snapshot(&participants);
+                if let Err(e) =
+                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                {
+                    log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
+                }
             }
             RoomEvent::ParticipantDisconnected(participant) => {
                 let sid = participant.sid().as_str().to_string();
+                let identity = participant.identity().as_str().to_string();
                 let name = participant.name();
 
                 log::info!("handle_room_events: Participant disconnected: {}", sid);
@@ -1910,11 +2000,22 @@ async fn handle_room_events(
                 }
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
-                    ParticipantData { name, sid },
+                    ParticipantData {
+                        name,
+                        identity,
+                        sid,
+                    },
                 )) {
                     log::error!(
                         "handle_room_events: Failed to send participant disconnected event: {e:?}"
                     );
+                }
+
+                let snapshot = build_participants_snapshot(&participants);
+                if let Err(e) =
+                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                {
+                    log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
                 }
             }
             RoomEvent::TrackPublished {
@@ -1970,14 +2071,21 @@ async fn handle_room_events(
                     let sid = participant.sid().as_str().to_string();
                     log::info!("handle_room_events: Audio track muted for {}", sid);
 
-                    let mut participants_guard = participants.write().unwrap();
-                    if let Some(info) = participants_guard.get_mut(&sid) {
-                        info.set_muted(true);
+                    {
+                        let mut participants_guard = participants.write().unwrap();
+                        if let Some(info) = participants_guard.get_mut(&sid) {
+                            info.set_muted(true);
+                        }
                     }
-                    log::info!(
-                        "handle_room_events: Participants state: {:?}",
-                        *participants_guard
-                    );
+
+                    let snapshot = build_participants_snapshot(&participants);
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                    {
+                        log::error!(
+                            "handle_room_events: Failed to send participants snapshot: {e:?}"
+                        );
+                    }
                 }
             }
             RoomEvent::TrackUnmuted {
@@ -1988,14 +2096,21 @@ async fn handle_room_events(
                     let sid = participant.sid().as_str().to_string();
                     log::info!("handle_room_events: Audio track unmuted for {}", sid);
 
-                    let mut participants_guard = participants.write().unwrap();
-                    if let Some(info) = participants_guard.get_mut(&sid) {
-                        info.set_muted(false);
+                    {
+                        let mut participants_guard = participants.write().unwrap();
+                        if let Some(info) = participants_guard.get_mut(&sid) {
+                            info.set_muted(false);
+                        }
                     }
-                    log::info!(
-                        "handle_room_events: Participants state: {:?}",
-                        *participants_guard
-                    );
+
+                    let snapshot = build_participants_snapshot(&participants);
+                    if let Err(e) =
+                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                    {
+                        log::error!(
+                            "handle_room_events: Failed to send participants snapshot: {e:?}"
+                        );
+                    }
                 }
             }
             RoomEvent::TrackSubscribed {

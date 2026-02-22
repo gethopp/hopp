@@ -133,6 +133,11 @@ pub struct AudioCaptureMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CameraDevice {
     pub name: String,
+    // Camera index now is not stable, the `stable_id` is not yet released.
+    // For now we will use the camera name as the id and hope for a new release and
+    // no duplicate names 🤞:
+    // https://github.com/l1npengtul/nokhwa/blob/ab2bedfbf13dfed4fabe77dcf725012fcaa4d305/nokhwa-core/src/types.rs#L478-L480
+    pub id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -140,6 +145,30 @@ pub struct CameraStartMessage {
     pub device_name: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CoreParticipantState {
+    pub identity: String,
+    pub name: String,
+    pub connected: bool,
+    pub muted: bool,
+    pub has_camera: bool,
+    pub is_screensharing: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum CoreRoleChange {
+    Sharer,
+    Controller,
+    None,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CoreRoleEvent {
+    pub role: CoreRoleChange,
+}
+
+/// When you add a new message that will be used in Tauri,
+/// be sure to update tauri/src/core_payloads.ts with the appropriate payload to have type-safety inside Tauri Javascript code.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
@@ -150,7 +179,6 @@ pub enum Message {
     StartScreenShare(ScreenShareMessage),
     StartScreenShareResult(Result<(), String>),
     StopScreenshare,
-    Reset,
     Ping,
     ControllerCursorEnabled(bool),
     LivekitServerUrl(String),
@@ -167,10 +195,19 @@ pub enum Message {
     CameraList(Vec<CameraDevice>),
     StartCamera(CameraStartMessage),
     StartCameraResult(Result<(), String>),
+    SwitchCamera(CameraStartMessage),
+    SwitchCameraResult(Result<(), String>),
     StopCamera,
     CameraFailed(String),
     OpenCamera,
     OpenScreensharing,
+    ToggleMic,
+    OpenScreenShareWindow,
+    CloseScreenShareWindow,
+    // Core → Tauri event forwarding
+    ParticipantsSnapshot(Vec<CoreParticipantState>),
+    RoleChange(CoreRoleEvent),
+    CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
 }
 
 impl Message {
@@ -184,6 +221,7 @@ impl Message {
                 | Message::StartAudioCaptureResult(_)
                 | Message::CameraList(_)
                 | Message::StartCameraResult(_)
+                | Message::SwitchCameraResult(_)
         )
     }
 }
@@ -277,6 +315,13 @@ impl EventSocket {
             String::from_utf8(message_buffer).expect("Failed to convert buffer to string");
         let deserialized_message: Message = serde_json::from_str(&buffer_str)?;
         Ok(deserialized_message)
+    }
+}
+
+impl EventSocket {
+    pub fn take_events(&mut self) -> mpsc::Receiver<Message> {
+        let (_tx, dummy_rx) = mpsc::channel();
+        std::mem::replace(&mut self.events, dummy_rx)
     }
 }
 

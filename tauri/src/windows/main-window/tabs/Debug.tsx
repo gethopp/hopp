@@ -11,6 +11,9 @@ import { URLS } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";
 import { usePostHog } from "posthog-js/react";
 import { invoke } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
+import { typedInvoke } from "@/core_payloads";
+import { sleep } from "@/lib/utils";
 
 export const Debug = () => {
   const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
@@ -19,6 +22,11 @@ export const Debug = () => {
   const [trayNotification, setTrayNotification] = useState(false);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
   const posthog = usePostHog();
+
+  const { refetch, data, isLoading, isFetching } = useQuery({
+    queryKey: ["list_cameras"],
+    queryFn: () => typedInvoke("list_webcams"),
+  });
 
   const handleSetTrayNotification = async (enabled: boolean) => {
     try {
@@ -109,11 +117,10 @@ export const Debug = () => {
               setCallTokens({
                 ...JSON.parse(e.target.value),
                 timeStarted: new Date(),
-                // hasAudioEnabled: true,
                 hasAudioEnabled: false,
                 hasCameraEnabled: false,
                 isRemoteControlEnabled: true,
-                cameraTrackId: null,
+                participants: [],
               });
             }}
           />
@@ -133,27 +140,14 @@ export const Debug = () => {
           Ping websocket
         </Button>
         <Button onClick={toggleSound}>{isPlaying ? "Stop call sound" : "Play call sound"}</Button>
-        <Button
-          onClick={() => {
-            updateCallTokens({
-              krispToggle: !(callTokens?.krispToggle ?? true),
-            });
-          }}
-          variant={callTokens?.krispToggle === false ? "destructive" : "default"}
-        >
-          Krisp: {callTokens?.krispToggle === false ? "Disabled" : "Enabled"}
+      </div>
+
+      <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
+        <Label className="text-sm font-medium">Core Process</Label>
+        <Button onClick={() => refetch()} size="sm">
+          {isLoading || isFetching ? "Loading..." : "List cameras"}
         </Button>
-        <Button
-          onClick={() => {
-            updateCallTokens({
-              av1Enabled: !(callTokens?.av1Enabled ?? false),
-            });
-          }}
-          disabled={!(callTokens?.controllerSupportsAv1 && !callTokens?.isRoomCall)}
-          variant={callTokens?.av1Enabled ? "default" : "destructive"}
-        >
-          AV1: {callTokens?.av1Enabled ? "Enabled" : "Disabled"}
-        </Button>
+        {data && data.map((camera) => <div key={camera.id}>{camera.name}</div>)}
       </div>
 
       <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">

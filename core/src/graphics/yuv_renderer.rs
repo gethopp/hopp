@@ -31,6 +31,8 @@ struct Params {
     tile_w: f32,
     tile_h: f32,
     corner_radius: f32,
+    /// When non-zero, skip aspect-ratio crop and stretch the source to fill the tile.
+    stretch_to_fill: u32,
     // Pad to 48 bytes (wgpu requires uniform buffer sizes to be multiples of 16)
     _pad: [u32; 3],
 }
@@ -221,6 +223,7 @@ impl YuvPipeline {
         tile_width: u32,
         tile_height: u32,
         corner_radius: f32,
+        stretch_to_fill: bool,
     ) {
         if width == 0 || height == 0 {
             return;
@@ -343,9 +346,17 @@ impl YuvPipeline {
             );
         }
 
-        // Update params uniform
-        let tile_aspect_num = (tile_width as f32 * 1000.0) as u32;
-        let tile_aspect_den = (tile_height.max(1) as f32 * 1000.0) as u32;
+        // Update params uniform.
+        // In stretch-to-fill mode, force aspect terms to match the source aspect so
+        // crop math becomes a no-op even if the shader flag path is not taken.
+        let (tile_aspect_num, tile_aspect_den) = if stretch_to_fill {
+            (width.max(1), height.max(1))
+        } else {
+            (
+                (tile_width as f32 * 1000.0) as u32,
+                (tile_height.max(1) as f32 * 1000.0) as u32,
+            )
+        };
 
         let params = Params {
             src_w: width,
@@ -357,6 +368,7 @@ impl YuvPipeline {
             tile_w: tile_width as f32,
             tile_h: tile_height as f32,
             corner_radius,
+            stretch_to_fill: u32::from(stretch_to_fill),
             _pad: [0; 3],
         };
         queue.write_buffer(&state.params_buf, 0, bytemuck::bytes_of(&params));
@@ -498,6 +510,8 @@ pub struct YuvVideoPrimitive {
     tile_width: u32,
     tile_height: u32,
     corner_radius: f32,
+    /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
+    stretch_to_fill: bool,
     has_data: bool,
 }
 
@@ -548,6 +562,7 @@ impl primitive::Primitive for YuvVideoPrimitive {
             self.tile_width,
             self.tile_height,
             self.corner_radius,
+            self.stretch_to_fill,
         );
     }
 
@@ -575,6 +590,8 @@ pub struct YuvVideoProgram {
     pub participant_id: u64,
     pub buffer: Arc<VideoBufferManager>,
     pub corner_radius: f32,
+    /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
+    pub stretch_to_fill: bool,
 }
 
 impl std::fmt::Debug for YuvVideoProgram {
@@ -607,6 +624,7 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
             tile_width: bounds.width.max(1.0) as u32,
             tile_height: bounds.height.max(1.0) as u32,
             corner_radius: self.corner_radius,
+            stretch_to_fill: self.stretch_to_fill,
             has_data,
         }
     }

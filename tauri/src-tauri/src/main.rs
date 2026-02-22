@@ -4,8 +4,10 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    CaptureContent, Content, DrawingEnabled, Extent, Message, ScreenShareMessage, SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, CaptureContent, Content, DrawingEnabled,
+    Extent, Message, ScreenShareMessage, SentryMetadata,
 };
+use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -60,38 +62,39 @@ async fn screenshare(
 
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    let res = data
-        .socket
-        .send_message(Message::StartScreenShare(ScreenShareMessage {
+    if let Err(e) = data
+        .sender
+        .send(Message::StartScreenShare(ScreenShareMessage {
             content,
-            token: token.clone(),
+            // token: token.clone(),
             resolution,
             accessibility_permission,
             use_av1,
-        }));
-    if let Err(e) = res {
+        }))
+    {
         log::error!("screenshare: failed to send message: {e:?}");
         return Err("Failed to send message to hopp_core".to_string());
     }
 
-    let res = data
-        .socket
-        .receive_message_with_timeout(Duration::from_secs(10));
-    if let Err(e) = res {
-        log::error!("screenshare: failed to receive message: {e:?}");
-        return Err("Failed to receive message from hopp_core".to_string());
-    }
-    match res.unwrap() {
-        Message::StartScreenShareResult(result) => match result {
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::StartScreenShareResult(result)) => match result {
             Ok(_) => Ok(()),
             Err(e) => {
                 log::error!("screenshare: failed to start screenshare");
                 Err(e)
             }
         },
-        _ => {
+        Ok(_) => {
             log::error!("screenshare: unexpected message");
             Err("Unexpected screenshare result message".to_string())
+        }
+        Err(e) => {
+            log::error!("screenshare: failed to receive message: {e:?}");
+            Err("Failed to receive message from hopp_core".to_string())
         }
     }
 }
@@ -100,10 +103,9 @@ async fn screenshare(
 async fn stop_sharing(app: tauri::AppHandle) {
     log::info!("stop_sharing");
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    let res = data.socket.send_message(Message::StopScreenshare);
-    if let Err(e) = res {
-        log::error!("screenshare: failed to send message: {e:?}");
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::StopScreenshare) {
+        log::error!("stop_sharing: failed to send message: {e:?}");
     }
 }
 
@@ -112,18 +114,16 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
     log::info!("get_available_content");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    let res = data.socket.send_message(Message::GetAvailableContent);
-    if let Err(e) = res {
+    if let Err(e) = data.sender.send(Message::GetAvailableContent) {
         log::error!("get_available_content: failed to send message: {e:?}");
         return vec![];
     }
-    let res = data.socket.receive_message();
-    if let Err(e) = res {
-        log::error!("get_available_content: failed to receive message: {e:?}");
-        return vec![];
-    }
-    match res.unwrap() {
-        Message::AvailableContent(content) => {
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::AvailableContent(content)) => {
             for c in &content.content {
                 log::info!(
                     "get_available_content: possible content {}, content {:?}",
@@ -133,7 +133,14 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
             }
             content.content
         }
-        _ => vec![],
+        Ok(other) => {
+            log::error!("get_available_content: unexpected: {other:?}");
+            vec![]
+        }
+        Err(e) => {
+            log::error!("get_available_content: recv failed: {e:?}");
+            vec![]
+        }
     }
 }
 
@@ -230,9 +237,8 @@ fn stop_sound(app: tauri::AppHandle, sound_name: String) {
 #[tauri::command]
 fn reset_core_process(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    let res = data.socket.send_message(Message::Reset);
-    if let Err(e) = res {
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::CallEnd) {
         log::error!("reset_core_process: failed to send message: {e:?}");
     }
 }
@@ -296,11 +302,8 @@ fn set_deactivate_hiding(app: tauri::AppHandle, deactivate: bool) {
 fn set_controller_cursor(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_controller_cursor: {enabled}");
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    let res = data
-        .socket
-        .send_message(Message::ControllerCursorEnabled(enabled));
-    if let Err(e) = res {
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::ControllerCursorEnabled(enabled)) {
         log::error!("set_controller_cursor: failed to send message: {e:?}");
     }
 }
@@ -473,11 +476,11 @@ fn set_drawing_permanent(app: tauri::AppHandle, permanent: bool) {
 fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
     log::info!("enable_drawing: permanent={permanent}");
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    let res = data
-        .socket
-        .send_message(Message::DrawingEnabled(DrawingEnabled { permanent }));
-    if let Err(e) = res {
+    let data = data.lock().unwrap();
+    if let Err(e) = data
+        .sender
+        .send(Message::DrawingEnabled(DrawingEnabled { permanent }))
+    {
         log::error!("enable_drawing: failed to send message: {e:?}");
     }
     drop(data);
@@ -507,8 +510,7 @@ fn set_livekit_url(app: tauri::AppHandle, url: String) {
     let mut data = data.lock().unwrap();
     if data.livekit_server_url != url {
         data.livekit_server_url = url.clone();
-        let res = data.socket.send_message(Message::LivekitServerUrl(url));
-        if let Err(e) = res {
+        if let Err(e) = data.sender.send(Message::LivekitServerUrl(url)) {
             log::error!("set_livekit_url: failed to send message: {e:?}");
         }
     }
@@ -614,21 +616,44 @@ fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: S
     log::info!("set_sentry_metadata");
     sentry_utils::init_metadata(user_email.clone(), app_version.clone());
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    if let Err(e) = data
-        .socket
-        .send_message(Message::SentryMetadata(SentryMetadata {
-            user_email,
-            app_version,
-        }))
-    {
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::SentryMetadata(SentryMetadata {
+        user_email,
+        app_version,
+    })) {
         log::error!("set_sentry_metadata: failed to send message: {e:?}");
     }
 }
 
 #[tauri::command]
-fn call_started(_app: tauri::AppHandle, caller_id: String) {
-    log::info!("call_started: {caller_id}");
+fn call_started(app: tauri::AppHandle, token: String) -> Result<(), String> {
+    log::info!("call_started");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .sender
+        .send(Message::CallStart(socket_lib::CallStartMessage {
+            token: token.clone(),
+        }))
+    {
+        log::error!("call_started: failed to send: {e:?}");
+        return Err("Failed to send message to hopp_core".to_string());
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::CallStartResult(result)) => result,
+        Ok(other) => {
+            log::error!("call_started: unexpected: {other:?}");
+            Err("Unexpected response".to_string())
+        }
+        Err(e) => {
+            log::error!("call_started: recv failed: {e:?}");
+            Err("Failed to receive message from hopp_core".to_string())
+        }
+    }
 }
 
 /// When enabled=true, shows the notification variant of the icon.
@@ -708,6 +733,262 @@ async fn create_feedback_window(
             background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
         },
     )
+}
+
+#[tauri::command]
+fn mute_mic(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::MuteAudio) {
+        log::error!("mute_mic: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn unmute_mic(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::UnmuteAudio) {
+        log::error!("unmute_mic: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn toggle_mic(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::ToggleMic) {
+        log::error!("toggle_mic: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn stop_audio_capture(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::StopAudioCapture) {
+        log::error!("stop_audio_capture: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn start_camera(app: tauri::AppHandle, device_name: String) -> Result<(), String> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .sender
+        .send(Message::StartCamera(socket_lib::CameraStartMessage {
+            device_name,
+        }))
+    {
+        log::error!("start_camera: failed to send: {e:?}");
+        return Err("Failed to send message to hopp_core".to_string());
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::StartCameraResult(result)) => result,
+        Ok(other) => {
+            log::error!("start_camera: unexpected: {other:?}");
+            Err("Unexpected response".to_string())
+        }
+        Err(e) => {
+            log::error!("start_camera: recv failed: {e:?}");
+            Err("Failed to receive message from hopp_core".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn switch_camera(app: tauri::AppHandle, device_name: String) -> Result<(), String> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .sender
+        .send(Message::SwitchCamera(socket_lib::CameraStartMessage {
+            device_name,
+        }))
+    {
+        log::error!("switch_camera: failed to send: {e:?}");
+        return Err("Failed to send message to hopp_core".to_string());
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::SwitchCameraResult(result)) => result,
+        Ok(other) => {
+            log::error!("switch_camera: unexpected: {other:?}");
+            Err("Unexpected response".to_string())
+        }
+        Err(e) => {
+            log::error!("switch_camera: recv failed: {e:?}");
+            Err("Failed to receive message from hopp_core".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn stop_camera(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::StopCamera) {
+        log::error!("stop_camera: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn open_camera_preview(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::OpenCamera) {
+        log::error!("open_camera_preview: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn open_screenshare_viewer(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::OpenScreenShareWindow) {
+        log::error!("open_screenshare_viewer: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn close_screenshare_viewer(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::CloseScreenShareWindow) {
+        log::error!("close_screenshare_viewer: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command]
+fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::ListAudioDevices) {
+        log::error!("list_microphones: failed to send: {e:?}");
+        return vec![];
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::AudioDeviceList(devices)) => devices,
+        Ok(other) => {
+            log::error!("list_microphones: unexpected: {other:?}");
+            vec![]
+        }
+        Err(e) => {
+            log::error!("list_microphones: recv failed: {e:?}");
+            vec![]
+        }
+    }
+}
+
+#[tauri::command]
+fn select_microphone(app: tauri::AppHandle, device_id: String) {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data
+        .sender
+        .send(Message::StartAudioCapture(AudioCaptureMessage {
+            device_id,
+        }))
+    {
+        log::error!("select_microphone: failed to send: {e:?}");
+        return;
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(5))
+    {
+        Ok(Message::StartAudioCaptureResult(Err(e))) => {
+            log::error!("select_microphone: core failed: {e}");
+        }
+        Err(e) => log::error!("select_microphone: no result: {e:?}"),
+        _ => {}
+    }
+}
+
+#[tauri::command]
+fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::ListCameras) {
+        log::error!("list_webcams: failed to send: {e:?}");
+        return vec![];
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(10))
+    {
+        Ok(Message::CameraList(devices)) => devices,
+        Ok(other) => {
+            log::error!("list_webcams: unexpected: {other:?}");
+            vec![]
+        }
+        Err(e) => {
+            log::error!("list_webcams: recv failed: {e:?}");
+            vec![]
+        }
+    }
+}
+
+#[tauri::command]
+fn end_call(app: tauri::AppHandle) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::CallEnd) {
+        log::error!("end_call: failed to send: {e:?}");
+    }
+}
+
+fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHandle) {
+    log::info!("forward_core_events: starting event forwarding thread");
+    for message in events_rx.iter() {
+        match message {
+            Message::ParticipantsSnapshot(snapshot) => {
+                log::info!(
+                    "forward_core_events: participants snapshot ({} participants)",
+                    snapshot.len()
+                );
+                if let Err(e) = app.emit("core_participants_snapshot", &snapshot) {
+                    log::error!("forward_core_events: failed to emit participants snapshot: {e:?}");
+                }
+            }
+            Message::RoleChange(event) => {
+                log::info!("forward_core_events: role change: {event:?}");
+                if let Err(e) = app.emit("core_role_change", &event) {
+                    log::error!("forward_core_events: failed to emit role change: {e:?}");
+                }
+            }
+            Message::CameraFailed(error) => {
+                log::error!("forward_core_events: camera failed: {error}");
+                if let Err(e) = app.emit("core_camera_failed", &error) {
+                    log::error!("forward_core_events: failed to emit camera failed: {e:?}");
+                }
+            }
+            Message::CallEnded => {
+                log::info!("forward_core_events: call ended");
+                if let Err(e) = app.emit("core_call_ended", &()) {
+                    log::error!("forward_core_events: failed to emit call ended: {e:?}");
+                }
+            }
+            other => {
+                log::error!("forward_core_events: unhandled event: {other:?}");
+            }
+        }
+    }
+    log::info!("forward_core_events: event forwarding thread exiting");
 }
 
 fn main() {
@@ -815,17 +1096,26 @@ fn main() {
                 }
             }
 
-            let (_core_process, socket) =
+            let (_core_process, sender, mut event_socket) =
                 create_core_process(app.handle()).expect("Failed to create core process");
+
+            let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
             let data = Mutex::new(AppData::new(
-                socket,
+                sender,
+                event_socket,
                 deactivate_hiding_clone,
                 dock_enabled,
                 app_state,
             ));
             app.manage(data);
+
+            // Background thread to forward core events to the frontend
+            let event_app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                forward_core_events(core_events_rx, event_app_handle);
+            });
 
             let quit = MenuItemBuilder::new("Quit")
                 .id("quit")
@@ -1082,6 +1372,20 @@ fn main() {
             get_feedback_disabled,
             set_feedback_disabled,
             create_feedback_window,
+            mute_mic,
+            unmute_mic,
+            toggle_mic,
+            stop_audio_capture,
+            list_microphones,
+            select_microphone,
+            list_webcams,
+            start_camera,
+            switch_camera,
+            stop_camera,
+            open_camera_preview,
+            open_screenshare_viewer,
+            close_screenshare_viewer,
+            end_call,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

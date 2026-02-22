@@ -266,8 +266,8 @@ const setSentryMetadata = async (userEmail: string) => {
   return await invoke("set_sentry_metadata", { userEmail, appVersion });
 };
 
-const callStarted = async (callerId: string) => {
-  return await invoke("call_started", { callerId });
+const callStarted = async (token: string) => {
+  return await invoke("call_started", { token });
 };
 
 /**
