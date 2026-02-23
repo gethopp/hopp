@@ -129,13 +129,15 @@ impl CameraStream {
         let handle = std::thread::spawn(move || {
             let frame_duration = Duration::from_micros(1_000_000 / CAMERA_FPS as u64);
 
-            // Pre-allocate RGB decode buffer once (only used for generic formats)
+            // Pre-allocate buffers once and reuse every frame
             let mut rgb_buf =
                 if frame_format != FrameFormat::YUYV && frame_format != FrameFormat::NV12 {
                     vec![0u8; (width * height * 3) as usize]
                 } else {
                     vec![]
                 };
+            let mut i420 = I420Buffer::new(width, height);
+            let mut cached_source: Option<NativeVideoSource> = None;
 
             let mut fps_frame_count: u32 = 0;
             let mut fps_window_start = Instant::now();
@@ -165,29 +167,51 @@ impl CameraStream {
                             fps_window_start = Instant::now();
                         }
 
-                        let source = {
+                        // Refresh cached source only when not yet set
+                        if cached_source.is_none() {
                             let lock = buffer_source.lock().unwrap();
-                            lock.clone()
-                        };
+                            cached_source = lock.clone();
+                        }
 
-                        if let Some(source) = source {
-                            let frame = match frame_format {
-                                FrameFormat::YUYV => yuyv_to_i420(buf.buffer(), width, height),
-                                FrameFormat::NV12 => nv12_to_i420(buf.buffer(), width, height),
+                        if let Some(ref source) = cached_source {
+                            let converted = match frame_format {
+                                FrameFormat::YUYV => {
+                                    yuyv_write_i420(buf.buffer(), width, height, &mut i420);
+                                    true
+                                }
+                                FrameFormat::NV12 => {
+                                    nv12_write_i420(buf.buffer(), width, height, &mut i420);
+                                    true
+                                }
                                 _ => match buf.decode_image_to_buffer::<RgbFormat>(&mut rgb_buf) {
-                                    Ok(()) => rgb_to_i420(&rgb_buf, width, height),
+                                    Ok(()) => {
+                                        rgb_write_i420(&rgb_buf, width, height, &mut i420);
+                                        true
+                                    }
                                     Err(e) => {
                                         log::warn!("CameraStream: failed to decode frame: {e}");
-                                        continue;
+                                        false
                                     }
                                 },
                             };
-                            source.capture_frame(&frame);
 
-                            let mut write_buf = video_buffer_manager.write_buffer().lock().unwrap();
-                            write_buf.copy_from_i420(&frame.buffer, width, height);
-                            drop(write_buf);
-                            video_buffer_manager.advance_write();
+                            if converted {
+                                let frame = VideoFrame {
+                                    rotation: VideoRotation::VideoRotation0,
+                                    buffer: i420,
+                                    timestamp_us: 0,
+                                };
+                                source.capture_frame(&frame);
+
+                                let mut write_buf =
+                                    video_buffer_manager.write_buffer().lock().unwrap();
+                                write_buf.copy_from_i420(&frame.buffer, width, height);
+                                drop(write_buf);
+                                video_buffer_manager.advance_write();
+
+                                // Recover buffer for reuse next frame
+                                i420 = frame.buffer;
+                            }
                         }
                     }
                     Err(e) => {
@@ -275,8 +299,7 @@ impl CameraStream {
     }
 }
 
-fn nv12_to_i420(nv12: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> {
-    let mut i420 = I420Buffer::new(width, height);
+fn nv12_write_i420(nv12: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
     let src_stride_y = width as i32;
@@ -299,16 +322,9 @@ fn nv12_to_i420(nv12: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> 
             height as i32,
         );
     }
-
-    VideoFrame {
-        rotation: VideoRotation::VideoRotation0,
-        buffer: i420,
-        timestamp_us: 0,
-    }
 }
 
-fn yuyv_to_i420(yuyv: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> {
-    let mut i420 = I420Buffer::new(width, height);
+fn yuyv_write_i420(yuyv: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
     let src_stride = width as i32 * 2; // YUYV is 2 bytes per pixel
@@ -327,16 +343,9 @@ fn yuyv_to_i420(yuyv: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> 
             height as i32,
         );
     }
-
-    VideoFrame {
-        rotation: VideoRotation::VideoRotation0,
-        buffer: i420,
-        timestamp_us: 0,
-    }
 }
 
-fn rgb_to_i420(rgb: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> {
-    let mut i420 = I420Buffer::new(width, height);
+fn rgb_write_i420(rgb: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
     let src_stride = width as i32 * 3;
@@ -354,12 +363,6 @@ fn rgb_to_i420(rgb: &[u8], width: u32, height: u32) -> VideoFrame<I420Buffer> {
             width as i32,
             height as i32,
         );
-    }
-
-    VideoFrame {
-        rotation: VideoRotation::VideoRotation0,
-        buffer: i420,
-        timestamp_us: 0,
     }
 }
 
