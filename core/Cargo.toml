@@ -21,8 +21,7 @@ codegen-units = 1
 exclude = [ "tests", "dev" ]
 
 [target.'cfg(target_os = "windows")'.dependencies]
-#nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-msmf"] }
-nokhwa = { path = "/Volumes/nvme/Github/nokhwa", default-features = false, features = ["output-threaded", "input-msmf"] }
+nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-msmf"] }
 windows = { version = "0.58.0", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Direct2D_Common",
@@ -43,13 +42,11 @@ core-foundation-sys = "0.8.7"
 objc2-app-kit = "0.3.1"
 objc2-foundation = "0.3.1"
 objc2 = "0.6.1"
-#nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-avfoundation"] }
-nokhwa = { path = "/Volumes/nvme/Github/nokhwa", default-features = false, features = ["output-threaded", "input-avfoundation"] }
+nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-avfoundation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.21.1"
-#nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-v4l"] }
-nokhwa = { path = "/Volumes/nvme/Github/nokhwa", default-features = false, features = ["output-threaded", "input-v4l"] }
+nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-v4l"] }
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::livekit::video::VideoBufferManager;
 
-const CAMERA_FPS: u32 = 30;
+const CAMERA_FPS: u32 = 20;
 const CAMERA_WIDTH: u32 = 1280;
 const CAMERA_HEIGHT: u32 = 720;
 

@@ -47,9 +47,6 @@ struct ParticipantGpuState {
     bind_group: wgpu::BindGroup,
     params_buf: wgpu::Buffer,
     dims: (u32, u32),
-    /// Reusable scratch buffer for row-padding during texture upload.
-    /// Sized to the largest plane (Y) and reused for U/V planes.
-    pad_buffer: Vec<u8>,
 }
 
 // ── Pipeline (shared GPU state) ─────────────────────────────────────────────
@@ -185,9 +182,6 @@ impl YuvPipeline {
                 ],
             });
 
-            // Pre-allocate the scratch pad for the largest plane (Y).
-            let pad_buffer = vec![0u8; (y_tex_w * height) as usize];
-
             self.participants.insert(
                 participant_id,
                 ParticipantGpuState {
@@ -197,7 +191,6 @@ impl YuvPipeline {
                     bind_group,
                     params_buf,
                     dims: (width, height),
-                    pad_buffer,
                 },
             );
         }
@@ -233,118 +226,69 @@ impl YuvPipeline {
 
         let y_tex_w = align_to(width, 256);
         let uv_tex_w = align_to(width / 2, 256);
+        let uv_h = height / 2;
 
-        // Reuse the pre-allocated scratch buffer for all three plane uploads.
-        let y_padded_len = (y_tex_w * height) as usize;
-        let pad = &mut state.pad_buffer;
+        // Data is already padded to GPU-aligned strides in VideoBuffer,
+        // upload directly — no intermediate copy needed.
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &state.y_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            y_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(y_tex_w),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width: y_tex_w,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
 
-        // Upload Y plane (pad rows to aligned width)
-        {
-            pad.resize(y_padded_len, 0);
-            pad.fill(0);
-            for row in 0..height {
-                let src_start = (row * stride_y) as usize;
-                let src_end = src_start + width as usize;
-                let dst_start = (row * y_tex_w) as usize;
-                let dst_end = dst_start + width as usize;
-                if src_end <= y_data.len() {
-                    pad[dst_start..dst_end].copy_from_slice(&y_data[src_start..src_end]);
-                }
-            }
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &state.y_tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pad,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(y_tex_w),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width: y_tex_w,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &state.u_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            u_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(uv_tex_w),
+                rows_per_image: Some(uv_h),
+            },
+            wgpu::Extent3d {
+                width: uv_tex_w,
+                height: uv_h,
+                depth_or_array_layers: 1,
+            },
+        );
 
-        // Upload U plane (reuse pad buffer — UV planes are smaller than Y)
-        {
-            let uv_h = height / 2;
-            let uv_w = width / 2;
-            let uv_padded_len = (uv_tex_w * uv_h) as usize;
-            pad.resize(uv_padded_len, 128);
-            pad.fill(128);
-            for row in 0..uv_h {
-                let src_start = (row * stride_u) as usize;
-                let src_end = src_start + uv_w as usize;
-                let dst_start = (row * uv_tex_w) as usize;
-                let dst_end = dst_start + uv_w as usize;
-                if src_end <= u_data.len() {
-                    pad[dst_start..dst_end].copy_from_slice(&u_data[src_start..src_end]);
-                }
-            }
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &state.u_tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pad,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(uv_tex_w),
-                    rows_per_image: Some(uv_h),
-                },
-                wgpu::Extent3d {
-                    width: uv_tex_w,
-                    height: uv_h,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-
-        // Upload V plane
-        {
-            let uv_h = height / 2;
-            let uv_w = width / 2;
-            let uv_padded_len = (uv_tex_w * uv_h) as usize;
-            pad.resize(uv_padded_len, 128);
-            pad.fill(128);
-            for row in 0..uv_h {
-                let src_start = (row * stride_v) as usize;
-                let src_end = src_start + uv_w as usize;
-                let dst_start = (row * uv_tex_w) as usize;
-                let dst_end = dst_start + uv_w as usize;
-                if src_end <= v_data.len() {
-                    pad[dst_start..dst_end].copy_from_slice(&v_data[src_start..src_end]);
-                }
-            }
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &state.v_tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pad,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(uv_tex_w),
-                    rows_per_image: Some(uv_h),
-                },
-                wgpu::Extent3d {
-                    width: uv_tex_w,
-                    height: uv_h,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &state.v_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            v_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(uv_tex_w),
+                rows_per_image: Some(uv_h),
+            },
+            wgpu::Extent3d {
+                width: uv_tex_w,
+                height: uv_h,
+                depth_or_array_layers: 1,
+            },
+        );
 
         // Update params uniform.
         // In stretch-to-fill mode, force aspect terms to match the source aspect so

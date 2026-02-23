@@ -616,14 +616,10 @@ impl RoomService {
     }
 
     /// Retrieves the camera video source buffer.
-    pub fn get_camera_buffer_source(&self) -> NativeVideoSource {
+    pub fn get_camera_buffer_source(&self) -> Option<NativeVideoSource> {
         log::info!("get_camera_buffer_source");
-        let buffer_source = {
-            let inner = self.inner.camera_buffer_source.lock().unwrap();
-            inner.clone()
-        };
-        buffer_source
-            .expect("get_camera_buffer_source: Buffer source not found (this shouldn't happen)")
+        let inner = self.inner.camera_buffer_source.lock().unwrap();
+        inner.clone()
     }
 
     /// Returns a shared reference to the participants map.

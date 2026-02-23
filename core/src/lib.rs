@@ -1253,8 +1253,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .publish_camera_track(width, height)
                         .map_err(|e| format!("Failed to publish camera track: {e}"))?;
 
-                    let source = room_service.get_camera_buffer_source();
-                    {
+                    if let Some(source) = room_service.get_camera_buffer_source() {
                         let capturer = self.camera_capturer.lock().unwrap();
                         capturer.set_buffer_source(source);
                     }
@@ -1318,8 +1317,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .publish_camera_track(width, height)
                         .map_err(|e| format!("Failed to publish camera track: {e}"))?;
 
-                    let source = room_service.get_camera_buffer_source();
-                    {
+                    if let Some(source) = room_service.get_camera_buffer_source() {
                         let capturer = self.camera_capturer.lock().unwrap();
                         capturer.set_buffer_source(source);
                     }
@@ -1355,7 +1353,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     };
                     let mut capturer = self.camera_capturer.lock().unwrap();
                     // TODO: check this
-                    let _ = capturer.toggle(room_service.get_camera_buffer_source());
+                    if let Some(source) = room_service.get_camera_buffer_source() {
+                        let _ = capturer.toggle(source);
+                    } else {
+                        log::warn!("user_event: ToggleCamera: no camera buffer source");
+                    }
                 }
             }
             UserEvent::OpenCamera => {

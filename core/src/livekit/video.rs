@@ -7,6 +7,11 @@ use std::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
+/// Align a value up to the given alignment.
+fn align_to(value: u32, alignment: u32) -> u32 {
+    (value + alignment - 1) / alignment * alignment
+}
+
 /// A buffer holding YUV420 planar video data
 #[derive(Debug)]
 pub struct VideoBuffer {
@@ -36,37 +41,59 @@ impl Default for VideoBuffer {
 }
 
 impl VideoBuffer {
-    /// Copy I420 frame data into this buffer. Reuses existing allocations when dimensions match.
+    /// Copy I420 frame data into this buffer with GPU-aligned strides (256-byte alignment).
+    /// Data arrives GPU-ready, eliminating per-frame scratch buffer padding in the renderer.
     pub fn copy_from_i420(&mut self, i420: &I420Buffer, width: u32, height: u32) {
-        self.width = width;
-        self.height = height;
-
-        let (sy, su, sv) = i420.strides();
-        self.stride_y = sy as u32;
-        self.stride_u = su as u32;
-        self.stride_v = sv as u32;
-
+        let (src_stride_y, src_stride_u, src_stride_v) = i420.strides();
         let (dy, du, dv) = i420.data();
 
-        let ch = (height + 1) / 2;
-        let y_size = (sy as u32 * height) as usize;
-        let u_size = (su as u32 * ch) as usize;
-        let v_size = (sv as u32 * ch) as usize;
+        // Only recompute strides, resize buffers, and fill padding when dimensions change
+        let dims_changed = self.width != width || self.height != height;
+        if dims_changed {
+            self.width = width;
+            self.height = height;
 
-        // Resize only when necessary to avoid reallocations
-        if self.y.len() != y_size {
+            // GPU-aligned strides (wgpu requires bytes_per_row multiple of 256)
+            let y_stride = align_to(width, 256);
+            let uv_stride = align_to(width / 2, 256);
+            self.stride_y = y_stride;
+            self.stride_u = uv_stride;
+            self.stride_v = uv_stride;
+
+            let ch = (height + 1) / 2;
+            let y_size = (y_stride * height) as usize;
+            let u_size = (uv_stride * ch) as usize;
+            let v_size = (uv_stride * ch) as usize;
+
             self.y.resize(y_size, 0);
-        }
-        if self.u.len() != u_size {
-            self.u.resize(u_size, 0);
-        }
-        if self.v.len() != v_size {
-            self.v.resize(v_size, 0);
+            self.u.resize(u_size, 128);
+            self.v.resize(v_size, 128);
         }
 
-        self.y.copy_from_slice(dy);
-        self.u.copy_from_slice(du);
-        self.v.copy_from_slice(dv);
+        let y_stride = self.stride_y;
+        let uv_stride = self.stride_u;
+        let ch = (height + 1) / 2;
+
+        // Row-by-row copy — only the pixel data, padding bytes stay from resize/previous fill
+        for row in 0..height as usize {
+            let src_start = row * src_stride_y as usize;
+            let dst_start = row * y_stride as usize;
+            self.y[dst_start..dst_start + width as usize]
+                .copy_from_slice(&dy[src_start..src_start + width as usize]);
+        }
+
+        let uv_w = (width / 2) as usize;
+        for row in 0..ch as usize {
+            let src_start = row * src_stride_u as usize;
+            let dst_start = row * uv_stride as usize;
+            self.u[dst_start..dst_start + uv_w].copy_from_slice(&du[src_start..src_start + uv_w]);
+        }
+
+        for row in 0..ch as usize {
+            let src_start = row * src_stride_v as usize;
+            let dst_start = row * uv_stride as usize;
+            self.v[dst_start..dst_start + uv_w].copy_from_slice(&dv[src_start..src_start + uv_w]);
+        }
     }
 }
 
