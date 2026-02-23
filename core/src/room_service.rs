@@ -2139,15 +2139,14 @@ async fn handle_room_events(
                             }
                         }
                     }
-                    livekit::track::RemoteTrack::Video(video_track) => {
-                        if publication.source() == TrackSource::Screenshare {
+                    livekit::track::RemoteTrack::Video(video_track) => match publication.source() {
+                        TrackSource::Screenshare => {
                             log::info!(
                                 "handle_room_events: Setting up screen share stream: {} from {}",
                                 video_track.name(),
                                 participant_sid,
                             );
 
-                            // Stop any existing screen share task
                             {
                                 let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
                                 if let Some(tx) = stop_tx_guard.take() {
@@ -2158,7 +2157,6 @@ async fn handle_room_events(
                                 }
                             }
 
-                            // Reuse existing buffer or create one
                             let manager = {
                                 let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
                                 if let Some(existing) = buffer_guard.as_ref() {
@@ -2170,82 +2168,65 @@ async fn handle_room_events(
                                 }
                             };
 
-                            // Store publisher SID
-                            {
-                                let mut sid_guard =
-                                    remote_screen_share.publisher_sid.lock().unwrap();
-                                *sid_guard = Some(participant_sid.clone());
-                            }
+                            *remote_screen_share.publisher_sid.lock().unwrap() =
+                                Some(participant_sid.clone());
 
-                            // Create new stop channel
                             let (stop_tx, stop_rx) = mpsc::unbounded_channel();
-                            {
-                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
-                                *stop_tx_guard = Some(stop_tx);
-                            }
+                            *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
 
-                            let stream_key = format!("screenshare_{}", participant_sid);
-
-                            // Spawn processing task
                             tokio::spawn(process_camera_stream(
                                 video_track,
                                 manager,
                                 stop_rx,
-                                stream_key,
+                                format!("screenshare_{}", participant_sid),
                             ));
 
-                            // Send event to open screen share window
                             if let Err(e) =
                                 event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow)
                             {
                                 log::error!(
-                                    "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
+                                        "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
+                                    );
+                            }
+                        }
+                        TrackSource::Camera => {
+                            log::info!(
+                                "handle_room_events: Setting up camera stream for participant: {}",
+                                participant_sid
+                            );
+
+                            if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
+                                log::error!(
+                                    "handle_room_events: Failed to send OpenCamera event: {e:?}"
                                 );
                             }
 
-                            continue;
-                        } else if publication.source() != TrackSource::Camera {
+                            let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+
+                            let manager = {
+                                let mut participants_guard = participants.write().unwrap();
+                                let info = participants_guard
+                                    .get_mut(&participant_sid)
+                                    .expect("Participant should exist");
+                                info.set_camera_stop_tx(stop_tx);
+                                info.camera_buffers()
+                            };
+
+                            tokio::spawn(process_camera_stream(
+                                video_track,
+                                manager,
+                                stop_rx,
+                                participant_sid.clone(),
+                            ));
+                        }
+                        source => {
                             log::info!(
                                 "handle_room_events: Ignoring non-camera video track: {} ({:?})",
                                 video_track.name(),
-                                publication.source()
-                            );
-                            continue;
-                        }
-
-                        log::info!(
-                            "handle_room_events: Setting up camera stream for participant: {}",
-                            participant_sid
-                        );
-
-                        if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
-                            log::error!(
-                                "handle_room_events: Failed to send OpenCamera event: {e:?}"
+                                source
                             );
                         }
-
-                        let manager = Arc::new(VideoBufferManager::new());
-
-                        let stream_key = participant_sid.clone();
-
-                        // Create stop channel
-                        let (stop_tx, stop_rx) = mpsc::unbounded_channel();
-
-                        // Store stop channel in participant info
-                        {
-                            let mut participants_guard = participants.write().unwrap();
-                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                info.set_camera_stop_tx(stop_tx);
-                            }
-                        }
-
-                        tokio::spawn(process_camera_stream(
-                            video_track,
-                            manager,
-                            stop_rx,
-                            stream_key,
-                        ));
-                    }
+                    },
                 }
             }
             RoomEvent::TrackUnsubscribed {

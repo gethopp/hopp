@@ -147,7 +147,7 @@ pub async fn process_camera_stream(
     let mut frames = 0u64;
     let mut fps_frames = 0u32;
     let mut fps_last = std::time::Instant::now();
-    let timeout_duration = std::time::Duration::from_secs(5);
+    let timeout_duration = std::time::Duration::from_secs(1);
 
     loop {
         tokio::select! {
