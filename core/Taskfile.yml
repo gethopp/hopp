@@ -37,7 +37,7 @@ tasks:
     desc: Run the clone process.
     cmds:
       - |
-        ./target/debug/hopp_core --socket-path "/var/folders/9l/60kxtcz13776cgxqhgjhh0v40000gn/T/core-socket" --textures-path $(pwd)/resources
+        ./target/debug/hopp_core --socket-path "${TMPDIR}core-socket-clone" --textures-path $(pwd)/resources
 
   dev_runner:
     desc: Run a dev scenario (e.g. task dev_runner -- solo)
