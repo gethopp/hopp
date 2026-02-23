@@ -64,9 +64,10 @@ impl CameraStream {
             .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG))
             .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12))
             .or_else(|_| {
-                let format = RequestedFormat::new::<RgbFormat>(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                );
+                let format =
+                    RequestedFormat::new::<RgbFormat>(RequestedFormatType::HighestResolution(
+                        Resolution::new(CAMERA_WIDTH, CAMERA_HEIGHT),
+                    ));
                 Camera::new(index, format)
                     .map_err(|e| format!("Failed to open camera with any format: {e}"))
             })?;

@@ -3805,8 +3805,6 @@ dependencies = [
 [[package]]
 name = "nokhwa"
 version = "0.10.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4cae50786bfa1214ed441f98addbea51ca1b9aaa9e4bf5369cda36654b3efaa"
 dependencies = [
  "flume",
  "image",
@@ -3822,8 +3820,6 @@ dependencies = [
 [[package]]
 name = "nokhwa-bindings-linux"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bd666aaa41d14357817bd9a981773a73c4d00b34d344cfc244e47ebd397b1ec"
 dependencies = [
  "nokhwa-core",
  "v4l",
@@ -3832,8 +3828,6 @@ dependencies = [
 [[package]]
 name = "nokhwa-bindings-macos"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de78eb4a2d47a68f490899aa0516070d7a972f853ec2bb374ab53be0bd39b60f"
 dependencies = [
  "block",
  "cocoa-foundation",
@@ -3849,8 +3843,6 @@ dependencies = [
 [[package]]
 name = "nokhwa-bindings-windows"
 version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "899799275c93ef69bbe8cb888cf6f8249abe751cbc50be5299105022aec14a1c"
 dependencies = [
  "nokhwa-core",
  "once_cell",
@@ -3860,8 +3852,6 @@ dependencies = [
 [[package]]
 name = "nokhwa-core"
 version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "109975552bbd690894f613bce3d408222911e317197c72b2e8b9a1912dc261ae"
 dependencies = [
  "bytes",
  "image",
