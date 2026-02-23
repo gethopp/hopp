@@ -120,8 +120,8 @@ struct RemoteScreenShare {
 struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     room: Mutex<Option<Room>>,
-    buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
-    camera_buffer_source: Arc<std::sync::Mutex<Option<NativeVideoSource>>>,
+    buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
+    camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
@@ -175,8 +175,8 @@ impl RoomService {
 
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
-            buffer_source: Arc::new(std::sync::Mutex::new(None)),
-            camera_buffer_source: Arc::new(std::sync::Mutex::new(None)),
+            buffer_source: std::sync::Mutex::new(None),
+            camera_buffer_source: std::sync::Mutex::new(None),
             participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
             mixer,
             remote_screen_share: RemoteScreenShare {
@@ -632,12 +632,12 @@ impl RoomService {
     }
 
     /// Creates and sets a camera buffer manager for the local participant.
-    pub fn create_local_camera_buffer_manager(&self) -> Option<Arc<VideoBufferManager>> {
-        let manager = Arc::new(VideoBufferManager::new());
+    pub fn local_camera_buffer_manager(&self) -> Arc<VideoBufferManager> {
         let mut participants = self.inner.participants.write().unwrap();
-        let info = participants.get_mut("local")?;
-        info.set_camera_buffers(manager.clone());
-        Some(manager)
+        let info = participants
+            .get_mut("local")
+            .expect("local participant info not found"); // This should never happen.
+        info.camera_buffers()
     }
 
     /// Returns the remote screen share buffer if available.
@@ -671,6 +671,47 @@ impl RoomService {
             log::error!("unmute_audio_track: Failed to send command: {e:?}");
         }
     }
+}
+
+/// Builds a deduplicated snapshot of participant states from the internal HashMap.
+/// Each user may have multiple LiveKit participants (audio, video, camera);
+/// this groups them by user ID and uses the audio participant's mute status.
+fn build_participants_snapshot(
+    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+) -> Vec<socket_lib::CoreParticipantState> {
+    let guard = participants.read().unwrap();
+    let mut seen: HashMap<String, socket_lib::CoreParticipantState> = HashMap::new();
+
+    for info in guard.values() {
+        let identity = info.identity();
+        // Identity format: "room:<roomId>:<userId>:<trackType>"
+        let parts: Vec<&str> = identity.split(':').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let user_id = parts[2];
+        let track_type = parts[3];
+
+        let entry =
+            seen.entry(user_id.to_string())
+                .or_insert_with(|| socket_lib::CoreParticipantState {
+                    identity: identity.to_string(),
+                    name: info.name().to_string(),
+                    connected: true,
+                    muted: false,
+                    has_camera: false,
+                    is_screensharing: false,
+                });
+
+        if track_type == "audio" {
+            entry.muted = info.muted();
+        }
+
+        entry.has_camera = entry.has_camera || info.camera_active();
+        entry.is_screensharing = entry.is_screensharing || info.is_screensharing();
+    }
+
+    seen.into_values().collect()
 }
 
 /// Handles room service commands in an async loop.
@@ -707,48 +748,6 @@ impl RoomService {
 /// * `IterateParticipants` - Iterates over the participants in the room and sends an event
 ///   to the event loop for each participant that is not an audio participant.
 ///
-
-/// Builds a deduplicated snapshot of participant states from the internal HashMap.
-/// Each user may have multiple LiveKit participants (audio, video, camera);
-/// this groups them by user ID and uses the audio participant's mute status.
-fn build_participants_snapshot(
-    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-) -> Vec<socket_lib::CoreParticipantState> {
-    let guard = participants.read().unwrap();
-    let mut seen: HashMap<String, socket_lib::CoreParticipantState> = HashMap::new();
-
-    for info in guard.values() {
-        let identity = info.identity();
-        // Identity format: "room:<roomId>:<userId>:<trackType>"
-        let parts: Vec<&str> = identity.split(':').collect();
-        if parts.len() < 4 {
-            continue;
-        }
-        let user_id = parts[2];
-        let track_type = parts[3];
-
-        let entry =
-            seen.entry(user_id.to_string())
-                .or_insert_with(|| socket_lib::CoreParticipantState {
-                    identity: identity.to_string(),
-                    name: info.name().to_string(),
-                    connected: true,
-                    muted: false,
-                    has_camera: false,
-                    is_screensharing: false,
-                });
-
-        if track_type == "audio" {
-            entry.muted = info.muted();
-        }
-
-        entry.has_camera = entry.has_camera || info.camera_buffers().is_some();
-        entry.is_screensharing = entry.is_screensharing || info.is_screensharing();
-    }
-
-    seen.into_values().collect()
-}
-
 /// # Error Handling
 ///
 /// The function logs errors for individual command failures but continues processing
@@ -822,11 +821,10 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_identity, user_name, false, false, false),
+                        ParticipantInfo::new(user_identity, user_name, false, false),
                     );
                 }
 
-                // TODO: Check if this will need cleanup
                 /* Spawn thread for handling livekit data events. */
                 tokio::spawn(handle_room_events(
                     rx,
@@ -967,14 +965,6 @@ async fn room_service_commands(
                         .unwrap()
                         .take();
                 }
-
-                // Clean up local participant camera buffers
-                {
-                    let mut participants = inner.participants.write().unwrap();
-                    if let Some(info) = participants.get_mut("local") {
-                        info.clear_camera_buffers();
-                    }
-                }
             }
             RoomServiceCommand::PublishSharerLocation(x, y, _pointer) => {
                 let inner_room = inner.room.lock().await;
@@ -1074,7 +1064,7 @@ async fn room_service_commands(
                     {
                         let mut participants = inner.participants.write().unwrap();
                         let new_participant =
-                            ParticipantInfo::from_remote_participant(&remote_participant, false);
+                            ParticipantInfo::from_remote_participant(&remote_participant);
                         log::info!(
                             "room_service_commands: participant to be added {:?}",
                             new_participant
@@ -1946,7 +1936,7 @@ async fn handle_room_events(
                     let mut participants_guard = participants.write().unwrap();
                     participants_guard.insert(
                         sid.clone(),
-                        ParticipantInfo::from_remote_participant(&participant, false),
+                        ParticipantInfo::from_remote_participant(&participant),
                     );
                 }
 
@@ -2112,9 +2102,24 @@ async fn handle_room_events(
                     track.kind()
                 );
 
+                let participant_sid = participant.sid().as_str().to_string();
+
+                {
+                    let mut participants_guard = participants.write().unwrap();
+                    if !participants_guard.contains_key(&participant_sid) {
+                        log::info!(
+                            "handle_room_events: Creating participant {} from track subscription",
+                            participant_sid
+                        );
+                        participants_guard.insert(
+                            participant_sid.clone(),
+                            ParticipantInfo::from_remote_participant(&participant),
+                        );
+                    }
+                }
+
                 match track {
                     livekit::track::RemoteTrack::Audio(audio_track) => {
-                        let participant_sid = participant.sid().as_str().to_string();
                         let participant_identity = participant.identity().to_string();
                         log::info!(
                             "handle_room_events: Setting up audio stream for participant: {}",
@@ -2127,21 +2132,8 @@ async fn handle_room_events(
                             &participant_identity,
                         );
 
-                        // Store handle in participant info, creating participant if needed
                         {
                             let mut participants_guard = participants.write().unwrap();
-
-                            if !participants_guard.contains_key(&participant_sid) {
-                                log::info!(
-                                    "handle_room_events: Creating participant {} from audio track subscription",
-                                    participant_sid
-                                );
-                                participants_guard.insert(
-                                    participant_sid.clone(),
-                                    ParticipantInfo::from_remote_participant(&participant, false),
-                                );
-                            }
-
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.set_audio_handle(handle);
                             }
@@ -2149,11 +2141,10 @@ async fn handle_room_events(
                     }
                     livekit::track::RemoteTrack::Video(video_track) => {
                         if publication.source() == TrackSource::Screenshare {
-                            let publisher_sid = participant.sid().as_str().to_string();
                             log::info!(
                                 "handle_room_events: Setting up screen share stream: {} from {}",
                                 video_track.name(),
-                                publisher_sid,
+                                participant_sid,
                             );
 
                             // Stop any existing screen share task
@@ -2183,7 +2174,7 @@ async fn handle_room_events(
                             {
                                 let mut sid_guard =
                                     remote_screen_share.publisher_sid.lock().unwrap();
-                                *sid_guard = Some(publisher_sid.clone());
+                                *sid_guard = Some(participant_sid.clone());
                             }
 
                             // Create new stop channel
@@ -2193,7 +2184,7 @@ async fn handle_room_events(
                                 *stop_tx_guard = Some(stop_tx);
                             }
 
-                            let stream_key = format!("screenshare_{}", publisher_sid);
+                            let stream_key = format!("screenshare_{}", participant_sid);
 
                             // Spawn processing task
                             tokio::spawn(process_camera_stream(
@@ -2222,7 +2213,6 @@ async fn handle_room_events(
                             continue;
                         }
 
-                        let participant_sid = participant.sid().as_str().to_string();
                         log::info!(
                             "handle_room_events: Setting up camera stream for participant: {}",
                             participant_sid
@@ -2235,27 +2225,6 @@ async fn handle_room_events(
                         }
 
                         let manager = Arc::new(VideoBufferManager::new());
-
-                        // Store manager in participant, creating participant if needed
-                        {
-                            let mut participants_guard = participants.write().unwrap();
-
-                            // Create participant if not in list
-                            if !participants_guard.contains_key(&participant_sid) {
-                                log::info!(
-                                    "handle_room_events: Creating participant {} from track subscription",
-                                    participant_sid
-                                );
-                                participants_guard.insert(
-                                    participant_sid.clone(),
-                                    ParticipantInfo::from_remote_participant(&participant, true),
-                                );
-                            }
-
-                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                info.set_camera_buffers(manager.clone());
-                            }
-                        }
 
                         let stream_key = participant_sid.clone();
 
@@ -2304,7 +2273,6 @@ async fn handle_room_events(
                             let mut participants_guard = participants.write().unwrap();
                             if let Some(info) = participants_guard.get_mut(&participant_sid) {
                                 info.stop_camera_stream();
-                                info.clear_camera_buffers();
                             }
                         } else if publication.source() == TrackSource::Screenshare {
                             let unsub_sid = participant.sid().as_str().to_string();

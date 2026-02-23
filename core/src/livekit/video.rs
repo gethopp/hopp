@@ -145,6 +145,8 @@ pub async fn process_camera_stream(
 
     let mut sink = NativeVideoStream::new(video_track.rtc_track());
     let mut frames = 0u64;
+    let mut fps_frames = 0u32;
+    let mut fps_last = std::time::Instant::now();
     let timeout_duration = std::time::Duration::from_secs(5);
 
     loop {
@@ -164,14 +166,20 @@ pub async fn process_camera_stream(
                         manager.advance_write();
 
                         frames += 1;
-                        if frames % 100 == 0 {
-                            log::warn!(
-                                "process_camera_stream: Received {} camera frames from {} ({}x{})",
-                                frames,
+                        fps_frames += 1;
+                        let elapsed = fps_last.elapsed();
+                        if elapsed >= std::time::Duration::from_secs(5) {
+                            let fps = fps_frames as f32 / elapsed.as_secs_f32();
+                            log::info!(
+                                "process_camera_stream: {} fps={:.1} total_frames={} ({}x{})",
                                 stream_key,
+                                fps,
+                                frames,
                                 width,
                                 height
                             );
+                            fps_frames = 0;
+                            fps_last = std::time::Instant::now();
                         }
                     }
                     Ok(None) => {

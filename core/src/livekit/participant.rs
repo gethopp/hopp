@@ -10,7 +10,7 @@ pub struct ParticipantInfo {
     muted: bool,
     is_speaking: bool,
     is_screensharing: bool,
-    camera_buffers: Option<Arc<VideoBufferManager>>,
+    camera_buffers: Arc<VideoBufferManager>,
     audio_handle: Option<AudioTrackHandle>,
     camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
 }
@@ -22,38 +22,19 @@ impl std::fmt::Debug for ParticipantInfo {
             .field("name", &self.name)
             .field("muted", &self.muted)
             .field("is_speaking", &self.is_speaking)
-            .field(
-                "camera_buffers",
-                &if self.camera_buffers.is_some() {
-                    "Some(VideoBufferManager)"
-                } else {
-                    "None"
-                },
-            )
             .finish()
     }
 }
 
 impl ParticipantInfo {
-    pub fn new(
-        identity: String,
-        name: String,
-        muted: bool,
-        is_speaking: bool,
-        create_buffers: bool,
-    ) -> Self {
-        let camera_buffers = if create_buffers {
-            Some(Arc::new(VideoBufferManager::new()))
-        } else {
-            None
-        };
+    pub fn new(identity: String, name: String, muted: bool, is_speaking: bool) -> Self {
         Self {
             identity,
             name,
             muted,
             is_speaking,
             is_screensharing: false,
-            camera_buffers,
+            camera_buffers: Arc::new(VideoBufferManager::new()),
             audio_handle: None,
             camera_stop_tx: None,
         }
@@ -61,10 +42,7 @@ impl ParticipantInfo {
 
     /// Creates a ParticipantInfo from a LiveKit remote participant.
     /// Extracts name, muted state (from audio tracks), and speaking state.
-    pub fn from_remote_participant(
-        participant: &livekit::participant::RemoteParticipant,
-        create_buffers: bool,
-    ) -> Self {
+    pub fn from_remote_participant(participant: &livekit::participant::RemoteParticipant) -> Self {
         let identity = participant.identity().as_str().to_string();
         let name = participant.name();
         let is_speaking = participant.is_speaking();
@@ -77,7 +55,7 @@ impl ParticipantInfo {
             }
         }
 
-        Self::new(identity, name.clone(), muted, is_speaking, create_buffers)
+        Self::new(identity, name.clone(), muted, is_speaking)
     }
 
     pub fn identity(&self) -> &str {
@@ -112,16 +90,12 @@ impl ParticipantInfo {
         self.is_screensharing = is_screensharing;
     }
 
-    pub fn camera_buffers(&self) -> Option<Arc<VideoBufferManager>> {
+    pub fn camera_buffers(&self) -> Arc<VideoBufferManager> {
         self.camera_buffers.clone()
     }
 
-    pub fn set_camera_buffers(&mut self, buffers: Arc<VideoBufferManager>) {
-        self.camera_buffers = Some(buffers);
-    }
-
-    pub fn clear_camera_buffers(&mut self) {
-        self.camera_buffers = None;
+    pub fn camera_active(&self) -> bool {
+        !self.camera_buffers.is_inactive()
     }
 
     pub fn set_audio_handle(&mut self, handle: AudioTrackHandle) {

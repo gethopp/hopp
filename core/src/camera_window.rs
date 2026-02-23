@@ -512,8 +512,8 @@ impl CameraWindow {
                 log::info!("CameraWindow: screen share requested");
             }
             CameraMessage::VideoToggle => {
-                log::info!("CameraWindow: video toggle -> StopCamera");
-                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::StopCamera) {
+                log::info!("CameraWindow: video toggle");
+                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::ToggleCamera) {
                     log::error!("CameraWindow: failed to send StopCamera event: {e:?}");
                 }
             }
@@ -787,7 +787,7 @@ fn participant_card<'a>(
     participant_id: u64,
     name: &str,
     is_speaking: bool,
-    camera_buffers: Option<Arc<VideoBufferManager>>,
+    buffers: Arc<VideoBufferManager>,
     tile_size: f32,
     is_small_window: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
@@ -797,38 +797,8 @@ fn participant_card<'a>(
 
     // Background layer: GPU video if buffer exists and is active, Slate900 fallback otherwise
     let bg_element: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
-        if let Some(buffers) = camera_buffers {
-            // Check if the stream is inactive
-            if buffers.is_inactive() {
-                // Use placeholder when stream is inactive
-                container(Space::new())
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(ColorToken::Slate900.to_color())),
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: TILE_RADIUS.into(),
-                        },
-                        ..Default::default()
-                    })
-                    .into()
-            } else {
-                // Render video when stream is active
-                let video_program = YuvVideoProgram {
-                    participant_id,
-                    buffer: buffers,
-                    corner_radius: TILE_RADIUS,
-                    stretch_to_fill: false,
-                };
-                let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
-                    .width(Length::Fill)
-                    .height(Length::Fill);
-                video_bg.into()
-            }
-        } else {
-            // Default placeholder background when no video buffer
+        if buffers.is_inactive() {
+            // Use placeholder when stream is inactive
             container(Space::new())
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -842,8 +812,19 @@ fn participant_card<'a>(
                     ..Default::default()
                 })
                 .into()
+        } else {
+            // Render video when stream is active
+            let video_program = YuvVideoProgram {
+                participant_id,
+                buffer: buffers,
+                corner_radius: TILE_RADIUS,
+                stretch_to_fill: false,
+            };
+            let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
+                .width(Length::Fill)
+                .height(Length::Fill);
+            video_bg.into()
         };
-
     // Overlay with name label at bottom-left
     let overlay = container(
         column![

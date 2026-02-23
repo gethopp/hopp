@@ -467,11 +467,6 @@ impl<'a> Application<'a> {
         }
         if let Some(room_service) = self.room_service.as_ref() {
             room_service.unpublish_camera_track();
-            let participants_arc = room_service.participants();
-            let mut participants = participants_arc.write().unwrap();
-            if let Some(info) = participants.get_mut("local") {
-                info.clear_camera_buffers();
-            }
         }
     }
 
@@ -1245,19 +1240,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .as_ref()
                         .ok_or_else(|| "Room service not found".to_string())?;
 
-                    // Create the buffer manager for local participant before starting capture
-                    let video_buffer_manager = room_service
-                        .create_local_camera_buffer_manager()
-                        .ok_or_else(|| {
-                            "Failed to create local camera buffer manager".to_string()
-                        })?;
-
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(
                             &msg.device_name,
                             self.socket.clone(),
-                            video_buffer_manager,
+                            room_service.local_camera_buffer_manager(),
                         )?
                     };
 
@@ -1317,18 +1305,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .as_ref()
                         .ok_or_else(|| "Room service not found".to_string())?;
 
-                    let video_buffer_manager = room_service
-                        .create_local_camera_buffer_manager()
-                        .ok_or_else(|| {
-                            "Failed to create local camera buffer manager".to_string()
-                        })?;
-
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(
                             &msg.device_name,
                             self.socket.clone(),
-                            video_buffer_manager,
+                            room_service.local_camera_buffer_manager(),
                         )?
                     };
 
@@ -1356,10 +1338,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
-                self.camera_window = None;
                 if let Some(room_service) = self.room_service.as_ref() {
                     let snapshot = room_service.participants_snapshot();
                     let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                }
+            }
+            UserEvent::ToggleCamera => {
+                log::info!("user_event: ToggleCamera");
+                {
+                    let room_service = match self.room_service.as_ref() {
+                        Some(service) => service,
+                        None => {
+                            log::warn!("user_event: room service is none toggle camera");
+                            return;
+                        }
+                    };
+                    let mut capturer = self.camera_capturer.lock().unwrap();
+                    // TODO: check this
+                    let _ = capturer.toggle(room_service.get_camera_buffer_source());
                 }
             }
             UserEvent::OpenCamera => {
@@ -1858,6 +1854,7 @@ pub enum UserEvent {
     StartCamera(CameraStartMessage),
     SwitchCamera(CameraStartMessage),
     StopCamera,
+    ToggleCamera,
     OpenCamera,
     OpenScreensharing,
     OpenScreenShareWindow,
