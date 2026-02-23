@@ -61,15 +61,16 @@ const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 
-const ICON_COG: &[u8] = include_bytes!("../resources/icons/cog.svg");
+const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
 
 /// Icon font codepoints for segmented control (from icons-font).
 const ICON_REMOTE_CONTROL: char = '\u{F107}';
 const ICON_PEN: char = '\u{F109}';
 const ICON_CLICK_POINTER: char = '\u{F108}';
 const CURSOR_ICON_POINTER: &[u8] =
-    include_bytes!("../resources/icons/local-participant-cursor.svg");
-const CURSOR_ICON_PENCIL: &[u8] = include_bytes!("../resources/icons/local-participant-pencil.svg");
+    include_bytes!("../../resources/icons/local-participant-cursor.svg");
+const CURSOR_ICON_PENCIL: &[u8] =
+    include_bytes!("../../resources/icons/local-participant-pencil.svg");
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[

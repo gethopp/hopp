@@ -42,15 +42,16 @@ pub mod utils {
     pub mod svg_renderer;
 }
 
-pub(crate) mod camera_window;
+pub(crate) mod window {
+    pub(crate) mod camera_window;
+    pub(crate) mod screensharing_window;
+}
 pub(crate) mod components;
 pub(crate) mod overlay_window;
-pub(crate) mod screensharing_window;
 pub(crate) mod window_manager;
 pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
-use camera_window::CameraWindow;
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
 use image::GenericImageView;
@@ -60,7 +61,6 @@ use input::mouse::CursorController;
 use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
-use screensharing_window::ScreensharingWindow;
 use socket_lib::{
     AvailableContentMessage, CallStartMessage, CameraStartMessage, CaptureContent, Message,
     ScreenShareMessage, SentryMetadata, SocketSender,
@@ -70,6 +70,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
+use window::camera_window::CameraWindow;
+use window::screensharing_window::ScreensharingWindow;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
@@ -1539,16 +1541,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(event) = input_event {
                     if let Some(rs) = &self.room_service {
                         match event {
-                            screensharing_window::ScreenShareInputEvent::CursorMoved { x, y } => {
+                            window::screensharing_window::ScreenShareInputEvent::CursorMoved {
+                                x,
+                                y,
+                            } => {
                                 rs.publish_sharer_location(x, y, true);
                             }
-                            screensharing_window::ScreenShareInputEvent::MouseClick(data) => {
+                            window::screensharing_window::ScreenShareInputEvent::MouseClick(
+                                data,
+                            ) => {
                                 rs.publish_mouse_click(data);
                             }
-                            screensharing_window::ScreenShareInputEvent::Scroll(data) => {
+                            window::screensharing_window::ScreenShareInputEvent::Scroll(data) => {
                                 rs.publish_wheel_event(data);
                             }
-                            screensharing_window::ScreenShareInputEvent::KeyInput(data) => {
+                            window::screensharing_window::ScreenShareInputEvent::KeyInput(data) => {
                                 rs.publish_keystroke(data);
                             }
                         }
