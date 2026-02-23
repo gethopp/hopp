@@ -6,6 +6,7 @@ import { isEqual } from "lodash";
 import { emit, listen } from "@tauri-apps/api/event";
 import { TCallTokensMessage } from "@/payloads";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { CoreParticipantState, CoreRoleEvent } from "@/core_payloads";
 
 const windowName = getCurrentWindow().label;
 
@@ -22,18 +23,12 @@ export type CallState = {
   timeStarted: Date;
   hasAudioEnabled: boolean;
   hasCameraEnabled: boolean;
-  // Managing buttons for starting/joining/terminating screenshare streams
   role: ParticipantRole;
   isRemoteControlEnabled: boolean;
   isRoomCall?: boolean;
-  cameraTrackId?: string | null;
   room?: components["schemas"]["Room"];
-  cameraWindowOpen?: boolean;
-  krispToggle?: boolean;
-  controllerSupportsAv1?: boolean;
-  av1Enabled?: boolean;
-  // Reconnection state
   isReconnecting?: boolean;
+  participants: CoreParticipantState[];
 } & TCallTokensMessage["payload"];
 
 type State = {
@@ -64,6 +59,8 @@ type Actions = {
   reset: () => void;
   setCalling: (calling: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
+  // TODO(@konsalex): Rename `xxCallToken` as its not
+  // representative anymore or the actual state it holds.
   updateCallTokens: (tokens: Partial<CallState>) => void;
   setCustomServerUrl: (url: string | null) => void;
   setLivekitUrl: (url: string | null) => void;
@@ -231,6 +228,47 @@ listen("get-store", () => {
     state: useStore.getState(),
     window: windowName,
   });
+});
+
+// Listen for full participant snapshot from core and replace the participants array.
+// Also derive local audio/camera state so the UI stays in sync when toggled from core
+// (e.g. camera window mute button).
+listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
+  const { callTokens, user } = useStore.getState();
+  if (!callTokens) return;
+
+  const updates: Partial<CallState> = { participants: event.payload };
+
+  if (user) {
+    const localParticipant = event.payload.find((p) => p.identity.includes(user.id));
+    if (localParticipant) {
+      updates.hasCameraEnabled = localParticipant.has_camera;
+      updates.hasAudioEnabled = !localParticipant.muted;
+
+      if (localParticipant.is_screensharing) {
+        updates.role = ParticipantRole.SHARER;
+      } else if (callTokens.role === ParticipantRole.SHARER) {
+        updates.role = ParticipantRole.NONE;
+      }
+    }
+  }
+
+  useStore.getState().updateCallTokens(updates);
+});
+
+// Listen for core role change events
+listen<CoreRoleEvent>("core_role_change", (event) => {
+  const { callTokens } = useStore.getState();
+  if (!callTokens) return;
+
+  const roleMap: Record<string, ParticipantRole> = {
+    Sharer: ParticipantRole.SHARER,
+    Controller: ParticipantRole.CONTROLLER,
+    None: ParticipantRole.NONE,
+  };
+
+  const newRole = roleMap[event.payload.role] ?? ParticipantRole.NONE;
+  useStore.getState().updateCallTokens({ role: newRole });
 });
 
 export default useStore;

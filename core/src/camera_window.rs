@@ -159,17 +159,24 @@ impl CameraWindow {
 
         #[cfg(target_os = "macos")]
         let attrs = {
-            use winit::platform::macos::WindowAttributesExtMacOS;
+            use winit::{
+                platform::macos::WindowAttributesExtMacOS,
+                window::{WindowButtons, WindowLevel},
+            };
             attrs
                 .with_title_hidden(true)
                 .with_titlebar_transparent(true)
                 .with_fullsize_content_view(true)
+                .with_window_level(WindowLevel::AlwaysOnTop)
+                .with_enabled_buttons(WindowButtons::MINIMIZE)
         };
 
         let window = event_loop.create_window(attrs).map_err(|e| {
             log::error!("CameraWindow: failed to create window: {e:?}");
             CameraWindowError::WindowCreation
         })?;
+        // Bring to front when window is created
+        window.focus_window();
         let window = Arc::new(window);
 
         // ── wgpu setup ───────────────────────────────────────────────────
@@ -813,6 +820,7 @@ fn participant_card<'a>(
                     participant_id,
                     buffer: buffers,
                     corner_radius: TILE_RADIUS,
+                    stretch_to_fill: false,
                 };
                 let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
                     .width(Length::Fill)

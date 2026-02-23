@@ -25,8 +25,6 @@ import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
-import { LiveKitRoom } from "@livekit/components-react";
-import { ConditionalWrap } from "@/components/conditional-wrapper";
 
 function App() {
   const {
@@ -53,7 +51,6 @@ function App() {
 
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
   const sentryMetadataRef = useRef<boolean>(false);
-  const livekitUrl = useStore((s) => s.livekitUrl);
 
   const { error: userError } = useQuery("get", "/api/auth/user", undefined, {
     enabled: !!authToken,
@@ -386,68 +383,59 @@ function App() {
     <div className="container flex flex-row bg-white" id="app-body">
       {/* Action Sidebar */}
       <Sidebar />
-      <ConditionalWrap
-        condition={!!callTokens}
-        wrap={(children) => (
-          <LiveKitRoom key={callTokens?.audioToken} token={callTokens?.audioToken} serverUrl={livekitUrl || ""}>
-            {children}
-          </LiveKitRoom>
-        )}
-      >
-        <ScrollArea type="scroll" className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full">
-          {callTokens && (
-            <div className="sticky top-0 z-10 bg-white">
-              <CallCenter />
-            </div>
-          )}
-          <div className="w-full h-auto mt-2">
-            {userError && (
-              <Alert variant="destructive" className="py-2 w-[90%] mx-auto">
-                <HiOutlineExclamationCircle className="h-4 w-4" />
-                <AlertTitle>Issue</AlertTitle>
-                <AlertDescription>{userError?.message}</AlertDescription>
-              </Alert>
-            )}
-            {teammatesError && (
-              <Alert variant="destructive" className="py-2 w-[90%] mx-auto">
-                <HiOutlineExclamationCircle className="h-4 w-4" />
-                <AlertTitle>Issue</AlertTitle>
-                <AlertDescription>{teammatesError?.message}</AlertDescription>
-              </Alert>
-            )}
+      <ScrollArea type="scroll" className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full">
+        {callTokens && (
+          <div className="sticky top-0 z-10 bg-white">
+            <CallCenter />
           </div>
-          {tab === "debug" && <Debug />}
-          {tab === "invite" && <Invite />}
-          {tab === "login" && <Login />}
-          {tab === "rooms" && <Rooms />}
-          {tab === "user-list" && (
-            <>
-              <div className="flex flex-col items-start gap-1.5 p-2">
-                <Participants teammates={teammates || []} />
-                <Button
-                  variant={
-                    needsUpdate ?
-                      updateInProgress ?
-                        "loading"
-                      : "default"
-                    : "hidden"
-                  }
-                  isLoading={updateInProgress}
-                  disabled={!!callTokens}
-                  onClick={() => {
-                    downloadAndRelaunch();
-                    setUpdateInProgress(true);
-                    handleReject();
-                  }}
-                >
-                  Update and restart
-                </Button>
-              </div>
-            </>
+        )}
+        <div className="w-full h-auto mt-2">
+          {userError && (
+            <Alert variant="destructive" className="py-2 w-[90%] mx-auto">
+              <HiOutlineExclamationCircle className="h-4 w-4" />
+              <AlertTitle>Issue</AlertTitle>
+              <AlertDescription>{userError?.message}</AlertDescription>
+            </Alert>
           )}
-          {tab === "report-issue" && <Report />}
-        </ScrollArea>
-      </ConditionalWrap>
+          {teammatesError && (
+            <Alert variant="destructive" className="py-2 w-[90%] mx-auto">
+              <HiOutlineExclamationCircle className="h-4 w-4" />
+              <AlertTitle>Issue</AlertTitle>
+              <AlertDescription>{teammatesError?.message}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+        {tab === "debug" && <Debug />}
+        {tab === "invite" && <Invite />}
+        {tab === "login" && <Login />}
+        {tab === "rooms" && <Rooms />}
+        {tab === "user-list" && (
+          <>
+            <div className="flex flex-col items-start gap-1.5 p-2">
+              <Participants teammates={teammates || []} />
+              <Button
+                variant={
+                  needsUpdate ?
+                    updateInProgress ?
+                      "loading"
+                    : "default"
+                  : "hidden"
+                }
+                isLoading={updateInProgress}
+                disabled={!!callTokens}
+                onClick={() => {
+                  downloadAndRelaunch();
+                  setUpdateInProgress(true);
+                  handleReject();
+                }}
+              >
+                Update and restart
+              </Button>
+            </div>
+          </>
+        )}
+        {tab === "report-issue" && <Report />}
+      </ScrollArea>
     </div>
   );
 }

@@ -18,7 +18,7 @@ lto = true
 codegen-units = 1
 
 [workspace]
-exclude = [ "tests" ]
+exclude = [ "tests", "dev" ]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 #nokhwa = { version = "0.10", default-features = false, features = ["output-threaded", "input-msmf"] }

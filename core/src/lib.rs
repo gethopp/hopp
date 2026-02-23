@@ -445,7 +445,16 @@ impl<'a> Application<'a> {
         }
 
         /* We want to add the participants that already exist in the cursor controller list. */
-        self.room_service.as_ref().unwrap().iterate_participants();
+        let room_service = self.room_service.as_ref().unwrap();
+        room_service.iterate_participants();
+
+        {
+            let participants = room_service.participants();
+            let mut guard = participants.write().unwrap();
+            if let Some(local) = guard.get_mut("local") {
+                local.set_is_screensharing(true);
+            }
+        }
 
         Ok(())
     }
@@ -458,6 +467,11 @@ impl<'a> Application<'a> {
         }
         if let Some(room_service) = self.room_service.as_ref() {
             room_service.unpublish_camera_track();
+            let participants_arc = room_service.participants();
+            let mut participants = participants_arc.write().unwrap();
+            if let Some(info) = participants.get_mut("local") {
+                info.clear_camera_buffers();
+            }
         }
     }
 
@@ -486,6 +500,11 @@ impl<'a> Application<'a> {
         drop(screen_capturer);
         if let Some(room_service) = self.room_service.as_ref() {
             room_service.unpublish_screen_share_track();
+            let participants = room_service.participants();
+            let mut guard = participants.write().unwrap();
+            if let Some(local) = guard.get_mut("local") {
+                local.set_is_screensharing(false);
+            }
         }
         self.destroy_overlay_window();
     }
@@ -656,70 +675,6 @@ impl<'a> Application<'a> {
         }
         self.remote_control = None;
     }
-
-    /// Resets the application state after a session ends or encounters an error.
-    ///
-    /// This method performs comprehensive cleanup and state reset:
-    /// - Stops active screen sharing sessions
-    /// - Destroys overlay windows
-    /// - Cleans up LiveKit room
-    /// - Restarts screen capturer if needed
-    /// - Uploads telemetry data to monitoring systems
-    ///
-    /// # Usage
-    ///
-    /// This function is called when:
-    /// - The user ends a remote desktop session
-    /// - An error occurs that requires session reset
-    /// - The client disconnects unexpectedly
-    ///
-    /// # Error Handling
-    ///
-    /// If the screen capturer is in an invalid state, this method will:
-    /// 1. Perform manual cleanup of overlay window and room service
-    /// 2. Create a new screen capturer instance
-    /// 3. Restart the capture event polling thread
-    ///
-    /// # Side Effects
-    ///
-    /// - Uploads "Ending call" event to Sentry for telemetry
-    /// - May create new threads for screen capture polling
-    /// - Resets all session-specific state to initial values
-    fn reset_state(&mut self) {
-        self.stop_mic();
-        self.stop_camera();
-
-        let capturer_valid = {
-            let screen_capturer = self.screen_capturer.lock();
-            screen_capturer.is_ok()
-        };
-        if capturer_valid {
-            self.stop_screenshare();
-        } else {
-            log::warn!("reset_state: Screen capturer is not valid");
-            self.destroy_overlay_window();
-            if let Some(room_service) = self.room_service.as_mut() {
-                room_service.destroy_room();
-            }
-
-            /* Restart the screen capturer. */
-            self.screen_capturer =
-                Arc::new(Mutex::new(Capturer::new(self.event_loop_proxy.clone())));
-            let screen_capturer_clone = self.screen_capturer.clone();
-
-            /*
-             * The previous screen capturer is invalid so we can stop the polling thread,
-             * this should be unlikely to happen to happen.
-             * Therefore we can have thread running but not doing anything.
-             */
-            self._screen_capturer_events = Some(std::thread::spawn(move || {
-                poll_stream(screen_capturer_clone)
-            }));
-        }
-
-        // Upload logs to sentry when ending call.
-        sentry_utils::upload_logs_event("Ending call".to_string());
-    }
 }
 
 impl Drop for Application<'_> {
@@ -750,7 +705,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CursorPosition(x, y, sid) => {
                 log::debug!("user_event: cursor position: {x} {y} {sid}");
                 if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor position");
+                    log::debug!("user_event: remote control is none cursor position");
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
@@ -868,12 +823,39 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
-                self.stop_camera();
-                self.stop_screenshare();
                 self.stop_mic();
+                self.stop_camera();
+
+                let capturer_valid = {
+                    let screen_capturer = self.screen_capturer.lock();
+                    screen_capturer.is_ok()
+                };
+                if capturer_valid {
+                    self.stop_screenshare();
+                } else {
+                    log::warn!("user_event: CallEnd: screen capturer is not valid");
+                    self.destroy_overlay_window();
+
+                    self.screen_capturer =
+                        Arc::new(Mutex::new(Capturer::new(self.event_loop_proxy.clone())));
+                    let screen_capturer_clone = self.screen_capturer.clone();
+                    self._screen_capturer_events = Some(std::thread::spawn(move || {
+                        poll_stream(screen_capturer_clone)
+                    }));
+                }
+
                 if let Some(room_service) = self.room_service.as_mut() {
                     room_service.destroy_room();
                 }
+
+                self.camera_window = None;
+                self.screensharing_window = None;
+
+                if let Err(e) = self.socket.send(Message::CallEnded) {
+                    log::error!("user_event: Error sending CallEnded: {e:?}");
+                }
+
+                sentry_utils::upload_logs_event("Ending call".to_string());
             }
             UserEvent::ScreenShare(data) => {
                 log::debug!("user_event: Screen share: {data:?}");
@@ -890,6 +872,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
 
+                if result_message.is_ok() {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        let snapshot = room_service.participants_snapshot();
+                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    }
+                }
+
                 if let Err(e) = self
                     .socket
                     .send(Message::StartScreenShareResult(result_message))
@@ -899,6 +888,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::StopScreenShare => {
                 self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    let snapshot = room_service.participants_snapshot();
+                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                }
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
@@ -921,10 +914,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_sharer_location(x, y, true);
             }
-            UserEvent::ResetState => {
-                debug!("user_event: Resetting state");
-                self.reset_state();
-            }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
                 if self.room_service.is_none() {
@@ -935,6 +924,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
+
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none participant connected");
                     return;
@@ -957,6 +947,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
+
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none participant disconnected");
                     return;
@@ -969,6 +960,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 remote_control
                     .gfx
                     .remove_participant(participant.sid.as_str());
+            }
+            UserEvent::ParticipantsSnapshot(snapshot) => {
+                log::debug!("user_event: Participants snapshot: {snapshot:?}");
+                let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
@@ -991,6 +986,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ControllerTakesScreenShare => {
                 log::info!("user_event: Controller takes screen share");
                 self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    let snapshot = room_service.participants_snapshot();
+                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                }
             }
             UserEvent::ParticipantInControl(participant) => {
                 log::debug!("user_event: participant in control: {participant:?}");
@@ -1221,6 +1220,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     room_service.unmute_audio_track();
                 }
             }
+            UserEvent::ToggleMic => {
+                log::info!("user_event: ToggleMic");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    if room_service.is_audio_muted() {
+                        room_service.unmute_audio_track();
+                    } else {
+                        room_service.mute_audio_track();
+                    }
+                }
+            }
             UserEvent::ListCameras => {
                 log::debug!("user_event: ListCameras");
                 let devices = CameraCapturer::list_devices();
@@ -1287,14 +1296,71 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
 
+                if result.is_ok() {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        let snapshot = room_service.participants_snapshot();
+                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    }
+                }
+
                 if let Err(e) = self.socket.send(Message::StartCameraResult(result)) {
                     error!("user_event: Error sending StartCameraResult: {e:?}");
+                }
+            }
+            UserEvent::SwitchCamera(msg) => {
+                log::info!("user_event: SwitchCamera device='{}'", msg.device_name);
+                self.stop_camera();
+
+                let result = (|| -> Result<(), String> {
+                    let room_service = self
+                        .room_service
+                        .as_ref()
+                        .ok_or_else(|| "Room service not found".to_string())?;
+
+                    let video_buffer_manager = room_service
+                        .create_local_camera_buffer_manager()
+                        .ok_or_else(|| {
+                            "Failed to create local camera buffer manager".to_string()
+                        })?;
+
+                    let (width, height) = {
+                        let mut capturer = self.camera_capturer.lock().unwrap();
+                        capturer.start_capture(
+                            &msg.device_name,
+                            self.socket.clone(),
+                            video_buffer_manager,
+                        )?
+                    };
+
+                    room_service
+                        .publish_camera_track(width, height)
+                        .map_err(|e| format!("Failed to publish camera track: {e}"))?;
+
+                    let source = room_service.get_camera_buffer_source();
+                    {
+                        let capturer = self.camera_capturer.lock().unwrap();
+                        capturer.set_buffer_source(source);
+                    }
+
+                    Ok(())
+                })();
+
+                if let Err(ref e) = result {
+                    log::error!("user_event: SwitchCamera failed: {e}");
+                }
+
+                if let Err(e) = self.socket.send(Message::SwitchCameraResult(result)) {
+                    error!("user_event: Error sending SwitchCameraResult: {e:?}");
                 }
             }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
                 self.camera_window = None;
+                if let Some(room_service) = self.room_service.as_ref() {
+                    let snapshot = room_service.participants_snapshot();
+                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                }
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
@@ -1744,6 +1810,7 @@ pub struct MouseClickData {
 #[derive(Debug, Clone)]
 pub struct ParticipantData {
     pub name: String,
+    pub identity: String,
     pub sid: String,
 }
 
@@ -1763,10 +1830,10 @@ pub enum UserEvent {
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
-    ResetState,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
+    ParticipantsSnapshot(Vec<socket_lib::CoreParticipantState>),
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
@@ -1786,8 +1853,10 @@ pub enum UserEvent {
     StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
+    ToggleMic,
     ListCameras,
     StartCamera(CameraStartMessage),
+    SwitchCamera(CameraStartMessage),
     StopCamera,
     OpenCamera,
     OpenScreensharing,
@@ -1865,7 +1934,6 @@ impl RenderEventLoop {
                         UserEvent::ScreenShare(screen_share_message)
                     }
                     Message::StopScreenshare => UserEvent::StopScreenShare,
-                    Message::Reset => UserEvent::ResetState,
                     Message::ControllerCursorEnabled(enabled) => {
                         UserEvent::ControllerCursorEnabled(enabled)
                     }
@@ -1875,11 +1943,15 @@ impl RenderEventLoop {
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
+                    Message::ToggleMic => UserEvent::ToggleMic,
                     Message::ListCameras => UserEvent::ListCameras,
                     Message::StartCamera(msg) => UserEvent::StartCamera(msg),
+                    Message::SwitchCamera(msg) => UserEvent::SwitchCamera(msg),
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
+                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow,
+                    Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

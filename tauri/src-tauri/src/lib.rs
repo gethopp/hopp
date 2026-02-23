@@ -21,7 +21,7 @@ use tauri::{Rect, TitleBarStyle, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
-use socket_lib::{CursorSocket, Message};
+use socket_lib::{EventSocket, Message, SocketSender};
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, PhysicalPosition, PhysicalSize};
 
@@ -48,10 +48,11 @@ pub struct CoreProcess {
 /// Central application data structure that holds all the runtime state and resources
 /// needed by the Tauri application.
 pub struct AppData {
-    /// Socket connection to the core process for inter-process communication.
-    /// Used to send commands like screen sharing requests, cursor control,
-    /// and receive responses from the native core process.
-    pub socket: CursorSocket,
+    /// Send half of the socket connection to the core process.
+    pub sender: SocketSender,
+
+    /// Receive half that routes messages into `events` and `responses` channels.
+    pub event_socket: EventSocket,
 
     /// Active sound entries currently being played by the application.
     /// Each entry contains the sound name and a channel transmitter to control playback.
@@ -81,26 +82,16 @@ pub struct AppData {
 }
 
 impl AppData {
-    /// Creates a new `AppData` instance with the provided dependencies.
-    ///
-    /// # Arguments
-    ///
-    /// * `socket` - The cursor socket for communicating with the core process
-    /// * `deactivate_hiding` - Shared flag to control window hiding behavior
-    /// * `dock_enabled` - Shared flag to control dock icon visibility
-    /// * `app_state` - Persistent application state manager
-    ///
-    /// # Returns
-    ///
-    /// A new `AppData` instance with empty sound entries and the provided state.
     pub fn new(
-        socket: CursorSocket,
+        sender: SocketSender,
+        event_socket: EventSocket,
         deactivate_hiding: Arc<Mutex<bool>>,
         dock_enabled: Arc<Mutex<bool>>,
         app_state: app_state::AppState,
     ) -> Self {
         AppData {
-            socket,
+            sender,
+            event_socket,
             sound_entries: Vec::new(),
             deactivate_hiding,
             dock_enabled,
@@ -137,19 +128,20 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                 Err(_) => {
                                     crash_msg = "Core process terminated because capturing failed from the OS and couldn't be recovered, please restart the app".to_string();
                                 }
-                                Ok((_core_process, mut socket)) => {
+                                Ok((_core_process, sender, event_socket)) => {
                                     crash_msg = "Core process restarted because capturing failed from the OS and couldn't be recovered, please select screen again".to_string();
 
                                     let data = app_handle.state::<Mutex<AppData>>();
                                     let mut data = data.lock().unwrap();
-                                    if let Err(e) = socket.send_message(Message::LivekitServerUrl(
+                                    if let Err(e) = sender.send(Message::LivekitServerUrl(
                                         data.livekit_server_url.clone(),
                                     )) {
                                         log::error!(
                                             "show_stdout: Failed to send livekit server url: {e:?}"
                                         );
                                     }
-                                    data.socket = socket;
+                                    data.sender = sender;
+                                    data.event_socket = event_socket;
                                 }
                             }
                         }
@@ -220,16 +212,16 @@ fn start_sidecar(
 }
 
 /// Creates a socket connection to communicate with the core process.
-fn create_core_process_socket(socket_path: &str) -> Result<CursorSocket, CoreProcessCreationError> {
+fn create_core_process_socket(
+    socket_path: &str,
+) -> Result<(SocketSender, EventSocket), CoreProcessCreationError> {
     let max_tries = 10;
     let mut tries = 0;
     loop {
-        match CursorSocket::new(socket_path) {
-            Ok(socket) => return Ok(socket),
+        match socket_lib::connect(socket_path) {
+            Ok(pair) => return Ok(pair),
             Err(_) => {
-                log::debug!(
-                    "create_render_process_socket: Failed to create socket, retrying in 1 second"
-                );
+                log::debug!("create_core_process_socket: Failed to connect, retrying in 1 second");
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
@@ -247,9 +239,9 @@ fn create_core_process_socket(socket_path: &str) -> Result<CursorSocket, CorePro
 /// We send this in order to stop the core process from timing out.
 /// This is used for killing the core process in case the tauri app
 /// has crashed.
-async fn send_ping(mut socket: CursorSocket) {
+async fn send_ping(sender: SocketSender) {
     loop {
-        let res = socket.send_message(Message::Ping);
+        let res = sender.send(Message::Ping);
         if let Err(e) = res {
             log::error!("Failed to send ping: {e:?}");
             break;
@@ -264,7 +256,7 @@ async fn send_ping(mut socket: CursorSocket) {
 /// Creates and initializes the core process with socket communication.
 pub fn create_core_process(
     app: &tauri::AppHandle,
-) -> Result<(CoreProcess, CursorSocket), CoreProcessCreationError> {
+) -> Result<(CoreProcess, SocketSender, EventSocket), CoreProcessCreationError> {
     log::info!("create_core_process: Creating core process");
     let mut resources_dir = app
         .path()
@@ -291,14 +283,15 @@ pub fn create_core_process(
 
     let (rx, core_process) = start_sidecar(app, &resources_dir, &socket_path);
     tauri::async_runtime::spawn(show_stdout(rx, app.clone()));
-    let socket = create_core_process_socket(&socket_path)?;
-    let socket_clone = socket.duplicate().unwrap();
-    tauri::async_runtime::spawn(send_ping(socket_clone));
+    let (sender, event_socket) = create_core_process_socket(&socket_path)?;
+    let ping_sender = sender.clone();
+    tauri::async_runtime::spawn(send_ping(ping_sender));
     Ok((
         CoreProcess {
             process: core_process,
         },
-        socket,
+        sender,
+        event_socket,
     ))
 }
 

@@ -5,9 +5,11 @@ use crate::livekit::audio::AudioTrackHandle;
 use crate::livekit::video::VideoBufferManager;
 
 pub struct ParticipantInfo {
+    identity: String,
     name: String,
     muted: bool,
     is_speaking: bool,
+    is_screensharing: bool,
     camera_buffers: Option<Arc<VideoBufferManager>>,
     audio_handle: Option<AudioTrackHandle>,
     camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
@@ -16,6 +18,7 @@ pub struct ParticipantInfo {
 impl std::fmt::Debug for ParticipantInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParticipantInfo")
+            .field("identity", &self.identity)
             .field("name", &self.name)
             .field("muted", &self.muted)
             .field("is_speaking", &self.is_speaking)
@@ -32,16 +35,24 @@ impl std::fmt::Debug for ParticipantInfo {
 }
 
 impl ParticipantInfo {
-    pub fn new(name: String, muted: bool, is_speaking: bool, create_buffers: bool) -> Self {
+    pub fn new(
+        identity: String,
+        name: String,
+        muted: bool,
+        is_speaking: bool,
+        create_buffers: bool,
+    ) -> Self {
         let camera_buffers = if create_buffers {
             Some(Arc::new(VideoBufferManager::new()))
         } else {
             None
         };
         Self {
+            identity,
             name,
             muted,
             is_speaking,
+            is_screensharing: false,
             camera_buffers,
             audio_handle: None,
             camera_stop_tx: None,
@@ -54,10 +65,10 @@ impl ParticipantInfo {
         participant: &livekit::participant::RemoteParticipant,
         create_buffers: bool,
     ) -> Self {
+        let identity = participant.identity().as_str().to_string();
         let name = participant.name();
         let is_speaking = participant.is_speaking();
 
-        // Check if any audio track is muted
         let mut muted = false;
         for (_, publication) in participant.track_publications() {
             if publication.kind() == livekit::track::TrackKind::Audio {
@@ -66,7 +77,11 @@ impl ParticipantInfo {
             }
         }
 
-        Self::new(name.clone(), muted, is_speaking, create_buffers)
+        Self::new(identity, name.clone(), muted, is_speaking, create_buffers)
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
     }
 
     pub fn name(&self) -> &str {
@@ -87,6 +102,14 @@ impl ParticipantInfo {
 
     pub fn set_is_speaking(&mut self, is_speaking: bool) {
         self.is_speaking = is_speaking;
+    }
+
+    pub fn is_screensharing(&self) -> bool {
+        self.is_screensharing
+    }
+
+    pub fn set_is_screensharing(&mut self, is_screensharing: bool) {
+        self.is_screensharing = is_screensharing;
     }
 
     pub fn camera_buffers(&self) -> Option<Arc<VideoBufferManager>> {

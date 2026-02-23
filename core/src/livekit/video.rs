@@ -165,7 +165,7 @@ pub async fn process_camera_stream(
 
                         frames += 1;
                         if frames % 100 == 0 {
-                            log::info!(
+                            log::warn!(
                                 "process_camera_stream: Received {} camera frames from {} ({}x{})",
                                 frames,
                                 stream_key,

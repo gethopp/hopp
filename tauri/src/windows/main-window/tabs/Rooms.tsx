@@ -24,10 +24,9 @@ import {
 import { Label } from "@/components/ui/label";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
-import { useCallback, useEffect, useMemo } from "react";
+import { tauriUtils } from "@/windows/window-utils";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
-import { useParticipants, useRoomContext } from "@livekit/components-react";
-import { RoomEvent } from "livekit-client";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
 import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
@@ -281,6 +280,7 @@ export const Rooms = () => {
         }
 
         sounds.callAccepted.play();
+        await tauriUtils.callStarted(tokens.audioToken);
         setCallTokens({
           ...tokens,
           isRoomCall: true,
@@ -289,10 +289,8 @@ export const Rooms = () => {
           hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
-          cameraTrackId: null,
           room: room,
-          cameraWindowOpen: false,
-          krispToggle: true,
+          participants: [],
         });
       } catch (error: any) {
         if (error?.error === "trial-ended") {
@@ -500,9 +498,9 @@ const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void 
 };
 
 const SelectedRoom = ({ room }: { room: Room }) => {
-  const participants = useParticipants();
-  const { teammates, user } = useStore();
-  const roomContext = useRoomContext();
+  const { teammates, user, callTokens } = useStore();
+  const coreParticipants = callTokens?.participants ?? [];
+  const prevCountRef = useRef(coreParticipants.length);
 
   const handleCopyRoomLink = async () => {
     const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
@@ -510,58 +508,57 @@ const SelectedRoom = ({ room }: { room: Room }) => {
     toast.success("Room link copied to clipboard");
   };
 
-  // Listen for participant connection events and play sound when someone joins
+  // Play sound when a new participant connects (count increases)
   useEffect(() => {
-    const handleParticipantConnected = (participant: any) => {
-      // Filter out video/camera tracks to only play sound for actual users
-      if (!participant.identity.includes("video") && !participant.identity.includes("camera")) {
-        sounds.callAccepted.play();
-      }
-    };
+    if (coreParticipants.length > prevCountRef.current) {
+      sounds.callAccepted.play();
+    }
+    prevCountRef.current = coreParticipants.length;
+  }, [coreParticipants.length]);
 
-    // Add event listener for participant connections
-    roomContext.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
-
-    // Cleanup event listener on component unmount
-    return () => {
-      roomContext.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
-    };
-  }, [roomContext]);
-
-  // Parse participant identities and match with teammates
   const participantList = useMemo(() => {
-    return participants
-      .filter((participant) => !participant.identity.includes("video") && !participant.identity.includes("camera"))
-      .map((participant) => {
-        // Parse identity: format is "room:roomname:participantId:tracktype"
-        // Extract participantId by splitting on ":" and taking the second-to-last part
-        const identityParts = participant.identity.split(":");
-        let participantId: string;
+    // Parse identity: format is "room:roomname:participantId:tracktype"
+    const extractUserId = (identity: string): string => {
+      const parts = identity.split(":");
+      return parts.length >= 4 ? (parts[2] ?? identity) : identity;
+    };
 
-        if (identityParts.length >= 4) {
-          // Format: "room:roomname:participantId:tracktype"
-          participantId = identityParts[2] || participant.identity;
-        } else {
-          participantId = participant.identity;
+    const findUser = (participantId: string) => {
+      if (user && user.id === participantId) return user;
+      return teammates?.find((t) => t.id === participantId) ?? null;
+    };
+
+    // Local user always appears first
+    const localEntry =
+      user ?
+        {
+          id: "local",
+          participantId: user.id,
+          user: user,
+          isLocal: true,
+          isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
         }
+      : null;
 
-        // Find user in teammates or current user
-        let foundUser = null;
-        if (user && user.id === participantId) {
-          foundUser = user;
-        } else if (teammates) {
-          foundUser = teammates.find((teammate) => teammate.id === participantId);
-        }
-
+    const remoteEntries = coreParticipants
+      .filter((p) => p.connected)
+      .filter((p) => {
+        const pid = extractUserId(p.identity);
+        return pid !== user?.id;
+      })
+      .map((p) => {
+        const participantId = extractUserId(p.identity);
         return {
-          id: participant.identity,
+          id: p.identity,
           participantId,
-          user: foundUser,
-          isLocal: participant.isLocal,
-          isMicrophoneEnabled: participant.isMicrophoneEnabled,
+          user: findUser(participantId),
+          isLocal: false,
+          isMicrophoneEnabled: !p.muted,
         };
       });
-  }, [participants, teammates, user]);
+
+    return localEntry ? [localEntry, ...remoteEntries] : remoteEntries;
+  }, [coreParticipants, teammates, user, callTokens?.hasAudioEnabled]);
 
   return (
     <div className="flex flex-col w-full">

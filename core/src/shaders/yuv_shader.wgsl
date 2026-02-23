@@ -41,7 +41,7 @@ struct Params {
     tile_w: f32,
     tile_h: f32,
     corner_radius: f32,
-    _pad: u32,
+    stretch_to_fill: u32,
 };
 @group(0) @binding(4) var<uniform> params: Params;
 
@@ -74,18 +74,21 @@ fn fs_main(in_: VSOut) -> @location(0) vec4<f32> {
     // Flip vertically (wgpu texture origin is top-left, UV origin bottom-left)
     let flipped = vec2<f32>(in_.uv.x, 1.0 - in_.uv.y);
 
-    // Center-crop: compute UVs that center-crop source to fill tile
-    let src_aspect = src_w / src_h;
-    let tile_aspect_val = f32(params.tile_aspect_num) / f32(params.tile_aspect_den);
+    // Center-crop: compute UVs that center-crop source to fill tile.
+    // When stretch_to_fill is set, skip the crop and use raw UVs (stretches to fill).
     var crop_uv = flipped;
-    if (src_aspect > tile_aspect_val) {
-        // Source wider than tile: crop sides
-        let scale = tile_aspect_val / src_aspect;
-        crop_uv.x = (crop_uv.x - 0.5) * scale + 0.5;
-    } else {
-        // Source taller than tile: crop top/bottom
-        let scale = src_aspect / tile_aspect_val;
-        crop_uv.y = (crop_uv.y - 0.5) * scale + 0.5;
+    if (params.stretch_to_fill == 0u) {
+        let src_aspect = src_w / src_h;
+        let tile_aspect_val = f32(params.tile_aspect_num) / f32(params.tile_aspect_den);
+        if (src_aspect > tile_aspect_val) {
+            // Source wider than tile: crop sides
+            let scale = tile_aspect_val / src_aspect;
+            crop_uv.x = (crop_uv.x - 0.5) * scale + 0.5;
+        } else {
+            // Source taller than tile: crop top/bottom
+            let scale = src_aspect / tile_aspect_val;
+            crop_uv.y = (crop_uv.y - 0.5) * scale + 0.5;
+        }
     }
 
     // Scale X to avoid sampling padded columns (256-byte alignment)
@@ -98,14 +101,27 @@ fn fs_main(in_: VSOut) -> @location(0) vec4<f32> {
 
     let rgb = yuv_to_rgb(y, u, v);
 
-    // Rounded-corner mask: compute pixel position from UV and tile size,
-    // then check against a rounded-rect SDF.
-    let pixel = in_.uv * vec2<f32>(params.tile_w, params.tile_h);
-    let center = vec2<f32>(params.tile_w, params.tile_h) * 0.5;
-    let half_size = center;
-    let dist = rounded_rect_sdf(pixel - center, half_size, params.corner_radius);
-    // Anti-aliased edge: smoothstep over ~1px
-    let alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+    // Optional rounded-corner mask. When radius is <= 0, skip masking entirely.
+    // We intentionally use two paths:
+    // - Camera tiles (stretch_to_fill == 0): use CPU-provided tile_w/tile_h.
+    // - Screenshare   (stretch_to_fill != 0): derive tile size from UV derivatives
+    //   so resize cannot produce stale-size clipping artifacts.
+    var alpha = 1.0;
+    if (params.corner_radius > 0.0) {
+        var mask_tile_size = vec2<f32>(params.tile_w, params.tile_h);
+        if (params.stretch_to_fill != 0u) {
+            let duv_dx = max(abs(dpdx(in_.uv.x)), 1e-6);
+            let duv_dy = max(abs(dpdy(in_.uv.y)), 1e-6);
+            mask_tile_size = vec2<f32>(1.0 / duv_dx, 1.0 / duv_dy);
+        }
+
+        let pixel = in_.uv * mask_tile_size;
+        let center = mask_tile_size * 0.5;
+        let half_size = center;
+        let dist = rounded_rect_sdf(pixel - center, half_size, params.corner_radius);
+        // Anti-aliased edge: smoothstep over ~1px
+        alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+    }
 
     return vec4<f32>(rgb * alpha, alpha);
 }
