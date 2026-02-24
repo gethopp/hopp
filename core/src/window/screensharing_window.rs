@@ -253,7 +253,6 @@ pub struct ScreensharingWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: ScreensharingState,
-    resized: bool,
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
@@ -328,7 +327,7 @@ impl ScreensharingWindow {
         })?;
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
+            power_preference: wgpu::PowerPreference::None,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
@@ -368,13 +367,9 @@ impl ScreensharingWindow {
             width: physical_size.width.max(1),
             height: physical_size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: if cfg!(target_os = "macos") {
-                wgpu::CompositeAlphaMode::PostMultiplied
-            } else {
-                wgpu::CompositeAlphaMode::Opaque
-            },
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 0,
         };
         surface.configure(&device, &surface_config);
 
@@ -478,7 +473,6 @@ impl ScreensharingWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state: ScreensharingState::default(),
-            resized: false,
             mouse_in_participant_area: false,
             screen_share_buffer,
             last_redraw: StdInstant::now(),
@@ -792,9 +786,6 @@ impl ScreensharingWindow {
 
             // Tick animation; keep requesting redraws while it runs.
             seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
-            if seg_ctrl_mod::animation_running(&self.state.tab_anim) {
-                self.window.request_redraw();
-            }
         }
 
         // Handle winit-specific events
@@ -818,7 +809,23 @@ impl ScreensharingWindow {
                         let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
                         set_macos_window_aspect_ratio(&self.window, w, h);
                     }
-                    self.resized = true;
+                    self.surface.configure(
+                        &self.device,
+                        &wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            format: self.format,
+                            width: new_size.width,
+                            height: new_size.height,
+                            present_mode: wgpu::PresentMode::AutoVsync,
+                            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                            view_formats: vec![],
+                            desired_maximum_frame_latency: 0,
+                        },
+                    );
+                    self.viewport = Viewport::with_physical_size(
+                        Size::new(new_size.width, new_size.height),
+                        self.window.scale_factor() as f32,
+                    );
                     self.window.request_redraw();
                 }
             }
@@ -864,10 +871,7 @@ impl ScreensharingWindow {
                     }
                 }
             }
-            _ => {
-                // Request redraw for any event that might change UI state
-                self.window.request_redraw();
-            }
+            _ => {}
         }
 
         input_event
@@ -1019,36 +1023,6 @@ impl ScreensharingWindow {
 
     /// Perform a full redraw: build UI, draw, present.
     fn redraw(&mut self) {
-        if self.resized {
-            let size = self.window.inner_size();
-            if size.width > 0 && size.height > 0 {
-                self.surface.configure(
-                    &self.device,
-                    &wgpu::SurfaceConfiguration {
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format: self.format,
-                        width: size.width,
-                        height: size.height,
-                        present_mode: wgpu::PresentMode::AutoVsync,
-                        alpha_mode: if cfg!(target_os = "macos") {
-                            wgpu::CompositeAlphaMode::PostMultiplied
-                        } else {
-                            wgpu::CompositeAlphaMode::Opaque
-                        },
-                        view_formats: vec![],
-                        desired_maximum_frame_latency: 2,
-                    },
-                );
-                // Always sync viewport to the actual surface size so the
-                // scissor rect can never exceed the render target.
-                self.viewport = Viewport::with_physical_size(
-                    Size::new(size.width, size.height),
-                    self.window.scale_factor() as f32,
-                );
-            }
-            self.resized = false;
-        }
-
         // Check if stream dimensions changed and update window size
         {
             let frame_lock = self.screen_share_buffer.latest_frame();
@@ -1168,9 +1142,6 @@ impl ScreensharingWindow {
         // is animating, so the slide plays smoothly even when no user input
         // events are arriving.
         seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
-        if seg_ctrl_mod::animation_running(&self.state.tab_anim) {
-            self.window.request_redraw();
-        }
     }
 }
 
