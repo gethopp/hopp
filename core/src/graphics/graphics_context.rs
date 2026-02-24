@@ -417,7 +417,7 @@ impl<'a> GraphicsContext<'a> {
     /// If frame acquisition fails (e.g., surface lost), the method logs the error
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
-    pub fn draw(&mut self) {
+    pub fn draw(&mut self, position_translator: &dyn Fn(Position) -> Position) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -436,6 +436,7 @@ impl<'a> GraphicsContext<'a> {
             &view,
             &self.participants_manager,
             &self.click_animation_renderer,
+            position_translator,
         );
 
         self.window.pre_present_notify();

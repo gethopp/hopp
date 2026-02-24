@@ -1007,11 +1007,8 @@ impl CursorController {
         if let Some(remote_control) = &self.remote_control {
             let sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
             if sharer_cursor.visible() {
-                let local_pos = sharer_cursor.local_position();
-                let pixel_pos = self
-                    .overlay_window
-                    .get_pixel_position(local_pos.x, local_pos.y);
-                participants_manager.set_cursor_position("local", Some(pixel_pos));
+                participants_manager
+                    .set_cursor_position("local", Some(sharer_cursor.local_position()));
             } else {
                 participants_manager.set_cursor_position("local", None);
             }
@@ -1021,11 +1018,8 @@ impl CursorController {
         let controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter() {
             if controller.visible() {
-                let local_pos = controller.local_position();
-                let pixel_pos = self
-                    .overlay_window
-                    .get_pixel_position(local_pos.x, local_pos.y);
-                participants_manager.set_cursor_position(&controller.sid, Some(pixel_pos));
+                participants_manager
+                    .set_cursor_position(&controller.sid, Some(controller.local_position()));
                 participants_manager.set_cursor_mode(&controller.sid, controller.mode());
             } else {
                 participants_manager.set_cursor_position(&controller.sid, None);

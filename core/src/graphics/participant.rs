@@ -359,12 +359,21 @@ impl ParticipantsManager {
     ///
     /// # Returns
     /// A vector of Geometry objects representing all rendered content
-    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> Vec<Geometry> {
+    pub fn draw(
+        &self,
+        renderer: &Renderer,
+        bounds: Rectangle,
+        translate: &dyn Fn(Position) -> Position,
+    ) -> Vec<Geometry> {
         let mut geometries = Vec::with_capacity(self.participants.len() + 1);
 
         // Collect cached completed geometries from each participant's Draw
         for participant in self.participants.values() {
-            geometries.push(participant.draw().draw_completed(renderer, bounds));
+            geometries.push(
+                participant
+                    .draw()
+                    .draw_completed(renderer, bounds, translate),
+            );
         }
 
         // Draw all in-progress paths into a single frame
@@ -372,11 +381,11 @@ impl ParticipantsManager {
         for participant in self.participants.values() {
             participant
                 .draw()
-                .draw_in_progress_to_frame(&mut in_progress_frame);
+                .draw_in_progress_to_frame(&mut in_progress_frame, translate);
         }
 
         for participant in self.participants.values() {
-            participant.cursor().draw(&mut in_progress_frame);
+            participant.cursor().draw(&mut in_progress_frame, translate);
         }
         geometries.push(in_progress_frame.into_geometry());
 

@@ -110,7 +110,12 @@ impl ClickAnimationRenderer {
         }
     }
 
-    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
+    pub fn draw(
+        &self,
+        renderer: &Renderer,
+        bounds: Rectangle,
+        translate: &dyn Fn(crate::utils::geometry::Position) -> crate::utils::geometry::Position,
+    ) -> Geometry {
         let mut frame = Frame::new(renderer, bounds.size());
         let now = self.clock.now();
         for slot in &self.used_slots {
@@ -125,8 +130,9 @@ impl ClickAnimationRenderer {
                 continue;
             }
 
-            let x = anim.position.x as f32;
-            let y = anim.position.y as f32;
+            let pos = translate(anim.position);
+            let x = pos.x as f32;
+            let y = pos.y as f32;
 
             if elapsed <= RING_DELAY_MS {
                 // Filled circle phase

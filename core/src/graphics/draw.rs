@@ -178,12 +178,17 @@ impl Draw {
     }
 
     /// Returns cached geometry for completed paths.
-    pub fn draw_completed(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
+    pub fn draw_completed(
+        &self,
+        renderer: &Renderer,
+        bounds: Rectangle,
+        translate: &dyn Fn(Position) -> Position,
+    ) -> Geometry {
         self.completed_cache.draw(renderer, bounds.size(), |frame| {
             let glow_stroke = self.make_glow_stroke();
             let core_stroke = self.make_stroke();
             for draw_path in &self.completed_paths {
-                if let Some(path) = Self::build_path(&draw_path.points) {
+                if let Some(path) = Self::build_path(&draw_path.points, translate) {
                     // Two-pass rendering: glow first (wider, semi-transparent), then core
                     frame.stroke(&path, glow_stroke);
                     frame.stroke(&path, core_stroke);
@@ -193,9 +198,13 @@ impl Draw {
     }
 
     /// Draws in-progress path onto the provided frame.
-    pub fn draw_in_progress_to_frame(&self, frame: &mut Frame) {
+    pub fn draw_in_progress_to_frame(
+        &self,
+        frame: &mut Frame,
+        translate: &dyn Fn(Position) -> Position,
+    ) {
         if let Some(in_progress) = &self.in_progress_path {
-            if let Some(path) = Self::build_path(&in_progress.points) {
+            if let Some(path) = Self::build_path(&in_progress.points, translate) {
                 // Two-pass rendering: glow first (wider, semi-transparent), then core
                 frame.stroke(&path, self.make_glow_stroke());
                 frame.stroke(&path, self.make_stroke());
@@ -225,15 +234,20 @@ impl Draw {
         }
     }
 
-    fn build_path(points: &[Position]) -> Option<path::Path> {
+    fn build_path(
+        points: &[Position],
+        translate: &dyn Fn(Position) -> Position,
+    ) -> Option<path::Path> {
         if points.is_empty() {
             return None;
         }
 
         let mut builder = path::Builder::new();
-        builder.move_to(Point::new(points[0].x as f32, points[0].y as f32));
+        let p = translate(points[0]);
+        builder.move_to(Point::new(p.x as f32, p.y as f32));
         for point in &points[1..] {
-            builder.line_to(Point::new(point.x as f32, point.y as f32));
+            let p = translate(*point);
+            builder.line_to(Point::new(p.x as f32, p.y as f32));
         }
         Some(builder.build())
     }

@@ -269,6 +269,16 @@ impl OverlayWindow {
             y: (y * self.display_info.display_scale) / self.display_info.display_extent.height,
         }
     }
+
+    /// Creates a closure that translates percentage positions (0.0–1.0) to logical pixel positions.
+    pub fn create_position_translator(&self) -> impl Fn(Position) -> Position {
+        let width = self.display_info.display_extent.width / self.display_info.display_scale;
+        let height = self.display_info.display_extent.height / self.display_info.display_scale;
+        move |pos: Position| Position {
+            x: pos.x * width,
+            y: pos.y * height,
+        }
+    }
 }
 
 impl fmt::Display for OverlayWindow {

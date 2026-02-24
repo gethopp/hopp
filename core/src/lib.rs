@@ -147,7 +147,11 @@ impl<'a> RemoteControl<'a> {
             .update_cursors(self.gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
-        self.gfx.draw();
+        let translator = self
+            .cursor_controller
+            .get_overlay_window()
+            .create_position_translator();
+        self.gfx.draw(&translator);
         cleared_path_ids
     }
 }
@@ -1072,11 +1076,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_start(sid.as_str(), pixel_position, path_id);
+                remote_control.gfx.draw_start(
+                    sid.as_str(),
+                    Position {
+                        x: point.x,
+                        y: point.y,
+                    },
+                    path_id,
+                );
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -1090,11 +1097,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_add_point(sid.as_str(), pixel_position);
+                remote_control.gfx.draw_add_point(
+                    sid.as_str(),
+                    Position {
+                        x: point.x,
+                        y: point.y,
+                    },
+                );
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -1108,9 +1117,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control.gfx.draw_end(sid.as_str(), pixel_position);
+                remote_control.gfx.draw_end(
+                    sid.as_str(),
+                    Position {
+                        x: point.x,
+                        y: point.y,
+                    },
+                );
                 remote_control.cursor_controller.cursor_move_controller(
                     point.x,
                     point.y,
@@ -1150,11 +1163,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let position = remote_control
-                    .cursor_controller
-                    .get_overlay_window()
-                    .get_pixel_position(point.x, point.y);
-                remote_control.gfx.trigger_click_animation(position);
+                remote_control.gfx.trigger_click_animation(Position {
+                    x: point.x,
+                    y: point.y,
+                });
             }
             UserEvent::ListAudioDevices => {
                 log::debug!("user_event: ListAudioDevices");
@@ -1614,17 +1626,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
-                                        let overlay_window =
-                                            remote_control.cursor_controller.get_overlay_window();
-                                        let normalized_point = overlay_window
-                                            .get_local_percentage_from_pixel(
-                                                position.x, position.y,
-                                            );
                                         room_service.publish_draw_start(
                                             room_service::DrawPathPoint {
                                                 point: room_service::ClientPoint {
-                                                    x: normalized_point.x,
-                                                    y: normalized_point.y,
+                                                    x: position.x,
+                                                    y: position.y,
                                                 },
                                                 path_id: self.local_drawing.current_path_id,
                                             },
@@ -1648,15 +1654,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
-                                        let overlay_window =
-                                            remote_control.cursor_controller.get_overlay_window();
-                                        let normalized_point = overlay_window
-                                            .get_local_percentage_from_pixel(
-                                                position.x, position.y,
-                                            );
                                         room_service.publish_draw_end(room_service::ClientPoint {
-                                            x: normalized_point.x,
-                                            y: normalized_point.y,
+                                            x: position.x,
+                                            y: position.y,
                                         });
                                     }
 
@@ -1683,18 +1683,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if self.local_drawing.enabled {
-                    let display_scale = if let Some(remote_control) = &mut self.remote_control {
-                        remote_control
-                            .cursor_controller
-                            .get_overlay_window()
-                            .get_display_scale()
+                    // Convert physical position to percentage (0.0–1.0)
+                    let pos = if let Some(remote_control) = &self.remote_control {
+                        let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                        let scale = overlay_window.get_display_scale();
+                        overlay_window
+                            .get_local_percentage_from_pixel(position.x / scale, position.y / scale)
                     } else {
-                        1.0
-                    };
-                    // Convert physical position to our Position type
-                    let pos = Position {
-                        x: position.x / display_scale,
-                        y: position.y / display_scale,
+                        Position {
+                            x: position.x,
+                            y: position.y,
+                        }
                     };
                     self.local_drawing.last_cursor_position = Some(pos);
 
@@ -1706,13 +1705,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                             // Send LiveKit event
                             if let Some(room_service) = &self.room_service {
-                                let overlay_window =
-                                    remote_control.cursor_controller.get_overlay_window();
-                                let normalized_point =
-                                    overlay_window.get_local_percentage_from_pixel(pos.x, pos.y);
                                 room_service.publish_draw_add_point(room_service::ClientPoint {
-                                    x: normalized_point.x,
-                                    y: normalized_point.y,
+                                    x: pos.x,
+                                    y: pos.y,
                                 });
                             }
                         }

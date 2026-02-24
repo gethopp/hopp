@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::utils::geometry::Position;
 use iced::Renderer;
 use iced::{Font, Pixels};
 use iced_wgpu::{
@@ -77,10 +78,11 @@ impl IcedRenderer {
         view: &wgpu::TextureView,
         participants: &ParticipantsManager,
         click_animation_renderer: &ClickAnimationRenderer,
+        position_translator: &dyn Fn(Position) -> Position,
     ) {
         let mut interface = UserInterface::build(
             self.overlay_surface
-                .view(participants, click_animation_renderer),
+                .view(participants, click_animation_renderer, position_translator),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,

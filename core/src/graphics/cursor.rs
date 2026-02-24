@@ -86,7 +86,11 @@ impl Cursor {
     }
 
     /// Draws the cursor onto an iced canvas frame.
-    pub fn draw(&self, frame: &mut Frame) {
+    pub fn draw(
+        &self,
+        frame: &mut Frame,
+        translate: &dyn Fn(crate::utils::geometry::Position) -> crate::utils::geometry::Position,
+    ) {
         if self.position.is_none() {
             return;
         }
@@ -97,7 +101,7 @@ impl Cursor {
         };
 
         let image = iced_core::image::Image::new(handle.clone());
-        let position = self.position.as_ref().unwrap();
+        let position = translate(self.position.unwrap());
         frame.draw_image(
             Rectangle {
                 x: position.x as f32,

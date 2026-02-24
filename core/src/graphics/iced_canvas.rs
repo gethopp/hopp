@@ -8,6 +8,7 @@ use marker::Marker;
 
 use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
 use crate::graphics::graphics_context::participant::ParticipantsManager;
+use crate::utils::geometry::Position;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Message {}
@@ -16,6 +17,7 @@ pub struct OverlaySurfaceCanvas<'a> {
     marker: &'a Marker,
     participants: &'a ParticipantsManager,
     click_animation_renderer: &'a ClickAnimationRenderer,
+    position_translator: &'a dyn Fn(Position) -> Position,
 }
 
 impl<'a> std::fmt::Debug for OverlaySurfaceCanvas<'a> {
@@ -29,11 +31,13 @@ impl<'a> OverlaySurfaceCanvas<'a> {
         marker: &'a Marker,
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
+        position_translator: &'a dyn Fn(Position) -> Position,
     ) -> Self {
         Self {
             marker,
             participants,
             click_animation_renderer,
+            position_translator,
         }
     }
 }
@@ -50,9 +54,16 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut geometries = vec![self.marker.draw(renderer, bounds)];
-        geometries.extend(self.participants.draw(renderer, bounds));
+        geometries.extend(
+            self.participants
+                .draw(renderer, bounds, self.position_translator),
+        );
 
-        geometries.push(self.click_animation_renderer.draw(renderer, bounds));
+        geometries.push(self.click_animation_renderer.draw(
+            renderer,
+            bounds,
+            self.position_translator,
+        ));
 
         geometries
     }
@@ -72,11 +83,13 @@ impl OverlaySurface {
         &'a mut self,
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
+        position_translator: &'a dyn Fn(Position) -> Position,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
         canvas(OverlaySurfaceCanvas::new(
             &self.marker,
             participants,
             click_animation_renderer,
+            position_translator,
         ))
         .width(Length::Fill)
         .height(Length::Fill)
