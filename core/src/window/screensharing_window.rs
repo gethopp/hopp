@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant as StdInstant};
 
-use iced::widget::{column, container, row, shader, stack, text, Space};
+use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
 };
@@ -144,6 +144,33 @@ impl Default for ScreensharingState {
             last_stream_width: 0,
             last_stream_height: 0,
         }
+    }
+}
+
+/// Canvas overlay that draws remote participant cursors and drawing strokes
+/// on top of the video content.
+struct ParticipantOverlay<'a> {
+    participants: &'a ParticipantsManager,
+}
+
+impl<'a, Message> canvas::Program<Message> for ParticipantOverlay<'a> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let translate = |pos: Position| -> Position {
+            Position {
+                x: pos.x * bounds.width as f64,
+                y: pos.y * bounds.height as f64,
+            }
+        };
+        self.participants.draw(renderer, bounds, &translate)
     }
 }
 
@@ -278,6 +305,7 @@ impl ScreensharingWindow {
     pub fn new(
         event_loop: &ActiveEventLoop,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
+        participant_sid: Option<String>,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
@@ -462,6 +490,13 @@ impl ScreensharingWindow {
             (pointer, pencil)
         };
 
+        let mut participants_manager = ParticipantsManager::new();
+        if let Some(sid) = participant_sid {
+            if let Err(e) = participants_manager.add_participant(sid.clone(), &sid, true) {
+                log::warn!("ScreensharingWindow::new: failed to add participant {sid}: {e:?}");
+            }
+        }
+
         let s = Self {
             window,
             surface,
@@ -478,7 +513,7 @@ impl ScreensharingWindow {
             state: ScreensharingState::default(),
             mouse_in_participant_area: false,
             screen_share_buffer,
-            participants_manager: ParticipantsManager::new(),
+            participants_manager,
             last_redraw: StdInstant::now(),
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
@@ -805,7 +840,11 @@ impl ScreensharingWindow {
 
             let cache = self.cache.take().unwrap_or_default();
             let mut interface = UserInterface::build(
-                Self::view(&self.state, &self.screen_share_buffer),
+                Self::view(
+                    &self.state,
+                    &self.screen_share_buffer,
+                    &self.participants_manager,
+                ),
                 self.viewport.logical_size(),
                 cache,
                 &mut self.renderer,
@@ -930,6 +969,7 @@ impl ScreensharingWindow {
     fn view<'a>(
         state: &'a ScreensharingState,
         screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
+        participants: &'a ParticipantsManager,
     ) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
         // ── Name label (left of header, after traffic lights) ───────────
         let name_label = container(
@@ -1011,8 +1051,16 @@ impl ScreensharingWindow {
                     .into()
             };
 
+        let canvas_overlay: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
+            canvas(ParticipantOverlay { participants })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+
+        let layered_content = stack![video_content, canvas_overlay];
+
         let content_area = container(
-            container(video_content)
+            container(layered_content)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme: &Theme| container::Style {
@@ -1143,7 +1191,11 @@ impl ScreensharingWindow {
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.state, &self.screen_share_buffer),
+            Self::view(
+                &self.state,
+                &self.screen_share_buffer,
+                &self.participants_manager,
+            ),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,

@@ -1402,12 +1402,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: OpenScreensharing");
                 // For the sharer's local screensharing UI, create a dummy buffer
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
-                match ScreensharingWindow::new(event_loop, buffer) {
+                match ScreensharingWindow::new(event_loop, buffer, None) {
                     Ok(win) => self.screensharing_window = Some(win),
                     Err(e) => log::error!("Failed to open screensharing window: {e:?}"),
                 }
             }
-            UserEvent::OpenScreenShareWindow => {
+            UserEvent::OpenScreenShareWindow(participant_sid) => {
                 log::info!("user_event: OpenScreenShareWindow");
                 if self.screensharing_window.is_some() {
                     log::info!("user_event: Screensharing window already exists, skipping");
@@ -1417,7 +1417,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_ref() {
                     if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
-                        match ScreensharingWindow::new(event_loop, screen_share_buffer) {
+                        match ScreensharingWindow::new(
+                            event_loop,
+                            screen_share_buffer,
+                            participant_sid,
+                        ) {
                             Ok(win) => self.screensharing_window = Some(win),
                             Err(e) => log::error!("Failed to open screen share window: {e:?}"),
                         }
@@ -1466,12 +1470,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .set_controllers_enabled(false);
                     remote_control.keyboard_controller.set_enabled(false);
 
-                    remote_control.gfx.set_drawing_mode(
-                        "local",
-                        room_service::DrawingMode::Draw(room_service::DrawSettings {
-                            permanent: drawing_enabled.permanent,
-                        }),
-                    );
+                    let draw_mode = room_service::DrawingMode::Draw(room_service::DrawSettings {
+                        permanent: drawing_enabled.permanent,
+                    });
+                    remote_control
+                        .gfx
+                        .set_drawing_mode("local", draw_mode.clone());
+
+                    if let Some(room_service) = &self.room_service {
+                        room_service.publish_drawing_mode(draw_mode);
+                    }
 
                     log::info!(
                         "Local drawing mode enabled (permanent: {})",
@@ -1515,6 +1523,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     remote_control
                         .gfx
                         .set_drawing_mode("local", room_service::DrawingMode::Disabled);
+
+                    if let Some(room_service) = &self.room_service {
+                        room_service.publish_drawing_mode(room_service::DrawingMode::Disabled);
+                    }
 
                     log::info!("Local drawing mode disabled");
 
@@ -1868,7 +1880,7 @@ pub enum UserEvent {
     ToggleCamera,
     OpenCamera,
     OpenScreensharing,
-    OpenScreenShareWindow,
+    OpenScreenShareWindow(Option<String>),
     CloseScreenShareWindow,
 }
 
@@ -1958,7 +1970,7 @@ impl RenderEventLoop {
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
-                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow,
+                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow(None),
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {

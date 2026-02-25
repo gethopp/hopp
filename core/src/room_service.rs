@@ -69,6 +69,7 @@ enum RoomServiceCommand {
     PublishDrawEnd(ClientPoint),
     PublishDrawClearPaths(Vec<u64>),
     PublishDrawClearAllPaths,
+    PublishDrawingMode(DrawingMode),
     PublishAudioTrack {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
@@ -438,6 +439,16 @@ impl RoomService {
             .send(RoomServiceCommand::PublishDrawClearAllPaths);
         if let Err(e) = res {
             log::error!("publish_draw_clear_all_paths: Error sending command: {e:?}");
+        }
+    }
+
+    pub fn publish_drawing_mode(&self, mode: DrawingMode) {
+        log::debug!("publish_drawing_mode: {:?}", mode);
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishDrawingMode(mode));
+        if let Err(e) = res {
+            log::error!("publish_drawing_mode: Error sending command: {e:?}");
         }
     }
 
@@ -1237,6 +1248,29 @@ async fn room_service_commands(
                     log::error!(
                         "room_service_commands: Failed to publish draw clear all paths: {e:?}"
                     );
+                }
+            }
+            RoomServiceCommand::PublishDrawingMode(mode) => {
+                let room = inner.room.lock().await;
+                if room.is_none() {
+                    log::warn!("room_service_commands: Room doesn't exist");
+                    continue;
+                }
+                let room = room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+                let event = ClientEvent::DrawingMode(mode);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_DRAW.to_string()),
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish drawing mode: {e:?}");
                 }
             }
             RoomServiceCommand::PublishAudioTrack {
@@ -2177,9 +2211,9 @@ async fn handle_room_events(
                                 format!("screenshare_{}", participant_sid),
                             ));
 
-                            if let Err(e) =
-                                event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow)
-                            {
+                            if let Err(e) = event_loop_proxy.send_event(
+                                UserEvent::OpenScreenShareWindow(Some(participant_sid.to_string())),
+                            ) {
                                 log::error!(
                                         "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
                                     );
