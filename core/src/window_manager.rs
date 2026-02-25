@@ -60,7 +60,6 @@ impl From<WindowManagerError> for ServerError {
 struct WindowEntry {
     window: Arc<Window>,
     monitor_id: MonitorId,
-    position: LogicalPosition<f64>,
 }
 
 pub struct WindowManager {
@@ -119,11 +118,7 @@ impl WindowManager {
 
         let monitor_id = ScreenshareFunctions::get_monitor_id(monitor);
 
-        Ok(WindowEntry {
-            window,
-            monitor_id,
-            position,
-        })
+        Ok(WindowEntry { window, monitor_id })
     }
 
     pub fn show_window(
@@ -192,18 +187,18 @@ impl WindowManager {
         for monitor in &monitors {
             log::info!("WindowManager::update: monitor {:?}", monitor);
         }
-        for window in &self.windows {
+        for entry in &self.windows {
             log::info!(
                 "WindowManager::update: window for monitor id {:?} with position {:?}",
-                window.monitor_id,
-                window.window.outer_position(),
+                entry.monitor_id,
+                entry.window.outer_position(),
             );
         }
 
         let mut matched_monitor_indices: Vec<usize> = Vec::new();
         let mut active_monitor_id_found = false;
 
-        self.windows.retain_mut(|entry| {
+        self.windows.retain(|entry| {
             if let Some(monitor_idx) = monitors
                 .iter()
                 .position(|m| ScreenshareFunctions::get_monitor_id(m) == entry.monitor_id)
@@ -211,17 +206,21 @@ impl WindowManager {
                 matched_monitor_indices.push(monitor_idx);
                 let monitor = &monitors[monitor_idx];
 
-                // Reposition only if the monitor position has changed
-                let new_position = get_window_position_for_monitor(monitor);
-                if entry.position != new_position {
+                // Reposition if the window's actual position doesn't match expected.
+                let expected_position = get_window_position_for_monitor(monitor);
+                let actual_position: LogicalPosition<f64> = entry
+                    .window
+                    .outer_position()
+                    .unwrap_or_default()
+                    .to_logical(monitor.scale_factor());
+                if actual_position != expected_position {
                     log::info!(
                         "WindowManager::update: repositioning window for monitor {:?} from {:?} to {:?}",
                         entry.monitor_id,
-                        entry.position,
-                        new_position
+                        actual_position,
+                        expected_position
                     );
-                    entry.window.set_outer_position(new_position);
-                    entry.position = new_position;
+                    entry.window.set_outer_position(expected_position);
 
                     // Re-apply fullscreen if this is the active window and position changed
                     if self.active_monitor_id.as_ref() == Some(&entry.monitor_id) {
