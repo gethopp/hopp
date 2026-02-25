@@ -58,7 +58,7 @@ enum RoomServiceCommand {
         height: u32,
         use_av1: bool,
     },
-    PublishSharerLocation(f64, f64, bool),
+    PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
     TickResponse(u128),
@@ -321,7 +321,7 @@ impl RoomService {
         buffer_source.expect("get_buffer_source: Buffer source not found (this shouldn't happen)")
     }
 
-    /// Publishes the sharer's cursor location to the room.
+    /// Publishes the sharer's cursor position to the room.
     ///
     /// This function sends the current cursor position of the person sharing their screen
     /// to all participants in the LiveKit room. The data is sent reliably using the
@@ -332,13 +332,13 @@ impl RoomService {
     /// * `x` - The x-coordinate of the cursor position
     /// * `y` - The y-coordinate of the cursor position
     /// * `pointer` - Whether the pointer is visible (currently unused in the implementation)
-    pub fn publish_sharer_location(&self, x: f64, y: f64, pointer: bool) {
-        log::debug!("publish_sharer_location: {x:?}, {y:?}, {pointer:?}");
+    pub fn publish_cursor_position(&self, x: f64, y: f64, pointer: bool) {
+        log::debug!("publish_cursor_position: {x:?}, {y:?}, {pointer:?}");
         let res = self
             .service_command_tx
-            .send(RoomServiceCommand::PublishSharerLocation(x, y, pointer));
+            .send(RoomServiceCommand::PublishCursorPosition(x, y, pointer));
         if let Err(e) = res {
-            log::error!("publish_sharer_location: Failed to send command: {e:?}");
+            log::error!("publish_cursor_position: Failed to send command: {e:?}");
         }
     }
 
@@ -365,7 +365,7 @@ impl RoomService {
             .service_command_tx
             .send(RoomServiceCommand::TickResponse(time));
         if let Err(e) = res {
-            log::error!("publish_sharer_location: Failed to send command: {e:?}");
+            log::error!("tick_response: Failed to send command: {e:?}");
         }
     }
 
@@ -744,7 +744,7 @@ fn build_participants_snapshot(
 /// * `DestroyRoom` - Closes the current room connection and cleans up associated
 ///   resources including the buffer source.
 ///
-/// * `PublishSharerLocation` - Publishes sharer cursor position data to the room
+/// * `PublishCursorPosition` - Publishes cursor position data to the room
 ///   with topic "sharer_location".
 ///
 /// * `PublishControllerCursorEnabled` - Publishes remote control enable/disable
@@ -973,7 +973,7 @@ async fn room_service_commands(
                         .take();
                 }
             }
-            RoomServiceCommand::PublishSharerLocation(x, y, _pointer) => {
+            RoomServiceCommand::PublishCursorPosition(x, y, _pointer) => {
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
                     log::warn!("room_service_commands: Room doesn't exist");
@@ -991,10 +991,10 @@ async fn room_service_commands(
                     })
                     .await;
                 if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to publish sharer location: {e:?}");
+                    log::error!("room_service_commands: Failed to publish cursor position: {e:?}");
                 }
                 log::debug!(
-                    "Published sharer location with x: {x:?}, y: {y:?} to topic: {TOPIC_SHARER_LOCATION:?}"
+                    "Published cursor position with x: {x:?}, y: {y:?} to topic: {TOPIC_SHARER_LOCATION:?}"
                 );
             }
             RoomServiceCommand::PublishControllerCursorEnabled(enabled) => {
@@ -1050,7 +1050,6 @@ async fn room_service_commands(
                     continue;
                 }
                 let room = room.as_ref().unwrap();
-                let mut any_new = false;
                 for participant in room.remote_participants() {
                     let remote_participant = participant.1;
                     let sid = remote_participant.sid().as_str().to_string();
@@ -1059,27 +1058,21 @@ async fn room_service_commands(
 
                     log::info!("room_service_commands: Participant: {}", sid);
 
-                    // Check if already in HashMap
+                    // Insert into HashMap only if not already present
                     {
-                        let participants = inner.participants.read().unwrap();
-                        if participants.contains_key(&sid) {
-                            continue;
+                        let already_exists = inner.participants.read().unwrap().contains_key(&sid);
+                        if !already_exists {
+                            let mut participants = inner.participants.write().unwrap();
+                            let new_participant =
+                                ParticipantInfo::from_remote_participant(&remote_participant);
+                            log::info!(
+                                "room_service_commands: participant to be added {:?}",
+                                new_participant
+                            );
+                            participants.insert(sid.clone(), new_participant);
                         }
                     }
 
-                    // Insert into HashMap
-                    {
-                        let mut participants = inner.participants.write().unwrap();
-                        let new_participant =
-                            ParticipantInfo::from_remote_participant(&remote_participant);
-                        log::info!(
-                            "room_service_commands: participant to be added {:?}",
-                            new_participant
-                        );
-                        participants.insert(sid.clone(), new_participant);
-                    }
-
-                    any_new = true;
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantConnected(
                         ParticipantData {
                             name,
@@ -1093,15 +1086,13 @@ async fn room_service_commands(
                     }
                 }
 
-                if any_new {
-                    let snapshot = build_participants_snapshot(&inner.participants);
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                    {
-                        log::error!(
-                            "room_service_commands: Failed to send participants snapshot: {e:?}"
-                        );
-                    }
+                let snapshot = build_participants_snapshot(&inner.participants);
+                if let Err(e) =
+                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                {
+                    log::error!(
+                        "room_service_commands: Failed to send participants snapshot: {e:?}"
+                    );
                 }
             }
             RoomServiceCommand::PublishParticipantInControl(participant) => {

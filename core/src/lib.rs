@@ -78,6 +78,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 
+use window::screensharing_window::{ScreenShareInputEvent, ScreenShareTab};
+
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
 
@@ -920,7 +922,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.room_service
                     .as_ref()
                     .unwrap()
-                    .publish_sharer_location(x, y, true);
+                    .publish_cursor_position(x, y, true);
             }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
@@ -1572,22 +1574,58 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(event) = input_event {
                     if let Some(rs) = &self.room_service {
                         match event {
-                            window::screensharing_window::ScreenShareInputEvent::CursorMoved {
-                                x,
-                                y,
-                            } => {
-                                rs.publish_sharer_location(x, y, true);
+                            ScreenShareInputEvent::CursorMoved { x, y } => {
+                                rs.publish_cursor_position(x, y, true);
                             }
-                            window::screensharing_window::ScreenShareInputEvent::MouseClick(
-                                data,
-                            ) => {
+                            ScreenShareInputEvent::MouseClick(data) => {
                                 rs.publish_mouse_click(data);
                             }
-                            window::screensharing_window::ScreenShareInputEvent::Scroll(data) => {
+                            ScreenShareInputEvent::Scroll(data) => {
                                 rs.publish_wheel_event(data);
                             }
-                            window::screensharing_window::ScreenShareInputEvent::KeyInput(data) => {
+                            ScreenShareInputEvent::KeyInput(data) => {
                                 rs.publish_keystroke(data);
+                            }
+                            ScreenShareInputEvent::DrawStart { x, y, path_id } => {
+                                rs.publish_draw_start(crate::room_service::DrawPathPoint {
+                                    point: crate::room_service::ClientPoint { x, y },
+                                    path_id,
+                                });
+                            }
+                            ScreenShareInputEvent::DrawAddPoint { x, y } => {
+                                rs.publish_draw_add_point(crate::room_service::ClientPoint {
+                                    x,
+                                    y,
+                                });
+                            }
+                            ScreenShareInputEvent::DrawEnd { x, y } => {
+                                rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
+                            }
+                            ScreenShareInputEvent::DrawClearAllPaths => {
+                                rs.publish_draw_clear_all_paths();
+                            }
+                            ScreenShareInputEvent::DrawClearPaths(ids) => {
+                                rs.publish_draw_clear_paths(ids);
+                            }
+                            ScreenShareInputEvent::ClickAnimation { x, y } => {
+                                rs.publish_click_animation(crate::room_service::ClientPoint {
+                                    x,
+                                    y,
+                                });
+                            }
+                            ScreenShareInputEvent::TabChanged(tab) => {
+                                let mode = match tab {
+                                    ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
+                                        crate::room_service::DrawSettings { permanent: false },
+                                    ),
+                                    ScreenShareTab::Point => {
+                                        crate::room_service::DrawingMode::ClickAnimation
+                                    }
+                                    ScreenShareTab::Control => {
+                                        crate::room_service::DrawingMode::Disabled
+                                    }
+                                };
+                                rs.publish_drawing_mode(mode);
                             }
                         }
                     }
