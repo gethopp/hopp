@@ -705,16 +705,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         match event {
             UserEvent::CursorPosition(x, y, sid) => {
                 log::debug!("user_event: cursor position: {x} {y} {sid}");
-                if self.remote_control.is_none() {
-                    log::debug!("user_event: remote control is none cursor position");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.cursor_controller.cursor_move_controller(
+                        x as f64,
+                        y as f64,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.cursor_controller.cursor_move_controller(
-                    x as f64,
-                    y as f64,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_cursor_position(
+                        sid.as_str(),
+                        Some(Position {
+                            x: x as f64,
+                            y: y as f64,
+                        }),
+                    );
+                    screensharing_window.request_redraw();
+                }
             }
             UserEvent::MouseClick(data, sid) => {
                 log::debug!("user_event: mouse click: {data:?} {sid}");
@@ -926,41 +933,49 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
 
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant connected");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let sid = participant.sid.clone();
-                let name = participant.name.clone();
+                if let Some(remote_control) = &mut self.remote_control {
+                    let sid = participant.sid.clone();
+                    let name = participant.name.clone();
 
-                // Add participant to draw manager first (assigns color)
-                if let Err(e) = remote_control
-                    .gfx
-                    .add_participant(sid.clone(), &name, false)
-                {
-                    log::error!("Failed to create cursor for participant {sid}: {e}");
-                    return;
+                    // Add participant to draw manager first (assigns color)
+                    if let Err(e) = remote_control
+                        .gfx
+                        .add_participant(sid.clone(), &name, false)
+                    {
+                        log::error!("Failed to create cursor for participant {sid}: {e}");
+                    } else {
+                        // Then add to cursor controller for state tracking
+                        remote_control.cursor_controller.add_controller(sid);
+                    }
                 }
 
-                // Then add to cursor controller for state tracking
-                remote_control.cursor_controller.add_controller(sid);
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    if let Err(e) = screensharing_window.add_participant(
+                        participant.sid.clone(),
+                        &participant.name,
+                        false,
+                    ) {
+                        log::error!(
+                            "user_event: failed to add participant to screensharing window: {e:?}"
+                        );
+                    }
+                }
             }
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
 
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant disconnected");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control
+                        .cursor_controller
+                        .remove_controller(participant.sid.as_str());
+                    // Remove participant from draw manager
+                    remote_control
+                        .gfx
+                        .remove_participant(participant.sid.as_str());
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .remove_controller(participant.sid.as_str());
-                // Remove participant from draw manager
-                remote_control
-                    .gfx
-                    .remove_participant(participant.sid.as_str());
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.remove_participant(participant.sid.as_str());
+                }
             }
             UserEvent::ParticipantsSnapshot(snapshot) => {
                 log::debug!("user_event: Participants snapshot: {snapshot:?}");
@@ -1048,107 +1063,103 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none drawing mode");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                match &drawing_mode {
-                    DrawingMode::Disabled => {
-                        remote_control
-                            .cursor_controller
-                            .set_controller_pointer(false, sid.as_str());
+                if let Some(remote_control) = &mut self.remote_control {
+                    match &drawing_mode {
+                        DrawingMode::Disabled => {
+                            remote_control
+                                .cursor_controller
+                                .set_controller_pointer(false, sid.as_str());
+                        }
+                        _ => {
+                            remote_control
+                                .cursor_controller
+                                .set_controller_pointer(true, sid.as_str());
+                        }
                     }
-                    _ => {
-                        remote_control
-                            .cursor_controller
-                            .set_controller_pointer(true, sid.as_str());
-                    }
+                    remote_control
+                        .gfx
+                        .set_drawing_mode(sid.as_str(), drawing_mode.clone());
                 }
-                remote_control
-                    .gfx
-                    .set_drawing_mode(sid.as_str(), drawing_mode);
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
                 log::debug!("user_event: DrawStart: {:?} {} {}", point, path_id, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw start");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_start(sid.as_str(), pos, path_id);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_start(
-                    sid.as_str(),
-                    Position {
-                        x: point.x,
-                        y: point.y,
-                    },
-                    path_id,
-                );
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_start(sid.as_str(), pos, path_id);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawAddPoint(point, sid) => {
                 log::debug!("user_event: DrawAddPoint: {:?} {}", point, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw add point");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_add_point(sid.as_str(), pos);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_add_point(
-                    sid.as_str(),
-                    Position {
-                        x: point.x,
-                        y: point.y,
-                    },
-                );
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_add_point(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawEnd(point, sid) => {
                 log::debug!("user_event: DrawEnd: {:?} {}", point, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw end");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_end(sid.as_str(), pos);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_end(
-                    sid.as_str(),
-                    Position {
-                        x: point.x,
-                        y: point.y,
-                    },
-                );
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_end(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawClearPath(path_id, sid) => {
                 log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw clear path");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+                    remote_control.gfx.trigger_render();
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
-                remote_control.gfx.trigger_render();
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                }
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw clear all paths");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_clear_all_paths(sid.as_str());
+                    remote_control.gfx.trigger_render();
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_all_paths(sid.as_str());
-                remote_control.gfx.trigger_render();
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_clear_all_paths(sid.as_str());
+                }
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
                 log::debug!(
@@ -1156,17 +1167,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point,
                     sid
                 );
-                if self.remote_control.is_none() {
-                    log::warn!(
-                        "user_event: remote control is none click animation from participant"
-                    );
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.trigger_click_animation(Position {
+                        x: point.x,
+                        y: point.y,
+                    });
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.trigger_click_animation(Position {
-                    x: point.x,
-                    y: point.y,
-                });
+                // TODO: Add click animation support to screensharing window when rendering is implemented
             }
             UserEvent::ListAudioDevices => {
                 log::debug!("user_event: ListAudioDevices");

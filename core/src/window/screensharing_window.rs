@@ -43,7 +43,9 @@ use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
 };
+use crate::graphics::graphics_context::participant::{ParticipantError, ParticipantsManager};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
+use crate::utils::geometry::Position;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
@@ -256,6 +258,7 @@ pub struct ScreensharingWindow {
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
+    participants_manager: ParticipantsManager,
     last_redraw: StdInstant,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
@@ -475,6 +478,7 @@ impl ScreensharingWindow {
             state: ScreensharingState::default(),
             mouse_in_participant_area: false,
             screen_share_buffer,
+            participants_manager: ParticipantsManager::new(),
             last_redraw: StdInstant::now(),
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
@@ -496,6 +500,52 @@ impl ScreensharingWindow {
 
     pub fn request_redraw(&self) {
         self.window.request_redraw();
+    }
+
+    pub fn add_participant(
+        &mut self,
+        sid: String,
+        name: &str,
+        auto_clear: bool,
+    ) -> Result<(), ParticipantError> {
+        self.participants_manager
+            .add_participant(sid, name, auto_clear)
+    }
+
+    pub fn remove_participant(&mut self, sid: &str) {
+        self.participants_manager.remove_participant(sid);
+    }
+
+    pub fn set_cursor_position(&mut self, sid: &str, position: Option<Position>) {
+        self.participants_manager.set_cursor_position(sid, position);
+    }
+
+    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+        self.participants_manager.draw_start(sid, point, path_id);
+    }
+
+    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+        self.participants_manager.draw_add_point(sid, point);
+    }
+
+    pub fn draw_end(&mut self, sid: &str, point: Position) {
+        self.participants_manager.draw_end(sid, point);
+    }
+
+    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+        self.participants_manager.draw_clear_path(sid, path_id);
+    }
+
+    pub fn draw_clear_all_paths(&mut self, sid: &str) {
+        self.participants_manager.draw_clear_all_paths(sid);
+    }
+
+    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
+        self.participants_manager.set_drawing_mode(sid, mode);
+    }
+
+    pub fn update_auto_clear(&mut self) -> Vec<u64> {
+        self.participants_manager.update_auto_clear()
     }
 
     /// Returns the instant when the next redraw should occur.
