@@ -906,6 +906,8 @@ impl ScreensharingWindow {
                         Key::Character(s) => s.to_string(),
                         // For named keys (Enter, Tab, Escape, etc.), use the Debug format
                         // which produces strings like "Enter", "Tab", "ArrowLeft", etc.
+                        // Space is a named key but maps to the actual space character in the keymap.
+                        Key::Named(winit::keyboard::NamedKey::Space) => " ".to_string(),
                         Key::Named(named) => format!("{:?}", named),
                         // For dead keys, use the character if available, otherwise "Dead"
                         Key::Dead(ch) => {
