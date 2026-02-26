@@ -901,6 +901,7 @@ impl ScreensharingWindow {
                     // Extract key string to match the format expected by keyboard.rs.
                     // We need strings like "Enter", "Tab", "a", "A", etc., not control characters.
                     use winit::keyboard::Key;
+                    let mut meta = self.modifiers.super_key();
                     let key_str = match &key_event.logical_key {
                         // For character keys, use the character directly
                         Key::Character(s) => s.to_string(),
@@ -908,6 +909,10 @@ impl ScreensharingWindow {
                         // which produces strings like "Enter", "Tab", "ArrowLeft", etc.
                         // Space is a named key but maps to the actual space character in the keymap.
                         Key::Named(winit::keyboard::NamedKey::Space) => " ".to_string(),
+                        Key::Named(winit::keyboard::NamedKey::Super) => {
+                            meta = true;
+                            "Meta".to_string()
+                        }
                         Key::Named(named) => format!("{:?}", named),
                         // For dead keys, use the character if available, otherwise "Dead"
                         Key::Dead(ch) => {
@@ -925,7 +930,7 @@ impl ScreensharingWindow {
                     input_event = Some(ScreenShareInputEvent::KeyInput(
                         crate::room_service::KeystrokeData {
                             key: vec![key_str.clone()],
-                            meta: self.modifiers.super_key(),
+                            meta,
                             ctrl: self.modifiers.control_key(),
                             shift: self.modifiers.shift_key(),
                             alt: self.modifiers.alt_key(),
