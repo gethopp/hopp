@@ -62,6 +62,8 @@ const HEADER_RIGHT_PADDING: f32 = 4.0;
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
+/// SID used for the local participant's drawing/cursor state.
+const LOCAL_PARTICIPANT_SID: &str = "local";
 
 const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
 
@@ -310,8 +312,6 @@ pub struct ScreensharingWindow {
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     participants_manager: ParticipantsManager,
     last_redraw: StdInstant,
-    /// SID of the local participant (sharer), for updating local drawing state.
-    local_participant_sid: Option<String>,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
@@ -516,15 +516,22 @@ impl ScreensharingWindow {
         };
 
         let mut participants_manager = ParticipantsManager::new();
-        let local_participant_sid = if let Some(sid) = &participant_sid {
-            if let Err(e) = participants_manager.add_participant(sid.clone(), sid, true) {
-                log::warn!("ScreensharingWindow::new: failed to add participant {sid}: {e:?}");
+        // Add the sharer as a participant (no connected event will fire for them).
+        if let Some(sid) = &participant_sid {
+            if let Err(e) = participants_manager.add_participant(sid.clone(), sid, false) {
+                log::warn!(
+                    "ScreensharingWindow::new: failed to add sharer participant {sid}: {e:?}"
+                );
             }
-            Some(sid.clone())
-        } else {
-            None
-        };
-
+        }
+        // Always add a local participant for the controller's own drawing/cursor state.
+        if let Err(e) = participants_manager.add_participant(
+            LOCAL_PARTICIPANT_SID.to_string(),
+            LOCAL_PARTICIPANT_SID,
+            true,
+        ) {
+            log::warn!("ScreensharingWindow::new: failed to add local participant: {e:?}");
+        }
         let s = Self {
             window,
             surface,
@@ -543,7 +550,6 @@ impl ScreensharingWindow {
             screen_share_buffer,
             participants_manager,
             last_redraw: StdInstant::now(),
-            local_participant_sid,
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
@@ -690,12 +696,10 @@ impl ScreensharingWindow {
                     self.state.last_draw_cursor = Some((pct_x, pct_y));
 
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
-                        if let Some(sid) = self.local_participant_sid.clone() {
-                            self.participants_manager.draw_add_point(
-                                &sid,
-                                crate::utils::geometry::Position { x: pct_x, y: pct_y },
-                            );
-                        }
+                        self.participants_manager.draw_add_point(
+                            LOCAL_PARTICIPANT_SID,
+                            crate::utils::geometry::Position { x: pct_x, y: pct_y },
+                        );
                         input_event =
                             Some(ScreenShareInputEvent::DrawAddPoint { x: pct_x, y: pct_y });
                     } else {
@@ -713,12 +717,10 @@ impl ScreensharingWindow {
                 } else if !inside && was_inside {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
-                            if let Some(sid) = self.local_participant_sid.clone() {
-                                self.participants_manager.draw_end(
-                                    &sid,
-                                    crate::utils::geometry::Position { x: lx, y: ly },
-                                );
-                            }
+                            self.participants_manager.draw_end(
+                                LOCAL_PARTICIPANT_SID,
+                                crate::utils::geometry::Position { x: lx, y: ly },
+                            );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
@@ -733,12 +735,10 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
-                            if let Some(sid) = self.local_participant_sid.clone() {
-                                self.participants_manager.draw_end(
-                                    &sid,
-                                    crate::utils::geometry::Position { x: lx, y: ly },
-                                );
-                            }
+                            self.participants_manager.draw_end(
+                                LOCAL_PARTICIPANT_SID,
+                                crate::utils::geometry::Position { x: lx, y: ly },
+                            );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
@@ -755,12 +755,10 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
-                            if let Some(sid) = self.local_participant_sid.clone() {
-                                self.participants_manager.draw_end(
-                                    &sid,
-                                    crate::utils::geometry::Position { x: lx, y: ly },
-                                );
-                            }
+                            self.participants_manager.draw_end(
+                                LOCAL_PARTICIPANT_SID,
+                                crate::utils::geometry::Position { x: lx, y: ly },
+                            );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
@@ -791,13 +789,11 @@ impl ScreensharingWindow {
                                 if down {
                                     self.state.current_path_id += 1;
                                     self.state.left_mouse_pressed = true;
-                                    if let Some(sid) = self.local_participant_sid.clone() {
-                                        self.participants_manager.draw_start(
-                                            &sid,
-                                            crate::utils::geometry::Position { x: pct_x, y: pct_y },
-                                            self.state.current_path_id,
-                                        );
-                                    }
+                                    self.participants_manager.draw_start(
+                                        LOCAL_PARTICIPANT_SID,
+                                        crate::utils::geometry::Position { x: pct_x, y: pct_y },
+                                        self.state.current_path_id,
+                                    );
                                     input_event = Some(ScreenShareInputEvent::DrawStart {
                                         x: pct_x,
                                         y: pct_y,
@@ -805,21 +801,18 @@ impl ScreensharingWindow {
                                     });
                                 } else {
                                     self.state.left_mouse_pressed = false;
-                                    if let Some(sid) = self.local_participant_sid.clone() {
-                                        self.participants_manager.draw_end(
-                                            &sid,
-                                            crate::utils::geometry::Position { x: pct_x, y: pct_y },
-                                        );
-                                    }
+                                    self.participants_manager.draw_end(
+                                        LOCAL_PARTICIPANT_SID,
+                                        crate::utils::geometry::Position { x: pct_x, y: pct_y },
+                                    );
                                     input_event =
                                         Some(ScreenShareInputEvent::DrawEnd { x: pct_x, y: pct_y });
                                 }
                             }
                             winit::event::MouseButton::Right => {
                                 if down {
-                                    if let Some(sid) = self.local_participant_sid.clone() {
-                                        self.participants_manager.draw_clear_all_paths(&sid);
-                                    }
+                                    self.participants_manager
+                                        .draw_clear_all_paths(LOCAL_PARTICIPANT_SID);
                                     input_event = Some(ScreenShareInputEvent::DrawClearAllPaths);
                                 }
                             }
@@ -1023,9 +1016,14 @@ impl ScreensharingWindow {
                             }
                             ScreenShareTab::Control => crate::room_service::DrawingMode::Disabled,
                         };
-                        if let Some(sid) = self.local_participant_sid.clone() {
-                            self.participants_manager.set_drawing_mode(&sid, mode);
+                        if mode == crate::room_service::DrawingMode::Disabled
+                            || mode == crate::room_service::DrawingMode::ClickAnimation
+                        {
+                            self.participants_manager
+                                .draw_clear_all_paths(LOCAL_PARTICIPANT_SID);
                         }
+                        self.participants_manager
+                            .set_drawing_mode(LOCAL_PARTICIPANT_SID, mode);
                         self.state.left_mouse_pressed = false;
                         input_event = Some(ScreenShareInputEvent::TabChanged(tab));
                     }

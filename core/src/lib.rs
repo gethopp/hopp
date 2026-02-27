@@ -1625,6 +1625,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                         crate::room_service::DrawingMode::Disabled
                                     }
                                 };
+                                if mode == crate::room_service::DrawingMode::Disabled
+                                    || mode == crate::room_service::DrawingMode::ClickAnimation
+                                {
+                                    rs.publish_draw_clear_all_paths();
+                                }
                                 rs.publish_drawing_mode(mode);
                             }
                         }
