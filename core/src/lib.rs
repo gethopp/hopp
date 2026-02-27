@@ -1203,7 +1203,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         y: point.y,
                     });
                 }
-                // TODO: Add click animation support to screensharing window when rendering is implemented
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.trigger_click_animation(Position {
+                        x: point.x,
+                        y: point.y,
+                    });
+                }
             }
             UserEvent::ListAudioDevices => {
                 log::debug!("user_event: ListAudioDevices");

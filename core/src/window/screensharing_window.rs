@@ -43,8 +43,10 @@ use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
 };
+use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
 use crate::graphics::graphics_context::participant::{ParticipantError, ParticipantsManager};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
+use crate::utils::clock;
 use crate::utils::geometry::Position;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
@@ -176,6 +178,7 @@ impl Default for ScreensharingState {
 /// on top of the video content.
 struct ParticipantOverlay<'a> {
     participants: &'a ParticipantsManager,
+    click_animation_renderer: &'a ClickAnimationRenderer,
 }
 
 impl<'a, Message> canvas::Program<Message> for ParticipantOverlay<'a> {
@@ -195,7 +198,12 @@ impl<'a, Message> canvas::Program<Message> for ParticipantOverlay<'a> {
                 y: pos.y * bounds.height as f64,
             }
         };
-        self.participants.draw(renderer, bounds, &translate)
+        let mut geometries = self.participants.draw(renderer, bounds, &translate);
+        geometries.push(
+            self.click_animation_renderer
+                .draw(renderer, bounds, &translate),
+        );
+        geometries
     }
 }
 
@@ -311,6 +319,7 @@ pub struct ScreensharingWindow {
     mouse_in_participant_area: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     participants_manager: ParticipantsManager,
+    click_animation_renderer: ClickAnimationRenderer,
     last_redraw: StdInstant,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
@@ -549,6 +558,7 @@ impl ScreensharingWindow {
             mouse_in_participant_area: false,
             screen_share_buffer,
             participants_manager,
+            click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
             last_redraw: StdInstant::now(),
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
@@ -616,6 +626,11 @@ impl ScreensharingWindow {
 
     pub fn update_auto_clear(&mut self) -> Vec<u64> {
         self.participants_manager.update_auto_clear()
+    }
+
+    pub fn trigger_click_animation(&mut self, position: Position) {
+        self.click_animation_renderer
+            .enable_click_animation(position);
     }
 
     /// Returns the instant when the next redraw should occur.
@@ -820,6 +835,9 @@ impl ScreensharingWindow {
                         }
                     } else if self.state.active_tab == "point" {
                         if matches!(button, winit::event::MouseButton::Left) && down {
+                            self.click_animation_renderer.enable_click_animation(
+                                crate::utils::geometry::Position { x: pct_x, y: pct_y },
+                            );
                             input_event =
                                 Some(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
                         }
@@ -974,6 +992,7 @@ impl ScreensharingWindow {
                     &self.state,
                     &self.screen_share_buffer,
                     &self.participants_manager,
+                    &self.click_animation_renderer,
                 ),
                 self.viewport.logical_size(),
                 cache,
@@ -1131,6 +1150,7 @@ impl ScreensharingWindow {
         state: &'a ScreensharingState,
         screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
         participants: &'a ParticipantsManager,
+        click_animation_renderer: &'a ClickAnimationRenderer,
     ) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
         // ── Name label (left of header, after traffic lights) ───────────
         let name_label = container(
@@ -1213,10 +1233,13 @@ impl ScreensharingWindow {
             };
 
         let canvas_overlay: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
-            canvas(ParticipantOverlay { participants })
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into();
+            canvas(ParticipantOverlay {
+                participants,
+                click_animation_renderer,
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
 
         let layered_content = stack![video_content, canvas_overlay];
 
@@ -1350,6 +1373,8 @@ impl ScreensharingWindow {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        self.click_animation_renderer.update();
+
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
@@ -1357,6 +1382,7 @@ impl ScreensharingWindow {
                 &self.state,
                 &self.screen_share_buffer,
                 &self.participants_manager,
+                &self.click_animation_renderer,
             ),
             self.viewport.logical_size(),
             cache,
