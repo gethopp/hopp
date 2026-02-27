@@ -1,0 +1,143 @@
+use std::sync::Arc;
+
+use livekit::track::{LocalTrack, TrackSource};
+use livekit::webrtc::stats::RtcStats;
+
+use crate::room_service::RoomServiceInner;
+
+#[derive(Debug, Clone, Default)]
+pub struct RoomStats {
+    pub screenshare_fps: f64,
+    pub screenshare_width: u32,
+    pub screenshare_height: u32,
+    pub screenshare_codec_id: String,
+    pub screenshare_jitter_buffer_delay: f64,
+    pub screenshare_input_bps: f64,
+    pub total_input_bps: f64,
+    pub total_output_bps: f64,
+}
+
+#[derive(Default)]
+struct CumulativeCounters {
+    screenshare_inbound_bytes: u64,
+    total_inbound_bytes: u64,
+    total_outbound_bytes: u64,
+}
+
+pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    let mut prev = CumulativeCounters::default();
+
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+
+        let room_guard = inner.room.lock().await;
+        let Some(room) = room_guard.as_ref() else {
+            continue;
+        };
+
+        let (counters, mut snapshot) = collect_stats(room).await;
+        drop(room_guard);
+
+        if prev.screenshare_inbound_bytes > 0 {
+            snapshot.screenshare_input_bps = (counters
+                .screenshare_inbound_bytes
+                .saturating_sub(prev.screenshare_inbound_bytes)
+                * 8) as f64;
+        }
+        if prev.total_inbound_bytes > 0 {
+            snapshot.total_input_bps = (counters
+                .total_inbound_bytes
+                .saturating_sub(prev.total_inbound_bytes)
+                * 8) as f64;
+        }
+        if prev.total_outbound_bytes > 0 {
+            snapshot.total_output_bps = (counters
+                .total_outbound_bytes
+                .saturating_sub(prev.total_outbound_bytes)
+                * 8) as f64;
+        }
+
+        prev = counters;
+
+        log::debug!(
+            "RoomStats: ss={}x{}@{:.1}fps codec_id={} jitter_buf={:.1}ms ss_in={:.2}Mbps | in={:.2}Mbps out={:.2}Mbps",
+            snapshot.screenshare_width,
+            snapshot.screenshare_height,
+            snapshot.screenshare_fps,
+            snapshot.screenshare_codec_id,
+            snapshot.screenshare_jitter_buffer_delay,
+            snapshot.screenshare_input_bps / 1_000_000.0,
+            snapshot.total_input_bps / 1_000_000.0,
+            snapshot.total_output_bps / 1_000_000.0,
+        );
+
+        if let Ok(mut w) = inner.stats.write() {
+            *w = snapshot;
+        }
+    }
+}
+
+async fn collect_stats(room: &livekit::Room) -> (CumulativeCounters, RoomStats) {
+    let mut counters = CumulativeCounters::default();
+    let mut snapshot = RoomStats::default();
+
+    // Outbound: local video tracks
+    let local = room.local_participant();
+    for (_, publication) in local.track_publications() {
+        let Some(track) = publication.track() else {
+            continue;
+        };
+        let LocalTrack::Video(v) = track else {
+            continue;
+        };
+        if let Ok(stats_vec) = v.get_stats().await {
+            for stat in &stats_vec {
+                if let RtcStats::OutboundRtp(s) = stat {
+                    counters.total_outbound_bytes += s.sent.bytes_sent;
+                }
+            }
+        }
+    }
+
+    // Inbound: remote video tracks
+    for (_, participant) in room.remote_participants() {
+        for (_, publication) in participant.track_publications() {
+            let Some(track) = publication.track() else {
+                continue;
+            };
+            let livekit::track::RemoteTrack::Video(v) = track else {
+                continue;
+            };
+            let Ok(stats_vec) = v.get_stats().await else {
+                continue;
+            };
+            let is_screenshare = publication.source() == TrackSource::Screenshare;
+
+            for stat in &stats_vec {
+                if let RtcStats::InboundRtp(s) = stat {
+                    if s.stream.kind != "video" {
+                        continue;
+                    }
+                    // NOTE: bytes_received is on .inbound, NOT .received
+                    counters.total_inbound_bytes += s.inbound.bytes_received;
+                    if is_screenshare {
+                        counters.screenshare_inbound_bytes += s.inbound.bytes_received;
+                        snapshot.screenshare_fps = s.inbound.frames_per_second;
+                        snapshot.screenshare_width = s.inbound.frame_width;
+                        snapshot.screenshare_height = s.inbound.frame_height;
+                        snapshot.screenshare_jitter_buffer_delay = (s.inbound.jitter_buffer_delay
+                            as f64)
+                            / (s.inbound.jitter_buffer_emitted_count as f64)
+                            * 1000.;
+                        snapshot.screenshare_codec_id = s.stream.codec_id.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    (counters, snapshot)
+}

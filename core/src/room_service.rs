@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
+use livekit::participant::ConnectionQuality;
 use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
-use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
@@ -118,14 +118,16 @@ struct RemoteScreenShare {
  * from a thread in the async runtime.
  */
 #[derive(Debug)]
-struct RoomServiceInner {
+pub(crate) struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
-    room: Mutex<Option<Room>>,
+    pub(crate) room: Mutex<Option<Room>>,
     buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
+    pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
+    connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
@@ -185,6 +187,8 @@ impl RoomService {
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
                 publisher_sid: Arc::new(std::sync::Mutex::new(None)),
             },
+            stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
+            connection_quality: Arc::new(std::sync::Mutex::new(None)),
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -202,6 +206,14 @@ impl RoomService {
             service_command_res_rx,
             inner,
         })
+    }
+
+    pub fn stats(&self) -> crate::livekit::stats::RoomStats {
+        self.inner.stats.read().unwrap().clone()
+    }
+
+    pub fn connection_quality(&self) -> Option<ConnectionQuality> {
+        *self.inner.connection_quality.lock().unwrap()
     }
 
     /// Creates a room, this will block until the room is created.
@@ -812,12 +824,12 @@ async fn room_service_commands(
                     }
                 };
 
-                if cfg!(debug_assertions) {
-                    if let Some(task) = stats_task.take() {
-                        task.abort();
-                    }
-                    stats_task = Some(tokio::spawn(stats_loop(inner.clone())));
+                if let Some(task) = stats_task.take() {
+                    task.abort();
                 }
+                stats_task = Some(tokio::spawn(crate::livekit::stats::stats_loop(
+                    inner.clone(),
+                )));
 
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 let user_identity = room.local_participant().identity().as_str().to_string();
@@ -844,6 +856,7 @@ async fn room_service_commands(
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
                         publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
                     },
+                    inner.connection_quality.clone(),
                 ));
 
                 let mut inner_room = inner.room.lock().await;
@@ -1823,6 +1836,7 @@ async fn handle_room_events(
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
+    connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -2357,59 +2371,19 @@ async fn handle_room_events(
                 //     }
                 // }
             }
+            RoomEvent::ConnectionQualityChanged {
+                quality,
+                participant,
+            } => {
+                if participant.sid().as_str() == user_sid {
+                    log::info!("Connection quality changed: {:?}", quality);
+                    *connection_quality.lock().unwrap() = Some(quality);
+                }
+            }
             _ => {
                 log::info!("message: {:?}", msg);
             }
         }
     }
     log::info!("handle_room_events: ended")
-}
-
-async fn stats_loop(inner: Arc<RoomServiceInner>) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-    let mut prev_bytes = 0;
-
-    // Initial tick
-    interval.tick().await;
-
-    loop {
-        interval.tick().await;
-        let current_bytes = {
-            let room_guard = inner.room.lock().await;
-            if let Some(room) = room_guard.as_ref() {
-                get_rtc_stats(room).await
-            } else {
-                0
-            }
-        };
-
-        if prev_bytes > 0 && current_bytes > prev_bytes {
-            let bitrate = ((current_bytes - prev_bytes) * 8) / 5; // bits per second
-            log::debug!("WebRTC Bandwidth: {:.2} Mbps", bitrate as f64 / 1_000_000.0);
-        }
-        prev_bytes = current_bytes;
-    }
-}
-
-async fn get_rtc_stats(room: &Room) -> u64 {
-    let mut total_bytes_sent = 0;
-    let local_participant = room.local_participant();
-
-    for (_, publication) in local_participant.track_publications() {
-        let track = publication.track();
-        if track.is_none() {
-            continue;
-        }
-        let track = track.unwrap();
-        if let LocalTrack::Video(track) = track {
-            if let Ok(stats) = track.get_stats().await {
-                for stat in stats {
-                    if let RtcStats::OutboundRtp(stats) = stat {
-                        total_bytes_sent += stats.sent.bytes_sent;
-                    }
-                }
-            }
-        }
-    }
-    total_bytes_sent
 }

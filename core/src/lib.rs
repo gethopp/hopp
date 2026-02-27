@@ -7,6 +7,7 @@ pub mod audio {
 pub mod livekit {
     pub mod audio;
     pub mod participant;
+    pub mod stats;
     pub mod video;
 }
 
@@ -45,6 +46,7 @@ pub mod utils {
 pub(crate) mod window {
     pub(crate) mod camera_window;
     pub(crate) mod screensharing_window;
+    pub(crate) mod stats_window;
 }
 pub(crate) mod components;
 pub(crate) mod overlay_window;
@@ -72,6 +74,7 @@ use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use window::camera_window::CameraWindow;
 use window::screensharing_window::ScreensharingWindow;
+use window::stats_window::StatsWindow;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
@@ -222,6 +225,7 @@ pub struct Application<'a> {
     _camera_capturer_events: Option<JoinHandle<()>>,
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
+    stats_window: Option<StatsWindow>,
 }
 
 // window: winit window
@@ -326,6 +330,7 @@ impl<'a> Application<'a> {
             })),
             camera_window: None,
             screensharing_window: None,
+            stats_window: None,
         })
     }
 
@@ -486,9 +491,31 @@ impl<'a> Application<'a> {
         }
     }
 
+    fn open_screensharing_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        buffer: Arc<crate::livekit::video::VideoBufferManager>,
+        participant_sid: Option<String>,
+    ) {
+        match ScreensharingWindow::new(event_loop, buffer, participant_sid) {
+            Ok(win) => self.screensharing_window = Some(win),
+            Err(e) => {
+                log::error!("Failed to open screensharing window: {e:?}");
+                return;
+            }
+        }
+        if self.stats_window.is_none() {
+            match StatsWindow::new(event_loop) {
+                Ok(w) => self.stats_window = Some(w),
+                Err(e) => log::error!("Failed to open stats window: {e:?}"),
+            }
+        }
+    }
+
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
         self.screensharing_window = None;
+        self.stats_window = None;
     }
 
     fn stop_screenshare(&mut self) {
@@ -860,6 +887,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 self.camera_window = None;
                 self.screensharing_window = None;
+                self.stats_window = None;
 
                 if let Err(e) = self.socket.send(Message::CallEnded) {
                     log::error!("user_event: Error sending CallEnded: {e:?}");
@@ -1402,12 +1430,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
-                // For the sharer's local screensharing UI, create a dummy buffer
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
-                match ScreensharingWindow::new(event_loop, buffer, None) {
-                    Ok(win) => self.screensharing_window = Some(win),
-                    Err(e) => log::error!("Failed to open screensharing window: {e:?}"),
-                }
+                self.open_screensharing_window(event_loop, buffer, None);
             }
             UserEvent::OpenScreenShareWindow(participant_sid) => {
                 log::info!("user_event: OpenScreenShareWindow");
@@ -1419,14 +1443,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_ref() {
                     if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
-                        match ScreensharingWindow::new(
+                        self.open_screensharing_window(
                             event_loop,
                             screen_share_buffer,
                             participant_sid,
-                        ) {
-                            Ok(win) => self.screensharing_window = Some(win),
-                            Err(e) => log::error!("Failed to open screen share window: {e:?}"),
-                        }
+                        );
                     } else {
                         log::warn!("user_event: No screen share buffer available");
                     }
@@ -1562,6 +1583,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         if let Some(camera) = &mut self.camera_window {
             if camera.window_id() == window_id {
                 camera.handle_window_event(event);
+                return;
+            }
+        }
+
+        // Route to stats window if it matches
+        if let Some(sw) = &mut self.stats_window {
+            if sw.window_id() == window_id {
+                sw.handle_window_event(event);
                 return;
             }
         }
@@ -1833,6 +1862,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             next_redraw = match next_redraw {
                 Some(existing) => Some(existing.min(ss_next)),
                 None => Some(ss_next),
+            };
+        }
+
+        // Handle stats window
+        if let Some(stats_win) = &mut self.stats_window {
+            if let Some(rs) = &self.room_service {
+                stats_win.update_stats(rs);
+            }
+            let sw_next = stats_win.next_redraw_at();
+            if now >= sw_next {
+                stats_win.request_redraw();
+            }
+            next_redraw = match next_redraw {
+                Some(existing) => Some(existing.min(sw_next)),
+                None => Some(sw_next),
             };
         }
 
