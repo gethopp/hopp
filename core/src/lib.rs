@@ -2,6 +2,7 @@ pub mod audio {
     pub mod capturer;
     pub mod mixer;
     pub mod player;
+    pub mod processor;
 }
 
 pub mod livekit {

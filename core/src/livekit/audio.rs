@@ -2,7 +2,6 @@ use livekit::options::TrackPublishOptions;
 use livekit::track::{LocalAudioTrack, LocalTrack, RemoteAudioTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
-use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
 use tokio::sync::mpsc;
@@ -10,6 +9,7 @@ use tokio_stream::StreamExt;
 
 use crate::audio::capturer::SAMPLES_DIVIDER;
 use crate::audio::mixer::{AudioSource, MixerHandle};
+use crate::audio::processor::{AudioProcessor, MixSourceHandle, ProcessorHandle};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
@@ -19,6 +19,7 @@ const AUDIO_QUEUE_SIZE: u32 = 100;
 pub struct AudioPublisher {
     audio_track: LocalAudioTrack,
     processing_task: tokio::task::JoinHandle<()>,
+    processor_handle: ProcessorHandle,
 }
 
 impl AudioPublisher {
@@ -55,13 +56,18 @@ impl AudioPublisher {
             .await
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
 
-        let apm = AudioProcessingModule::new(true, true, false, false);
+        let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
+        let (processor, processor_handle) = AudioProcessor::new(
+            sample_rate as i32,
+            AUDIO_NUM_CHANNELS as i32,
+            samples_per_unit,
+        );
 
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
             native_source,
             sample_rate,
-            apm,
+            processor,
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -69,6 +75,7 @@ impl AudioPublisher {
         Ok(Self {
             audio_track: track,
             processing_task,
+            processor_handle,
         })
     }
 
@@ -89,13 +96,17 @@ impl AudioPublisher {
     pub fn unmute(&self) {
         self.audio_track.unmute();
     }
+
+    pub fn processor_handle(&self) -> ProcessorHandle {
+        self.processor_handle.clone()
+    }
 }
 
 async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     sample_rate: u32,
-    mut apm: AudioProcessingModule,
+    mut processor: AudioProcessor,
 ) {
     let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
     log::info!(
@@ -113,11 +124,8 @@ async fn process_audio_samples(
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
-            if let Err(e) =
-                apm.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32)
-            {
-                log::warn!("APM process_stream failed: {e}");
-            }
+            processor.mix_and_process_reverse();
+            processor.process(&mut chunk);
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }
@@ -129,6 +137,7 @@ async fn process_audio_samples(
 /// On drop, removes the source from the mixer and aborts the receive task.
 pub struct AudioTrackHandle {
     _source: AudioSource,
+    _mix_source: MixSourceHandle,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -139,15 +148,18 @@ impl Drop for AudioTrackHandle {
     }
 }
 
-/// Sets up a remote audio track to feed into the rodio mixer.
+/// Sets up a remote audio track to feed into the rodio mixer and the APM reverse stream.
 /// Returns a handle that cleans up automatically on drop.
 pub fn play_remote_audio_track(
     track: RemoteAudioTrack,
     mixer: MixerHandle,
+    processor_handle: &ProcessorHandle,
     participant_id: &str,
 ) -> AudioTrackHandle {
     let source = mixer.add_source(LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS as u16);
     let source_clone = source.clone();
+    let mix_source = processor_handle.add_source();
+    let mix_source_task = mix_source.clone();
 
     let mut stream = livekit::webrtc::audio_stream::native::NativeAudioStream::new(
         track.rtc_track(),
@@ -160,12 +172,14 @@ pub fn play_remote_audio_track(
         log::info!("Starting audio receive loop for {}", stream_key);
         while let Some(frame) = stream.next().await {
             source_clone.push_samples(&frame.data);
+            mix_source_task.push_samples(&frame.data);
         }
         log::info!("Audio receive loop ended for {}", stream_key);
     });
 
     AudioTrackHandle {
         _source: source,
+        _mix_source: mix_source,
         task,
     }
 }
