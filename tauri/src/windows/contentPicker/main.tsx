@@ -112,7 +112,7 @@ function Window() {
         resolution,
         videoToken,
         accessibilityPermission,
-        callTokens?.av1Enabled ?? false,
+        tauriUtils.getTokenParam("useAv1") === "true",
       );
       if (success) {
         await appWindow.close();

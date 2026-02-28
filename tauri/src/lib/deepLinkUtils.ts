@@ -118,6 +118,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
       role: ParticipantRole.NONE,
       isRemoteControlEnabled: true,
       isRoomCall: true,
+      participants: [],
       room: {
         id: sessionId,
         // TODO(@konsalex): Get the room name from the backend

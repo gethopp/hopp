@@ -3,7 +3,7 @@ import "../../App.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { Toaster } from "react-hot-toast";
-import { useDisableNativeContextMenu, useInboundCameraBandwidthMonitor, useSystemTheme } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { LiveKitRoom, useTracks, VideoTrack } from "@livekit/components-react";
 import { Track, VideoQuality } from "livekit-client";
@@ -193,28 +193,26 @@ function ConsumerComponent({
   setHideSelf: (value: boolean) => void;
   sizeMode: SizeMode;
 }) {
-  //useInboundCameraBandwidthMonitor();
-  const { callTokens } = useStore();
+  const { callTokens, user } = useStore();
   const [actualVideoSize, setActualVideoSize] = useState<number>(SIZE_CONFIG[sizeMode].videoSize);
 
   const tracks = useTracks([Track.Source.Camera], {
     onlySubscribed: true,
   });
 
-  const selfTrackSid = callTokens?.cameraTrackId;
   const selfTrack = useMemo(() => {
-    if (!selfTrackSid) {
+    if (!user?.id) {
       return undefined;
     }
-    return tracks.find((track) => track?.publication?.trackSid === selfTrackSid);
-  }, [tracks, selfTrackSid]);
+    return tracks.find((track) => track?.participant?.identity?.includes(user.id));
+  }, [tracks, user?.id]);
 
   const visibleTracks = useMemo(() => {
     return tracks.filter((track) => {
-      const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
+      const isSelfTrack = user?.id ? track?.participant?.identity?.includes(user.id) : false;
       return !(hideSelf && isSelfTrack);
     });
-  }, [tracks, hideSelf, callTokens?.cameraTrackId]);
+  }, [tracks, hideSelf, user?.id]);
   const visibleTrackCount = visibleTracks.length;
 
   useEffect(() => {
@@ -304,8 +302,8 @@ function VideoTrackComponent({
   callTokens: any;
   setHideSelf: (value: boolean) => void;
 }) {
-  //useInboundCameraBandwidthMonitor();
-  const isSelfTrack = callTokens?.cameraTrackId === track?.publication?.trackSid;
+  const { user } = useStore();
+  const isSelfTrack = user?.id ? track?.participant?.identity?.includes(user.id) : false;
   const sid = track?.publication?.trackSid;
 
   // Set the desired video quality for this track
