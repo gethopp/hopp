@@ -36,6 +36,7 @@ pub struct Capturer {
     available_devices: Vec<AudioDevice>,
     capture_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
+    sample_tx: Option<mpsc::UnboundedSender<Vec<i16>>>,
 }
 
 impl Capturer {
@@ -44,6 +45,7 @@ impl Capturer {
             available_devices: vec![],
             capture_thread: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
+            sample_tx: None,
         }
     }
 
@@ -162,6 +164,8 @@ impl Capturer {
             (buffer_frames as u64 * 1000 / TARGET_SAMPLE_RATE as u64).saturating_sub(2),
         );
 
+        self.sample_tx = Some(sample_tx.clone());
+
         // Spawn the capture thread
         let handle = std::thread::spawn(move || {
             let mut source = source;
@@ -206,12 +210,29 @@ impl Capturer {
         Ok(TARGET_SAMPLE_RATE)
     }
 
-    pub fn stop_capture(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
+    pub fn is_capturing(&self) -> bool {
+        self.capture_thread.is_some()
+    }
 
+    pub fn switch_device(&mut self, device_name: &str) -> Result<u32, String> {
+        let sample_tx = self
+            .sample_tx
+            .clone()
+            .ok_or_else(|| "No active capture to switch".to_string())?;
+        self.stop_thread();
+        self.start_capture(Some(device_name), sample_tx)
+    }
+
+    fn stop_thread(&mut self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
         if let Some(handle) = self.capture_thread.take() {
             let _ = handle.join();
         }
+    }
+
+    pub fn stop_capture(&mut self) {
+        self.stop_thread();
+        self.sample_tx = None;
     }
 }
 

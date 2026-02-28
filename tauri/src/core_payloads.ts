@@ -88,11 +88,10 @@ export interface DrawingEnabled {
 
 export interface AudioDevice {
   name: string;
-  id: string;
 }
 
 export interface AudioCaptureMessage {
-  device_id: string;
+  device_name: string;
 }
 
 export interface CameraDevice {
@@ -213,7 +212,7 @@ export interface CommandMap {
   toggle_mic: { args: void; return: void };
   stop_audio_capture: { args: void; return: void };
   list_microphones: { args: void; return: AudioDevice[] };
-  select_microphone: { args: { deviceId: string }; return: void };
+  select_microphone: { args: { deviceName: string }; return: void };
 
   // Core socket messages — camera
   list_webcams: { args: void; return: CameraDevice[] };

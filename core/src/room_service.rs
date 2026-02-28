@@ -8,8 +8,9 @@ use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
-use crate::audio::processor::ProcessorHandle;
-use crate::livekit::audio::AudioPublisher;
+use crate::audio::capturer::SAMPLES_DIVIDER;
+use crate::audio::processor::{AudioProcessor, ProcessorHandle};
+use crate::livekit::audio::{AudioPublisher, AUDIO_NUM_CHANNELS, LIVEKIT_SAMPLE_RATE};
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_camera_stream, VideoBufferManager};
 
@@ -783,8 +784,15 @@ async fn room_service_commands(
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
-    let processor_handle: Arc<std::sync::Mutex<Option<ProcessorHandle>>> =
-        Arc::new(std::sync::Mutex::new(None));
+
+    let samples_per_unit = (LIVEKIT_SAMPLE_RATE / SAMPLES_DIVIDER) as usize;
+    let (initial_processor, initial_handle) = AudioProcessor::new(
+        LIVEKIT_SAMPLE_RATE as i32,
+        AUDIO_NUM_CHANNELS as i32,
+        samples_per_unit,
+    );
+    let processor_handle = Arc::new(std::sync::Mutex::new(initial_handle));
+    let audio_processor = Arc::new(std::sync::Mutex::new(initial_processor));
 
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
@@ -1293,12 +1301,10 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                match AudioPublisher::publish(room, sample_rate, sample_rx).await {
+                match AudioPublisher::publish(room, sample_rate, sample_rx, audio_processor.clone())
+                    .await
+                {
                     Ok(publisher) => {
-                        {
-                            let mut ph = processor_handle.lock().unwrap();
-                            *ph = Some(publisher.processor_handle());
-                        }
                         audio_publisher = Some(publisher);
                         log::info!("room_service_commands: Audio track published");
                         let _ = tx.send(RoomServiceCommandResult::Success);
@@ -1311,10 +1317,6 @@ async fn room_service_commands(
             }
             RoomServiceCommand::UnpublishAudioTrack => {
                 if let Some(publisher) = audio_publisher.take() {
-                    {
-                        let mut ph = processor_handle.lock().unwrap();
-                        *ph = None;
-                    }
                     let inner_room = inner.room.lock().await;
                     if let Some(room) = inner_room.as_ref() {
                         publisher.unpublish(room).await;
@@ -1847,7 +1849,7 @@ async fn handle_room_events(
     user_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
-    processor_handle: Arc<std::sync::Mutex<Option<ProcessorHandle>>>,
+    processor_handle: Arc<std::sync::Mutex<ProcessorHandle>>,
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
 ) {
@@ -2175,23 +2177,18 @@ async fn handle_room_events(
                         );
 
                         let proc_handle = processor_handle.lock().unwrap();
-                        if let Some(ph) = proc_handle.as_ref() {
-                            let handle = crate::livekit::audio::play_remote_audio_track(
-                                audio_track,
-                                mixer.clone(),
-                                ph,
-                                &participant_identity,
-                            );
+                        let handle = crate::livekit::audio::play_remote_audio_track(
+                            audio_track,
+                            mixer.clone(),
+                            &proc_handle,
+                            &participant_identity,
+                        );
 
-                            drop(proc_handle);
-                            {
-                                let mut participants_guard = participants.write().unwrap();
-                                if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                    info.set_audio_handle(handle);
-                                }
-                            }
-                        } else {
-                            log::warn!("No processor handle available, skipping audio track setup");
+                        drop(proc_handle);
+
+                        let mut participants_guard = participants.write().unwrap();
+                        if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                            info.set_audio_handle(handle);
                         }
                     }
                     livekit::track::RemoteTrack::Video(video_track) => match publication.source() {

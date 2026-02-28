@@ -10,6 +10,7 @@ use tokio_stream::StreamExt;
 use crate::audio::capturer::SAMPLES_DIVIDER;
 use crate::audio::mixer::{AudioSource, MixerHandle};
 use crate::audio::processor::{AudioProcessor, MixSourceHandle, ProcessorHandle};
+use std::sync::{Arc, Mutex};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
@@ -19,7 +20,6 @@ const AUDIO_QUEUE_SIZE: u32 = 100;
 pub struct AudioPublisher {
     audio_track: LocalAudioTrack,
     processing_task: tokio::task::JoinHandle<()>,
-    processor_handle: ProcessorHandle,
 }
 
 impl AudioPublisher {
@@ -27,6 +27,7 @@ impl AudioPublisher {
         room: &Room,
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+        processor: Arc<Mutex<AudioProcessor>>,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -56,13 +57,6 @@ impl AudioPublisher {
             .await
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
 
-        let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
-        let (processor, processor_handle) = AudioProcessor::new(
-            sample_rate as i32,
-            AUDIO_NUM_CHANNELS as i32,
-            samples_per_unit,
-        );
-
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
             native_source,
@@ -75,7 +69,6 @@ impl AudioPublisher {
         Ok(Self {
             audio_track: track,
             processing_task,
-            processor_handle,
         })
     }
 
@@ -96,17 +89,13 @@ impl AudioPublisher {
     pub fn unmute(&self) {
         self.audio_track.unmute();
     }
-
-    pub fn processor_handle(&self) -> ProcessorHandle {
-        self.processor_handle.clone()
-    }
 }
 
 async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     sample_rate: u32,
-    mut processor: AudioProcessor,
+    processor: Arc<Mutex<AudioProcessor>>,
 ) {
     let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
     log::info!(
@@ -124,8 +113,11 @@ async fn process_audio_samples(
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
-            processor.mix_and_process_reverse();
-            processor.process(&mut chunk);
+            {
+                let mut p = processor.lock().unwrap();
+                p.mix_and_process_reverse();
+                p.process(&mut chunk);
+            }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }

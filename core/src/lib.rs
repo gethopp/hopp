@@ -1228,25 +1228,30 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     "user_event: StartAudioCapture device_name={}",
                     msg.device_name
                 );
-                let result = (|| -> Result<(), String> {
-                    let room_service = self
-                        .room_service
-                        .as_ref()
-                        .ok_or_else(|| "Room service not found".to_string())?;
+                let result = if self.audio_capturer.is_capturing() {
+                    self.audio_capturer
+                        .switch_device(&msg.device_name)
+                        .map(|_| ())
+                } else {
+                    (|| -> Result<(), String> {
+                        let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
 
-                    let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
+                        let sample_rate = self
+                            .audio_capturer
+                            .start_capture(Some(&msg.device_name), sample_tx)?;
 
-                    let sample_rate = self
-                        .audio_capturer
-                        .start_capture(Some(&msg.device_name), sample_tx)?;
+                        let room_service = self
+                            .room_service
+                            .as_ref()
+                            .ok_or_else(|| "Room service not found".to_string())?;
 
-                    // Create the AudioPublisher with the detected sample rate
-                    room_service
-                        .publish_audio_track(sample_rate, sample_rx)
-                        .map_err(|e| format!("Failed to publish audio track: {e}"))?;
+                        room_service
+                            .publish_audio_track(sample_rate, sample_rx)
+                            .map_err(|e| format!("Failed to publish audio track: {e}"))?;
 
-                    Ok(())
-                })();
+                        Ok(())
+                    })()
+                };
 
                 if let Err(ref e) = result {
                     log::error!("user_event: StartAudioCapture failed: {e}");

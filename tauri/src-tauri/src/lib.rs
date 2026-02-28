@@ -232,6 +232,7 @@ fn create_core_process_socket(
             );
             break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
     Err(CoreProcessCreationError::SocketCreationFailed)
 }

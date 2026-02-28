@@ -342,9 +342,9 @@ function MicrophoneIcon() {
   // When mic devices change, try to select the previously used one
   useEffect(() => {
     if (!microphoneDevices.length || !activeMicId) return;
-    const found = microphoneDevices.find((d) => d.id === activeMicId);
+    const found = microphoneDevices.find((d) => d.name === activeMicId);
     if (found) {
-      typedInvoke("select_microphone", { deviceId: found.id });
+      typedInvoke("select_microphone", { deviceName: found.name });
     }
   }, [microphoneDevices, activeMicId]);
 
@@ -360,7 +360,7 @@ function MicrophoneIcon() {
 
   const handleMicrophoneChange = useCallback((value: string) => {
     setActiveMicId(value);
-    typedInvoke("select_microphone", { deviceId: value });
+    typedInvoke("select_microphone", { deviceName: value });
     tauriUtils.setLastUsedMic(value);
   }, []);
 
@@ -399,7 +399,7 @@ function MicrophoneIcon() {
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
               {microphoneDevices.map((device) => (
-                <SelectItem key={device.id} value={device.id}>
+                <SelectItem key={device.name} value={device.name}>
                   <span className="text-xs truncate">{device.name}</span>
                 </SelectItem>
               ))}

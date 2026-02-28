@@ -893,13 +893,13 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
 }
 
 #[tauri::command]
-fn select_microphone(app: tauri::AppHandle, device_id: String) {
+fn select_microphone(app: tauri::AppHandle, device_name: String) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     if let Err(e) = data
         .sender
         .send(Message::StartAudioCapture(AudioCaptureMessage {
-            device_id,
+            device_name,
         }))
     {
         log::error!("select_microphone: failed to send: {e:?}");
