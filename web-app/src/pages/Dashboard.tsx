@@ -510,7 +510,7 @@ export function Dashboard() {
             <div className="flex flex-row items-center justify-center gap-6">
               <BsWindows className="size-4 text-slate-600" />
               <div className="flex flex-col">
-                <span className="font-normal">Windows</span>
+                <span className="font-normal">Windows (alpha)</span>
                 <span className="muted">Windows 7 or later</span>
               </div>
 
