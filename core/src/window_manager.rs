@@ -345,7 +345,7 @@ fn set_fullscreen(
     // validation errors in wgpu.
     let expected_size = selected_monitor.size();
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(1);
+    let timeout = std::time::Duration::from_secs(5);
 
     loop {
         let current_size = window.inner_size();
