@@ -12,7 +12,7 @@ use crate::audio::mixer::{AudioSource, MixerHandle};
 use crate::audio::processor::{AudioProcessor, MixSourceHandle, ProcessorHandle};
 use std::sync::{Arc, Mutex};
 
-pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
+pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
 const AUDIO_QUEUE_SIZE: u32 = 100;
