@@ -25,6 +25,19 @@ Hopp is an open source pair programming app that allows you to pair program with
   - We want to build Hopp with the OSS community
   - This comes with benefits as self-hosting, and innovation from the community
 
+## Supported Platforms
+
+- **macOS** - Fully supported
+- **Windows** - Alpha (compiles but expect some bugs)
+
+## Roadmap
+
+- [ ] Move everything WebRTC related from WebKit to our Rust backend (currently in progress)
+- [ ] Implement dynamic codec selection and adaptive streaming resolution
+- [ ] Add key bindings
+- [ ] Support Linux
+- [ ] Re-introduce Windows as fully supported
+
 ## 🛠️ Tech Stack
 
 ### Backend
