@@ -1,31 +1,23 @@
-use rodio::source::Zero;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink};
-use std::num::NonZero;
-
 use super::mixer::MixerHandle;
 
 pub struct Player {
-    _sink: MixerDeviceSink,
     mixer: MixerHandle,
+    #[cfg(target_os = "macos")]
+    _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
 impl Player {
     pub fn new() -> Result<Self, String> {
-        let mut sink = DeviceSinkBuilder::open_default_sink()
-            .map_err(|e| format!("Failed to open default sink: {e}"))?;
-        sink.log_on_drop(false);
+        let mixer = MixerHandle::new()?;
 
-        let rodio_mixer = sink.mixer().clone();
-
-        // Infinite silence keeps mixer attached to the output stream.
-        rodio_mixer.add(Zero::new(
-            NonZero::new(1u16).unwrap(),
-            NonZero::new(16000u32).unwrap(),
-        ));
+        #[cfg(target_os = "macos")]
+        let device_monitor = super::device_monitor::DeviceMonitor::new(mixer.clone())
+            .map_err(|e| format!("Failed to start device monitor: {e}"))?;
 
         Ok(Self {
-            _sink: sink,
-            mixer: MixerHandle::new(rodio_mixer),
+            mixer,
+            #[cfg(target_os = "macos")]
+            _device_monitor: device_monitor,
         })
     }
 
@@ -63,7 +55,6 @@ mod tests {
         capturer1.start_capture(None, tx1).expect("capture 1");
         capturer2.start_capture(None, tx2).expect("capture 2");
 
-        // Forward captured samples → mixer (simulates LiveKit push)
         std::thread::spawn(move || {
             while let Some(samples) = rx1.blocking_recv() {
                 s1.push_samples(&samples);
