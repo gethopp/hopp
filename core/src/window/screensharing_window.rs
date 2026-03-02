@@ -953,9 +953,17 @@ impl ScreensharingWindow {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if self.mouse_in_participant_area && self.state.active_tab == "control" {
-                    // Extract delta_x and delta_y from the scroll delta
+                    // Extract delta_x and delta_y from the scroll delta.
+                    // LineDelta (from a physical mouse wheel) gives small integer
+                    // line counts (e.g. 1.0, -3.0). The sharer's macOS input
+                    // simulator uses ScrollEventUnit::PIXEL, and the browser's
+                    // WheelEvent.deltaY produces pixel values (~40-120 per tick).
+                    // Multiply by a standard line height to match browser behaviour.
+                    const LINE_HEIGHT_PX: f64 = 40.0;
                     let (delta_x, delta_y) = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(x, y) => (*x as f64, *y as f64),
+                        winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                            (*x as f64 * LINE_HEIGHT_PX, *y as f64 * LINE_HEIGHT_PX)
+                        }
                         winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
                     };
 
