@@ -885,10 +885,13 @@ impl ScreensharingWindow {
                         }
                     } else {
                         // control mode
+                        // Use the Web/MDN MouseEvent.button convention
+                        // (the receiving side interprets these values):
+                        // 0=left, 1=middle, 2=right, 3=back, 4=forward
                         let button_num = match button {
                             winit::event::MouseButton::Left => 0,
-                            winit::event::MouseButton::Right => 1,
-                            winit::event::MouseButton::Middle => 2,
+                            winit::event::MouseButton::Middle => 1,
+                            winit::event::MouseButton::Right => 2,
                             winit::event::MouseButton::Back => 3,
                             winit::event::MouseButton::Forward => 4,
                             winit::event::MouseButton::Other(n) => *n as u32,
