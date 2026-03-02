@@ -157,6 +157,12 @@ struct ScreensharingState {
     current_path_id: u64,
     /// Last cursor position (percentage 0.0-1.0) inside participant area.
     last_draw_cursor: Option<(f64, f64)>,
+    /// Multi-click detection state (à la Chromium).
+    last_click_count: u32,
+    last_click_button: u32,
+    last_click_time: StdInstant,
+    last_click_x: f32,
+    last_click_y: f32,
 }
 
 impl Default for ScreensharingState {
@@ -170,6 +176,11 @@ impl Default for ScreensharingState {
             left_mouse_pressed: false,
             current_path_id: 0,
             last_draw_cursor: None,
+            last_click_count: 0,
+            last_click_button: 0,
+            last_click_time: StdInstant::now(),
+            last_click_x: 0.0,
+            last_click_y: 0.0,
         }
     }
 }
@@ -638,6 +649,37 @@ impl ScreensharingWindow {
         self.last_redraw + REDRAW_INTERVAL
     }
 
+    /// Compute multi-click count using the same logic as Chromium.
+    /// Coordinates are in logical pixels so the distance threshold is
+    /// resolution-independent.
+    fn get_mouse_click_count(&self, x: f32, y: f32, button: u32) -> u32 {
+        const DOUBLE_CLICK_TIME_MS: u64 = 500;
+        const DOUBLE_CLICK_RANGE: f32 = 4.0;
+
+        let prev = &self.state;
+        if prev.last_click_count == 0 {
+            return 1;
+        }
+        if prev.last_click_time.elapsed().as_millis() as u64 > DOUBLE_CLICK_TIME_MS {
+            return 1;
+        }
+        if (x - prev.last_click_x).abs() > DOUBLE_CLICK_RANGE / 2.0 {
+            return 1;
+        }
+        if (y - prev.last_click_y).abs() > DOUBLE_CLICK_RANGE / 2.0 {
+            return 1;
+        }
+        if prev.last_click_button != button {
+            return 1;
+        }
+        // On macOS and Windows keep counting; elsewhere cap at 3.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        if prev.last_click_count >= 3 {
+            return 1;
+        }
+        prev.last_click_count + 1
+    }
+
     /// Update window cursor based on active tab and mouse position.
     ///
     /// - Outside participant area → always the OS default cursor.
@@ -842,7 +884,7 @@ impl ScreensharingWindow {
                                 Some(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
                         }
                     } else {
-                        // control mode — existing behavior
+                        // control mode
                         let button_num = match button {
                             winit::event::MouseButton::Left => 0,
                             winit::event::MouseButton::Right => 1,
@@ -852,12 +894,34 @@ impl ScreensharingWindow {
                             winit::event::MouseButton::Other(n) => *n as u32,
                         };
 
+                        // Compute multi-click count on press using logical
+                        // pixel positions (same approach as Chromium).
+                        let logical_x = match &self.cursor {
+                            mouse::Cursor::Available(pos) => pos.x,
+                            _ => 0.0,
+                        };
+                        let logical_y = match &self.cursor {
+                            mouse::Cursor::Available(pos) => pos.y,
+                            _ => 0.0,
+                        };
+                        let clicks = if down {
+                            let c = self.get_mouse_click_count(logical_x, logical_y, button_num);
+                            self.state.last_click_count = c;
+                            self.state.last_click_button = button_num;
+                            self.state.last_click_time = StdInstant::now();
+                            self.state.last_click_x = logical_x;
+                            self.state.last_click_y = logical_y;
+                            c
+                        } else {
+                            self.state.last_click_count
+                        };
+
                         input_event = Some(ScreenShareInputEvent::MouseClick(
                             crate::room_service::MouseClickData {
                                 x: pct_x,
                                 y: pct_y,
                                 button: button_num,
-                                clicks: 1,
+                                clicks,
                                 down,
                                 shift: self.modifiers.shift_key(),
                                 meta: self.modifiers.super_key(),
