@@ -27,7 +27,7 @@ use iced_winit::core::{window, Event, Size, Theme};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState};
 #[cfg(not(target_os = "macos"))]
@@ -138,6 +138,8 @@ pub(crate) enum ScreenShareInputEvent {
     DrawClearPaths(Vec<u64>),
     ClickAnimation { x: f64, y: f64 },
     TabChanged(ScreenShareTab),
+    AddToClipboard { is_copy: bool },
+    PasteFromClipboard(Option<String>),
 }
 
 // ── Application state for the screensharing UI ─────────────────────────────
@@ -978,7 +980,6 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area && self.state.active_tab == "control" {
                     // Extract key string to match the format expected by keyboard.rs.
                     // We need strings like "Enter", "Tab", "a", "A", etc., not control characters.
-                    use winit::keyboard::Key;
                     let mut meta = self.modifiers.super_key();
                     let key_str = match &key_event.logical_key {
                         // For character keys, use the character directly
@@ -1003,18 +1004,59 @@ impl ScreensharingWindow {
                         Key::Unidentified(_) => "Unidentified".to_string(),
                     };
 
-                    let down = key_event.state.is_pressed();
+                    let ctrl_or_cmd = if cfg!(target_os = "macos") {
+                        self.modifiers.super_key()
+                    } else {
+                        self.modifiers.control_key()
+                    };
 
-                    input_event = Some(ScreenShareInputEvent::KeyInput(
-                        crate::room_service::KeystrokeData {
-                            key: vec![key_str.clone()],
-                            meta,
-                            ctrl: self.modifiers.control_key(),
-                            shift: self.modifiers.shift_key(),
-                            alt: self.modifiers.alt_key(),
-                            down,
-                        },
-                    ));
+                    if ctrl_or_cmd && key_event.state.is_pressed() {
+                        match key_str.as_str() {
+                            "c" => {
+                                input_event =
+                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: true });
+                            }
+                            "x" => {
+                                input_event =
+                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: false });
+                            }
+                            "v" => {
+                                let clipboard_text =
+                                    self.clipboard.read(Kind::Standard).unwrap_or_default();
+                                let data = if clipboard_text.is_empty() {
+                                    None
+                                } else {
+                                    Some(clipboard_text)
+                                };
+                                input_event = Some(ScreenShareInputEvent::PasteFromClipboard(data));
+                            }
+                            _ => {
+                                let down = key_event.state.is_pressed();
+                                input_event = Some(ScreenShareInputEvent::KeyInput(
+                                    crate::room_service::KeystrokeData {
+                                        key: vec![key_str.clone()],
+                                        meta,
+                                        ctrl: self.modifiers.control_key(),
+                                        shift: self.modifiers.shift_key(),
+                                        alt: self.modifiers.alt_key(),
+                                        down,
+                                    },
+                                ));
+                            }
+                        }
+                    } else {
+                        let down = key_event.state.is_pressed();
+                        input_event = Some(ScreenShareInputEvent::KeyInput(
+                            crate::room_service::KeystrokeData {
+                                key: vec![key_str.clone()],
+                                meta,
+                                ctrl: self.modifiers.control_key(),
+                                shift: self.modifiers.shift_key(),
+                                alt: self.modifiers.alt_key(),
+                                down,
+                            },
+                        ));
+                    }
 
                     log::debug!(
                         "ScreensharingWindow: [participant_area] key {:?} {:?}",
@@ -1173,39 +1215,6 @@ impl ScreensharingWindow {
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Only handle Copy/Paste/Cut events when the user is inside the
-                // screen-sharing area, and they are in control mode.
-                if !self.mouse_in_participant_area || self.state.active_tab != "control" {
-                    return None;
-                }
-
-                if event.state == ElementState::Pressed {
-                    let ctrl_or_cmd = if cfg!(target_os = "macos") {
-                        self.modifiers.super_key()
-                    } else {
-                        self.modifiers.control_key()
-                    };
-
-                    if ctrl_or_cmd {
-                        match event.logical_key.as_ref() {
-                            // Will send a command to remote participant's screen
-                            // to copy their selected text
-                            Key::Character("c") => {
-                                println!("Copy triggered!");
-                            }
-                            Key::Character("v") => {
-                                println!("Paste triggered!");
-                                // Get from clipboard manager the text
-                                let clipboard_text =
-                                    self.clipboard.read(Kind::Standard).unwrap_or_default();
-                                println!("Clipboard text: {}", clipboard_text);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
             }
             _ => {}
         }

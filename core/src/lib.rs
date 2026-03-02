@@ -1653,6 +1653,38 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     y,
                                 });
                             }
+                            ScreenShareInputEvent::AddToClipboard { is_copy } => {
+                                rs.publish_add_to_clipboard(
+                                    crate::room_service::AddToClipboardData { is_copy },
+                                );
+                            }
+                            ScreenShareInputEvent::PasteFromClipboard(text) => match text {
+                                Some(clipboard_text) => {
+                                    let bytes = clipboard_text.as_bytes();
+                                    const MAX_PACKET: usize = 15 * 1024;
+                                    let total_packets =
+                                        ((bytes.len() + MAX_PACKET - 1) / MAX_PACKET) as u64;
+                                    for i in 0..total_packets {
+                                        let start = (i as usize) * MAX_PACKET;
+                                        let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                                        let chunk = bytes[start..end].to_vec();
+                                        rs.publish_paste_from_clipboard(
+                                            crate::room_service::PasteFromClipboardData {
+                                                data: Some(crate::room_service::ClipboardPayload {
+                                                    packet_id: i,
+                                                    total_packets,
+                                                    data: chunk,
+                                                }),
+                                            },
+                                        );
+                                    }
+                                }
+                                None => {
+                                    rs.publish_paste_from_clipboard(
+                                        crate::room_service::PasteFromClipboardData { data: None },
+                                    );
+                                }
+                            },
                             ScreenShareInputEvent::TabChanged(tab) => {
                                 let mode = match tab {
                                     ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
