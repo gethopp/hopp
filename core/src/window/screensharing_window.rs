@@ -1455,6 +1455,7 @@ impl ScreensharingWindow {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.click_animation_renderer.update();
+        self.participants_manager.hide_inactive_cursors();
 
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();

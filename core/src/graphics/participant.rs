@@ -8,7 +8,10 @@ use crate::utils::svg_renderer::SvgRenderError;
 use iced::widget::canvas::{Frame, Geometry};
 use iced::{Rectangle, Renderer};
 use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
 use thiserror::Error;
+
+const CURSOR_HIDE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[path = "draw.rs"]
 mod draw;
@@ -352,6 +355,15 @@ impl ParticipantsManager {
     pub fn set_cursor_mode(&mut self, sid: &str, mode: CursorMode) {
         if let Some(participant) = self.participants.get_mut(sid) {
             participant.cursor_mut().set_mode(mode);
+        }
+    }
+
+    /// Hides cursors that haven't been updated within `CURSOR_HIDE_TIMEOUT`.
+    pub fn hide_inactive_cursors(&mut self) {
+        for participant in self.participants.values_mut() {
+            participant
+                .cursor_mut()
+                .hide_if_expired(CURSOR_HIDE_TIMEOUT);
         }
     }
 
