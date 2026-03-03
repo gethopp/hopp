@@ -37,15 +37,26 @@ pub struct Capturer {
     capture_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
     sample_tx: Option<mpsc::UnboundedSender<Vec<i16>>>,
+    active_device_name: Option<String>,
+    #[cfg(target_os = "macos")]
+    _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
 impl Capturer {
-    pub fn new() -> Self {
+    #[allow(unused_variables)]
+    pub fn new(proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>) -> Self {
         Self {
             available_devices: vec![],
             capture_thread: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
             sample_tx: None,
+            active_device_name: None,
+            #[cfg(target_os = "macos")]
+            _device_monitor: super::device_monitor::DeviceMonitor::new(
+                super::device_monitor::DeviceKind::Input,
+                proxy,
+            )
+            .expect("Failed to start input device monitor"),
         }
     }
 
@@ -164,6 +175,7 @@ impl Capturer {
             (buffer_frames as u64 * 1000 / TARGET_SAMPLE_RATE as u64).saturating_sub(2),
         );
 
+        self.active_device_name = device_name.map(|s| s.to_string());
         self.sample_tx = Some(sample_tx.clone());
 
         // Spawn the capture thread
@@ -214,25 +226,73 @@ impl Capturer {
         self.capture_thread.is_some()
     }
 
-    pub fn switch_device(&mut self, device_name: &str) -> Result<u32, String> {
+    pub fn switch_device(&mut self, device_name: Option<&str>) -> Result<u32, String> {
         let sample_tx = self
             .sample_tx
             .clone()
             .ok_or_else(|| "No active capture to switch".to_string())?;
         self.stop_thread();
-        self.start_capture(Some(device_name), sample_tx)
+        self.start_capture(device_name, sample_tx)
+    }
+
+    pub fn active_device_name(&self) -> Option<&str> {
+        self.active_device_name.as_deref()
+    }
+
+    /// Called when the OS default input device changes.
+    /// If using default: reconnect (the default changed).
+    /// If using a named device: only switch if that device disappeared.
+    pub fn handle_default_device_changed(&mut self) {
+        if !self.is_capturing() {
+            return;
+        }
+        match &self.active_device_name {
+            None => {
+                log::info!("Was using default mic, reconnecting to new default...");
+                if let Err(e) = self.switch_device(None) {
+                    log::error!("Failed to reconnect mic to new default: {e}");
+                }
+            }
+            Some(name) => {
+                let name = name.clone();
+                let available = self.list_sources();
+                if !available.iter().any(|d| d == &name) {
+                    log::info!("Active mic '{name}' removed, switching to default");
+                    if let Err(e) = self.switch_device(None) {
+                        log::error!("Failed to switch mic to default: {e}");
+                    }
+                }
+            }
+        }
     }
 
     fn stop_thread(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
         if let Some(handle) = self.capture_thread.take() {
-            let _ = handle.join();
+            // Try joining with a short timeout. The capture thread may be stuck
+            // blocking on source.next() if the audio device disappeared, so we
+            // can't wait forever — just detach it and let it die on its own.
+            // TODO: check if not joining could create many zombie threads
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+                let _ = done_tx.send(());
+            });
+            if done_rx
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .is_err()
+            {
+                log::warn!("Capture thread did not exit in time, detaching");
+            }
         }
+        // Allocate a fresh stop flag for the next capture thread
+        self.stop_flag = Arc::new(AtomicBool::new(false));
     }
 
     pub fn stop_capture(&mut self) {
         self.stop_thread();
         self.sample_tx = None;
+        self.active_device_name = None;
     }
 }
 

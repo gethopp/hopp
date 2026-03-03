@@ -301,8 +301,10 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_player =
-            audio::player::Player::new().map_err(ApplicationError::AudioPlayerError)?;
+        let audio_player = audio::player::Player::new(event_loop_proxy.clone())
+            .map_err(ApplicationError::AudioPlayerError)?;
+
+        let audio_capturer = audio::capturer::Capturer::new(event_loop_proxy.clone());
 
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();
@@ -325,7 +327,7 @@ impl<'a> Application<'a> {
                 cursor_set_times: 0,
             },
             window_manager: None,
-            audio_capturer: audio::capturer::Capturer::new(),
+            audio_capturer,
             audio_player,
             camera_capturer: camera_capturer.clone(),
             _camera_capturer_events: Some(std::thread::spawn(move || {
@@ -1232,7 +1234,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 );
                 let result = if self.audio_capturer.is_capturing() {
                     self.audio_capturer
-                        .switch_device(&msg.device_name)
+                        .switch_device(Some(&msg.device_name))
                         .map(|_| ())
                 } else {
                     (|| -> Result<(), String> {
@@ -1471,6 +1473,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CloseScreenShareWindow => {
                 log::info!("user_event: CloseScreenShareWindow");
                 self.close_screensharing_window();
+            }
+            UserEvent::DefaultOutputDeviceChanged => {
+                log::info!("Default audio output device changed, reconnecting...");
+                if let Err(e) = self.audio_player.mixer().reconnect() {
+                    log::error!("Failed to reconnect audio output: {e}");
+                }
+            }
+            UserEvent::DefaultInputDeviceChanged => {
+                self.audio_capturer.handle_default_device_changed();
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
@@ -2014,6 +2025,8 @@ pub enum UserEvent {
     OpenScreensharing,
     OpenScreenShareWindow(Option<String>),
     CloseScreenShareWindow,
+    DefaultOutputDeviceChanged,
+    DefaultInputDeviceChanged,
 }
 
 pub struct RenderEventLoop {

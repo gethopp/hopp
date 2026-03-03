@@ -1,4 +1,7 @@
 use super::mixer::MixerHandle;
+use winit::event_loop::EventLoopProxy;
+
+use crate::UserEvent;
 
 pub struct Player {
     mixer: MixerHandle,
@@ -7,12 +10,16 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new() -> Result<Self, String> {
+    #[allow(unused_variables)]
+    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
         let mixer = MixerHandle::new()?;
 
         #[cfg(target_os = "macos")]
-        let device_monitor = super::device_monitor::DeviceMonitor::new(mixer.clone())
-            .map_err(|e| format!("Failed to start device monitor: {e}"))?;
+        let device_monitor = super::device_monitor::DeviceMonitor::new(
+            super::device_monitor::DeviceKind::Output,
+            proxy,
+        )
+        .map_err(|e| format!("Failed to start device monitor: {e}"))?;
 
         Ok(Self {
             mixer,
