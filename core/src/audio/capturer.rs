@@ -38,6 +38,10 @@ pub struct Capturer {
     stop_flag: Arc<AtomicBool>,
     sample_tx: Option<mpsc::UnboundedSender<Vec<i16>>>,
     active_device_name: Option<String>,
+    /// Threads that were asked to stop but may still be blocked in `source.next()`.
+    /// We try-join them on each `stop_thread` call; they'll eventually exit when
+    /// the device errors out or the process ends.
+    orphaned_threads: Vec<JoinHandle<()>>,
     #[cfg(target_os = "macos")]
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
@@ -51,6 +55,7 @@ impl Capturer {
             stop_flag: Arc::new(AtomicBool::new(false)),
             sample_tx: None,
             active_device_name: None,
+            orphaned_threads: Vec::new(),
             #[cfg(target_os = "macos")]
             _device_monitor: super::device_monitor::DeviceMonitor::new(
                 super::device_monitor::DeviceKind::Input,
@@ -269,21 +274,29 @@ impl Capturer {
     fn stop_thread(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
         if let Some(handle) = self.capture_thread.take() {
-            // Try joining with a short timeout. The capture thread may be stuck
-            // blocking on source.next() if the audio device disappeared, so we
-            // can't wait forever — just detach it and let it die on its own.
-            // TODO: check if not joining could create many zombie threads
-            let (done_tx, done_rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
+            if handle.is_finished() {
                 let _ = handle.join();
-                let _ = done_tx.send(());
-            });
-            if done_rx
-                .recv_timeout(std::time::Duration::from_millis(500))
-                .is_err()
-            {
-                log::warn!("Capture thread did not exit in time, detaching");
+            } else {
+                log::warn!("Capture thread still running, orphaning it");
+                self.orphaned_threads.push(handle);
             }
+        }
+        // Sweep orphaned threads that have since finished
+        let mut still_running = Vec::new();
+        for handle in self.orphaned_threads.drain(..) {
+            if handle.is_finished() {
+                let _ = handle.join();
+                log::info!("Orphaned capture thread finished");
+            } else {
+                still_running.push(handle);
+            }
+        }
+        self.orphaned_threads = still_running;
+        if !self.orphaned_threads.is_empty() {
+            log::warn!(
+                "{} orphaned capture thread(s) still running",
+                self.orphaned_threads.len()
+            );
         }
         // Allocate a fresh stop flag for the next capture thread
         self.stop_flag = Arc::new(AtomicBool::new(false));
