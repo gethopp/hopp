@@ -1620,10 +1620,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         }
 
         // Route to screensharing window if it matches
-        if let Some(ss) = &mut self.screensharing_window {
-            if ss.window_id() == window_id {
-                let input_event = ss.handle_window_event(event);
-                // Mutable borrow on ss is dropped here
+        if let Some(screen_sharing_window) = &mut self.screensharing_window {
+            if screen_sharing_window.window_id() == window_id {
+                let input_event = screen_sharing_window.handle_window_event(event);
+                // Mutable borrow on screen_sharing_window is dropped here
                 if let Some(event) = input_event {
                     if let Some(rs) = &self.room_service {
                         match event {
