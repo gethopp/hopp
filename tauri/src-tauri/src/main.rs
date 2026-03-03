@@ -1113,12 +1113,18 @@ fn main() {
                 *reopen_requested = true;
             }
 
-            let main_window = app_handle.get_webview_window("main");
-            if let Some(window) = main_window {
+            let screenshare_window = app_handle.get_webview_window("screenshare");
+            if let Some(window) = screenshare_window {
                 let _ = window.show();
                 let _ = window.set_focus();
             } else {
-                log::error!("Main window not found");
+                let main_window = app_handle.get_webview_window("main");
+                if let Some(window) = main_window {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                } else {
+                    log::error!("Main window not found");
+                }
             }
 
             let reopen_requested_thread = reopen_requested_clone.clone();
