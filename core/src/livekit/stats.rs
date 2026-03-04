@@ -22,6 +22,8 @@ struct CumulativeCounters {
     screenshare_inbound_bytes: u64,
     total_inbound_bytes: u64,
     total_outbound_bytes: u64,
+    screenshare_jitter_buffer_delay: f64,
+    screenshare_jitter_buffer_emitted_count: u64,
 }
 
 pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
@@ -58,6 +60,16 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
                 .total_outbound_bytes
                 .saturating_sub(prev.total_outbound_bytes)
                 * 8) as f64;
+        }
+        if prev.screenshare_jitter_buffer_emitted_count > 0 {
+            let delta_delay =
+                counters.screenshare_jitter_buffer_delay - prev.screenshare_jitter_buffer_delay;
+            let delta_count = counters
+                .screenshare_jitter_buffer_emitted_count
+                .saturating_sub(prev.screenshare_jitter_buffer_emitted_count);
+            if delta_count > 0 {
+                snapshot.screenshare_jitter_buffer_delay = delta_delay / delta_count as f64 * 1000.;
+            }
         }
 
         prev = counters;
@@ -121,17 +133,16 @@ async fn collect_stats(room: &livekit::Room) -> (CumulativeCounters, RoomStats) 
                     if s.stream.kind != "video" {
                         continue;
                     }
-                    // NOTE: bytes_received is on .inbound, NOT .received
                     counters.total_inbound_bytes += s.inbound.bytes_received;
                     if is_screenshare {
                         counters.screenshare_inbound_bytes += s.inbound.bytes_received;
+                        counters.screenshare_jitter_buffer_delay +=
+                            s.inbound.jitter_buffer_delay as f64;
+                        counters.screenshare_jitter_buffer_emitted_count +=
+                            s.inbound.jitter_buffer_emitted_count;
                         snapshot.screenshare_fps = s.inbound.frames_per_second;
                         snapshot.screenshare_width = s.inbound.frame_width;
                         snapshot.screenshare_height = s.inbound.frame_height;
-                        snapshot.screenshare_jitter_buffer_delay = (s.inbound.jitter_buffer_delay
-                            as f64)
-                            / (s.inbound.jitter_buffer_emitted_count as f64)
-                            * 1000.;
                         snapshot.screenshare_codec_id = s.stream.codec_id.clone();
                     }
                 }
