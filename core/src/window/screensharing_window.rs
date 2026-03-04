@@ -61,6 +61,40 @@ const HEADER_CHROME_HEIGHT: f32 = 42.0;
 /// Header right padding (less than content so the cog sits closer to the window edge)
 const HEADER_RIGHT_PADDING: f32 = 4.0;
 
+const fn default_window_size() -> (f64, f64) {
+    let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+    let content_h = content_w / (16.0 / 9.0);
+    let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+    (SCREENSHARING_WINDOW_WIDTH, h)
+}
+
+/// Returns the minimum logical (width, height) for a given stream aspect ratio.
+fn min_window_size_for_aspect(aspect: f64) -> (f64, f64) {
+    let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - 2.0 * CONTENT_PADDING as f64;
+    let min_content_h = min_content_w / aspect;
+    let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+    (SCREENSHARING_WINDOW_MIN_WIDTH, min_h)
+}
+
+/// Minimum logical (width, height) for the default 16:9 aspect ratio.
+const fn min_window_size() -> (f64, f64) {
+    let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - 2.0 * CONTENT_PADDING as f64;
+    let min_content_h = min_content_w / (16.0 / 9.0);
+    let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+    (SCREENSHARING_WINDOW_MIN_WIDTH, min_h)
+}
+
+fn auto_window_position(window: &Window) -> (f64, f64) {
+    let Some(monitor) = window.current_monitor() else {
+        return (0., 0.);
+    };
+
+    let monitor_pos: winit::dpi::LogicalPosition<f64> =
+        monitor.position().to_logical(monitor.scale_factor());
+
+    (monitor_pos.x, monitor_pos.y)
+}
+
 /// Target redraw interval: 60 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
@@ -170,6 +204,8 @@ struct ScreensharingState {
     draw_persist: bool,
     /// Whether the sharer currently allows remote control input.
     remote_control_allowed: bool,
+    /// True after the user manually resizes the window; suppresses auto-maximize.
+    user_has_resized: bool,
     /// Multi-click detection state (à la Chromium).
     last_click_count: u32,
     last_click_button: u32,
@@ -192,6 +228,7 @@ impl Default for ScreensharingState {
             dropdown_open: false,
             draw_persist: false,
             remote_control_allowed: true,
+            user_has_resized: false,
             last_click_count: 0,
             last_click_button: 0,
             last_click_time: StdInstant::now(),
@@ -343,6 +380,8 @@ pub struct ScreensharingWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: ScreensharingState,
+    /// Guard: true while a programmatic resize is in flight.
+    programmatic_resize: bool,
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
@@ -359,9 +398,6 @@ pub struct ScreensharingWindow {
     custom_cursor_pencil: winit::window::CustomCursor,
 }
 
-// TODO(@konsalex): Things looks stretched out when
-// (for sure in non-retina displays) when we resize the window. This needs to be fixed.
-// Example: https://share.cleanshot.com/fgYwrMBM
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
     pub fn new(
@@ -371,18 +407,8 @@ impl ScreensharingWindow {
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
-        // ── Create winit window ──────────────────────────────────────────
-        // Initial window: use 16:9 default aspect
-        let default_aspect = 16.0 / 9.0;
-        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-        let content_h = content_w / default_aspect;
-        let init_w = SCREENSHARING_WINDOW_WIDTH;
-        let init_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-
-        let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-        let min_content_h = min_content_w / default_aspect;
-        let min_w = SCREENSHARING_WINDOW_MIN_WIDTH;
-        let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+        let (init_w, init_h) = default_window_size();
+        let (min_w, min_h) = min_window_size();
 
         let attrs = WindowAttributes::default()
             .with_title("Hopp Screensharing")
@@ -523,7 +549,7 @@ impl ScreensharingWindow {
             disable_macos_fullscreen_button(&window);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
-            set_macos_window_aspect_ratio(&window, default_aspect);
+            set_macos_window_aspect_ratio(&window, 16.0 / 9.0);
         }
 
         // Create custom cursors for the participant area.
@@ -609,6 +635,7 @@ impl ScreensharingWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state: ScreensharingState::default(),
+            programmatic_resize: false,
             mouse_in_participant_area: false,
             screen_share_buffer,
             participants_manager,
@@ -1245,6 +1272,24 @@ impl ScreensharingWindow {
             }
             WindowEvent::Resized(new_size) => {
                 if new_size.width > 0 && new_size.height > 0 {
+                    let logical: winit::dpi::LogicalSize<f64> =
+                        new_size.to_logical(self.window.scale_factor());
+                    let (default_w, default_h) = default_window_size();
+                    let is_initial = (logical.width - default_w).abs() < 1.0
+                        && (logical.height - default_h).abs() < 1.0;
+
+                    if self.programmatic_resize {
+                        self.programmatic_resize = false;
+                    } else if is_initial {
+                        // initial window creation — do not flag as user resize
+                    } else {
+                        self.state.user_has_resized = true;
+                        log::info!(
+                            "ScreensharingWindow: user resize to {:.1}x{:.1} (logical)",
+                            logical.width,
+                            logical.height
+                        );
+                    }
                     // Re-apply aspect ratio on macOS.  Winit's window delegate
                     // calls setResizeIncrements: at the start/end of every live
                     // resize, which clears NSWindow.aspectRatio (the two are
@@ -1573,31 +1618,46 @@ impl ScreensharingWindow {
                 self.state.last_stream_width = stream_w;
                 self.state.last_stream_height = stream_h;
 
-                let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-                let content_h = content_w / aspect;
-                let w = SCREENSHARING_WINDOW_WIDTH;
-                let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+                let (width, height) = if !self.state.user_has_resized {
+                    // Auto-maximize to fit monitor
+                    calculate_max_window_size(&self.window, aspect).unwrap_or_else(|| {
+                        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+                        let content_h = content_w / aspect;
+                        (
+                            SCREENSHARING_WINDOW_WIDTH,
+                            content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
+                        )
+                    })
+                } else {
+                    // User manually resized: keep current width, adjust height for new aspect
+                    let current_size: winit::dpi::LogicalSize<f64> = self
+                        .window
+                        .inner_size()
+                        .to_logical(self.window.scale_factor());
+                    let content_w = current_size.width - 2.0 * CONTENT_PADDING as f64;
+                    let content_h = content_w / aspect;
+                    (
+                        current_size.width,
+                        content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
+                    )
+                };
 
                 #[cfg(target_os = "macos")]
-                {
-                    // Update the OS-enforced aspect ratio + min size for the new stream.
-                    set_macos_window_aspect_ratio(&self.window, aspect);
+                set_macos_window_aspect_ratio(&self.window, aspect);
 
-                    let saved_pos = self.window.outer_position();
-                    let _ = self
-                        .window
-                        .request_inner_size(winit::dpi::LogicalSize::new(w, h));
-                    // Restore top-left so the window doesn't jump vertically.
-                    if let Ok(pos) = saved_pos {
-                        self.window.set_outer_position(pos);
-                    }
-                }
+                let saved_pos = self.window.outer_position();
+                self.programmatic_resize = true;
+                let _ = self
+                    .window
+                    .request_inner_size(winit::dpi::LogicalSize::new(width, height));
 
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let _ = self
-                        .window
-                        .request_inner_size(winit::dpi::LogicalSize::new(w, h));
+                if !self.state.user_has_resized {
+                    let (pos_x, pos_y) = auto_window_position(&self.window);
+                    self.window
+                        .set_outer_position(winit::dpi::LogicalPosition::new(pos_x, pos_y));
+                } else if let Ok(pos) = saved_pos {
+                    // Restore position so the window doesn't jump when aspect changes.
+                    self.window.set_outer_position(pos);
                 }
 
                 log::info!(
@@ -1605,8 +1665,8 @@ impl ScreensharingWindow {
                     stream_w,
                     stream_h,
                     aspect,
-                    w,
-                    h
+                    width,
+                    height
                 );
             }
         }
@@ -1840,6 +1900,49 @@ fn disable_macos_fullscreen_button(window: &Window) {
     }
 }
 
+/// Calculate the maximum logical window size that fits the current monitor
+/// while preserving the stream aspect ratio.
+fn calculate_max_window_size(window: &Window, stream_aspect: f64) -> Option<(f64, f64)> {
+    let monitor = window.current_monitor()?;
+    let logical_size: winit::dpi::LogicalSize<f64> =
+        monitor.size().to_logical(monitor.scale_factor());
+
+    let monitor_w = logical_size.width;
+    let monitor_h = logical_size.height;
+
+    // OS menubar/taskbar offset (logical pixels) — matches JS utils.ts
+    let os_chrome_height = if cfg!(target_os = "macos") {
+        25.0
+    } else if cfg!(target_os = "windows") {
+        70.0
+    } else {
+        0.0
+    };
+
+    // Window chrome: header + bottom padding
+    let window_chrome_height = HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+
+    let available_h = monitor_h - os_chrome_height - window_chrome_height;
+    let available_content_w = monitor_w - 2.0 * CONTENT_PADDING as f64;
+
+    if available_content_w <= 0.0 || available_h <= 0.0 {
+        log::warn!("calculate_max_window_size: available space is zero or negative, falling back");
+        return None;
+    }
+
+    // Fit content preserving aspect ratio
+    let (content_w, content_h) = if available_content_w / available_h > stream_aspect {
+        (available_h * stream_aspect, available_h)
+    } else {
+        (available_content_w, available_content_w / stream_aspect)
+    };
+
+    let window_w = content_w + 2.0 * CONTENT_PADDING as f64;
+    let window_h = content_h + window_chrome_height;
+
+    Some((window_w, window_h))
+}
+
 /// Set the **frame-level** aspect ratio on the NSWindow so that the
 /// **content area** preserves the given stream aspect ratio.
 ///
@@ -1883,20 +1986,8 @@ fn set_macos_window_aspect_ratio(window: &Window, content_aspect: f64) {
 
         ns_window.setAspectRatio(NSSize::new(frame_w, frame_h));
 
-        let min_w = SCREENSHARING_WINDOW_MIN_WIDTH;
-        let min_content_w = min_w - 2.0 * CONTENT_PADDING as f64;
-        let min_content_h = min_content_w / content_aspect;
-        let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+        let (min_w, min_h) = min_window_size_for_aspect(content_aspect);
         ns_window.setMinSize(NSSize::new(min_w, min_h));
-
-        log::warn!(
-            "set_macos_window_aspect_ratio: frame={:.1}x{:.1}, content_aspect={:.3}, minSize={:.1}x{:.1}",
-            frame_w,
-            frame_h,
-            content_aspect,
-            min_w,
-            min_h,
-        );
     }
 }
 
