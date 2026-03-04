@@ -437,7 +437,7 @@ impl<'a> Application<'a> {
             .window_manager
             .as_mut()
             .ok_or(ServerError::WindowCreationError)?
-            .show_window(&selected_monitor)
+            .show_window(&selected_monitor, event_loop)
             .map_err(|e| {
                 log::error!("create_overlay_window: Error showing window: {:?}", e);
                 ServerError::from(e)
