@@ -483,7 +483,7 @@ impl ScreensharingWindow {
             disable_macos_fullscreen_button(&window);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
-            set_macos_window_aspect_ratio(&window, init_w, init_h);
+            set_macos_window_aspect_ratio(&window, default_aspect);
         }
 
         // Create custom cursors for the participant area.
@@ -1182,13 +1182,7 @@ impl ScreensharingWindow {
                     // each Resized event so the OS enforces the ratio for all
                     // subsequent drag movements.
                     #[cfg(target_os = "macos")]
-                    {
-                        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-                        let content_h = content_w / self.state.img_aspect;
-                        let w = SCREENSHARING_WINDOW_WIDTH;
-                        let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-                        set_macos_window_aspect_ratio(&self.window, w, h);
-                    }
+                    set_macos_window_aspect_ratio(&self.window, self.state.img_aspect);
                     self.surface.configure(
                         &self.device,
                         &wgpu::SurfaceConfiguration {
@@ -1413,7 +1407,7 @@ impl ScreensharingWindow {
                 #[cfg(target_os = "macos")]
                 {
                     // Update the OS-enforced aspect ratio + min size for the new stream.
-                    set_macos_window_aspect_ratio(&self.window, w, h);
+                    set_macos_window_aspect_ratio(&self.window, aspect);
 
                     let saved_pos = self.window.outer_position();
                     let _ = self
@@ -1631,17 +1625,15 @@ fn disable_macos_fullscreen_button(window: &Window) {
     }
 }
 
-/// Set the **frame-level** aspect ratio on the NSWindow.
+/// Set the **frame-level** aspect ratio on the NSWindow so that the
+/// **content area** preserves the given stream aspect ratio.
 ///
-/// Uses the safe `NSWindow::setAspectRatio()` binding which calls the
-/// Objective-C `setAspectRatio:` property setter.  This constrains the window
-/// **frame** ratio — macOS enforces it for ALL resize methods (drag, keyboard
-/// shortcuts, tiling, accessibility).
-///
-/// Also sets `NSWindow.minSize` directly (frame-level, not content-level)
-/// to match the aspect ratio, mirroring the proven Swift implementation.
+/// Because the content area has fixed-height chrome that does not scale
+/// with the window, we read the current frame width and derive the frame
+/// height that produces the correct content aspect, then pass that to
+/// `NSWindow::setAspectRatio()`.  Re-applied on every `Resized` event.
 #[cfg(target_os = "macos")]
-fn set_macos_window_aspect_ratio(window: &Window, width: f64, height: f64) {
+fn set_macos_window_aspect_ratio(window: &Window, content_aspect: f64) {
     use objc2::rc::Retained;
     use objc2_app_kit::NSView;
     use objc2_foundation::NSSize;
@@ -1668,19 +1660,25 @@ fn set_macos_window_aspect_ratio(window: &Window, width: f64, height: f64) {
             return;
         };
 
-        // Use the safe generated binding — avoids any msg_send! encoding pitfalls.
-        let aspect = NSSize::new(width, height);
-        ns_window.setAspectRatio(aspect);
+        let frame = ns_window.frame();
+        let frame_w = frame.size.width;
+        let content_w = frame_w - 2.0 * CONTENT_PADDING as f64;
+        let content_h = content_w / content_aspect;
+        let frame_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
 
-        // Also set min size at the frame level (same ratio).
+        ns_window.setAspectRatio(NSSize::new(frame_w, frame_h));
+
         let min_w = SCREENSHARING_WINDOW_MIN_WIDTH;
-        let min_h = min_w * (height / width);
+        let min_content_w = min_w - 2.0 * CONTENT_PADDING as f64;
+        let min_content_h = min_content_w / content_aspect;
+        let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
         ns_window.setMinSize(NSSize::new(min_w, min_h));
 
         log::warn!(
-            "set_macos_window_aspect_ratio: aspect={:.1}x{:.1}, minSize={:.1}x{:.1}",
-            width,
-            height,
+            "set_macos_window_aspect_ratio: frame={:.1}x{:.1}, content_aspect={:.3}, minSize={:.1}x{:.1}",
+            frame_w,
+            frame_h,
+            content_aspect,
             min_w,
             min_h,
         );
