@@ -184,6 +184,42 @@ async function CameraWindowSize({
   return actualVideoSize;
 }
 
+const putWindowCorner = async () => {
+  const appWindow = getCurrentWebviewWindow();
+
+  try {
+    // Get the current monitor information
+    const monitor = await currentMonitor();
+    if (!monitor) {
+      console.error("Could not get current monitor information");
+      return;
+    }
+
+    // Get the current window size in logical units
+    const windowSize = await appWindow.outerSize();
+    const scaleFactor = await appWindow.scaleFactor();
+
+    const logicalMonitorWidth = monitor.size.width / scaleFactor;
+    const logicalMonitorHeight = monitor.size.height / scaleFactor;
+    const logicalAppWindowWidth = windowSize.width / scaleFactor;
+    const rightGap = Math.floor(logicalMonitorWidth * 0.01);
+    const topGap = Math.floor(logicalMonitorHeight * 0.08);
+
+    // Calculate position for top-right corner with gap (in logical coordinates)
+    const logicalMonitorX = monitor.position.x / scaleFactor;
+    const logicalMonitorY = monitor.position.y / scaleFactor;
+
+    const x = logicalMonitorX + logicalMonitorWidth - logicalAppWindowWidth - rightGap;
+    const y = logicalMonitorY + topGap;
+
+    // Set the window position
+    await appWindow.setPosition(new LogicalPosition(x, y));
+    console.log(`Positioned window at (${x}, ${y}) with ${rightGap}px gap from right edge`);
+  } catch (error) {
+    console.error("Failed to position window at corner:", error);
+  }
+};
+
 function ConsumerComponent({
   hideSelf,
   setHideSelf,
@@ -239,6 +275,8 @@ function ConsumerComponent({
     // Set window size appropriately and get the actual video size used
     CameraWindowSize({ numOfTracks: visibleTrackCount, sizeMode }).then((size) => {
       setActualVideoSize(size);
+      // Reposition window after size change to prevent it from being stuck
+      putWindowCorner();
     });
   }, [visibleTrackCount, sizeMode]);
 
@@ -443,42 +481,6 @@ function SizeModeSelector({
     </div>
   );
 }
-
-const putWindowCorner = async () => {
-  const appWindow = getCurrentWebviewWindow();
-
-  try {
-    // Get the current monitor information
-    const monitor = await currentMonitor();
-    if (!monitor) {
-      console.error("Could not get current monitor information");
-      return;
-    }
-
-    // Get the current window size in logical units
-    const windowSize = await appWindow.outerSize();
-    const scaleFactor = await appWindow.scaleFactor();
-
-    const logicalMonitorWidth = monitor.size.width / scaleFactor;
-    const logicalMonitorHeight = monitor.size.height / scaleFactor;
-    const logicalAppWindowWidth = windowSize.width / scaleFactor;
-    const rightGap = Math.floor(logicalMonitorWidth * 0.01);
-    const topGap = Math.floor(logicalMonitorHeight * 0.08);
-
-    // Calculate position for top-right corner with gap (in logical coordinates)
-    const logicalMonitorX = monitor.position.x / scaleFactor;
-    const logicalMonitorY = monitor.position.y / scaleFactor;
-
-    const x = logicalMonitorX + logicalMonitorWidth - logicalAppWindowWidth - rightGap;
-    const y = logicalMonitorY + topGap;
-
-    // Set the window position
-    await appWindow.setPosition(new LogicalPosition(x, y));
-    console.log(`Positioned window at (${x}, ${y}) with ${rightGap}px gap from right edge`);
-  } catch (error) {
-    console.error("Failed to position window at corner:", error);
-  }
-};
 
 function CameraWindow() {
   useDisableNativeContextMenu();
