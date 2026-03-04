@@ -168,6 +168,8 @@ struct ScreensharingState {
     dropdown_open: bool,
     /// When true, drawn strokes persist until right-click; otherwise they fade out.
     draw_persist: bool,
+    /// Whether the sharer currently allows remote control input.
+    remote_control_allowed: bool,
     /// Multi-click detection state (à la Chromium).
     last_click_count: u32,
     last_click_button: u32,
@@ -189,6 +191,7 @@ impl Default for ScreensharingState {
             last_draw_cursor: None,
             dropdown_open: false,
             draw_persist: false,
+            remote_control_allowed: true,
             last_click_count: 0,
             last_click_button: 0,
             last_click_time: StdInstant::now(),
@@ -689,6 +692,11 @@ impl ScreensharingWindow {
             .enable_click_animation(position);
     }
 
+    pub fn set_remote_control_allowed(&mut self, allowed: bool) {
+        self.state.remote_control_allowed = allowed;
+        self.window.request_redraw();
+    }
+
     /// Returns the instant when the next redraw should occur.
     pub fn next_redraw_at(&self) -> StdInstant {
         self.last_redraw + REDRAW_INTERVAL
@@ -929,7 +937,7 @@ impl ScreensharingWindow {
                             input_event =
                                 Some(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
                         }
-                    } else {
+                    } else if self.state.remote_control_allowed {
                         // control mode
                         // Use the Web/MDN MouseEvent.button convention
                         // (the receiving side interprets these values):
@@ -996,7 +1004,10 @@ impl ScreensharingWindow {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if self.mouse_in_participant_area && self.state.active_tab == "control" {
+                if self.mouse_in_participant_area
+                    && self.state.active_tab == "control"
+                    && self.state.remote_control_allowed
+                {
                     // Extract delta_x and delta_y from the scroll delta.
                     // Always convert lines to pixels, it seems to work for now, maybe a better approach is
                     // to also forward the unit type (lines/pixels) to the sharer.
@@ -1026,7 +1037,10 @@ impl ScreensharingWindow {
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
-                if self.mouse_in_participant_area && self.state.active_tab == "control" {
+                if self.mouse_in_participant_area
+                    && self.state.active_tab == "control"
+                    && self.state.remote_control_allowed
+                {
                     // Extract key string to match the format expected by keyboard.rs.
                     // We need strings like "Enter", "Tab", "a", "A", etc., not control characters.
                     let mut meta = self.modifiers.super_key();
@@ -1379,7 +1393,57 @@ impl ScreensharingWindow {
             .height(Length::Fill)
             .into();
 
-        let layered_content = stack![video_content, canvas_overlay];
+        let remote_control_disabled_label: iced::Element<
+            'a,
+            ScreensharingMessage,
+            Theme,
+            iced::Renderer,
+        > = if !state.remote_control_allowed && state.active_tab == "control" {
+            container(
+                container(
+                    text("Remote control is disabled")
+                        .size(12)
+                        .font(GEIST_REGULAR)
+                        .color(Color::from_rgba(0.0, 0.0, 0.0, 0.9)),
+                )
+                .padding(Padding {
+                    top: 2.0,
+                    right: 10.0,
+                    bottom: 2.0,
+                    left: 10.0,
+                })
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Gradient(
+                        gradient::Linear::new(Radians(0.0))
+                            .add_stop(
+                                0.0,
+                                Color::from_rgba(249.0 / 255.0, 250.0 / 255.0, 251.0 / 255.0, 0.6),
+                            )
+                            .add_stop(
+                                1.0,
+                                Color::from_rgba(153.0 / 255.0, 161.0 / 255.0, 175.0 / 255.0, 0.6),
+                            )
+                            .into(),
+                    )),
+                    border: Border {
+                        radius: 100.0.into(),
+                        color: Color::from_rgba(1.0, 1.0, 1.0, 0.8),
+                        width: 1.0,
+                    },
+                    ..Default::default()
+                }),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::End)
+            .padding(10.0)
+            .into()
+        } else {
+            Space::new().into()
+        };
+
+        let layered_content = stack![video_content, canvas_overlay, remote_control_disabled_label];
 
         let content_area = container(
             container(layered_content)

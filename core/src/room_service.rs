@@ -1981,6 +1981,9 @@ async fn handle_room_events(
                     }
                     ClientEvent::ClickAnimation(point) => event_loop_proxy
                         .send_event(UserEvent::ClickAnimationFromParticipant(point, sid)),
+                    ClientEvent::RemoteControlEnabled(data) => {
+                        event_loop_proxy.send_event(UserEvent::SharerControlEnabled(data.enabled))
+                    }
                     _ => Ok(()),
                 };
                 if let Err(e) = res {

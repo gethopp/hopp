@@ -1458,6 +1458,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: Error sending BringWindowsToFrontResult: {e:?}");
                 }
             }
+            // TODO(@konsalex): We need to rethink how to tackle this,
+            // as a new-joiner in a Room will not have access to this
+            UserEvent::SharerControlEnabled(enabled) => {
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_remote_control_allowed(enabled);
+                }
+            }
             UserEvent::DefaultOutputDeviceChanged => {
                 log::info!("Default audio output device changed, reconnecting...");
                 if let Err(e) = self.audio_player.mixer().reconnect() {
@@ -1998,6 +2005,7 @@ pub enum UserEvent {
     CloseScreenShareWindow,
     CloseCameraWindow,
     BringWindowsToFront,
+    SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
 }
