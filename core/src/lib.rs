@@ -1,5 +1,7 @@
 pub mod audio {
     pub mod capturer;
+    #[cfg(target_os = "macos")]
+    pub mod device_monitor;
     pub mod mixer;
     pub mod player;
     pub mod processor;
@@ -299,8 +301,10 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_player =
-            audio::player::Player::new().map_err(ApplicationError::AudioPlayerError)?;
+        let audio_player = audio::player::Player::new(event_loop_proxy.clone())
+            .map_err(ApplicationError::AudioPlayerError)?;
+
+        let audio_capturer = audio::capturer::Capturer::new(event_loop_proxy.clone());
 
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();
@@ -323,7 +327,7 @@ impl<'a> Application<'a> {
                 cursor_set_times: 0,
             },
             window_manager: None,
-            audio_capturer: audio::capturer::Capturer::new(),
+            audio_capturer,
             audio_player,
             camera_capturer: camera_capturer.clone(),
             _camera_capturer_events: Some(std::thread::spawn(move || {
@@ -1236,7 +1240,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 );
                 let result = if self.audio_capturer.is_capturing() {
                     self.audio_capturer
-                        .switch_device(&msg.device_name)
+                        .switch_device(Some(&msg.device_name))
                         .map(|_| ())
                 } else {
                     (|| -> Result<(), String> {
@@ -1454,6 +1458,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: Error sending BringWindowsToFrontResult: {e:?}");
                 }
             }
+            UserEvent::DefaultOutputDeviceChanged => {
+                log::info!("Default audio output device changed, reconnecting...");
+                if let Err(e) = self.audio_player.mixer().reconnect() {
+                    log::error!("Failed to reconnect audio output: {e}");
+                }
+            }
+            UserEvent::DefaultInputDeviceChanged => {
+                self.audio_capturer.handle_default_device_changed();
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1591,10 +1604,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         }
 
         // Route to screensharing window if it matches
-        if let Some(ss) = &mut self.screensharing_window {
-            if ss.window_id() == window_id {
-                let input_event = ss.handle_window_event(event);
-                // Mutable borrow on ss is dropped here
+        if let Some(screen_sharing_window) = &mut self.screensharing_window {
+            if screen_sharing_window.window_id() == window_id {
+                let input_event = screen_sharing_window.handle_window_event(event);
+                // Mutable borrow on screen_sharing_window is dropped here
                 if let Some(event) = input_event {
                     if let Some(rs) = &self.room_service {
                         match event {
@@ -1637,6 +1650,38 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     y,
                                 });
                             }
+                            ScreenShareInputEvent::AddToClipboard { is_copy } => {
+                                rs.publish_add_to_clipboard(
+                                    crate::room_service::AddToClipboardData { is_copy },
+                                );
+                            }
+                            ScreenShareInputEvent::PasteFromClipboard(text) => match text {
+                                Some(clipboard_text) => {
+                                    let bytes = clipboard_text.as_bytes();
+                                    const MAX_PACKET: usize = 15 * 1024;
+                                    let total_packets =
+                                        ((bytes.len() + MAX_PACKET - 1) / MAX_PACKET) as u64;
+                                    for i in 0..total_packets {
+                                        let start = (i as usize) * MAX_PACKET;
+                                        let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                                        let chunk = bytes[start..end].to_vec();
+                                        rs.publish_paste_from_clipboard(
+                                            crate::room_service::PasteFromClipboardData {
+                                                data: Some(crate::room_service::ClipboardPayload {
+                                                    packet_id: i,
+                                                    total_packets,
+                                                    data: chunk,
+                                                }),
+                                            },
+                                        );
+                                    }
+                                }
+                                None => {
+                                    rs.publish_paste_from_clipboard(
+                                        crate::room_service::PasteFromClipboardData { data: None },
+                                    );
+                                }
+                            },
                             ScreenShareInputEvent::DrawingModeChanged(mode) => {
                                 if mode == crate::room_service::DrawingMode::Disabled
                                     || mode == crate::room_service::DrawingMode::ClickAnimation
@@ -1953,6 +1998,8 @@ pub enum UserEvent {
     CloseScreenShareWindow,
     CloseCameraWindow,
     BringWindowsToFront,
+    DefaultOutputDeviceChanged,
+    DefaultInputDeviceChanged,
 }
 
 pub struct RenderEventLoop {

@@ -215,7 +215,7 @@ fn start_sidecar(
 fn create_core_process_socket(
     socket_path: &str,
 ) -> Result<(SocketSender, EventSocket), CoreProcessCreationError> {
-    let max_tries = 10;
+    let max_tries = 20;
     let mut tries = 0;
     loop {
         match socket_lib::connect(socket_path) {
@@ -232,7 +232,6 @@ fn create_core_process_socket(
             );
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     }
     Err(CoreProcessCreationError::SocketCreationFailed)
 }

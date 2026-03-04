@@ -27,7 +27,7 @@ use iced_winit::core::{window, Event, Size, Theme};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState};
 #[cfg(not(target_os = "macos"))]
@@ -143,6 +143,8 @@ pub(crate) enum ScreenShareInputEvent {
     DrawClearPaths(Vec<u64>),
     ClickAnimation { x: f64, y: f64 },
     DrawingModeChanged(crate::room_service::DrawingMode),
+    AddToClipboard { is_copy: bool },
+    PasteFromClipboard(Option<String>),
 }
 
 // ── Application state for the screensharing UI ─────────────────────────────
@@ -166,6 +168,12 @@ struct ScreensharingState {
     dropdown_open: bool,
     /// When true, drawn strokes persist until right-click; otherwise they fade out.
     draw_persist: bool,
+    /// Multi-click detection state (à la Chromium).
+    last_click_count: u32,
+    last_click_button: u32,
+    last_click_time: StdInstant,
+    last_click_x: f32,
+    last_click_y: f32,
 }
 
 impl Default for ScreensharingState {
@@ -181,6 +189,11 @@ impl Default for ScreensharingState {
             last_draw_cursor: None,
             dropdown_open: false,
             draw_persist: false,
+            last_click_count: 0,
+            last_click_button: 0,
+            last_click_time: StdInstant::now(),
+            last_click_x: 0.0,
+            last_click_y: 0.0,
         }
     }
 }
@@ -507,7 +520,7 @@ impl ScreensharingWindow {
             disable_macos_fullscreen_button(&window);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
-            set_macos_window_aspect_ratio(&window, init_w, init_h);
+            set_macos_window_aspect_ratio(&window, default_aspect);
         }
 
         // Create custom cursors for the participant area.
@@ -679,6 +692,37 @@ impl ScreensharingWindow {
     /// Returns the instant when the next redraw should occur.
     pub fn next_redraw_at(&self) -> StdInstant {
         self.last_redraw + REDRAW_INTERVAL
+    }
+
+    /// Compute multi-click count using the same logic as Chromium.
+    /// Coordinates are in logical pixels so the distance threshold is
+    /// resolution-independent.
+    fn get_mouse_click_count(&self, x: f32, y: f32, button: u32) -> u32 {
+        const DOUBLE_CLICK_TIME_MS: u64 = 500;
+        const DOUBLE_CLICK_RANGE: f32 = 4.0;
+
+        let prev = &self.state;
+        if prev.last_click_count == 0 {
+            return 1;
+        }
+        if prev.last_click_time.elapsed().as_millis() as u64 > DOUBLE_CLICK_TIME_MS {
+            return 1;
+        }
+        if (x - prev.last_click_x).abs() > DOUBLE_CLICK_RANGE / 2.0 {
+            return 1;
+        }
+        if (y - prev.last_click_y).abs() > DOUBLE_CLICK_RANGE / 2.0 {
+            return 1;
+        }
+        if prev.last_click_button != button {
+            return 1;
+        }
+        // On macOS and Windows keep counting; elsewhere cap at 3.
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        if prev.last_click_count >= 3 {
+            return 1;
+        }
+        prev.last_click_count + 1
     }
 
     /// Update window cursor based on active tab and mouse position.
@@ -886,14 +930,39 @@ impl ScreensharingWindow {
                                 Some(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
                         }
                     } else {
-                        // control mode — existing behavior
+                        // control mode
+                        // Use the Web/MDN MouseEvent.button convention
+                        // (the receiving side interprets these values):
+                        // 0=left, 1=middle, 2=right, 3=back, 4=forward
                         let button_num = match button {
                             winit::event::MouseButton::Left => 0,
-                            winit::event::MouseButton::Right => 1,
-                            winit::event::MouseButton::Middle => 2,
+                            winit::event::MouseButton::Middle => 1,
+                            winit::event::MouseButton::Right => 2,
                             winit::event::MouseButton::Back => 3,
                             winit::event::MouseButton::Forward => 4,
                             winit::event::MouseButton::Other(n) => *n as u32,
+                        };
+
+                        // Compute multi-click count on press using logical
+                        // pixel positions (same approach as Chromium).
+                        let logical_x = match &self.cursor {
+                            mouse::Cursor::Available(pos) => pos.x,
+                            _ => 0.0,
+                        };
+                        let logical_y = match &self.cursor {
+                            mouse::Cursor::Available(pos) => pos.y,
+                            _ => 0.0,
+                        };
+                        let clicks = if down {
+                            let c = self.get_mouse_click_count(logical_x, logical_y, button_num);
+                            self.state.last_click_count = c;
+                            self.state.last_click_button = button_num;
+                            self.state.last_click_time = StdInstant::now();
+                            self.state.last_click_x = logical_x;
+                            self.state.last_click_y = logical_y;
+                            c
+                        } else {
+                            self.state.last_click_count
                         };
 
                         input_event = Some(ScreenShareInputEvent::MouseClick(
@@ -901,7 +970,7 @@ impl ScreensharingWindow {
                                 x: pct_x,
                                 y: pct_y,
                                 button: button_num,
-                                clicks: 1,
+                                clicks,
                                 down,
                                 shift: self.modifiers.shift_key(),
                                 meta: self.modifiers.super_key(),
@@ -928,9 +997,14 @@ impl ScreensharingWindow {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if self.mouse_in_participant_area && self.state.active_tab == "control" {
-                    // Extract delta_x and delta_y from the scroll delta
+                    // Extract delta_x and delta_y from the scroll delta.
+                    // Always convert lines to pixels, it seems to work for now, maybe a better approach is
+                    // to also forward the unit type (lines/pixels) to the sharer.
+                    const LINE_HEIGHT_PX: f64 = 40.0;
                     let (delta_x, delta_y) = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(x, y) => (*x as f64, *y as f64),
+                        winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                            (*x as f64 * LINE_HEIGHT_PX, *y as f64 * LINE_HEIGHT_PX)
+                        }
                         winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
                     };
 
@@ -955,7 +1029,6 @@ impl ScreensharingWindow {
                 if self.mouse_in_participant_area && self.state.active_tab == "control" {
                     // Extract key string to match the format expected by keyboard.rs.
                     // We need strings like "Enter", "Tab", "a", "A", etc., not control characters.
-                    use winit::keyboard::Key;
                     let mut meta = self.modifiers.super_key();
                     let key_str = match &key_event.logical_key {
                         // For character keys, use the character directly
@@ -980,18 +1053,59 @@ impl ScreensharingWindow {
                         Key::Unidentified(_) => "Unidentified".to_string(),
                     };
 
-                    let down = key_event.state.is_pressed();
+                    let ctrl_or_cmd = if cfg!(target_os = "macos") {
+                        self.modifiers.super_key()
+                    } else {
+                        self.modifiers.control_key()
+                    };
 
-                    input_event = Some(ScreenShareInputEvent::KeyInput(
-                        crate::room_service::KeystrokeData {
-                            key: vec![key_str.clone()],
-                            meta,
-                            ctrl: self.modifiers.control_key(),
-                            shift: self.modifiers.shift_key(),
-                            alt: self.modifiers.alt_key(),
-                            down,
-                        },
-                    ));
+                    if ctrl_or_cmd && key_event.state.is_pressed() {
+                        match key_str.as_str() {
+                            "c" => {
+                                input_event =
+                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: true });
+                            }
+                            "x" => {
+                                input_event =
+                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: false });
+                            }
+                            "v" => {
+                                let clipboard_text =
+                                    self.clipboard.read(Kind::Standard).unwrap_or_default();
+                                let data = if clipboard_text.is_empty() {
+                                    None
+                                } else {
+                                    Some(clipboard_text)
+                                };
+                                input_event = Some(ScreenShareInputEvent::PasteFromClipboard(data));
+                            }
+                            _ => {
+                                let down = key_event.state.is_pressed();
+                                input_event = Some(ScreenShareInputEvent::KeyInput(
+                                    crate::room_service::KeystrokeData {
+                                        key: vec![key_str.clone()],
+                                        meta,
+                                        ctrl: self.modifiers.control_key(),
+                                        shift: self.modifiers.shift_key(),
+                                        alt: self.modifiers.alt_key(),
+                                        down,
+                                    },
+                                ));
+                            }
+                        }
+                    } else {
+                        let down = key_event.state.is_pressed();
+                        input_event = Some(ScreenShareInputEvent::KeyInput(
+                            crate::room_service::KeystrokeData {
+                                key: vec![key_str.clone()],
+                                meta,
+                                ctrl: self.modifiers.control_key(),
+                                shift: self.modifiers.shift_key(),
+                                alt: self.modifiers.alt_key(),
+                                down,
+                            },
+                        ));
+                    }
 
                     log::debug!(
                         "ScreensharingWindow: [participant_area] key {:?} {:?}",
@@ -1124,13 +1238,7 @@ impl ScreensharingWindow {
                     // each Resized event so the OS enforces the ratio for all
                     // subsequent drag movements.
                     #[cfg(target_os = "macos")]
-                    {
-                        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-                        let content_h = content_w / self.state.img_aspect;
-                        let w = SCREENSHARING_WINDOW_WIDTH;
-                        let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-                        set_macos_window_aspect_ratio(&self.window, w, h);
-                    }
+                    set_macos_window_aspect_ratio(&self.window, self.state.img_aspect);
                     self.surface.configure(
                         &self.device,
                         &wgpu::SurfaceConfiguration {
@@ -1162,39 +1270,6 @@ impl ScreensharingWindow {
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Only handle Copy/Paste/Cut events when the user is inside the
-                // screen-sharing area, and they are in control mode.
-                if !self.mouse_in_participant_area || self.state.active_tab != "control" {
-                    return None;
-                }
-
-                if event.state == ElementState::Pressed {
-                    let ctrl_or_cmd = if cfg!(target_os = "macos") {
-                        self.modifiers.super_key()
-                    } else {
-                        self.modifiers.control_key()
-                    };
-
-                    if ctrl_or_cmd {
-                        match event.logical_key.as_ref() {
-                            // Will send a command to remote participant's screen
-                            // to copy their selected text
-                            Key::Character("c") => {
-                                println!("Copy triggered!");
-                            }
-                            Key::Character("v") => {
-                                println!("Paste triggered!");
-                                // Get from clipboard manager the text
-                                let clipboard_text =
-                                    self.clipboard.read(Kind::Standard).unwrap_or_default();
-                                println!("Clipboard text: {}", clipboard_text);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
             }
             _ => {}
         }
@@ -1442,7 +1517,7 @@ impl ScreensharingWindow {
                 #[cfg(target_os = "macos")]
                 {
                     // Update the OS-enforced aspect ratio + min size for the new stream.
-                    set_macos_window_aspect_ratio(&self.window, w, h);
+                    set_macos_window_aspect_ratio(&self.window, aspect);
 
                     let saved_pos = self.window.outer_position();
                     let _ = self
@@ -1484,6 +1559,7 @@ impl ScreensharingWindow {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.click_animation_renderer.update();
+        self.participants_manager.hide_inactive_cursors();
 
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
@@ -1700,17 +1776,15 @@ fn disable_macos_fullscreen_button(window: &Window) {
     }
 }
 
-/// Set the **frame-level** aspect ratio on the NSWindow.
+/// Set the **frame-level** aspect ratio on the NSWindow so that the
+/// **content area** preserves the given stream aspect ratio.
 ///
-/// Uses the safe `NSWindow::setAspectRatio()` binding which calls the
-/// Objective-C `setAspectRatio:` property setter.  This constrains the window
-/// **frame** ratio — macOS enforces it for ALL resize methods (drag, keyboard
-/// shortcuts, tiling, accessibility).
-///
-/// Also sets `NSWindow.minSize` directly (frame-level, not content-level)
-/// to match the aspect ratio, mirroring the proven Swift implementation.
+/// Because the content area has fixed-height chrome that does not scale
+/// with the window, we read the current frame width and derive the frame
+/// height that produces the correct content aspect, then pass that to
+/// `NSWindow::setAspectRatio()`.  Re-applied on every `Resized` event.
 #[cfg(target_os = "macos")]
-fn set_macos_window_aspect_ratio(window: &Window, width: f64, height: f64) {
+fn set_macos_window_aspect_ratio(window: &Window, content_aspect: f64) {
     use objc2::rc::Retained;
     use objc2_app_kit::NSView;
     use objc2_foundation::NSSize;
@@ -1737,19 +1811,25 @@ fn set_macos_window_aspect_ratio(window: &Window, width: f64, height: f64) {
             return;
         };
 
-        // Use the safe generated binding — avoids any msg_send! encoding pitfalls.
-        let aspect = NSSize::new(width, height);
-        ns_window.setAspectRatio(aspect);
+        let frame = ns_window.frame();
+        let frame_w = frame.size.width;
+        let content_w = frame_w - 2.0 * CONTENT_PADDING as f64;
+        let content_h = content_w / content_aspect;
+        let frame_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
 
-        // Also set min size at the frame level (same ratio).
+        ns_window.setAspectRatio(NSSize::new(frame_w, frame_h));
+
         let min_w = SCREENSHARING_WINDOW_MIN_WIDTH;
-        let min_h = min_w * (height / width);
+        let min_content_w = min_w - 2.0 * CONTENT_PADDING as f64;
+        let min_content_h = min_content_w / content_aspect;
+        let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
         ns_window.setMinSize(NSSize::new(min_w, min_h));
 
         log::warn!(
-            "set_macos_window_aspect_ratio: aspect={:.1}x{:.1}, minSize={:.1}x{:.1}",
-            width,
-            height,
+            "set_macos_window_aspect_ratio: frame={:.1}x{:.1}, content_aspect={:.3}, minSize={:.1}x{:.1}",
+            frame_w,
+            frame_h,
+            content_aspect,
             min_w,
             min_h,
         );

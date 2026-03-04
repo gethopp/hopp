@@ -8,6 +8,7 @@ use crate::utils::geometry::Position;
 use crate::utils::svg_renderer::{render_user_badge_to_png, SvgRenderError};
 use iced::widget::canvas::Frame;
 use iced::Rectangle;
+use std::time::{Duration, Instant};
 
 /// Cursor display mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub struct Cursor {
     position: Option<Position>,
     /// Current cursor display mode
     mode: CursorMode,
+    /// Timestamp of the last position update (for auto-hiding)
+    last_update: Option<Instant>,
 }
 
 impl Cursor {
@@ -67,6 +70,7 @@ impl Cursor {
             pointer_cursor,
             position: None,
             mode: CursorMode::Normal,
+            last_update: None,
         })
     }
 
@@ -82,7 +86,21 @@ impl Cursor {
 
     /// Sets the cursor position.
     pub fn set_position(&mut self, position: Option<Position>) {
+        self.last_update = match position {
+            Some(_) => Some(Instant::now()),
+            None => None,
+        };
         self.position = position;
+    }
+
+    /// Hides the cursor if it hasn't been updated within `timeout`.
+    pub fn hide_if_expired(&mut self, timeout: Duration) {
+        if let Some(last) = self.last_update {
+            if last.elapsed() > timeout {
+                self.position = None;
+                self.last_update = None;
+            }
+        }
     }
 
     /// Draws the cursor onto an iced canvas frame.
