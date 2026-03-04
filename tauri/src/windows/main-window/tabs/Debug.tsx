@@ -13,10 +13,9 @@ import { usePostHog } from "posthog-js/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import { typedInvoke } from "@/core_payloads";
-import { sleep } from "@/lib/utils";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
+  const { callTokens, setCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const [trayNotification, setTrayNotification] = useState(false);

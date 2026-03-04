@@ -1,6 +1,5 @@
 import clsx from "clsx";
 import React from "react";
-type RoomButtonState = "deactivated" | "active" | "neutral";
 
 export const RoomButton: React.FC<
   React.PropsWithChildren<

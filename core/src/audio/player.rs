@@ -47,8 +47,8 @@ mod tests {
 
         let sources = capturer1.list_sources();
         println!("Available audio input devices:");
-        for device in &sources {
-            println!("  - {}", device);
+        for (name, is_default) in &sources {
+            println!("  - {} (default: {})", name, is_default);
         }
 
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();

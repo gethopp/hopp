@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import createFetchClient from "openapi-fetch";
 import createClient, { type OpenapiQueryClient } from "openapi-react-query";
-import type { paths } from "../openapi";
+import type { paths } from "@/openapi";
 import useStore from "../store/store";
 import { Constants } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";

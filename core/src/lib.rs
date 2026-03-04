@@ -82,7 +82,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 
-use window::screensharing_window::{ScreenShareInputEvent, ScreenShareTab};
+use window::screensharing_window::ScreenShareInputEvent;
 
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
@@ -481,6 +481,11 @@ impl<'a> Application<'a> {
         }
         if let Some(room_service) = self.room_service.as_ref() {
             room_service.unpublish_camera_track();
+            let participants = room_service.participants();
+            let guard = participants.read().unwrap();
+            if let Some(info) = guard.get("local") {
+                info.camera_buffers().set_inactive(true);
+            }
         }
     }
 
@@ -844,6 +849,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     {
                         Ok(_) => {
                             log::info!("user_event: Room created successfully");
+                            room_service.iterate_participants();
                             Ok(())
                         }
                         Err(e) => {
@@ -1217,7 +1223,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .audio_capturer
                     .list_sources()
                     .into_iter()
-                    .map(|name| socket_lib::AudioDevice { name })
+                    .map(|(name, default)| socket_lib::AudioDevice { name, default })
                     .collect();
                 if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
                     error!("user_event: Error sending audio device list: {e:?}");
@@ -1295,7 +1301,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::StartCamera(msg) => {
-                log::info!("user_event: StartCamera device='{}'", msg.device_name);
+                log::info!("user_event: StartCamera device='{:?}'", msg.device_name);
                 let result = (|| -> Result<(), String> {
                     let room_service = self
                         .room_service
@@ -1305,7 +1311,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     let (width, height) = {
                         let mut capturer = self.camera_capturer.lock().unwrap();
                         capturer.start_capture(
-                            &msg.device_name,
+                            msg.device_name.as_deref(),
                             self.socket.clone(),
                             room_service.local_camera_buffer_manager(),
                         )?
@@ -1346,6 +1352,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if result.is_ok() {
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.set_camera_active(true);
+                    }
                     if let Some(room_service) = self.room_service.as_ref() {
                         let snapshot = room_service.participants_snapshot();
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
@@ -1356,69 +1365,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending StartCameraResult: {e:?}");
                 }
             }
-            UserEvent::SwitchCamera(msg) => {
-                log::info!("user_event: SwitchCamera device='{}'", msg.device_name);
-                self.stop_camera();
-
-                let result = (|| -> Result<(), String> {
-                    let room_service = self
-                        .room_service
-                        .as_ref()
-                        .ok_or_else(|| "Room service not found".to_string())?;
-
-                    let (width, height) = {
-                        let mut capturer = self.camera_capturer.lock().unwrap();
-                        capturer.start_capture(
-                            &msg.device_name,
-                            self.socket.clone(),
-                            room_service.local_camera_buffer_manager(),
-                        )?
-                    };
-
-                    room_service
-                        .publish_camera_track(width, height)
-                        .map_err(|e| format!("Failed to publish camera track: {e}"))?;
-
-                    if let Some(source) = room_service.get_camera_buffer_source() {
-                        let capturer = self.camera_capturer.lock().unwrap();
-                        capturer.set_buffer_source(source);
-                    }
-
-                    Ok(())
-                })();
-
-                if let Err(ref e) = result {
-                    log::error!("user_event: SwitchCamera failed: {e}");
-                }
-
-                if let Err(e) = self.socket.send(Message::SwitchCameraResult(result)) {
-                    error!("user_event: Error sending SwitchCameraResult: {e:?}");
-                }
-            }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_camera_active(false);
+                }
                 if let Some(room_service) = self.room_service.as_ref() {
                     let snapshot = room_service.participants_snapshot();
                     let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
-                }
-            }
-            UserEvent::ToggleCamera => {
-                log::info!("user_event: ToggleCamera");
-                {
-                    let room_service = match self.room_service.as_ref() {
-                        Some(service) => service,
-                        None => {
-                            log::warn!("user_event: room service is none toggle camera");
-                            return;
-                        }
+                    let participants = room_service.participants();
+                    let any_active = {
+                        let guard = participants.read().unwrap();
+                        guard.values().any(|info| info.camera_active())
                     };
-                    let mut capturer = self.camera_capturer.lock().unwrap();
-                    // TODO: check this
-                    if let Some(source) = room_service.get_camera_buffer_source() {
-                        let _ = capturer.toggle(source);
-                    } else {
-                        log::warn!("user_event: ToggleCamera: no camera buffer source");
+                    if !any_active {
+                        self.camera_window = None;
                     }
                 }
             }
@@ -1469,6 +1431,28 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CloseScreenShareWindow => {
                 log::info!("user_event: CloseScreenShareWindow");
                 self.close_screensharing_window();
+            }
+            UserEvent::CloseCameraWindow => {
+                log::info!("user_event: CloseCameraWindow");
+                self.camera_window = None;
+            }
+            UserEvent::BringWindowsToFront => {
+                log::info!("user_event: BringWindowsToFront");
+                let mut focused = false;
+                if let Some(ss) = &self.screensharing_window {
+                    ss.focus_window();
+                    focused = true;
+                }
+                if let Some(cam) = &self.camera_window {
+                    cam.focus_window();
+                    focused = true;
+                }
+                if let Err(e) = self
+                    .socket
+                    .send(Message::BringWindowsToFrontResult(focused))
+                {
+                    log::error!("user_event: Error sending BringWindowsToFrontResult: {e:?}");
+                }
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
@@ -1653,18 +1637,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     y,
                                 });
                             }
-                            ScreenShareInputEvent::TabChanged(tab) => {
-                                let mode = match tab {
-                                    ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
-                                        crate::room_service::DrawSettings { permanent: false },
-                                    ),
-                                    ScreenShareTab::Point => {
-                                        crate::room_service::DrawingMode::ClickAnimation
-                                    }
-                                    ScreenShareTab::Control => {
-                                        crate::room_service::DrawingMode::Disabled
-                                    }
-                                };
+                            ScreenShareInputEvent::DrawingModeChanged(mode) => {
                                 if mode == crate::room_service::DrawingMode::Disabled
                                     || mode == crate::room_service::DrawingMode::ClickAnimation
                                 {
@@ -1973,13 +1946,13 @@ pub enum UserEvent {
     ToggleMic,
     ListCameras,
     StartCamera(CameraStartMessage),
-    SwitchCamera(CameraStartMessage),
     StopCamera,
-    ToggleCamera,
     OpenCamera,
     OpenScreensharing,
     OpenScreenShareWindow(Option<String>),
     CloseScreenShareWindow,
+    CloseCameraWindow,
+    BringWindowsToFront,
 }
 
 pub struct RenderEventLoop {
@@ -2064,12 +2037,12 @@ impl RenderEventLoop {
                     Message::ToggleMic => UserEvent::ToggleMic,
                     Message::ListCameras => UserEvent::ListCameras,
                     Message::StartCamera(msg) => UserEvent::StartCamera(msg),
-                    Message::SwitchCamera(msg) => UserEvent::SwitchCamera(msg),
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow(None),
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
+                    Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

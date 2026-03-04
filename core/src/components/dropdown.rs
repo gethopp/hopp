@@ -9,7 +9,7 @@
 //! ```ignore
 //! // 1. Define items
 //! const ITEMS: &[DropdownItemDef] = &[
-//!     DropdownItemDef { label: "Option A", icon: ICON_COG },
+//!     DropdownItemDef { label: "Option A", icon: ICON_COG, selected: false },
 //! ];
 //!
 //! // 2. Trigger button (in your header)
@@ -36,6 +36,8 @@ pub struct DropdownItemDef {
     pub label: &'static str,
     /// SVG icon bytes (embedded at compile time).
     pub icon: &'static [u8],
+    /// Whether the item is currently selected (shows a checkmark on the left).
+    pub selected: bool,
 }
 
 /// Build a dropdown trigger button with an SVG icon.
@@ -126,7 +128,12 @@ pub fn dropdown_menu<'a, Message: Clone + 'a>(
 
     // Primary items
     for (i, def) in items.iter().enumerate() {
-        elements.push(dropdown_menu_item(def.label, def.icon, on_item_click(i)));
+        elements.push(dropdown_menu_item(
+            def.label,
+            def.icon,
+            def.selected,
+            on_item_click(i),
+        ));
     }
 
     // Divider + secondary items
@@ -137,6 +144,7 @@ pub fn dropdown_menu<'a, Message: Clone + 'a>(
             elements.push(dropdown_menu_item(
                 def.label,
                 def.icon,
+                def.selected,
                 on_item_click(offset + i),
             ));
         }
@@ -212,8 +220,24 @@ pub fn dropdown_overlay<'a, Message: Clone + 'a>(
 fn dropdown_menu_item<'a, Message: Clone + 'a>(
     label: &'static str,
     icon_data: &'static [u8],
+    selected: bool,
     on_press: Message,
 ) -> iced::Element<'a, Message, Theme, iced::Renderer> {
+    // Checkmark indicator (fixed-width so items stay aligned)
+    let check: iced::Element<'a, Message, Theme, iced::Renderer> = if selected {
+        text("\u{2713}")
+            .size(13)
+            .color(Color::WHITE)
+            .font(GEIST_MEDIUM)
+            .width(Length::Fixed(14.0))
+            .into()
+    } else {
+        Space::new()
+            .width(Length::Fixed(14.0))
+            .height(Length::Shrink)
+            .into()
+    };
+
     // Icon (16×16 with gray stroke color)
     let icon_handle = svg::Handle::from_memory(icon_data);
     let icon = svg(icon_handle)
@@ -230,7 +254,9 @@ fn dropdown_menu_item<'a, Message: Clone + 'a>(
         .font(GEIST_MEDIUM)
         .wrapping(text_widget::Wrapping::None);
 
-    let content_row = row![icon, label_text].spacing(8).align_y(Alignment::Center);
+    let content_row = row![check, icon, label_text]
+        .spacing(6)
+        .align_y(Alignment::Center);
 
     // Wrap in a styled container, then in a button for click handling
     let content = container(content_row)

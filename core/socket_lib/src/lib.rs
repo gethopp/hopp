@@ -122,6 +122,7 @@ pub struct DrawingEnabled {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioDevice {
     pub name: String,
+    pub default: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -137,11 +138,12 @@ pub struct CameraDevice {
     // no duplicate names 🤞:
     // https://github.com/l1npengtul/nokhwa/blob/ab2bedfbf13dfed4fabe77dcf725012fcaa4d305/nokhwa-core/src/types.rs#L478-L480
     pub id: String,
+    pub default: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CameraStartMessage {
-    pub device_name: String,
+    pub device_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -194,8 +196,6 @@ pub enum Message {
     CameraList(Vec<CameraDevice>),
     StartCamera(CameraStartMessage),
     StartCameraResult(Result<(), String>),
-    SwitchCamera(CameraStartMessage),
-    SwitchCameraResult(Result<(), String>),
     StopCamera,
     CameraFailed(String),
     OpenCamera,
@@ -203,6 +203,8 @@ pub enum Message {
     ToggleMic,
     OpenScreenShareWindow,
     CloseScreenShareWindow,
+    BringWindowsToFront,
+    BringWindowsToFrontResult(bool),
     // Core → Tauri event forwarding
     ParticipantsSnapshot(Vec<CoreParticipantState>),
     RoleChange(CoreRoleEvent),
@@ -220,7 +222,7 @@ impl Message {
                 | Message::StartAudioCaptureResult(_)
                 | Message::CameraList(_)
                 | Message::StartCameraResult(_)
-                | Message::SwitchCameraResult(_)
+                | Message::BringWindowsToFrontResult(_)
         )
     }
 }

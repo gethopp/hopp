@@ -201,7 +201,7 @@ function App() {
       if (data.type !== "incoming_call") {
         return;
       }
-      // Check that there is no on-going call
+      // Check that there is no ongoing call
       // If there is, reject the call
       const { callTokens } = useStore.getState();
       if (callTokens) {

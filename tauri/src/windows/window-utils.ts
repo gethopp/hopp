@@ -106,8 +106,7 @@ const storeTokenBackend = async (token: string) => {
 };
 
 const getStoredToken = async () => {
-  const token = await invoke<string | null>("get_stored_token");
-  return token;
+  return await invoke<string | null>("get_stored_token");
 };
 
 const deleteStoredToken = async () => {
@@ -257,8 +256,7 @@ const setLivekitUrl = async (url: string) => {
 };
 
 const getLivekitUrl = async () => {
-  const url = await invoke<string>("get_livekit_url");
-  return url;
+  return await invoke<string>("get_livekit_url");
 };
 
 const setSentryMetadata = async (userEmail: string) => {

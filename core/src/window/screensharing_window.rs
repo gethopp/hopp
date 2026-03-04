@@ -39,6 +39,7 @@ use thiserror::Error;
 use fontdb::Database;
 use resvg::{tiny_skia, usvg};
 
+use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
@@ -68,6 +69,7 @@ const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 const LOCAL_PARTICIPANT_SID: &str = "local";
 
 const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
+const ICON_PENCIL_SVG: &[u8] = include_bytes!("../../resources/icons/pencil.svg");
 
 /// Icon font codepoints for segmented control (from icons-font).
 const ICON_REMOTE_CONTROL: char = '\u{F107}';
@@ -114,6 +116,9 @@ pub enum ScreensharingWindowError {
 #[derive(Debug, Clone)]
 pub enum ScreensharingMessage {
     TabSelected(&'static str),
+    ToggleDropdown,
+    DismissDropdown,
+    DropdownItemClicked(usize),
 }
 
 // ── Input events to forward to room service ─────────────────────────────────
@@ -137,7 +142,7 @@ pub(crate) enum ScreenShareInputEvent {
     DrawClearAllPaths,
     DrawClearPaths(Vec<u64>),
     ClickAnimation { x: f64, y: f64 },
-    TabChanged(ScreenShareTab),
+    DrawingModeChanged(crate::room_service::DrawingMode),
 }
 
 // ── Application state for the screensharing UI ─────────────────────────────
@@ -157,6 +162,10 @@ struct ScreensharingState {
     current_path_id: u64,
     /// Last cursor position (percentage 0.0-1.0) inside participant area.
     last_draw_cursor: Option<(f64, f64)>,
+    /// Whether the settings dropdown is open.
+    dropdown_open: bool,
+    /// When true, drawn strokes persist until right-click; otherwise they fade out.
+    draw_persist: bool,
 }
 
 impl Default for ScreensharingState {
@@ -170,6 +179,8 @@ impl Default for ScreensharingState {
             left_mouse_pressed: false,
             current_path_id: 0,
             last_draw_cursor: None,
+            dropdown_open: false,
+            draw_persist: false,
         }
     }
 }
@@ -307,6 +318,7 @@ pub struct ScreensharingWindow {
     device: wgpu::Device,
     _queue: wgpu::Queue,
     format: wgpu::TextureFormat,
+    alpha_mode: wgpu::CompositeAlphaMode,
     _engine: Engine,
     renderer: iced::Renderer,
     viewport: Viewport,
@@ -425,6 +437,31 @@ impl ScreensharingWindow {
             .find(|f| !f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
+        // On macOS, use PreMultiplied so the alpha channel is honoured by the
+        // compositor and the NSVisualEffectView vibrancy shows through.
+        log::info!(
+            "ScreensharingWindow: available alpha modes: {:?}",
+            caps.alpha_modes
+        );
+        let alpha_mode = if cfg!(target_os = "macos") {
+            if caps
+                .alpha_modes
+                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+            {
+                wgpu::CompositeAlphaMode::PreMultiplied
+            } else if caps
+                .alpha_modes
+                .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+            {
+                wgpu::CompositeAlphaMode::PostMultiplied
+            } else {
+                wgpu::CompositeAlphaMode::Auto
+            }
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
+        log::info!("ScreensharingWindow: selected alpha_mode: {:?}", alpha_mode);
+
         let physical_size = window.inner_size();
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -432,7 +469,7 @@ impl ScreensharingWindow {
             width: physical_size.width.max(1),
             height: physical_size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 0,
         };
@@ -547,6 +584,7 @@ impl ScreensharingWindow {
             device,
             _queue: queue,
             format,
+            alpha_mode,
             _engine: engine,
             renderer,
             viewport,
@@ -576,6 +614,11 @@ impl ScreensharingWindow {
     /// The winit `WindowId` for event routing.
     pub fn window_id(&self) -> WindowId {
         self.window.id()
+    }
+
+    pub fn focus_window(&self) {
+        self.window.set_visible(true);
+        self.window.focus_window();
     }
 
     pub fn request_redraw(&self) {
@@ -696,7 +739,8 @@ impl ScreensharingWindow {
             WindowEvent::CursorMoved { position, .. } => {
                 let logical_x = (position.x / scale_factor as f64) as f32;
                 let logical_y = (position.y / scale_factor as f64) as f32;
-                let inside = logical_x >= rect.x
+                let inside = !self.state.dropdown_open
+                    && logical_x >= rect.x
                     && logical_x < rect.x + rect.width
                     && logical_y >= rect.y
                     && logical_y < rect.y + rect.height;
@@ -825,7 +869,7 @@ impl ScreensharingWindow {
                                 }
                             }
                             winit::event::MouseButton::Right => {
-                                if down {
+                                if down && self.state.draw_persist {
                                     self.participants_manager
                                         .draw_clear_all_paths(LOCAL_PARTICIPANT_SID);
                                     input_event = Some(ScreenShareInputEvent::DrawClearAllPaths);
@@ -1028,7 +1072,9 @@ impl ScreensharingWindow {
                         };
                         let mode = match tab {
                             ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
-                                crate::room_service::DrawSettings { permanent: false },
+                                crate::room_service::DrawSettings {
+                                    permanent: self.state.draw_persist,
+                                },
                             ),
                             ScreenShareTab::Point => {
                                 crate::room_service::DrawingMode::ClickAnimation
@@ -1042,10 +1088,20 @@ impl ScreensharingWindow {
                                 .draw_clear_all_paths(LOCAL_PARTICIPANT_SID);
                         }
                         self.participants_manager
-                            .set_drawing_mode(LOCAL_PARTICIPANT_SID, mode);
+                            .set_drawing_mode(LOCAL_PARTICIPANT_SID, mode.clone());
                         self.state.left_mouse_pressed = false;
-                        input_event = Some(ScreenShareInputEvent::TabChanged(tab));
+                        input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
                     }
+                    ScreensharingMessage::DropdownItemClicked(index) => {
+                        let permanent = *index == 1;
+                        let mode = crate::room_service::DrawingMode::Draw(
+                            crate::room_service::DrawSettings { permanent },
+                        );
+                        self.participants_manager
+                            .set_drawing_mode(LOCAL_PARTICIPANT_SID, mode.clone());
+                        input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                    }
+                    _ => {}
                 }
                 self.update(msg);
             }
@@ -1083,7 +1139,7 @@ impl ScreensharingWindow {
                             width: new_size.width,
                             height: new_size.height,
                             present_mode: wgpu::PresentMode::AutoVsync,
-                            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                            alpha_mode: self.alpha_mode,
                             view_formats: vec![],
                             desired_maximum_frame_latency: 0,
                         },
@@ -1160,7 +1216,7 @@ impl ScreensharingWindow {
                 .font(GEIST_MEDIUM),
         )
         .padding(Padding {
-            top: 1.0,
+            top: 2.0,
             right: 0.0,
             bottom: 0.0,
             left: 0.0,
@@ -1177,11 +1233,18 @@ impl ScreensharingWindow {
         //    centered across the full window width, independent of name width.
         //    Layer 1: name on the left
         //    Layer 2: segmented control absolutely centered
+        let cog_button = dropdown_trigger_button(
+            ICON_COG,
+            state.dropdown_open,
+            ScreensharingMessage::ToggleDropdown,
+        );
+
         let header_ends = row![
             Space::new().width(Length::Fixed(68.0)), // Space for native macOS traffic lights
             Space::new().width(Length::Fixed(0.0)),  // gap before name
             name_label,
             Space::new().width(Length::Fill),
+            cog_button,
         ]
         .align_y(Alignment::Center)
         .width(Length::Fill);
@@ -1271,23 +1334,48 @@ impl ScreensharingWindow {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        container(main_content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                // On macOS, layer a semi-transparent dark tint over the vibrancy
-                // so the blur shows through but white text stays readable.
-                // Tune: lower alpha → more vibrancy visible, higher → darker.
-                background: if cfg!(target_os = "macos") {
-                    // Dark semi-transparent overlay for the window chrome.
-                    // Values are sRGB (non-sRGB surface, no GPU encoding).
-                    Some(Background::Color(Color::from_rgba(0.31, 0.31, 0.35, 0.55)))
-                } else {
-                    Some(Background::Color(ColorToken::Slate600.to_color()))
+        let base: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
+            container(main_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: if cfg!(target_os = "macos") {
+                        Some(Background::Color(Color::from_rgba(0.31, 0.31, 0.45, 0.15)))
+                    } else {
+                        Some(Background::Color(ColorToken::Slate600.to_color()))
+                    },
+                    ..Default::default()
+                })
+                .into();
+
+        if state.dropdown_open {
+            let items = [
+                DropdownItemDef {
+                    label: "Fade Out",
+                    icon: ICON_PENCIL_SVG,
+                    selected: !state.draw_persist,
                 },
-                ..Default::default()
-            })
-            .into()
+                DropdownItemDef {
+                    label: "Persist Until Right Click",
+                    icon: ICON_PENCIL_SVG,
+                    selected: state.draw_persist,
+                },
+            ];
+            let menu = crate::components::dropdown::dropdown_menu(
+                &items,
+                &[],
+                ScreensharingMessage::DropdownItemClicked,
+            );
+            dropdown_overlay(
+                base,
+                menu,
+                ScreensharingMessage::DismissDropdown,
+                HEADER_CHROME_HEIGHT,
+                HEADER_RIGHT_PADDING,
+            )
+        } else {
+            base
+        }
     }
 
     /// Handle a screensharing UI message (state update).
@@ -1299,6 +1387,28 @@ impl ScreensharingWindow {
                 self.state.active_tab = id;
                 self.update_cursor();
                 log::info!("ScreensharingWindow: tab selected = {}", id);
+            }
+            ScreensharingMessage::ToggleDropdown => {
+                self.state.dropdown_open = !self.state.dropdown_open;
+                log::info!(
+                    "ScreensharingWindow: dropdown toggled = {}",
+                    self.state.dropdown_open
+                );
+            }
+            ScreensharingMessage::DismissDropdown => {
+                self.state.dropdown_open = false;
+            }
+            ScreensharingMessage::DropdownItemClicked(index) => {
+                match index {
+                    0 => self.state.draw_persist = false,
+                    1 => self.state.draw_persist = true,
+                    _ => {}
+                }
+                log::info!(
+                    "ScreensharingWindow: draw_persist = {}",
+                    self.state.draw_persist
+                );
+                self.state.dropdown_open = false;
             }
         }
     }
@@ -1442,14 +1552,21 @@ impl ScreensharingWindow {
 /// Uses `NSVisualEffectView` with the HUDWindow material for a dark translucent
 /// background that blends with the desktop, following Apple's
 /// [Human Interface Guidelines for materials](https://developer.apple.com/design/human-interface-guidelines/materials).
+///
+/// Also forces the NSWindow, content view, and CAMetalLayer to be non-opaque
+/// so the compositor honours the alpha channel from the wgpu surface.
+/// Example code that replicates this effect:
+/// https://stackoverflow.com/a/70222106
 #[cfg(target_os = "macos")]
 fn apply_macos_vibrancy(window: &Window) {
     use objc2::rc::Retained;
-    use objc2::{msg_send, MainThreadMarker, MainThreadOnly};
+    use objc2::{msg_send, AnyThread, ClassType, MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-        NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+        NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSImage, NSView,
+        NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
+        NSVisualEffectView, NSWindowOrderingMode,
     };
+    use objc2_foundation::{NSEdgeInsets, NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let Some(mtm) = MainThreadMarker::new() else {
@@ -1468,18 +1585,30 @@ fn apply_macos_vibrancy(window: &Window) {
     };
 
     unsafe {
-        // Get the content view (winit's NSView) from the raw window handle.
         let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
         let Some(ns_view) = ns_view else {
             log::warn!("apply_macos_vibrancy: failed to retain NSView");
             return;
         };
 
-        // The content view's superview is the window's frame view (NSThemeFrame).
-        // We insert the vibrancy view there, *behind* the content view, so the
-        // wgpu Metal layer renders on top and transparent areas show vibrancy.
-        // Adding a subview directly to the content view doesn't work because
-        // subviews render ON TOP of the parent's CAMetalLayer, hiding iced UI.
+        // Force the NSWindow to be non-opaque with a clear background.
+        // winit's with_transparent(true) should do this, but wgpu's surface
+        // setup may override it — re-apply after surface configuration.
+        let Some(ns_window) = ns_view.window() else {
+            log::warn!("apply_macos_vibrancy: NSView has no window");
+            return;
+        };
+        ns_window.setOpaque(false);
+        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+
+        // Force the CAMetalLayer (wgpu's backing layer) to be non-opaque so
+        // the compositor actually uses the alpha channel we write.
+        let layer: *mut objc2::runtime::AnyObject = msg_send![&*ns_view, layer];
+        if !layer.is_null() {
+            let _: () = msg_send![layer, setOpaque: false];
+            log::info!("apply_macos_vibrancy: CAMetalLayer.isOpaque set to false");
+        }
+
         let Some(frame_view) = ns_view.superview() else {
             log::warn!("apply_macos_vibrancy: content view has no superview");
             return;
@@ -1487,23 +1616,45 @@ fn apply_macos_vibrancy(window: &Window) {
 
         let bounds = frame_view.bounds();
 
-        // Create NSVisualEffectView with HUDWindow material — the semantic
-        // replacement for the deprecated .ultraDark material (macOS 10.14+).
         let vibrancy_view: Retained<NSVisualEffectView> =
             msg_send![NSVisualEffectView::alloc(mtm), initWithFrame: bounds];
 
-        vibrancy_view.setMaterial(NSVisualEffectMaterial(13)); // HUDWindow
+        vibrancy_view.setMaterial(NSVisualEffectMaterial(9)); // UltraDark
         vibrancy_view.setBlendingMode(NSVisualEffectBlendingMode(0)); // BehindWindow
-        vibrancy_view.setState(NSVisualEffectState(1)); // Active (always dark, like ultraDark)
+        vibrancy_view.setState(NSVisualEffectState(1)); // Active
         vibrancy_view.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
 
-        // Insert into the frame view behind the content view. We do NOT
-        // replace the content view or call setOpaque/setBackgroundColor —
-        // the window was created with with_transparent(true) which handles
-        // that safely. This keeps winit's internal state intact.
+        // Rounded-corner mask so vibrancy edges match the window frame.
+        let corner_radius: f64 = 10.0;
+        let mask_size = NSSize::new(corner_radius * 2.0, corner_radius * 2.0);
+        let mask_image: Retained<NSImage> = msg_send![NSImage::alloc(), initWithSize: mask_size];
+
+        let _: () = msg_send![&*mask_image, lockFocus];
+        let mask_rect = NSRect::new(NSPoint::new(0.0, 0.0), mask_size);
+        let path: Retained<NSBezierPath> = msg_send![
+            NSBezierPath::class(),
+            bezierPathWithRoundedRect: mask_rect,
+            xRadius: corner_radius,
+            yRadius: corner_radius
+        ];
+        let _: () = msg_send![&NSColor::blackColor(), set];
+        let _: () = msg_send![&*path, fill];
+        let _: () = msg_send![&*mask_image, unlockFocus];
+
+        let insets = NSEdgeInsets {
+            top: corner_radius,
+            left: corner_radius,
+            bottom: corner_radius,
+            right: corner_radius,
+        };
+        let _: () = msg_send![&*mask_image, setCapInsets: insets];
+        let _: () = msg_send![&*mask_image, setResizingMode: 1_isize]; // .stretch
+
+        let _: () = msg_send![&*vibrancy_view, setMaskImage: &*mask_image];
+
         frame_view.addSubview_positioned_relativeTo(
             &vibrancy_view,
             NSWindowOrderingMode::Below,

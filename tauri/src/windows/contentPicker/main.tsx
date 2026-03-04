@@ -14,7 +14,6 @@ import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
 import clsx from "clsx";
-import useStore from "@/store/store";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -69,7 +68,6 @@ async function screenshare(
 function Window() {
   useDisableNativeContextMenu();
   useSystemTheme();
-  const { callTokens } = useStore();
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);

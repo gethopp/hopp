@@ -143,6 +143,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
           await tauriUtils.callStarted(data.payload.audioToken);
+          await tauriUtils.setDockIconVisible(true);
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),

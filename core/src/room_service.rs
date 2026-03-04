@@ -1411,6 +1411,17 @@ async fn room_service_commands(
                 let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
                 *inner_buffer_source = Some(buffer_source);
 
+                // Mark local camera as active before building snapshot
+                // to avoid the race where the capture thread hasn't written
+                // its first frame yet.
+                {
+                    let mut participants = inner.participants.write().unwrap();
+                    let info = participants
+                        .get_mut("local")
+                        .expect("local participant info not found");
+                    info.camera_buffers().set_inactive(false);
+                }
+
                 log::info!("room_service_commands: Camera track published");
                 let _ = tx.send(RoomServiceCommandResult::Success);
             }
@@ -1435,6 +1446,16 @@ async fn room_service_commands(
 
                 let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
                 *inner_buffer_source = None;
+
+                // Mark local camera as inactive before building snapshot
+                // to avoid sending active camera when we disable it.
+                {
+                    let mut participants = inner.participants.write().unwrap();
+                    let info = participants
+                        .get_mut("local")
+                        .expect("local participant info not found");
+                    info.camera_buffers().set_inactive(true);
+                }
 
                 log::info!("room_service_commands: Camera track unpublished");
             }
@@ -2017,13 +2038,22 @@ async fn handle_room_events(
                 log::info!("handle_room_events: Participant disconnected: {}", sid);
 
                 // Stop streams and remove from HashMap
-                {
+                let any_camera_active_after = {
                     let mut participants_guard = participants.write().unwrap();
                     if let Some(info) = participants_guard.get_mut(&sid) {
                         info.stop_audio_stream();
                         info.stop_camera_stream();
                     }
                     participants_guard.remove(&sid);
+                    participants_guard.values().any(|info| info.camera_active())
+                };
+
+                if !any_camera_active_after {
+                    if let Err(e) = event_loop_proxy.send_event(UserEvent::CloseCameraWindow) {
+                        log::error!(
+                            "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                        );
+                    }
                 }
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
@@ -2303,9 +2333,21 @@ async fn handle_room_events(
                                 participant_sid
                             );
 
-                            let mut participants_guard = participants.write().unwrap();
-                            if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                info.stop_camera_stream();
+                            let any_camera_active = {
+                                let mut participants_guard = participants.write().unwrap();
+                                if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                                    info.stop_camera_stream();
+                                }
+                                participants_guard.values().any(|info| info.camera_active())
+                            };
+                            if !any_camera_active {
+                                if let Err(e) =
+                                    event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
+                                {
+                                    log::error!(
+                                        "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                                    );
+                                }
                             }
                         } else if publication.source() == TrackSource::Screenshare {
                             let unsub_sid = participant.sid().as_str().to_string();

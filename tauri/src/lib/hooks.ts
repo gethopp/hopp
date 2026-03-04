@@ -45,27 +45,6 @@ export const useSystemTheme = () => {
   return theme;
 };
 
-export const useResizeListener = (callback: () => void) => {
-  useEffect(() => {
-    // Run only once hook
-    // Hacky way to initialise the callbacks with a Promise inside a hook
-    const setupResizeListener = async () => {
-      const unlisten = await appWindow.onResized(callback);
-      return unlisten;
-    };
-
-    let unlisten: (() => void) | undefined;
-
-    setupResizeListener().then((fn) => {
-      unlisten = fn;
-    });
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [callback]);
-};
-
 /**
  * This is a hack to prevent the context menu from being shown
  * when the user right clicks on the screen.

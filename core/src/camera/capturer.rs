@@ -15,8 +15,6 @@ pub struct CameraCapturer {
     rx: Arc<Mutex<mpsc::Receiver<CameraStreamMessage>>>,
     tx: mpsc::Sender<CameraStreamMessage>,
     socket: Option<SocketSender>,
-    cached_device_name: Option<String>,
-    cached_video_buffer_manager: Option<Arc<VideoBufferManager>>,
 }
 
 impl Default for CameraCapturer {
@@ -33,8 +31,6 @@ impl CameraCapturer {
             rx: Arc::new(Mutex::new(rx)),
             tx,
             socket: None,
-            cached_device_name: None,
-            cached_video_buffer_manager: None,
         }
     }
 
@@ -44,22 +40,17 @@ impl CameraCapturer {
 
     pub fn start_capture(
         &mut self,
-        device_name: &str,
+        device_name: Option<&str>,
         socket: SocketSender,
         video_buffer_manager: Arc<VideoBufferManager>,
     ) -> Result<(u32, u32), String> {
         self.stop_capture();
         self.socket = Some(socket);
-
-        log::info!("CameraCapturer::start_capture: device='{device_name}'");
-        let stream = CameraStream::new(device_name, self.tx.clone(), video_buffer_manager.clone())?;
+        let name = device_name.unwrap_or("");
+        log::info!("CameraCapturer::start_capture: device='{name}'");
+        let stream = CameraStream::new(name, self.tx.clone(), video_buffer_manager.clone())?;
         let extent = stream.extent();
         self.stream = Some(stream);
-
-        // Cache for toggle
-        self.cached_device_name = Some(device_name.to_string());
-        self.cached_video_buffer_manager = Some(video_buffer_manager);
-
         Ok(extent)
     }
 
@@ -68,33 +59,6 @@ impl CameraCapturer {
             log::info!("CameraCapturer::stop_capture");
             stream.stop_capture();
         }
-        self.cached_device_name = None;
-        self.cached_video_buffer_manager = None;
-    }
-
-    pub fn toggle(&mut self, buffer_source: NativeVideoSource) -> Result<(), String> {
-        if let Some(mut stream) = self.stream.take() {
-            log::info!("CameraCapturer::toggle: stopping stream");
-            stream.stop_capture();
-            return Ok(());
-        }
-
-        let device_name = self
-            .cached_device_name
-            .clone()
-            .ok_or("No cached camera config")?;
-        let video_buffer_manager = self
-            .cached_video_buffer_manager
-            .clone()
-            .ok_or("No cached video buffer manager")?;
-        let socket = self.socket.clone().ok_or("No cached socket")?;
-
-        self.start_capture(&device_name, socket, video_buffer_manager)?;
-        self.stream
-            .as_ref()
-            .unwrap()
-            .set_buffer_source(buffer_source);
-        Ok(())
     }
 
     pub fn set_buffer_source(&self, source: NativeVideoSource) {

@@ -69,7 +69,7 @@ pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     };
 
     sender.send(Message::StartCamera(CameraStartMessage {
-        device_name: device_name.clone(),
+        device_name: Some(device_name.clone()),
     }))?;
 
     let result = event_socket
@@ -246,7 +246,9 @@ pub fn test_call(
     };
 
     if let Some(device_name) = device_name {
-        sender.send(Message::StartCamera(CameraStartMessage { device_name }))?;
+        sender.send(Message::StartCamera(CameraStartMessage {
+            device_name: Some(device_name),
+        }))?;
 
         match event_socket
             .responses

@@ -370,9 +370,11 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     match nokhwa::query(ApiBackend::Auto) {
         Ok(cameras) => cameras
             .iter()
-            .map(|c| socket_lib::CameraDevice {
+            .enumerate()
+            .map(|(i, c)| socket_lib::CameraDevice {
                 name: c.human_name(),
                 id: c.index().to_string(),
+                default: i == 0,
             })
             .collect(),
         Err(e) => {

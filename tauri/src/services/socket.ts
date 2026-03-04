@@ -33,15 +33,6 @@ class SocketService {
     }
   }
 
-  public updateToken(token: string) {
-    if (token && token !== this.currentToken) {
-      console.log("Closing socket connection and updating socket connection with new token:", token);
-      this.closeConnection();
-      this.currentToken = token;
-      this.connect(token);
-    }
-  }
-
   private connect(token: string) {
     this.closeConnection();
 

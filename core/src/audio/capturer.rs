@@ -49,7 +49,7 @@ impl Capturer {
         }
     }
 
-    pub fn list_sources(&mut self) -> Vec<String> {
+    pub fn list_sources(&mut self) -> Vec<(String, bool)> {
         let devices = match microphone::available_inputs() {
             Ok(mics) => mics
                 .into_iter()
@@ -60,7 +60,8 @@ impl Capturer {
         self.available_devices = devices;
         self.available_devices
             .iter()
-            .map(|dev| dev.input.to_string())
+            .enumerate()
+            .map(|(i, dev)| (dev.input.to_string(), i == 0))
             .collect()
     }
 
@@ -246,8 +247,8 @@ mod tests {
         let mut capturer = Capturer::new();
         let sources = capturer.list_sources();
         println!("Available audio input devices:");
-        for device in &sources {
-            println!("  - {}", device);
+        for (name, is_default) in &sources {
+            println!("  - {} (default: {})", name, is_default);
         }
         assert!(
             !sources.is_empty(),
@@ -266,7 +267,7 @@ mod tests {
         let (sample_tx, mut sample_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let sample_rate = capturer
-            .start_capture(Some(&sources[1]), sample_tx)
+            .start_capture(Some(&sources[1].0), sample_tx)
             .expect("Failed to start capture");
 
         println!("Capturing audio at {}Hz for 3 seconds...", sample_rate);
@@ -308,8 +309,8 @@ mod tests {
         let mut capturer = Capturer::new();
         let sources = capturer.list_sources();
         println!("Available audio input devices:");
-        for device in &sources {
-            println!("  - {}", device);
+        for (name, is_default) in &sources {
+            println!("  - {} (default: {})", name, is_default);
         }
         let sample_rate = capturer
             .start_capture(None, sample_tx)
@@ -337,7 +338,7 @@ mod tests {
 
         let (sample_tx1, mut sample_rx1) = tokio::sync::mpsc::unbounded_channel();
         capturer
-            .start_capture(Some(&sources[0]), sample_tx1)
+            .start_capture(Some(&sources[0].0), sample_tx1)
             .expect("Failed to start first capture");
         std::thread::sleep(Duration::from_millis(500));
         capturer.stop_capture();
@@ -350,7 +351,7 @@ mod tests {
 
         let (sample_tx2, mut sample_rx2) = tokio::sync::mpsc::unbounded_channel();
         capturer
-            .start_capture(Some(&sources[0]), sample_tx2)
+            .start_capture(Some(&sources[0].0), sample_tx2)
             .expect("Failed to start second capture");
         std::thread::sleep(Duration::from_millis(500));
         capturer.stop_capture();

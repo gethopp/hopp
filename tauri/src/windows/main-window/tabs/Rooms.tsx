@@ -149,11 +149,7 @@ export const Rooms = () => {
   const { useQuery } = useAPI();
 
   // Get current user's rooms
-  const {
-    error: roomsError,
-    data: rooms,
-    refetch,
-  } = useQuery("get", "/api/auth/rooms", undefined, {
+  const { data: rooms, refetch } = useQuery("get", "/api/auth/rooms", undefined, {
     enabled: !!authToken,
     refetchInterval: 30_000,
     retry: true,
@@ -190,13 +186,13 @@ export const Rooms = () => {
   );
 
   const { useMutation } = useAPI();
-  const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
+  const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const { mutateAsync: createRoom } = useMutation("post", "/api/auth/room", undefined);
 
   const handleCreateRoom = async (roomName: string) => {
     try {
-      const response = await createRoom({
+      await createRoom({
         body: { name: roomName },
       });
       refetch();
@@ -211,7 +207,7 @@ export const Rooms = () => {
   const handleDeleteRoom = async (room: Room) => {
     try {
       // Send JSON body as specified in OpenAPI
-      const response = await deleteRoom({
+      await deleteRoom({
         params: {
           path: {
             id: room.id,
@@ -281,6 +277,7 @@ export const Rooms = () => {
 
         sounds.callAccepted.play();
         await tauriUtils.callStarted(tokens.audioToken);
+        await tauriUtils.setDockIconVisible(true);
         setCallTokens({
           ...tokens,
           isRoomCall: true,
@@ -319,7 +316,7 @@ export const Rooms = () => {
   }, [rooms, searchQuery]);
 
   callTokens?.audioToken;
-  const isRoomCall = !(callTokens == null || (callTokens !== null && !callTokens.room));
+  const isRoomCall = !(callTokens == null || !callTokens.room);
 
   return (
     <div className="flex flex-col items-start gap-1.5 p-2">

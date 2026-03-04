@@ -399,13 +399,8 @@ fn set_dock_icon_visible(app: tauri::AppHandle, visible: bool) {
         if visible {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         } else {
-            let camera_window = app.get_webview_window("camera");
-            let screenshare_window = app.get_webview_window("screenshare");
             let content_picker_window = app.get_webview_window("contentPicker");
-            if camera_window.is_none()
-                && screenshare_window.is_none()
-                && content_picker_window.is_none()
-            {
+            if content_picker_window.is_none() {
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
         }
@@ -772,7 +767,7 @@ fn stop_audio_capture(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn start_camera(app: tauri::AppHandle, device_name: String) -> Result<(), String> {
+fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     if let Err(e) = data
@@ -796,36 +791,6 @@ fn start_camera(app: tauri::AppHandle, device_name: String) -> Result<(), String
         }
         Err(e) => {
             log::error!("start_camera: recv failed: {e:?}");
-            Err("Failed to receive message from hopp_core".to_string())
-        }
-    }
-}
-
-#[tauri::command]
-fn switch_camera(app: tauri::AppHandle, device_name: String) -> Result<(), String> {
-    let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    if let Err(e) = data
-        .sender
-        .send(Message::SwitchCamera(socket_lib::CameraStartMessage {
-            device_name,
-        }))
-    {
-        log::error!("switch_camera: failed to send: {e:?}");
-        return Err("Failed to send message to hopp_core".to_string());
-    }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::SwitchCameraResult(result)) => result,
-        Ok(other) => {
-            log::error!("switch_camera: unexpected: {other:?}");
-            Err("Unexpected response".to_string())
-        }
-        Err(e) => {
-            log::error!("switch_camera: recv failed: {e:?}");
             Err("Failed to receive message from hopp_core".to_string())
         }
     }
@@ -934,11 +899,39 @@ fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
         Ok(Message::CameraList(devices)) => devices,
         Ok(other) => {
             log::error!("list_webcams: unexpected: {other:?}");
-            vec![]
+            // To catch issues with our implementation,
+            // adding a panic here to test
+            panic!("list_webcams: unexpected: {other:?}");
         }
         Err(e) => {
             log::error!("list_webcams: recv failed: {e:?}");
             vec![]
+        }
+    }
+}
+
+#[tauri::command]
+fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
+    log::info!("bring_windows_to_front");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
+        log::error!("bring_windows_to_front: failed to send: {e:?}");
+        return false;
+    }
+    match data
+        .event_socket
+        .responses
+        .recv_timeout(Duration::from_secs(2))
+    {
+        Ok(Message::BringWindowsToFrontResult(focused)) => focused,
+        Ok(other) => {
+            log::error!("bring_windows_to_front: unexpected: {other:?}");
+            false
+        }
+        Err(e) => {
+            log::error!("bring_windows_to_front: recv failed: {e:?}");
+            false
         }
     }
 }
@@ -1380,12 +1373,12 @@ fn main() {
             select_microphone,
             list_webcams,
             start_camera,
-            switch_camera,
             stop_camera,
             open_camera_preview,
             open_screenshare_viewer,
             close_screenshare_viewer,
             end_call,
+            bring_windows_to_front,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1397,19 +1390,54 @@ fn main() {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
             log::info!("reopen requested");
-            {
+            let dock_is_enabled = {
                 let data = app_handle.state::<Mutex<AppData>>();
                 let data = data.lock().unwrap();
-                if !*data.dock_enabled.lock().unwrap() {
-                    log::info!("Dock icon is not enabled, setting activation policy to accessory");
-                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                }
+                let enabled = *data.dock_enabled.lock().unwrap();
+                enabled
+            };
+
+            if !dock_is_enabled {
+                log::info!("Dock icon is not enabled, setting activation policy to accessory");
+                let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
 
             let location_set = location_set.lock().unwrap();
             if !*location_set {
                 log::info!("Location not set, don't show the main window");
                 return;
+            }
+
+            // When in a call, try to bring native core windows to front first
+            if dock_is_enabled {
+                let core_focused = {
+                    let data = app_handle.state::<Mutex<AppData>>();
+                    let mut data = data.lock().unwrap();
+                    if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
+                        log::error!("reopen: failed to send BringWindowsToFront: {e:?}");
+                        false
+                    } else {
+                        match data
+                            .event_socket
+                            .responses
+                            .recv_timeout(Duration::from_secs(2))
+                        {
+                            Ok(Message::BringWindowsToFrontResult(focused)) => focused,
+                            Ok(other) => {
+                                log::error!("reopen: unexpected response: {other:?}");
+                                false
+                            }
+                            Err(e) => {
+                                log::error!("reopen: recv failed: {e:?}");
+                                false
+                            }
+                        }
+                    }
+                };
+                if core_focused {
+                    log::info!("reopen: core windows brought to front");
+                    return;
+                }
             }
 
             {

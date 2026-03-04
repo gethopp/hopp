@@ -88,6 +88,7 @@ export interface DrawingEnabled {
 
 export interface AudioDevice {
   name: string;
+  default: boolean;
 }
 
 export interface AudioCaptureMessage {
@@ -97,6 +98,7 @@ export interface AudioCaptureMessage {
 export interface CameraDevice {
   name: string;
   id: string;
+  default: boolean;
 }
 
 export interface CameraStartMessage {
@@ -216,14 +218,16 @@ export interface CommandMap {
 
   // Core socket messages — camera
   list_webcams: { args: void; return: CameraDevice[] };
-  start_camera: { args: { deviceName: string }; return: void };
-  switch_camera: { args: { deviceName: string }; return: void };
+  start_camera: { args: { deviceName?: string }; return: void };
   stop_camera: { args: void; return: void };
   open_camera_preview: { args: void; return: void };
 
   // Core socket messages — screenshare viewer
   open_screenshare_viewer: { args: void; return: void };
   close_screenshare_viewer: { args: void; return: void };
+
+  // Core socket messages — window management
+  bring_windows_to_front: { args: void; return: boolean };
 }
 
 type InvokeArgs<K extends keyof CommandMap> = CommandMap[K]["args"] extends void ? [] : [CommandMap[K]["args"]];

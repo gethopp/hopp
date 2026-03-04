@@ -43,6 +43,7 @@ use crate::livekit::video::VideoBufferManager;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 use crate::UserEvent;
+use socket_lib::CameraStartMessage;
 
 /// Initial camera window dimensions (logical pixels).
 const CAMERA_WINDOW_WIDTH: f64 = 1035.0;
@@ -98,12 +99,15 @@ pub enum CameraMessage {
 struct CameraState {
     // Viewport logical size for responsive layout
     viewport_size: IcedSize,
+    /// Local camera on/off state, updated from StartCamera/StopCamera handlers.
+    camera_active: bool,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
             viewport_size: IcedSize::new(CAMERA_WINDOW_WIDTH as f32, CAMERA_WINDOW_HEIGHT as f32),
+            camera_active: false,
         }
     }
 }
@@ -258,8 +262,14 @@ impl CameraWindow {
         let clipboard = Clipboard::connect(window.clone());
 
         let logical = viewport.logical_size();
+        let camera_active = participants
+            .read()
+            .ok()
+            .and_then(|p| p.get("local").map(|info| info.camera_active()))
+            .unwrap_or(false);
         let mut state = CameraState::default();
         state.viewport_size = IcedSize::new(logical.width as f32, logical.height as f32);
+        state.camera_active = camera_active;
 
         Ok(Self {
             window,
@@ -287,6 +297,11 @@ impl CameraWindow {
         self.window.id()
     }
 
+    pub fn focus_window(&self) {
+        self.window.set_visible(true);
+        self.window.focus_window();
+    }
+
     /// Request a redraw of the camera window.
     pub fn request_redraw(&self) {
         self.window.request_redraw();
@@ -295,6 +310,11 @@ impl CameraWindow {
     /// Returns the instant when the next redraw should occur.
     pub fn next_redraw_at(&self) -> StdInstant {
         self.last_redraw + REDRAW_INTERVAL
+    }
+
+    /// Update the local camera active state. Call from StartCamera/StopCamera handlers.
+    pub fn set_camera_active(&mut self, active: bool) {
+        self.state.camera_active = active;
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
@@ -430,11 +450,12 @@ impl CameraWindow {
             CameraMessage::ScreenShare,
         );
 
-        let video_button = control_button(
-            ICON_VIDEO,
-            ButtonBackground::Solid(ColorToken::Green400),
-            CameraMessage::VideoToggle,
-        );
+        let video_bg = if state.camera_active {
+            ButtonBackground::Solid(ColorToken::Green400)
+        } else {
+            ButtonBackground::Solid(ColorToken::Gray400)
+        };
+        let video_button = control_button(ICON_VIDEO, video_bg, CameraMessage::VideoToggle);
 
         // Red gradient from Figma: #FB2C36 (top) -> #C10007 (bottom)
         let end_call_button = control_button(
@@ -512,9 +533,14 @@ impl CameraWindow {
                 log::info!("CameraWindow: screen share requested");
             }
             CameraMessage::VideoToggle => {
-                log::info!("CameraWindow: video toggle");
-                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::ToggleCamera) {
-                    log::error!("CameraWindow: failed to send StopCamera event: {e:?}");
+                let event = if self.state.camera_active {
+                    UserEvent::StopCamera
+                } else {
+                    UserEvent::StartCamera(CameraStartMessage { device_name: None })
+                };
+                log::info!("CameraWindow: video toggle -> {:?}", event);
+                if let Err(e) = self.event_loop_proxy.send_event(event) {
+                    log::error!("CameraWindow: failed to send camera event: {e:?}");
                 }
             }
             CameraMessage::EndCall => {

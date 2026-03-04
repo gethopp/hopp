@@ -25,7 +25,7 @@ import { MoreHorizontal } from "lucide-react";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { useEndCall } from "@/lib/hooks";
-import { typedInvoke, AudioDevice, CameraDevice } from "@/core_payloads";
+import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 
@@ -325,28 +325,33 @@ function MicrophoneIcon() {
   const { data: microphoneDevices = [], refetch: refetchMics } = useQuery({
     queryKey: ["list_microphones"],
     queryFn: () => typedInvoke("list_microphones"),
+    select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
   const [activeMicId, setActiveMicId] = useState<string>("");
 
   useEffect(() => {
-    const loadLastMic = async () => {
+    if (!microphoneDevices.length) return;
+    if (activeMicId) return;
+    const resolve = async () => {
       const lastUsedMic = await tauriUtils.getLastUsedMic();
-      if (lastUsedMic) {
+      if (lastUsedMic && microphoneDevices.find((d) => d.name === lastUsedMic)) {
         setActiveMicId(lastUsedMic);
+        return;
       }
+      const defaultDevice = microphoneDevices.find((d) => d.default) ?? microphoneDevices[0];
+      if (defaultDevice) setActiveMicId(defaultDevice.name);
     };
-    loadLastMic();
-  }, []);
+    resolve();
+  }, [microphoneDevices]);
 
-  // When mic devices change, try to select the previously used one
   useEffect(() => {
-    if (!microphoneDevices.length || !activeMicId) return;
+    if (!activeMicId || !microphoneDevices.length) return;
     const found = microphoneDevices.find((d) => d.name === activeMicId);
     if (found) {
       typedInvoke("select_microphone", { deviceName: found.name });
     }
-  }, [microphoneDevices, activeMicId]);
+  }, [activeMicId]);
 
   const handleMicToggle = useCallback(() => {
     const newState = !hasAudioEnabled;
@@ -398,11 +403,14 @@ function MicrophoneIcon() {
           />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
-              {microphoneDevices.map((device) => (
-                <SelectItem key={device.name} value={device.name}>
-                  <span className="text-xs truncate">{device.name}</span>
-                </SelectItem>
-              ))}
+              {microphoneDevices.map(
+                (device) =>
+                  device.name !== "" && (
+                    <SelectItem key={device.name} value={device.name}>
+                      <span className="text-xs truncate">{device.name}</span>
+                    </SelectItem>
+                  ),
+              )}
             </SelectContent>
           </SelectPortal>
         </Select>
@@ -484,9 +492,9 @@ function CameraIcon() {
   const [activeCamera, setActiveCamera] = useState<string>("");
 
   useEffect(() => {
-    const firstName = cameraDevices[0]?.name;
-    if (firstName && !activeCamera) {
-      setActiveCamera(firstName);
+    if (!activeCamera && cameraDevices.length > 0) {
+      const defaultDevice = cameraDevices.find((d) => d.default) ?? cameraDevices[0];
+      if (defaultDevice) setActiveCamera(defaultDevice.name);
     }
   }, [cameraDevices]);
 
@@ -495,17 +503,8 @@ function CameraIcon() {
     updateCallTokens({ hasCameraEnabled: newEnabled });
 
     if (newEnabled) {
-      let deviceName = activeCamera || cameraDevices[0]?.name || "";
-      if (!activeCamera && deviceName) {
-        setActiveCamera(deviceName);
-      }
-      if (!deviceName) {
-        toast.error("No camera found", { duration: 2500 });
-        updateCallTokens({ hasCameraEnabled: false });
-        return;
-      }
       try {
-        await typedInvoke("start_camera", { deviceName });
+        await typedInvoke("start_camera", { deviceName: activeCamera || undefined });
       } catch (error) {
         console.error("Failed to start camera:", error);
         toast.error("Failed to initialize camera", { duration: 2500 });
@@ -516,14 +515,14 @@ function CameraIcon() {
       // We may need to make this sync somehow.
       typedInvoke("stop_camera");
     }
-  }, [cameraEnabled, cameraDevices, activeCamera, updateCallTokens]);
+  }, [cameraEnabled, updateCallTokens, activeCamera]);
 
   const handleCameraChange = useCallback(
     async (deviceName: string) => {
       setActiveCamera(deviceName);
       if (cameraEnabled) {
         try {
-          await typedInvoke("switch_camera", { deviceName });
+          await typedInvoke("start_camera", { deviceName });
         } catch (error) {
           console.error("Failed to switch camera:", error);
         }

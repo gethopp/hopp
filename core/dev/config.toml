@@ -1,3 +1,11 @@
+# TODO:
+# Create a CLI to create config on the fly like:
+# Add participant #1/#2:
+# Have mic: boolean
+# Have camera: Selection with None and all available cameras
+# Have screenshare: Selection with None and all available screens
+# Also in the dev CLI, add an option to pass a custom config file path
+# so we can use the generated one.
 [livekit]
 url = "ws://localhost:7880"
 api_key = "devkey"
@@ -9,7 +17,8 @@ rust_log = "hopp_core=info"
 # Named participant profiles, reused across scenarios
 [participants.streamer]
 name = "Costantinos"
-camera_name = "MacBook Pro Camera"
+camera_name = ""
+# camera_name = "MacBook Pro Camera"
 screenshare = true
 
 [participants.viewer]

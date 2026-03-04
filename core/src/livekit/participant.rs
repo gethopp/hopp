@@ -112,6 +112,7 @@ impl ParticipantInfo {
     }
 
     pub fn stop_camera_stream(&mut self) {
+        self.camera_buffers.set_inactive(true);
         if let Some(tx) = self.camera_stop_tx.take() {
             let _ = tx.send(());
         }
