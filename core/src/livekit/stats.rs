@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use livekit::track::{LocalTrack, TrackSource};
@@ -26,10 +27,17 @@ struct CumulativeCounters {
     screenshare_jitter_buffer_emitted_count: u64,
 }
 
+fn codec_label(mime: &str) -> String {
+    let base = mime.split(';').next().unwrap_or(mime).trim();
+    let last = base.rsplit('/').next().unwrap_or(base).trim();
+    last.to_ascii_uppercase()
+}
+
 pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut prev = CumulativeCounters::default();
 
+    let mut codec_map: HashMap<String, String> = HashMap::new();
     interval.tick().await;
 
     loop {
@@ -40,7 +48,7 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
             continue;
         };
 
-        let (counters, mut snapshot) = collect_stats(room).await;
+        let (counters, mut snapshot) = collect_stats(room, &mut codec_map).await;
         drop(room_guard);
 
         if prev.screenshare_inbound_bytes > 0 {
@@ -92,7 +100,10 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
     }
 }
 
-async fn collect_stats(room: &livekit::Room) -> (CumulativeCounters, RoomStats) {
+async fn collect_stats(
+    room: &livekit::Room,
+    codec_map: &mut HashMap<String, String>,
+) -> (CumulativeCounters, RoomStats) {
     let mut counters = CumulativeCounters::default();
     let mut snapshot = RoomStats::default();
 
@@ -128,6 +139,14 @@ async fn collect_stats(room: &livekit::Room) -> (CumulativeCounters, RoomStats) 
             };
             let is_screenshare = publication.source() == TrackSource::Screenshare;
 
+            if is_screenshare && codec_map.is_empty() {
+                for stat in &stats_vec {
+                    if let RtcStats::Codec(c) = stat {
+                        codec_map.insert(c.rtc.id.clone(), c.codec.mime_type.clone());
+                    }
+                }
+            }
+
             for stat in &stats_vec {
                 if let RtcStats::InboundRtp(s) = stat {
                     if s.stream.kind != "video" {
@@ -143,7 +162,10 @@ async fn collect_stats(room: &livekit::Room) -> (CumulativeCounters, RoomStats) 
                         snapshot.screenshare_fps = s.inbound.frames_per_second;
                         snapshot.screenshare_width = s.inbound.frame_width;
                         snapshot.screenshare_height = s.inbound.frame_height;
-                        snapshot.screenshare_codec_id = s.stream.codec_id.clone();
+                        snapshot.screenshare_codec_id = codec_map
+                            .get(&s.stream.codec_id)
+                            .map(|m| codec_label(m))
+                            .unwrap_or_else(|| s.stream.codec_id.clone());
                     }
                 }
             }
