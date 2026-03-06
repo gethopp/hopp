@@ -139,6 +139,7 @@ impl CameraStream {
             let mut i420 = I420Buffer::new(width, height);
             let mut cached_source: Option<NativeVideoSource> = None;
 
+            let capture_start = Instant::now();
             let mut fps_frame_count: u32 = 0;
             let mut fps_window_start = Instant::now();
 
@@ -199,7 +200,7 @@ impl CameraStream {
                                 let frame = VideoFrame {
                                     rotation: VideoRotation::VideoRotation0,
                                     buffer: i420,
-                                    timestamp_us: 0,
+                                    timestamp_us: capture_start.elapsed().as_micros() as i64,
                                 };
                                 source.capture_frame(&frame);
 

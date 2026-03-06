@@ -105,6 +105,7 @@ fn create_capture_callback(
 ) -> impl FnMut(Result<DesktopFrame, CaptureError>) {
     let mut capture_buffer = NV12Buffer::new(1, 1);
     let mut stream_failed = false;
+    let capture_start = std::time::Instant::now();
     move |result: Result<DesktopFrame, CaptureError>| {
         let frame = match result {
             Ok(frame) => frame,
@@ -220,6 +221,7 @@ fn create_capture_callback(
             dst_y.copy_from_slice(data_y);
             dst_uv.copy_from_slice(data_uv);
         }
+        stream_buffer.video_frame.timestamp_us = capture_start.elapsed().as_micros() as i64;
 
         let buffer_source = buffer_source.lock().unwrap();
         if buffer_source.is_some() {
