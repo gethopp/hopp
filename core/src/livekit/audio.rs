@@ -108,8 +108,8 @@ async fn process_audio_samples(
     let mut chunk = vec![0i16; samples_per_unit];
 
     {
-        //let mut processor = processor.lock().unwrap();
-        //processor.set_delay(50);
+        let mut processor = processor.lock().unwrap();
+        processor.set_delay(50);
     }
 
     while let Some(audio_data) = rx.recv().await {
