@@ -33,6 +33,37 @@ use std::time::Duration;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
 
+/// Receive a response from core, retrying if a stale response from a
+/// previous timed-out request arrives first. The `extract` closure returns
+/// `Ok(T)` for the expected variant or `Err(Message)` for unexpected ones.
+fn recv_expected_response<T>(
+    event_socket: &socket_lib::EventSocket,
+    extract: impl Fn(Message) -> Result<T, Message>,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+        }
+        match event_socket.responses.recv_timeout(remaining) {
+            Ok(msg) => match extract(msg) {
+                Ok(val) => return Ok(val),
+                Err(other) => {
+                    let t = std::any::type_name::<T>();
+                    log::error!(
+                        "recv_expected_response<{t}>: unexpected response (stale?): {other:?}"
+                    );
+                    sentry_utils::simple_event(format!(
+                        "recv_expected_response<{t}>: unexpected response: {other:?}"
+                    ));
+                }
+            },
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 #[tauri::command]
 async fn screenshare(
     app: tauri::AppHandle,
@@ -76,21 +107,14 @@ async fn screenshare(
         return Err("Failed to send message to hopp_core".to_string());
     }
 
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::StartScreenShareResult(result)) => match result {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::error!("screenshare: failed to start screenshare");
-                Err(e)
-            }
-        },
-        Ok(_) => {
-            log::error!("screenshare: unexpected message");
-            Err("Unexpected screenshare result message".to_string())
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::StartScreenShareResult(r) => Ok(r),
+        other => Err(other),
+    }) {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => {
+            log::error!("screenshare: failed to start screenshare");
+            Err(e)
         }
         Err(e) => {
             log::error!("screenshare: failed to receive message: {e:?}");
@@ -118,12 +142,11 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
         log::error!("get_available_content: failed to send message: {e:?}");
         return vec![];
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::AvailableContent(content)) => {
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::AvailableContent(c) => Ok(c),
+        other => Err(other),
+    }) {
+        Ok(content) => {
             for c in &content.content {
                 log::info!(
                     "get_available_content: possible content {}, content {:?}",
@@ -132,10 +155,6 @@ async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
                 );
             }
             content.content
-        }
-        Ok(other) => {
-            log::error!("get_available_content: unexpected: {other:?}");
-            vec![]
         }
         Err(e) => {
             log::error!("get_available_content: recv failed: {e:?}");
@@ -634,16 +653,11 @@ fn call_started(app: tauri::AppHandle, token: String) -> Result<(), String> {
         log::error!("call_started: failed to send: {e:?}");
         return Err("Failed to send message to hopp_core".to_string());
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::CallStartResult(result)) => result,
-        Ok(other) => {
-            log::error!("call_started: unexpected: {other:?}");
-            Err("Unexpected response".to_string())
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::CallStartResult(r) => Ok(r),
+        other => Err(other),
+    }) {
+        Ok(result) => result,
         Err(e) => {
             log::error!("call_started: recv failed: {e:?}");
             Err("Failed to receive message from hopp_core".to_string())
@@ -779,16 +793,11 @@ fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<()
         log::error!("start_camera: failed to send: {e:?}");
         return Err("Failed to send message to hopp_core".to_string());
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::StartCameraResult(result)) => result,
-        Ok(other) => {
-            log::error!("start_camera: unexpected: {other:?}");
-            Err("Unexpected response".to_string())
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::StartCameraResult(r) => Ok(r),
+        other => Err(other),
+    }) {
+        Ok(result) => result,
         Err(e) => {
             log::error!("start_camera: recv failed: {e:?}");
             Err("Failed to receive message from hopp_core".to_string())
@@ -840,16 +849,11 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
         log::error!("list_microphones: failed to send: {e:?}");
         return vec![];
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::AudioDeviceList(devices)) => devices,
-        Ok(other) => {
-            log::error!("list_microphones: unexpected: {other:?}");
-            vec![]
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::AudioDeviceList(d) => Ok(d),
+        other => Err(other),
+    }) {
+        Ok(devices) => devices,
         Err(e) => {
             log::error!("list_microphones: recv failed: {e:?}");
             vec![]
@@ -870,16 +874,13 @@ fn select_microphone(app: tauri::AppHandle, device_name: String) {
         log::error!("select_microphone: failed to send: {e:?}");
         return;
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(5))
-    {
-        Ok(Message::StartAudioCaptureResult(Err(e))) => {
-            log::error!("select_microphone: core failed: {e}");
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::StartAudioCaptureResult(r) => Ok(r),
+        other => Err(other),
+    }) {
+        Ok(Err(e)) => log::error!("select_microphone: core failed: {e}"),
         Err(e) => log::error!("select_microphone: no result: {e:?}"),
-        _ => {}
+        Ok(Ok(())) => {}
     }
 }
 
@@ -891,18 +892,11 @@ fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
         log::error!("list_webcams: failed to send: {e:?}");
         return vec![];
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(10))
-    {
-        Ok(Message::CameraList(devices)) => devices,
-        Ok(other) => {
-            log::error!("list_webcams: unexpected: {other:?}");
-            // To catch issues with our implementation,
-            // adding a panic here to test
-            panic!("list_webcams: unexpected: {other:?}");
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::CameraList(d) => Ok(d),
+        other => Err(other),
+    }) {
+        Ok(devices) => devices,
         Err(e) => {
             log::error!("list_webcams: recv failed: {e:?}");
             vec![]
@@ -919,16 +913,11 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
         log::error!("bring_windows_to_front: failed to send: {e:?}");
         return false;
     }
-    match data
-        .event_socket
-        .responses
-        .recv_timeout(Duration::from_secs(2))
-    {
-        Ok(Message::BringWindowsToFrontResult(focused)) => focused,
-        Ok(other) => {
-            log::error!("bring_windows_to_front: unexpected: {other:?}");
-            false
-        }
+    match recv_expected_response(&data.event_socket, |msg| match msg {
+        Message::BringWindowsToFrontResult(f) => Ok(f),
+        other => Err(other),
+    }) {
+        Ok(focused) => focused,
         Err(e) => {
             log::error!("bring_windows_to_front: recv failed: {e:?}");
             false
@@ -1417,16 +1406,11 @@ fn main() {
                         log::error!("reopen: failed to send BringWindowsToFront: {e:?}");
                         false
                     } else {
-                        match data
-                            .event_socket
-                            .responses
-                            .recv_timeout(Duration::from_secs(2))
-                        {
-                            Ok(Message::BringWindowsToFrontResult(focused)) => focused,
-                            Ok(other) => {
-                                log::error!("reopen: unexpected response: {other:?}");
-                                false
-                            }
+                        match recv_expected_response(&data.event_socket, |msg| match msg {
+                            Message::BringWindowsToFrontResult(f) => Ok(f),
+                            other => Err(other),
+                        }) {
+                            Ok(focused) => focused,
                             Err(e) => {
                                 log::error!("reopen: recv failed: {e:?}");
                                 false
