@@ -12,7 +12,7 @@ use crate::audio::capturer::SAMPLES_DIVIDER;
 use crate::audio::processor::{AudioProcessor, ProcessorHandle};
 use crate::livekit::audio::{AudioPublisher, AUDIO_NUM_CHANNELS, LIVEKIT_SAMPLE_RATE};
 use crate::livekit::participant::ParticipantInfo;
-use crate::livekit::video::{process_camera_stream, VideoBufferManager};
+use crate::livekit::video::{process_video_stream, VideoBufferManager};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -2259,11 +2259,12 @@ async fn handle_room_events(
                             let (stop_tx, stop_rx) = mpsc::unbounded_channel();
                             *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
 
-                            tokio::spawn(process_camera_stream(
+                            tokio::spawn(process_video_stream(
                                 video_track,
                                 manager,
                                 stop_rx,
                                 format!("screenshare_{}", participant_sid),
+                                false,
                             ));
 
                             if let Err(e) = event_loop_proxy.send_event(
@@ -2297,11 +2298,12 @@ async fn handle_room_events(
                                 info.camera_buffers()
                             };
 
-                            tokio::spawn(process_camera_stream(
+                            tokio::spawn(process_video_stream(
                                 video_track,
                                 manager,
                                 stop_rx,
                                 participant_sid.clone(),
+                                true,
                             ));
                         }
                         source => {

@@ -44,7 +44,7 @@ pub struct AudioProcessor {
 
 impl AudioProcessor {
     pub fn new(sample_rate: i32, num_channels: i32, chunk_size: usize) -> (Self, ProcessorHandle) {
-        let apm = AudioProcessingModule::new(true, true, false, false);
+        let apm = AudioProcessingModule::new(true, true, false, true);
         let (source_tx, new_source_rx) = mpsc::unbounded_channel();
 
         let processor = Self {
@@ -118,6 +118,12 @@ impl AudioProcessor {
             .process_stream(chunk, self.sample_rate, self.num_channels)
         {
             log::warn!("APM process_stream failed: {e}");
+        }
+    }
+
+    pub fn set_delay(&mut self, delay_ms: i32) {
+        if let Err(e) = self.apm.set_stream_delay_ms(delay_ms) {
+            log::warn!("APM set_stream_delay_ms failed: {e}");
         }
     }
 }

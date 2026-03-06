@@ -152,21 +152,24 @@ impl VideoBufferManager {
     }
 }
 
-/// Process camera stream frames with a 5-second timeout.
+/// Process a video stream (camera or screen share) frames with a 5-second timeout.
 ///
 /// Receives frames from the video track and writes them to the buffer manager.
 /// If no frames are received for 5 seconds, marks the manager as inactive.
 /// The stream continues running until:
 /// - The stream ends naturally
 /// - A stop signal is received via stop_rx
-pub async fn process_camera_stream(
+pub async fn process_video_stream(
     video_track: RemoteVideoTrack,
     manager: Arc<VideoBufferManager>,
     mut stop_rx: mpsc::UnboundedReceiver<()>,
     stream_key: String,
+    is_camera: bool,
 ) {
+    let stream_type = if is_camera { "camera" } else { "screen share" };
     log::info!(
-        "process_camera_stream: Starting camera stream processing for participant: {}",
+        "process_video_stream: Starting {} stream processing for participant: {}",
+        stream_type,
         stream_key
     );
 
@@ -198,8 +201,9 @@ pub async fn process_camera_stream(
                         if elapsed >= std::time::Duration::from_secs(5) {
                             let fps = fps_frames as f32 / elapsed.as_secs_f32();
                             log::info!(
-                                "process_camera_stream: {} fps={:.1} total_frames={} ({}x{})",
+                                "process_video_stream: {} [{}] fps={:.1} total_frames={} ({}x{})",
                                 stream_key,
+                                stream_type,
                                 fps,
                                 frames,
                                 width,
@@ -211,24 +215,29 @@ pub async fn process_camera_stream(
                     }
                     Ok(None) => {
                         log::info!(
-                            "process_camera_stream: Stream ended for participant: {}",
+                            "process_video_stream: {} stream ended for participant: {}",
+                            stream_type,
                             stream_key
                         );
                         break;
                     }
-                    Err(_) => {
-                        log::warn!(
-                            "process_camera_stream: No frames received for 5 seconds from {}, marking as inactive",
-                            stream_key
+                    Err(e) => {
+                        log::error!(
+                            "process_video_stream: No frames received for 1 seconds from {} [{}], marking as inactive {:?}",
+                            stream_key,
+                            stream_type,
+                            e,
                         );
                         manager.set_inactive(true);
+                        break;
                         // Continue waiting for frames instead of breaking
                     }
                 }
             }
             _ = stop_rx.recv() => {
                 log::info!(
-                    "process_camera_stream: Received stop signal for camera stream: {}",
+                    "process_video_stream: Received stop signal for {} stream: {}",
+                    stream_type,
                     stream_key
                 );
                 break;
@@ -238,7 +247,8 @@ pub async fn process_camera_stream(
 
     manager.set_inactive(true);
     log::info!(
-        "process_camera_stream: Camera stream ended for participant: {}",
+        "process_video_stream: {} stream ended for participant: {}",
+        stream_type,
         stream_key
     );
 }
