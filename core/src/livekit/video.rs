@@ -229,7 +229,6 @@ pub async fn process_video_stream(
                             e,
                         );
                         manager.set_inactive(true);
-                        break;
                         // Continue waiting for frames instead of breaking
                     }
                 }

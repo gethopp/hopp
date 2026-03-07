@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
-use crate::{audio, ParticipantData, UserEvent};
+use crate::{audio, room_service, ParticipantData, UserEvent};
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -894,7 +894,7 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
+                let buffer_source = NativeVideoSource::new(VideoResolution { width, height }, true);
                 let track = LocalVideoTrack::create_video_track(
                     VIDEO_TRACK_NAME,
                     RtcVideoSource::Native(buffer_source.clone()),
@@ -1379,7 +1379,8 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                let buffer_source = NativeVideoSource::new(VideoResolution { width, height });
+                let buffer_source =
+                    NativeVideoSource::new(VideoResolution { width, height }, false);
                 let track = LocalVideoTrack::create_video_track(
                     CAMERA_TRACK_NAME,
                     RtcVideoSource::Native(buffer_source.clone()),
@@ -2079,13 +2080,16 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::TrackPublished {
-                publication: _,
+                publication,
                 participant,
             } => {
                 log::info!(
-                    "handle_room_events: Track published: from {}",
+                    "handle_room_events: Track published: {} ({:?}) from {}",
+                    publication.name(),
+                    publication.source(),
                     participant.sid()
                 );
+
                 let participant_id = participant.identity().as_str().to_string();
                 if participant_id.contains("video") {
                     log::info!(
@@ -2102,7 +2106,7 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ActiveSpeakersChanged { speakers } => {
-                log::info!("handle_room_events: Active speakers changed");
+                log::trace!("handle_room_events: Active speakers changed");
                 let mut participants_guard = participants.write().unwrap();
 
                 // First, set all participants to not speaking
@@ -2117,11 +2121,6 @@ async fn handle_room_events(
                         info.set_is_speaking(true);
                     }
                 }
-
-                log::info!(
-                    "handle_room_events: Participants state: {:?}",
-                    *participants_guard
-                );
             }
             RoomEvent::TrackMuted {
                 participant,
@@ -2179,10 +2178,12 @@ async fn handle_room_events(
                 participant,
             } => {
                 log::info!(
-                    "handle_room_events: Track subscribed from {}: {} ({:?})",
+                    "handle_room_events: Track subscribed from {}: {} ({:?}) {:?} {:?}",
                     participant.identity(),
                     track.name(),
-                    track.kind()
+                    track.kind(),
+                    track,
+                    publication,
                 );
 
                 let participant_sid = participant.sid().as_str().to_string();
