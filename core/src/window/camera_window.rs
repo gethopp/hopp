@@ -492,18 +492,9 @@ impl CameraWindow {
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &Theme| {
-                let border_color = Color::from_rgba(1.0, 1.0, 1.0, 0.5);
-
-                container::Style {
-                    background: Some(Background::Color(ColorToken::Slate600.to_color())),
-                    border: Border {
-                        color: border_color,
-                        width: 1.0,
-                        radius: 18.0.into(),
-                    },
-                    ..Default::default()
-                }
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(ColorToken::Slate600.to_color())),
+                ..Default::default()
             })
             .into()
     }
