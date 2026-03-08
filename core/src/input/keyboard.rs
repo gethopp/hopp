@@ -480,6 +480,8 @@ impl<T: KeyboardLayoutTrait> KeyboardController<T> {
             && (keystroke_data.key != "ArrowDown")
             && (keystroke_data.key != "PageUp")
             && (keystroke_data.key != "PageDown")
+            && (keystroke_data.key != "Home")
+            && (keystroke_data.key != "End")
             && (keystroke_data.key != "Control")
             && (keystroke_data.key != "Shift")
             && (!keystroke_data.key.is_empty())

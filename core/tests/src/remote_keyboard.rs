@@ -80,6 +80,50 @@ async fn internal_test_keyboard_chars(room: &Room) -> io::Result<()> {
     Ok(())
 }
 
+/// Tests sending function keys (PageUp, PageDown, Home, End) with and without Shift.
+async fn internal_test_keyboard_fn_keys(room: &Room) -> io::Result<()> {
+    let fn_keys = ["PageUp", "PageDown", "Home", "End"];
+
+    println!("Testing function keys without modifier...");
+    for key in fn_keys.iter() {
+        simulate_key_press(room, key, false).await?;
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    println!("Testing function keys with Shift...");
+    for key in fn_keys.iter() {
+        simulate_key_press(room, key, true).await?;
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    println!("Function key test finished.");
+    Ok(())
+}
+
+/// Connects screenshare, runs the function key test, and stops screenshare.
+pub async fn test_keyboard_fn_keys() -> io::Result<()> {
+    println!("Starting function key test...");
+    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test FnKeys");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    internal_test_keyboard_fn_keys(&room).await?;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&mut cursor_socket)?;
+    println!("Screenshare stopped.");
+    println!("Function key test complete.");
+    Ok(())
+}
+
 /// Connects screenshare, runs the keyboard character test, and stops screenshare.
 pub async fn test_keyboard_chars() -> io::Result<()> {
     println!("Starting keyboard test...");
