@@ -1941,6 +1941,11 @@ fn calculate_max_window_size(window: &Window, stream_aspect: f64) -> Option<(f64
     let monitor_h = logical_size.height;
 
     // OS menubar/taskbar offset (logical pixels) — matches JS utils.ts
+    // TODO(@konsalex): Use MacOS APIs like
+    // NSStatusBar.system.thickness
+    // NSScreen.visibleFrame
+    // to get the correct values, but also the actual
+    // available height and width without the dock and menubar.
     let os_chrome_height = if cfg!(target_os = "macos") {
         25.0
     } else if cfg!(target_os = "windows") {

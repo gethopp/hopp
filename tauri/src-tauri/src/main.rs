@@ -978,6 +978,107 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
     log::info!("forward_core_events: event forwarding thread exiting");
 }
 
+#[cfg(target_os = "macos")]
+// Enable Alt+Tab activation until its supported from tauri:
+// https://github.com/tauri-apps/tauri/issues/15060
+async fn monitor_app_activation(
+    app_handle: tauri::AppHandle,
+    location_set: Arc<Mutex<bool>>,
+    reopen_requested: Arc<Mutex<bool>>,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+
+    let mut was_active = true;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let is_active: bool = unsafe {
+            let cls = AnyClass::get(c"NSApplication").unwrap();
+            let app: *const objc2::runtime::AnyObject = msg_send![cls, sharedApplication];
+            msg_send![&*app, isActive]
+        };
+
+        if is_active && !was_active {
+            log::info!("monitor_app_activation: app became active");
+
+            {
+                let loc = location_set.lock().unwrap();
+                if !*loc {
+                    was_active = is_active;
+                    continue;
+                }
+            }
+
+            {
+                let rr = reopen_requested.lock().unwrap();
+                if *rr {
+                    was_active = is_active;
+                    continue;
+                }
+            }
+
+            {
+                let mut rr = reopen_requested.lock().unwrap();
+                *rr = true;
+            }
+
+            let dock_is_enabled = {
+                let data = app_handle.state::<Mutex<AppData>>();
+                let data = data.lock().unwrap();
+                let enabled = *data.dock_enabled.lock().unwrap();
+                enabled
+            };
+
+            if dock_is_enabled {
+                let core_focused = {
+                    let data = app_handle.state::<Mutex<AppData>>();
+                    let mut data = data.lock().unwrap();
+                    if let Err(e) = data.sender.send(socket_lib::Message::BringWindowsToFront) {
+                        log::error!("monitor_app_activation: send failed: {e:?}");
+                        false
+                    } else {
+                        match recv_expected_response(&data.event_socket, |msg| match msg {
+                            socket_lib::Message::BringWindowsToFrontResult(f) => Ok(f),
+                            other => Err(other),
+                        }) {
+                            Ok(focused) => focused,
+                            Err(e) => {
+                                log::error!("monitor_app_activation: recv failed: {e:?}");
+                                false
+                            }
+                        }
+                    }
+                };
+                if core_focused {
+                    log::info!("monitor_app_activation: core windows brought to front");
+                    let rr_clone = reopen_requested.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        *rr_clone.lock().unwrap() = false;
+                    });
+                    was_active = is_active;
+                    continue;
+                }
+            }
+
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+
+            let rr_clone = reopen_requested.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                *rr_clone.lock().unwrap() = false;
+            });
+        }
+
+        was_active = is_active;
+    }
+}
+
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -996,6 +1097,8 @@ fn main() {
     let reopen_requested = Arc::new(Mutex::new(false));
     #[allow(unused_variables)]
     let reopen_requested_clone = reopen_requested.clone();
+    #[allow(unused_variables)]
+    let reopen_requested_run = reopen_requested.clone();
 
     /* This is used to guard against hiding the dock icon if the dock has been enabled by the ui. */
     let dock_enabled = Arc::new(Mutex::new(false));
@@ -1273,6 +1376,18 @@ fn main() {
                 if show_dock {
                     app.set_activation_policy(tauri::ActivationPolicy::Regular);
                 }
+
+                // Tackles Alt+Tab activation
+                {
+                    let app_handle = app.handle().clone();
+                    let location_set_activate = location_set_setup.clone();
+                    let reopen_requested_activate = reopen_requested_clone.clone();
+                    tauri::async_runtime::spawn(monitor_app_activation(
+                        app_handle,
+                        location_set_activate,
+                        reopen_requested_activate,
+                    ));
+                }
             }
 
             Ok(())
@@ -1430,7 +1545,7 @@ fn main() {
             }
 
             {
-                let mut reopen_requested = reopen_requested_clone.lock().unwrap();
+                let mut reopen_requested = reopen_requested_run.lock().unwrap();
                 *reopen_requested = true;
             }
 
@@ -1442,7 +1557,7 @@ fn main() {
                 log::error!("Main window not found");
             }
 
-            let reopen_requested_thread = reopen_requested_clone.clone();
+            let reopen_requested_thread = reopen_requested_run.clone();
             /*
              * When reopen is requested app is losing focus as soon as the window opens.
              * The reopen_requested flag is used to disable hiding the window on focus lost.
