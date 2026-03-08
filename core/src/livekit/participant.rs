@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -117,4 +118,16 @@ impl ParticipantInfo {
             let _ = tx.send(());
         }
     }
+}
+
+/// Given a participants map (sid → ParticipantInfo) and an identity string,
+/// returns the sid of the participant with that identity, if found.
+pub fn find_sid_by_identity(
+    participants: &HashMap<String, ParticipantInfo>,
+    identity: &str,
+) -> Option<String> {
+    participants
+        .iter()
+        .find(|(_, info)| info.identity() == identity)
+        .map(|(sid, _)| sid.clone())
 }

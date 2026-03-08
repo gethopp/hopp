@@ -124,6 +124,7 @@ struct RemoteScreenShare {
 pub(crate) struct RoomServiceInner {
     // TODO: See if we can use a sync::Mutex instead of tokio::sync::Mutex
     pub(crate) room: Mutex<Option<Room>>,
+    pub(crate) video_room: Mutex<Option<Room>>,
     buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
@@ -141,6 +142,9 @@ fn insert_participant_if_absent(
     sid: &str,
     remote_participant: &livekit::participant::RemoteParticipant,
 ) -> bool {
+    if remote_participant.identity().as_str().contains("video") {
+        return false;
+    }
     let mut guard = participants.write().unwrap();
     if guard.contains_key(sid) {
         return false;
@@ -199,6 +203,7 @@ impl RoomService {
 
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
+            video_room: Mutex::new(None),
             buffer_source: std::sync::Mutex::new(None),
             camera_buffer_source: std::sync::Mutex::new(None),
             participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -821,7 +826,7 @@ async fn room_service_commands(
             // TODO: Break this into create room and publish track commands
             RoomServiceCommand::CreateRoom {
                 token,
-                video_token: _video_token,
+                video_token,
                 event_loop_proxy,
             } => {
                 {
@@ -832,6 +837,15 @@ async fn room_service_commands(
                         let res = room.close().await;
                         if let Err(e) = res {
                             log::error!("room_service_commands: Failed to close room: {e:?}");
+                        }
+                    }
+                }
+                {
+                    let mut inner_video_room = inner.video_room.lock().await;
+                    if let Some(video_room) = inner_video_room.take() {
+                        log::warn!("room_service_commands: Video room already exists, killing it.");
+                        if let Err(e) = video_room.close().await {
+                            log::error!("room_service_commands: Failed to close video room: {e:?}");
                         }
                     }
                 }
@@ -877,11 +891,29 @@ async fn room_service_commands(
                     );
                 }
 
+                // Connect video room for screen share publishing
+                let video_participant_sid =
+                    match Room::connect(&url, &video_token, RoomOptions::default()).await {
+                        Ok((video_room, _video_rx)) => {
+                            let sid = video_room.local_participant().sid().as_str().to_string();
+                            let mut inner_video_room = inner.video_room.lock().await;
+                            *inner_video_room = Some(video_room);
+                            sid
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "room_service_commands: Failed to connect video room: {e:?}"
+                            );
+                            String::new()
+                        }
+                    };
+
                 /* Spawn thread for handling livekit data events. */
                 tokio::spawn(handle_room_events(
                     rx,
                     event_loop_proxy,
                     user_sid,
+                    video_participant_sid,
                     inner.participants.clone(),
                     inner.mixer.clone(),
                     processor_handle.clone(),
@@ -905,16 +937,16 @@ async fn room_service_commands(
                 height,
                 use_av1,
             } => {
-                let inner_room = inner.room.lock().await;
-                if inner_room.is_none() {
-                    log::error!("room_service_commands: Room doesn't exist.");
+                let inner_video_room = inner.video_room.lock().await;
+                if inner_video_room.is_none() {
+                    log::error!("room_service_commands: Video room doesn't exist.");
                     let res = tx.send(RoomServiceCommandResult::Failure);
                     if let Err(e) = res {
                         log::error!("room_service_commands: Failed to send result: {e:?}");
                     }
                     continue;
                 }
-                let room = inner_room.as_ref().unwrap();
+                let room = inner_video_room.as_ref().unwrap();
 
                 let buffer_source = NativeVideoSource::new(VideoResolution { width, height }, true);
                 let track = LocalVideoTrack::create_video_track(
@@ -976,18 +1008,20 @@ async fn room_service_commands(
                     task.abort();
                 }
 
-                let room = {
+                {
                     let mut inner_room = inner.room.lock().await;
-                    if inner_room.is_none() {
-                        log::warn!("room_service_commands: Room doesn't exist");
-                        continue;
+                    if let Some(room) = inner_room.take() {
+                        if let Err(e) = room.close().await {
+                            log::error!("room_service_commands: Failed to close room: {e:?}");
+                        }
                     }
-                    inner_room.take()
-                };
-                if let Some(room) = &room {
-                    let res = room.close().await;
-                    if let Err(e) = res {
-                        log::error!("room_service_commands: Failed to close room: {e:?}");
+                }
+                {
+                    let mut inner_video_room = inner.video_room.lock().await;
+                    if let Some(video_room) = inner_video_room.take() {
+                        if let Err(e) = video_room.close().await {
+                            log::error!("room_service_commands: Failed to close video room: {e:?}");
+                        }
                     }
                 }
 
@@ -1010,6 +1044,13 @@ async fn room_service_commands(
                         let _ = tx.send(());
                     }
                 }
+
+                // Drop the participants
+                {
+                    //let mut participants = inner.participants.write().unwrap();
+                    //participants.clear();
+                }
+
                 {
                     inner.remote_screen_share.buffer.lock().unwrap().take();
                     inner
@@ -1103,7 +1144,11 @@ async fn room_service_commands(
                     let identity = remote_participant.identity().as_str().to_string();
                     let name = remote_participant.name();
 
-                    log::info!("room_service_commands: Participant: {}", sid);
+                    log::info!(
+                        "room_service_commands: Participant: {} {:?}",
+                        sid,
+                        remote_participant
+                    );
 
                     if insert_participant_if_absent(&inner.participants, &sid, &remote_participant)
                     {
@@ -1473,8 +1518,8 @@ async fn room_service_commands(
                 log::info!("room_service_commands: Camera track unpublished");
             }
             RoomServiceCommand::UnpublishScreenShareTrack => {
-                let inner_room = inner.room.lock().await;
-                if let Some(room) = inner_room.as_ref() {
+                let inner_video_room = inner.video_room.lock().await;
+                if let Some(room) = inner_video_room.as_ref() {
                     // Find and unpublish screen share track
                     let local_participant = room.local_participant();
                     for (sid, publication) in local_participant.track_publications() {
@@ -1881,6 +1926,7 @@ async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
+    video_participant_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
     processor_handle: Arc<std::sync::Mutex<ProcessorHandle>>,
@@ -2088,21 +2134,6 @@ async fn handle_room_events(
                     publication.source(),
                     participant.sid()
                 );
-
-                let participant_id = participant.identity().as_str().to_string();
-                if participant_id.contains("video") {
-                    log::info!(
-                        "handle_room_events: Controller {} takes screen share",
-                        participant.sid()
-                    );
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ControllerTakesScreenShare)
-                    {
-                        log::error!(
-                            "handle_room_events: Failed to send controller takes screen share event: {e:?}"
-                        );
-                    }
-                }
             }
             RoomEvent::ActiveSpeakersChanged { speakers } => {
                 log::trace!("handle_room_events: Active speakers changed");
@@ -2187,6 +2218,11 @@ async fn handle_room_events(
 
                 let participant_sid = participant.sid().as_str().to_string();
 
+                if participant_sid == video_participant_sid {
+                    log::debug!("handle_room_events: Skipping track subscribed event from video participant");
+                    continue;
+                }
+
                 if insert_participant_if_absent(&participants, &participant_sid, &participant) {
                     log::info!(
                         "handle_room_events: Creating participant {} from track subscription",
@@ -2260,9 +2296,26 @@ async fn handle_room_events(
                                 false,
                             ));
 
-                            if let Err(e) = event_loop_proxy.send_event(
-                                UserEvent::OpenScreenShareWindow(Some(participant_sid.to_string())),
-                            ) {
+                            // Derive the audio participant identity from the video participant identity
+                            // e.g. "room:...:video" → "room:...:audio"
+                            let sharer_sid = {
+                                let video_identity = participant.identity().as_str().to_string();
+                                let audio_identity = video_identity
+                                    .strip_suffix(":video")
+                                    .map(|prefix| format!("{prefix}:audio"));
+                                if let Some(audio_id) = audio_identity {
+                                    let guard = participants.read().unwrap();
+                                    crate::livekit::participant::find_sid_by_identity(
+                                        &guard, &audio_id,
+                                    )
+                                    .unwrap_or_else(|| participant_sid.clone())
+                                } else {
+                                    participant_sid.clone()
+                                }
+                            };
+                            if let Err(e) = event_loop_proxy
+                                .send_event(UserEvent::OpenScreenShareWindow(Some(sharer_sid)))
+                            {
                                 log::error!(
                                         "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
                                     );
@@ -2322,6 +2375,11 @@ async fn handle_room_events(
                 );
 
                 let participant_sid = participant.sid().as_str().to_string();
+
+                if participant_sid == video_participant_sid {
+                    log::debug!("handle_room_events: Skipping track unsubscribed event from video participant");
+                    continue;
+                }
 
                 match track {
                     livekit::track::RemoteTrack::Video(_) => {

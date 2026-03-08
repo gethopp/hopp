@@ -47,9 +47,12 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
         let Some(room) = room_guard.as_ref() else {
             continue;
         };
+        let video_room_guard = inner.video_room.lock().await;
 
-        let (counters, mut snapshot) = collect_stats(room, &mut codec_map).await;
+        let (counters, mut snapshot) =
+            collect_stats(room, video_room_guard.as_ref(), &mut codec_map).await;
         drop(room_guard);
+        drop(video_room_guard);
 
         if prev.screenshare_inbound_bytes > 0 {
             snapshot.screenshare_input_bps = (counters
@@ -102,12 +105,13 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
 
 async fn collect_stats(
     room: &livekit::Room,
+    video_room: Option<&livekit::Room>,
     codec_map: &mut HashMap<String, String>,
 ) -> (CumulativeCounters, RoomStats) {
     let mut counters = CumulativeCounters::default();
     let mut snapshot = RoomStats::default();
 
-    // Outbound: local video tracks
+    // Outbound from main room (camera)
     let local = room.local_participant();
     for (_, publication) in local.track_publications() {
         let Some(track) = publication.track() else {
@@ -120,6 +124,25 @@ async fn collect_stats(
             for stat in &stats_vec {
                 if let RtcStats::OutboundRtp(s) = stat {
                     counters.total_outbound_bytes += s.sent.bytes_sent;
+                }
+            }
+        }
+    }
+    // Outbound from video room (screen share)
+    if let Some(vr) = video_room {
+        let local = vr.local_participant();
+        for (_, publication) in local.track_publications() {
+            let Some(track) = publication.track() else {
+                continue;
+            };
+            let LocalTrack::Video(v) = track else {
+                continue;
+            };
+            if let Ok(stats_vec) = v.get_stats().await {
+                for stat in &stats_vec {
+                    if let RtcStats::OutboundRtp(s) = stat {
+                        counters.total_outbound_bytes += s.sent.bytes_sent;
+                    }
                 }
             }
         }
