@@ -134,6 +134,24 @@ pub(crate) struct RoomServiceInner {
     // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
 }
 
+/// Inserts a remote participant into the map if not already present.
+/// Returns `true` if the participant was newly inserted.
+fn insert_participant_if_absent(
+    participants: &std::sync::RwLock<HashMap<String, ParticipantInfo>>,
+    sid: &str,
+    remote_participant: &livekit::participant::RemoteParticipant,
+) -> bool {
+    let mut guard = participants.write().unwrap();
+    if guard.contains_key(sid) {
+        return false;
+    }
+    guard.insert(
+        sid.to_string(),
+        ParticipantInfo::from_remote_participant(remote_participant),
+    );
+    true
+}
+
 /// RoomService is a wrapper around the LiveKit room, on creation it
 /// spawns a thread for handling async code.
 /// It exposes a few functions for sending commands to the room service.
@@ -1087,19 +1105,9 @@ async fn room_service_commands(
 
                     log::info!("room_service_commands: Participant: {}", sid);
 
-                    // Insert into HashMap only if not already present
+                    if insert_participant_if_absent(&inner.participants, &sid, &remote_participant)
                     {
-                        let already_exists = inner.participants.read().unwrap().contains_key(&sid);
-                        if !already_exists {
-                            let mut participants = inner.participants.write().unwrap();
-                            let new_participant =
-                                ParticipantInfo::from_remote_participant(&remote_participant);
-                            log::info!(
-                                "room_service_commands: participant to be added {:?}",
-                                new_participant
-                            );
-                            participants.insert(sid.clone(), new_participant);
-                        }
+                        log::info!("room_service_commands: participant added: {}", sid);
                     }
 
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantConnected(
@@ -2002,21 +2010,8 @@ async fn handle_room_events(
 
                 log::info!("handle_room_events: Participant connected: {}", sid);
 
-                // Check if already in HashMap
-                {
-                    let participants_guard = participants.read().unwrap();
-                    if participants_guard.contains_key(&sid) {
-                        continue;
-                    }
-                }
-
-                // Insert into HashMap
-                {
-                    let mut participants_guard = participants.write().unwrap();
-                    participants_guard.insert(
-                        sid.clone(),
-                        ParticipantInfo::from_remote_participant(&participant),
-                    );
+                if !insert_participant_if_absent(&participants, &sid, &participant) {
+                    continue;
                 }
 
                 if let Err(e) =
@@ -2192,18 +2187,11 @@ async fn handle_room_events(
 
                 let participant_sid = participant.sid().as_str().to_string();
 
-                {
-                    let mut participants_guard = participants.write().unwrap();
-                    if !participants_guard.contains_key(&participant_sid) {
-                        log::info!(
-                            "handle_room_events: Creating participant {} from track subscription",
-                            participant_sid
-                        );
-                        participants_guard.insert(
-                            participant_sid.clone(),
-                            ParticipantInfo::from_remote_participant(&participant),
-                        );
-                    }
+                if insert_participant_if_absent(&participants, &participant_sid, &participant) {
+                    log::info!(
+                        "handle_room_events: Creating participant {} from track subscription",
+                        participant_sid
+                    );
                 }
 
                 match track {
