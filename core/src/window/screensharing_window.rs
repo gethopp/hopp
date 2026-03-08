@@ -92,7 +92,9 @@ fn auto_window_position(window: &Window) -> (f64, f64) {
     let monitor_pos: winit::dpi::LogicalPosition<f64> =
         monitor.position().to_logical(monitor.scale_factor());
 
-    (monitor_pos.x, monitor_pos.y)
+    let offset_y = if cfg!(target_os = "macos") { 25.0 } else { 0.0 };
+
+    (monitor_pos.x, monitor_pos.y + offset_y)
 }
 
 /// Target redraw interval: 60 FPS
@@ -1931,28 +1933,28 @@ fn calculate_max_window_size(window: &Window, stream_aspect: f64) -> Option<(f64
         0.0
     };
 
-    // Window chrome: header + bottom padding
-    let window_chrome_height = HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-
-    let available_h = monitor_h - os_chrome_height - window_chrome_height;
-    let available_content_w = monitor_w - 2.0 * CONTENT_PADDING as f64;
+    let available_h = monitor_h - os_chrome_height;
+    let available_content_w = monitor_w;
 
     if available_content_w <= 0.0 || available_h <= 0.0 {
         log::warn!("calculate_max_window_size: available space is zero or negative, falling back");
         return None;
     }
 
-    // Fit content preserving aspect ratio
-    let (content_w, content_h) = if available_content_w / available_h > stream_aspect {
-        (available_h * stream_aspect, available_h)
+    // Subtract UI chrome to get the maximum available content area.
+    let chrome_h = HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+    let chrome_w = 2.0 * CONTENT_PADDING as f64;
+    let max_content_h = available_h - chrome_h;
+    let max_content_w = available_content_w - chrome_w;
+
+    // Fit content preserving aspect ratio (height- or width-constrained).
+    let (content_w, content_h) = if max_content_w / max_content_h > stream_aspect {
+        (max_content_h * stream_aspect, max_content_h)
     } else {
-        (available_content_w, available_content_w / stream_aspect)
+        (max_content_w, max_content_w / stream_aspect)
     };
 
-    let window_w = content_w + 2.0 * CONTENT_PADDING as f64;
-    let window_h = content_h + window_chrome_height;
-
-    Some((window_w, window_h))
+    Some((content_w + chrome_w, content_h + chrome_h))
 }
 
 /// Set the **frame-level** aspect ratio on the NSWindow so that the
