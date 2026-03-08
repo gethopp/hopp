@@ -1063,6 +1063,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_participant_in_control(participant);
             }
+            UserEvent::LocalParticipantInControl(in_control) => {
+                log::debug!("user_event: local participant in control: {in_control}");
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_local_participant_in_control(in_control);
+                }
+            }
             UserEvent::SentryMetadata(sentry_metadata) => {
                 log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
                 sentry_utils::init_metadata(
@@ -1987,6 +1993,7 @@ pub enum UserEvent {
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
+    LocalParticipantInControl(bool),
     SentryMetadata(SentryMetadata),
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),

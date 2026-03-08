@@ -1936,10 +1936,29 @@ async fn handle_room_events(
         match msg {
             RoomEvent::DataReceived {
                 payload,
-                topic: _,
+                topic,
                 kind: _,
                 participant,
             } => {
+                // participant_in_control uses raw UTF-8 SID, not JSON. Handle before deserialize.
+                // TODO(@konsalex): Maybe follow a JSON  type
+                // type, payload approach to be easier to work with?
+                if topic.as_deref() == Some(TOPIC_PARTICIPANT_IN_CONTROL) {
+                    if let Ok(sid_str) = std::str::from_utf8(&payload) {
+                        let in_control = sid_str == user_sid;
+                        if let Err(e) = event_loop_proxy
+                            .send_event(UserEvent::LocalParticipantInControl(in_control))
+                        {
+                            log::error!("handle_room_events: Failed to send LocalParticipantInControl: {e:?}");
+                        }
+                    } else {
+                        log::warn!(
+                            "handle_room_events: participant_in_control payload is not valid UTF-8"
+                        );
+                    }
+                    continue;
+                }
+
                 let client_event: ClientEvent = match serde_json::from_slice(&payload) {
                     Ok(event) => event,
                     Err(e) => {

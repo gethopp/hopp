@@ -388,6 +388,8 @@ pub struct ScreensharingWindow {
     programmatic_resize: bool,
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
+    /// True when participant_in_control names the local participant (use OS cursor in control tab).
+    local_participant_in_control: bool,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     participants_manager: ParticipantsManager,
     click_animation_renderer: ClickAnimationRenderer,
@@ -651,6 +653,7 @@ impl ScreensharingWindow {
             },
             programmatic_resize: false,
             mouse_in_participant_area: false,
+            local_participant_in_control: false,
             screen_share_buffer,
             participants_manager,
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
@@ -738,6 +741,13 @@ impl ScreensharingWindow {
         self.window.request_redraw();
     }
 
+    /// Update local control ownership and refresh cursor. When true, control tab uses OS cursor.
+    pub fn set_local_participant_in_control(&mut self, in_control: bool) {
+        self.local_participant_in_control = in_control;
+        self.update_cursor();
+        self.window.request_redraw();
+    }
+
     /// Returns the instant when the next redraw should occur.
     pub fn next_redraw_at(&self) -> StdInstant {
         self.last_redraw + REDRAW_INTERVAL
@@ -774,11 +784,12 @@ impl ScreensharingWindow {
         prev.last_click_count + 1
     }
 
-    /// Update window cursor based on active tab and mouse position.
+    /// Update window cursor based on active tab, mouse position, and local control ownership.
     ///
     /// - Outside participant area → always the OS default cursor.
     /// - Inside participant area + `draw` tab → pencil cursor.
-    /// - Inside participant area + any other tab → pointer cursor.
+    /// - Inside participant area + `control` tab + local in control → OS default cursor.
+    /// - Inside participant area + other cases → custom pointer cursor.
     fn update_cursor(&self) {
         #[cfg(target_os = "macos")]
         {
@@ -787,6 +798,8 @@ impl ScreensharingWindow {
                 unsafe { NSCursor::arrowCursor().set() };
             } else if self.state.active_tab == "draw" {
                 unsafe { self.ns_cursor_pencil.set() };
+            } else if self.state.active_tab == "control" && self.local_participant_in_control {
+                unsafe { NSCursor::arrowCursor().set() };
             } else {
                 unsafe { self.ns_cursor_pointer.set() };
             }
@@ -800,6 +813,9 @@ impl ScreensharingWindow {
                 self.window.set_cursor(winit::window::Cursor::Custom(
                     self.custom_cursor_pencil.clone(),
                 ));
+            } else if self.state.active_tab == "control" && self.local_participant_in_control {
+                self.window
+                    .set_cursor(winit::window::Cursor::Icon(CursorIcon::Default));
             } else {
                 self.window.set_cursor(winit::window::Cursor::Custom(
                     self.custom_cursor_pointer.clone(),
