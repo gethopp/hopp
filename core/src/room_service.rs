@@ -1047,8 +1047,8 @@ async fn room_service_commands(
 
                 // Drop the participants
                 {
-                    //let mut participants = inner.participants.write().unwrap();
-                    //participants.clear();
+                    let mut participants = inner.participants.write().unwrap();
+                    participants.clear();
                 }
 
                 {
@@ -1509,10 +1509,9 @@ async fn room_service_commands(
                 // to avoid sending active camera when we disable it.
                 {
                     let mut participants = inner.participants.write().unwrap();
-                    let info = participants
-                        .get_mut("local")
-                        .expect("local participant info not found");
-                    info.camera_buffers().set_inactive(true);
+                    if let Some(info) = participants.get_mut("local") {
+                        info.camera_buffers().set_inactive(true);
+                    }
                 }
 
                 log::info!("room_service_commands: Camera track unpublished");
