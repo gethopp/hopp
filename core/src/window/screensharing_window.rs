@@ -212,6 +212,7 @@ struct ScreensharingState {
     last_click_time: StdInstant,
     last_click_x: f32,
     last_click_y: f32,
+    sharer_name: String,
 }
 
 impl Default for ScreensharingState {
@@ -234,6 +235,7 @@ impl Default for ScreensharingState {
             last_click_time: StdInstant::now(),
             last_click_x: 0.0,
             last_click_y: 0.0,
+            sharer_name: "Screen".to_string(),
         }
     }
 }
@@ -404,6 +406,7 @@ impl ScreensharingWindow {
         event_loop: &ActiveEventLoop,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participant_sid: Option<String>,
+        participant_name: Option<String>,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
@@ -606,7 +609,8 @@ impl ScreensharingWindow {
         let mut participants_manager = ParticipantsManager::new();
         // Add the sharer as a participant (no connected event will fire for them).
         if let Some(sid) = &participant_sid {
-            if let Err(e) = participants_manager.add_participant(sid.clone(), sid, false) {
+            let name = participant_name.as_deref().unwrap_or(sid.as_str());
+            if let Err(e) = participants_manager.add_participant(sid.clone(), name, false) {
                 log::warn!(
                     "ScreensharingWindow::new: failed to add sharer participant {sid}: {e:?}"
                 );
@@ -620,6 +624,11 @@ impl ScreensharingWindow {
         ) {
             log::warn!("ScreensharingWindow::new: failed to add local participant: {e:?}");
         }
+        let sharer_first_name = participant_name
+            .as_deref()
+            .and_then(|n| n.split_whitespace().next())
+            .unwrap_or("Screen")
+            .to_string();
         let s = Self {
             window,
             surface,
@@ -634,7 +643,10 @@ impl ScreensharingWindow {
             clipboard,
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
-            state: ScreensharingState::default(),
+            state: ScreensharingState {
+                sharer_name: sharer_first_name,
+                ..Default::default()
+            },
             programmatic_resize: false,
             mouse_in_participant_area: false,
             screen_share_buffer,
@@ -1344,7 +1356,7 @@ impl ScreensharingWindow {
     ) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
         // ── Name label (left of header, after traffic lights) ───────────
         let name_label = container(
-            text("Costa's Screen")
+            text(format!("{}'s Screen", state.sharer_name))
                 .size(14)
                 .color(Color::WHITE)
                 .font(GEIST_MEDIUM),

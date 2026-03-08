@@ -1449,7 +1449,7 @@ async fn room_service_commands(
                         LocalTrack::Video(track),
                         TrackPublishOptions {
                             source: TrackSource::Camera,
-                            video_codec: VideoCodec::H264,
+                            video_codec: VideoCodec::VP8,
                             simulcast: true,
                             video_encoding: Some(VideoEncoding {
                                 max_bitrate: CAMERA_MAX_BITRATE,
@@ -2297,6 +2297,7 @@ async fn handle_room_events(
 
                             // Derive the audio participant identity from the video participant identity
                             // e.g. "room:...:video" → "room:...:audio"
+                            let sharer_name = participant.name().to_string();
                             let sharer_sid = {
                                 let video_identity = participant.identity().as_str().to_string();
                                 let audio_identity = video_identity
@@ -2312,8 +2313,11 @@ async fn handle_room_events(
                                     participant_sid.clone()
                                 }
                             };
-                            if let Err(e) = event_loop_proxy
-                                .send_event(UserEvent::OpenScreenShareWindow(Some(sharer_sid)))
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
+                                    sid: Some(sharer_sid),
+                                    name: Some(sharer_name),
+                                })
                             {
                                 log::error!(
                                         "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"

@@ -506,8 +506,9 @@ impl<'a> Application<'a> {
         event_loop: &ActiveEventLoop,
         buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participant_sid: Option<String>,
+        participant_name: Option<String>,
     ) {
-        match ScreensharingWindow::new(event_loop, buffer, participant_sid) {
+        match ScreensharingWindow::new(event_loop, buffer, participant_sid, participant_name) {
             Ok(win) => self.screensharing_window = Some(win),
             Err(e) => {
                 log::error!("Failed to open screensharing window: {e:?}");
@@ -1411,9 +1412,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
-                self.open_screensharing_window(event_loop, buffer, None);
+                self.open_screensharing_window(event_loop, buffer, None, None);
             }
-            UserEvent::OpenScreenShareWindow(participant_sid) => {
+            UserEvent::OpenScreenShareWindow {
+                sid: participant_sid,
+                name: participant_name,
+            } => {
                 log::info!("user_event: OpenScreenShareWindow");
                 if self.screensharing_window.is_some() {
                     log::info!("user_event: Screensharing window already exists, skipping");
@@ -1427,6 +1431,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             event_loop,
                             screen_share_buffer,
                             participant_sid,
+                            participant_name,
                         );
                     } else {
                         log::warn!("user_event: No screen share buffer available");
@@ -2004,7 +2009,10 @@ pub enum UserEvent {
     StopCamera,
     OpenCamera,
     OpenScreensharing,
-    OpenScreenShareWindow(Option<String>),
+    OpenScreenShareWindow {
+        sid: Option<String>,
+        name: Option<String>,
+    },
     CloseScreenShareWindow,
     CloseCameraWindow,
     BringWindowsToFront,
@@ -2098,7 +2106,10 @@ impl RenderEventLoop {
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
-                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow(None),
+                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
+                        sid: None,
+                        name: None,
+                    },
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
