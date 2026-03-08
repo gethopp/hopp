@@ -4,7 +4,7 @@
 // center-crop logic for aspect-ratio-aware rendering.
 //
 // Uses 3 separate R8Unorm textures for Y, U, V planes (I420 format).
-// BT.601 color space conversion.
+// BT.709 color space conversion (standard for HD video).
 
 struct VSOut {
     @builtin(position) pos: vec4<f32>,
@@ -53,14 +53,16 @@ fn rounded_rect_sdf(p: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - radius;
 }
 
-// BT.601 YUV to RGB conversion (studio swing range).
+// BT.709 YUV to RGB conversion (limited / studio-swing range).
+// HD webcam feeds from WebRTC use BT.709; using BT.601 here would
+// desaturate colours noticeably.
 fn yuv_to_rgb(y: f32, u: f32, v: f32) -> vec3<f32> {
     let c = y - (16.0 / 255.0);
     let d = u - 0.5;
     let e = v - 0.5;
-    let r = 1.164 * c + 1.596 * e;
-    let g = 1.164 * c - 0.392 * d - 0.813 * e;
-    let b = 1.164 * c + 2.017 * d;
+    let r = 1.164 * c + 1.793 * e;
+    let g = 1.164 * c - 0.213 * d - 0.533 * e;
+    let b = 1.164 * c + 2.112 * d;
     return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
