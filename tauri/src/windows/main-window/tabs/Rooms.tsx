@@ -276,7 +276,7 @@ export const Rooms = () => {
         }
 
         sounds.callAccepted.play();
-        await tauriUtils.callStarted(tokens.audioToken);
+        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
         await tauriUtils.setDockIconVisible(true);
         setCallTokens({
           ...tokens,

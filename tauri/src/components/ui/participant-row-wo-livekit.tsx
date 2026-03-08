@@ -142,7 +142,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
-          await tauriUtils.callStarted(data.payload.audioToken);
+          await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
           await tauriUtils.setDockIconVisible(true);
           setCallTokens({
             ...data.payload,

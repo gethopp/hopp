@@ -849,8 +849,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CallStart(call_start) => {
                 log::info!("user_event: CallStart");
                 let result = if let Some(room_service) = self.room_service.as_ref() {
-                    match room_service.create_room(call_start.token, self.event_loop_proxy.clone())
-                    {
+                    match room_service.create_room(
+                        call_start.audio_token,
+                        call_start.video_token,
+                        self.event_loop_proxy.clone(),
+                    ) {
                         Ok(_) => {
                             log::info!("user_event: Room created successfully");
                             room_service.iterate_participants();

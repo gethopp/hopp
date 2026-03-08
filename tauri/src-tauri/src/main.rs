@@ -640,14 +640,19 @@ fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: S
 }
 
 #[tauri::command]
-fn call_started(app: tauri::AppHandle, token: String) -> Result<(), String> {
+fn call_started(
+    app: tauri::AppHandle,
+    audio_token: String,
+    video_token: String,
+) -> Result<(), String> {
     log::info!("call_started");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     if let Err(e) = data
         .sender
         .send(Message::CallStart(socket_lib::CallStartMessage {
-            token: token.clone(),
+            audio_token: audio_token.clone(),
+            video_token: video_token.clone(),
         }))
     {
         log::error!("call_started: failed to send: {e:?}");

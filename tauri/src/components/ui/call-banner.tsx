@@ -56,7 +56,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         console.log("Received call_tokens", data);
         tokensReceived = true;
         sounds.callAccepted.play();
-        await tauriUtils.callStarted(data.payload.audioToken);
+        await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
         await tauriUtils.setDockIconVisible(true);
 
         setCallTokens({

@@ -40,8 +40,12 @@ pub fn call_start_with_name(
     event_socket: &EventSocket,
     name: &str,
 ) -> io::Result<()> {
-    let token = livekit_utils::generate_token(name);
-    sender.send(Message::CallStart(CallStartMessage { token }))?;
+    let audio_token = livekit_utils::generate_token(&format!("{name} Audio"));
+    let video_token = livekit_utils::generate_token(&format!("{name} Video"));
+    sender.send(Message::CallStart(CallStartMessage {
+        audio_token,
+        video_token,
+    }))?;
     match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Message::CallStartResult(Ok(()))) => Ok(()),
         Ok(Message::CallStartResult(Err(e))) => {

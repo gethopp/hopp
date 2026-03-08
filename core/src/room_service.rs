@@ -53,6 +53,7 @@ const WIDTH_THRESHOLD_2560: u32 = 2560;
 enum RoomServiceCommand {
     CreateRoom {
         token: String,
+        video_token: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     },
     PublishTrack {
@@ -235,6 +236,7 @@ impl RoomService {
     pub fn create_room(
         &self,
         token: String,
+        video_token: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room");
@@ -242,6 +244,7 @@ impl RoomService {
             .service_command_tx
             .send(RoomServiceCommand::CreateRoom {
                 token,
+                video_token,
                 event_loop_proxy,
             });
         if let Err(e) = res {
@@ -800,6 +803,7 @@ async fn room_service_commands(
             // TODO: Break this into create room and publish track commands
             RoomServiceCommand::CreateRoom {
                 token,
+                video_token: _video_token,
                 event_loop_proxy,
             } => {
                 {

@@ -264,8 +264,8 @@ const setSentryMetadata = async (userEmail: string) => {
   return await invoke("set_sentry_metadata", { userEmail, appVersion });
 };
 
-const callStarted = async (token: string) => {
-  return await invoke("call_started", { token });
+const callStarted = async (audioToken: string, videoToken: string) => {
+  return await invoke("call_started", { audioToken, videoToken });
 };
 
 /**

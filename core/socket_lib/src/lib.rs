@@ -105,7 +105,8 @@ pub struct ScreenShareMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CallStartMessage {
-    pub token: String,
+    pub audio_token: String,
+    pub video_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

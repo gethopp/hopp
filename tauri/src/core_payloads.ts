@@ -197,7 +197,7 @@ export interface CommandMap {
   set_sentry_metadata: { args: { userEmail: string; appVersion: string }; return: void };
 
   // Call
-  call_started: { args: { token: string }; return: void };
+  call_started: { args: { audioToken: string; videoToken: string }; return: void };
   end_call: { args: void; return: void };
 
   // Server
