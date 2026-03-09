@@ -364,6 +364,7 @@ pub fn get_log_level() -> LevelFilter {
 #[cfg(target_os = "macos")]
 fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
     log::info!("center_window_on_tray: tray_rect: {tray_rect:?}, show_window: {show_window:?}");
+
     /*
      * Because centering the window using the move_window function is
      * broken we have to calculate the position of the window manually.
@@ -380,6 +381,7 @@ fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: b
     let mut scale = 1.0;
     /* The tray rect position is in physical units */
     let tray_pos: PhysicalPosition<i32> = tray_rect.position.to_physical(1.0);
+    let mut found_monitor = false;
     let monitors = window.available_monitors();
     if let Ok(monitors) = monitors {
         for monitor in monitors {
@@ -394,11 +396,19 @@ fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: b
             {
                 log::info!("center_window_on_tray: Found monitor: {monitor:?}");
                 scale = monitor.scale_factor();
+                found_monitor = true;
                 break;
             }
         }
     } else {
         log::warn!("center_window_on_tray: Available monitors errored scale to 1.0");
+    }
+
+    if !found_monitor {
+        log::warn!(
+            "center_window_on_tray: Tray position {tray_pos:?} is outside all monitors, skipping"
+        );
+        return;
     }
 
     let tray_size: PhysicalSize<f64> = tray_rect.size.to_physical(scale);
@@ -569,7 +579,7 @@ pub fn setup_tray_icon(
                             let is_visible = window.is_visible();
 
                             if let Ok(true) = is_visible {
-                                center_window_on_tray(&window, rect, true);
+                                center_window_on_tray(&window, rect, false);
                             }
                         }
                     }
