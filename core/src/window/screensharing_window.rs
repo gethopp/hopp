@@ -1146,6 +1146,7 @@ impl ScreensharingWindow {
                                 let data = if clipboard_text.is_empty() {
                                     None
                                 } else {
+                                    self.clipboard.write(Kind::Standard, String::new());
                                     Some(clipboard_text)
                                 };
                                 input_event = Some(ScreenShareInputEvent::PasteFromClipboard(data));
