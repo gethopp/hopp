@@ -7,10 +7,7 @@ use livekit::Room;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
-use crate::audio::capturer::SAMPLES_DIVIDER;
-use crate::audio::mixer::{AudioSource, MixerHandle};
-use crate::audio::processor::AudioProcessor;
-use std::sync::{Arc, Mutex};
+use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
@@ -27,7 +24,7 @@ impl AudioPublisher {
         room: &Room,
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
-        processor: Arc<Mutex<AudioProcessor>>,
+        processor: SharedProcessor,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -95,14 +92,13 @@ async fn process_audio_samples(
     mut rx: mpsc::UnboundedReceiver<Vec<i16>>,
     audio_source: NativeAudioSource,
     sample_rate: u32,
-    processor: Arc<Mutex<AudioProcessor>>,
+    processor: SharedProcessor,
 ) {
     assert_eq!(
-        sample_rate,
-        crate::audio::processor::APM_SAMPLE_RATE,
+        sample_rate, MIXER_SAMPLE_RATE,
         "Mic capture sample rate must match APM rate"
     );
-    let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
+    let samples_per_unit = (MIXER_SAMPLE_RATE / 100) as usize;
     log::info!(
         "Starting audio processing ({}Hz, {} samples per 10ms)",
         sample_rate,
@@ -112,11 +108,6 @@ async fn process_audio_samples(
     let mut buffer: Vec<i16> = Vec::new();
     let mut chunk = vec![0i16; samples_per_unit];
 
-    // {
-    //     let mut processor = processor.lock().unwrap();
-    //     processor.set_delay(50);
-    // }
-
     while let Some(audio_data) = rx.recv().await {
         buffer.extend_from_slice(&audio_data);
 
@@ -125,7 +116,7 @@ async fn process_audio_samples(
             buffer.drain(..samples_per_unit);
             {
                 let mut p = processor.lock().unwrap();
-                p.process(&mut chunk);
+                let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
             }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }

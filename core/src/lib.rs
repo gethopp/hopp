@@ -4,7 +4,6 @@ pub mod audio {
     pub mod device_monitor;
     pub mod mixer;
     pub mod player;
-    pub mod processor;
 }
 
 pub mod livekit {
