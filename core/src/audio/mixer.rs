@@ -8,7 +8,11 @@ use std::num::NonZero;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::audio::processor::AudioProcessor;
+
 // TODO: use custom errors here
+
+pub type SharedProcessor = Arc<Mutex<AudioProcessor>>;
 
 struct ResampledSource {
     iter: UniformSourceIterator<SourcesQueueOutput>,
@@ -31,6 +35,7 @@ struct MixerInner {
     source_tx: Sender<ResampledSource>,
     sources: Vec<SourceMeta>,
     output: OutputConfig,
+    processor: SharedProcessor,
 }
 
 #[derive(Clone)]
@@ -46,6 +51,7 @@ impl std::fmt::Debug for MixerHandle {
 
 fn open_output_stream(
     pending_rx: mpsc::Receiver<ResampledSource>,
+    processor: SharedProcessor,
 ) -> Result<(cpal::Stream, OutputConfig), String> {
     let host = cpal::default_host();
     let device = host
@@ -93,6 +99,9 @@ fn open_output_stream(
                     }
                     *sample = acc.clamp(-1.0, 1.0);
                 }
+                if let Ok(mut proc) = processor.try_lock() {
+                    proc.process_reverse(data);
+                }
             },
             |err| error!("cpal stream error: {err}"),
             None,
@@ -113,17 +122,43 @@ fn open_output_stream(
 }
 
 impl MixerHandle {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> Result<(Self, SharedProcessor), String> {
         let (source_tx, pending_rx) = mpsc::channel();
-        let (stream, output) = open_output_stream(pending_rx)?;
-        Ok(Self {
+
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or("No default output device")?;
+        let cfg = device
+            .default_output_config()
+            .map_err(|e| format!("Failed to get output config: {e}"))?;
+
+        let processor = Arc::new(Mutex::new(AudioProcessor::new(
+            cfg.sample_rate(),
+            cfg.channels() as u32,
+        )));
+
+        let (stream, output) = open_output_stream(pending_rx, processor.clone())?;
+
+        let handle = Self {
             inner: Arc::new(Mutex::new(MixerInner {
                 _stream: stream,
                 source_tx,
                 sources: Vec::new(),
                 output,
+                processor: processor.clone(),
             })),
-        })
+        };
+
+        Ok((handle, processor))
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.inner.lock().unwrap().output.sample_rate.get()
+    }
+
+    pub fn channels(&self) -> u16 {
+        self.inner.lock().unwrap().output.channels.get()
     }
 
     pub fn add_source(&self, sample_rate: u32, channels: u16) -> AudioSource {
@@ -158,9 +193,14 @@ impl MixerHandle {
 
     pub fn reconnect(&self) -> Result<(), String> {
         let (source_tx, pending_rx) = mpsc::channel();
-        let (stream, output) = open_output_stream(pending_rx)?;
-
         let mut inner = self.inner.lock().unwrap();
+        let (stream, output) = open_output_stream(pending_rx, inner.processor.clone())?;
+
+        inner
+            .processor
+            .lock()
+            .unwrap()
+            .update_speaker_config(output.sample_rate.get(), output.channels.get() as u32);
 
         let mut live = 0usize;
         inner.sources.retain(|meta| {

@@ -9,7 +9,7 @@ use tokio_stream::StreamExt;
 
 use crate::audio::capturer::SAMPLES_DIVIDER;
 use crate::audio::mixer::{AudioSource, MixerHandle};
-use crate::audio::processor::{AudioProcessor, MixSourceHandle, ProcessorHandle};
+use crate::audio::processor::AudioProcessor;
 use std::sync::{Arc, Mutex};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
@@ -97,6 +97,11 @@ async fn process_audio_samples(
     sample_rate: u32,
     processor: Arc<Mutex<AudioProcessor>>,
 ) {
+    assert_eq!(
+        sample_rate,
+        crate::audio::processor::APM_SAMPLE_RATE,
+        "Mic capture sample rate must match APM rate"
+    );
     let samples_per_unit = (sample_rate / SAMPLES_DIVIDER) as usize;
     log::info!(
         "Starting audio processing ({}Hz, {} samples per 10ms)",
@@ -107,10 +112,10 @@ async fn process_audio_samples(
     let mut buffer: Vec<i16> = Vec::new();
     let mut chunk = vec![0i16; samples_per_unit];
 
-    {
-        let mut processor = processor.lock().unwrap();
-        processor.set_delay(50);
-    }
+    // {
+    //     let mut processor = processor.lock().unwrap();
+    //     processor.set_delay(50);
+    // }
 
     while let Some(audio_data) = rx.recv().await {
         buffer.extend_from_slice(&audio_data);
@@ -120,7 +125,6 @@ async fn process_audio_samples(
             buffer.drain(..samples_per_unit);
             {
                 let mut p = processor.lock().unwrap();
-                p.mix_and_process_reverse();
                 p.process(&mut chunk);
             }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
@@ -134,7 +138,6 @@ async fn process_audio_samples(
 /// On drop, removes the source from the mixer and aborts the receive task.
 pub struct AudioTrackHandle {
     _source: AudioSource,
-    _mix_source: MixSourceHandle,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -145,18 +148,15 @@ impl Drop for AudioTrackHandle {
     }
 }
 
-/// Sets up a remote audio track to feed into the rodio mixer and the APM reverse stream.
+/// Sets up a remote audio track to feed into the rodio mixer.
 /// Returns a handle that cleans up automatically on drop.
 pub fn play_remote_audio_track(
     track: RemoteAudioTrack,
     mixer: MixerHandle,
-    processor_handle: &ProcessorHandle,
     participant_id: &str,
 ) -> AudioTrackHandle {
     let source = mixer.add_source(LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS as u16);
     let source_clone = source.clone();
-    let mix_source = processor_handle.add_source();
-    let mix_source_task = mix_source.clone();
 
     let mut stream = livekit::webrtc::audio_stream::native::NativeAudioStream::new(
         track.rtc_track(),
@@ -169,14 +169,12 @@ pub fn play_remote_audio_track(
         log::info!("Starting audio receive loop for {}", stream_key);
         while let Some(frame) = stream.next().await {
             source_clone.push_samples(&frame.data);
-            mix_source_task.push_samples(&frame.data);
         }
         log::info!("Audio receive loop ended for {}", stream_key);
     });
 
     AudioTrackHandle {
         _source: source,
-        _mix_source: mix_source,
         task,
     }
 }

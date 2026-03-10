@@ -8,9 +8,8 @@ use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 
-use crate::audio::capturer::SAMPLES_DIVIDER;
-use crate::audio::processor::{AudioProcessor, ProcessorHandle};
-use crate::livekit::audio::{AudioPublisher, AUDIO_NUM_CHANNELS, LIVEKIT_SAMPLE_RATE};
+use crate::audio::mixer::SharedProcessor;
+use crate::livekit::audio::AudioPublisher;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_video_stream, VideoBufferManager};
 
@@ -196,6 +195,7 @@ impl RoomService {
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         mixer: audio::mixer::MixerHandle,
+        audio_processor: SharedProcessor,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -224,6 +224,7 @@ impl RoomService {
             inner.clone(),
             livekit_server_url,
             event_loop_proxy,
+            audio_processor,
         ));
 
         Ok(Self {
@@ -807,18 +808,10 @@ async fn room_service_commands(
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    audio_processor: SharedProcessor,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
-
-    let samples_per_unit = (LIVEKIT_SAMPLE_RATE / SAMPLES_DIVIDER) as usize;
-    let (initial_processor, initial_handle) = AudioProcessor::new(
-        LIVEKIT_SAMPLE_RATE as i32,
-        AUDIO_NUM_CHANNELS as i32,
-        samples_per_unit,
-    );
-    let processor_handle = Arc::new(std::sync::Mutex::new(initial_handle));
-    let audio_processor = Arc::new(std::sync::Mutex::new(initial_processor));
 
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
@@ -916,7 +909,6 @@ async fn room_service_commands(
                     video_participant_sid,
                     inner.participants.clone(),
                     inner.mixer.clone(),
-                    processor_handle.clone(),
                     RemoteScreenShare {
                         buffer: inner.remote_screen_share.buffer.clone(),
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
@@ -1928,7 +1920,6 @@ async fn handle_room_events(
     video_participant_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     mixer: audio::mixer::MixerHandle,
-    processor_handle: Arc<std::sync::Mutex<ProcessorHandle>>,
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
 ) {
@@ -2256,15 +2247,11 @@ async fn handle_room_events(
                             participant_identity
                         );
 
-                        let proc_handle = processor_handle.lock().unwrap();
                         let handle = crate::livekit::audio::play_remote_audio_track(
                             audio_track,
                             mixer.clone(),
-                            &proc_handle,
                             &participant_identity,
                         );
-
-                        drop(proc_handle);
 
                         let mut participants_guard = participants.write().unwrap();
                         if let Some(info) = participants_guard.get_mut(&participant_sid) {

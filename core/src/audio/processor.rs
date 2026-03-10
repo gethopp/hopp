@@ -1,121 +1,63 @@
 use livekit::webrtc::native::apm::AudioProcessingModule;
-use tokio::sync::mpsc;
+use livekit::webrtc::native::audio_resampler::AudioResampler;
 
-struct MixSource {
-    rx: mpsc::UnboundedReceiver<Vec<i16>>,
-    buffer: Vec<i16>,
-}
-
-/// Sender side for a mix source. Dropping this closes the channel
-/// and the processor auto-prunes it on the next mix cycle.
-#[derive(Clone)]
-pub struct MixSourceHandle {
-    tx: mpsc::UnboundedSender<Vec<i16>>,
-}
-
-impl MixSourceHandle {
-    pub fn push_samples(&self, samples: &[i16]) {
-        let _ = self.tx.send(samples.to_vec());
-    }
-}
-
-/// Clonable handle to add new sources to the processor from any task.
-#[derive(Clone)]
-pub struct ProcessorHandle {
-    source_tx: mpsc::UnboundedSender<mpsc::UnboundedReceiver<Vec<i16>>>,
-}
-
-impl ProcessorHandle {
-    pub fn add_source(&self) -> MixSourceHandle {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let _ = self.source_tx.send(rx);
-        MixSourceHandle { tx }
-    }
-}
+pub const APM_SAMPLE_RATE: u32 = 48000;
+pub const APM_NUM_CHANNELS: u32 = 1;
 
 pub struct AudioProcessor {
     apm: AudioProcessingModule,
-    sample_rate: i32,
-    num_channels: i32,
-    sources: Vec<MixSource>,
-    new_source_rx: mpsc::UnboundedReceiver<mpsc::UnboundedReceiver<Vec<i16>>>,
-    mixed_chunk: Vec<i16>, // pre-allocated, size = chunk_size, never resized
+    resampler: AudioResampler,
+    speaker_sample_rate: u32,
+    speaker_num_channels: u32,
+    reverse_buffer: Vec<i16>,
 }
 
 impl AudioProcessor {
-    pub fn new(sample_rate: i32, num_channels: i32, chunk_size: usize) -> (Self, ProcessorHandle) {
-        let apm = AudioProcessingModule::new(true, true, false, true);
-        let (source_tx, new_source_rx) = mpsc::unbounded_channel();
-
-        let processor = Self {
-            apm,
-            sample_rate,
-            num_channels,
-            sources: Vec::new(),
-            new_source_rx,
-            mixed_chunk: vec![0i16; chunk_size],
-        };
-
-        let handle = ProcessorHandle { source_tx };
-        (processor, handle)
+    pub fn new(speaker_sample_rate: u32, speaker_num_channels: u32) -> Self {
+        Self {
+            apm: AudioProcessingModule::new(true, true, false, true),
+            resampler: AudioResampler::default(),
+            speaker_sample_rate,
+            speaker_num_channels,
+            reverse_buffer: Vec::new(),
+        }
     }
 
-    /// Mix all remote sources, feed to APM as reverse stream.
-    /// Call BEFORE process() on each 10ms cycle.
-    pub fn mix_and_process_reverse(&mut self) {
-        // 1. Accept newly added sources
-        while let Ok(rx) = self.new_source_rx.try_recv() {
-            self.sources.push(MixSource {
-                rx,
-                buffer: Vec::new(),
-            });
-        }
+    /// Called from cpal callback with the mixed speaker output (f32).
+    /// Resamples to mono 48kHz and feeds 10ms chunks to APM reverse stream.
+    pub fn process_reverse(&mut self, data: &[f32]) {
+        let i16_data: Vec<i16> = data.iter().map(|&s| (s * i16::MAX as f32) as i16).collect();
+        let samples_per_channel = i16_data.len() / self.speaker_num_channels as usize;
 
-        if self.sources.is_empty() {
-            return;
-        }
+        let resampled = self.resampler.remix_and_resample(
+            &i16_data,
+            samples_per_channel as u32,
+            self.speaker_num_channels,
+            self.speaker_sample_rate,
+            APM_NUM_CHANNELS,
+            APM_SAMPLE_RATE,
+        );
+        self.reverse_buffer.extend_from_slice(resampled);
 
-        // 2. Drain each source's channel into its buffer
-        for source in &mut self.sources {
-            while let Ok(samples) = source.rx.try_recv() {
-                source.buffer.extend_from_slice(&samples);
+        // Feed complete 10ms chunks (480 samples at 48kHz mono) to APM
+        let chunk_size = (APM_SAMPLE_RATE / 100 * APM_NUM_CHANNELS) as usize;
+        while self.reverse_buffer.len() >= chunk_size {
+            let mut chunk: Vec<i16> = self.reverse_buffer.drain(..chunk_size).collect();
+            if let Err(e) = self.apm.process_reverse_stream(
+                &mut chunk,
+                APM_SAMPLE_RATE as i32,
+                APM_NUM_CHANNELS as i32,
+            ) {
+                log::warn!("APM process_reverse_stream failed: {e}");
             }
         }
-
-        // 3. Zero out mixed_chunk (reuse existing allocation)
-        let chunk_size = self.mixed_chunk.len();
-        for sample in self.mixed_chunk.iter_mut() {
-            *sample = 0;
-        }
-
-        // 4. Sum samples from each source
-        for source in &mut self.sources {
-            let available = source.buffer.len().min(chunk_size);
-            for i in 0..available {
-                self.mixed_chunk[i] = self.mixed_chunk[i].saturating_add(source.buffer[i]);
-            }
-            source.buffer.drain(..available);
-        }
-
-        // 5. Feed to APM reverse stream
-        if let Err(e) = self.apm.process_reverse_stream(
-            &mut self.mixed_chunk,
-            self.sample_rate,
-            self.num_channels,
-        ) {
-            log::warn!("APM process_reverse_stream failed: {e}");
-        }
-
-        // 6. Prune closed sources with empty buffers
-        self.sources
-            .retain(|source| !source.rx.is_closed() || !source.buffer.is_empty());
     }
 
     /// Process mic audio through APM (echo cancellation + noise suppression).
     pub fn process(&mut self, chunk: &mut [i16]) {
-        if let Err(e) = self
-            .apm
-            .process_stream(chunk, self.sample_rate, self.num_channels)
+        if let Err(e) =
+            self.apm
+                .process_stream(chunk, APM_SAMPLE_RATE as i32, APM_NUM_CHANNELS as i32)
         {
             log::warn!("APM process_stream failed: {e}");
         }
@@ -125,5 +67,11 @@ impl AudioProcessor {
         if let Err(e) = self.apm.set_stream_delay_ms(delay_ms) {
             log::warn!("APM set_stream_delay_ms failed: {e}");
         }
+    }
+
+    pub fn update_speaker_config(&mut self, sample_rate: u32, num_channels: u32) {
+        self.speaker_sample_rate = sample_rate;
+        self.speaker_num_channels = num_channels;
+        self.reverse_buffer.clear();
     }
 }

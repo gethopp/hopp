@@ -1,10 +1,11 @@
-use super::mixer::MixerHandle;
+use super::mixer::{MixerHandle, SharedProcessor};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
 
 pub struct Player {
     mixer: MixerHandle,
+    processor: SharedProcessor,
     #[cfg(target_os = "macos")]
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
@@ -12,7 +13,7 @@ pub struct Player {
 impl Player {
     #[allow(unused_variables)]
     pub fn new(proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
-        let mixer = MixerHandle::new()?;
+        let (mixer, processor) = MixerHandle::new()?;
 
         #[cfg(target_os = "macos")]
         let device_monitor = super::device_monitor::DeviceMonitor::new(
@@ -23,6 +24,7 @@ impl Player {
 
         Ok(Self {
             mixer,
+            processor,
             #[cfg(target_os = "macos")]
             _device_monitor: device_monitor,
         })
@@ -30,6 +32,10 @@ impl Player {
 
     pub fn mixer(&self) -> &MixerHandle {
         &self.mixer
+    }
+
+    pub fn processor(&self) -> SharedProcessor {
+        self.processor.clone()
     }
 }
 

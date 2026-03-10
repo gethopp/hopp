@@ -1033,6 +1033,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     url,
                     self.event_loop_proxy.clone(),
                     self.audio_player.mixer().clone(),
+                    self.audio_player.processor(),
                 );
                 if room_service.is_err() {
                     log::error!(
