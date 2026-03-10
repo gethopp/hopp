@@ -1,20 +1,36 @@
-use log::info;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::StreamConfig;
+use log::{error, info};
 use rodio::buffer::SamplesBuffer;
-use rodio::mixer::Mixer;
-use rodio::queue::{self, SourcesQueueInput};
-use rodio::source::Zero;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink};
+use rodio::queue::{self, SourcesQueueInput, SourcesQueueOutput};
+use rodio::source::UniformSourceIterator;
 use std::num::NonZero;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, Weak};
 
-struct SourceEntry {
+// TODO: use custom errors here
+
+struct ResampledSource {
+    iter: UniformSourceIterator<SourcesQueueOutput>,
     tx: Weak<Mutex<Arc<SourcesQueueInput>>>,
 }
 
+struct SourceMeta {
+    tx: Weak<Mutex<Arc<SourcesQueueInput>>>,
+    channels: NonZero<u16>,
+    sample_rate: NonZero<u32>,
+}
+
+struct OutputConfig {
+    sample_rate: NonZero<u32>,
+    channels: NonZero<u16>,
+}
+
 struct MixerInner {
-    _sink: MixerDeviceSink,
-    mixer: Mixer,
-    sources: Vec<SourceEntry>,
+    _stream: cpal::Stream,
+    source_tx: Sender<ResampledSource>,
+    sources: Vec<SourceMeta>,
+    output: OutputConfig,
 }
 
 #[derive(Clone)]
@@ -28,80 +44,150 @@ impl std::fmt::Debug for MixerHandle {
     }
 }
 
-fn create_sink_and_mixer() -> Result<(MixerDeviceSink, Mixer), String> {
-    let sink_builder = DeviceSinkBuilder::from_default_device()
-        .map_err(|e| format!("Failed to get default output device: {e}"))?;
-    let sink_builder = sink_builder.with_error_callback(|e| eprintln!("Audio sink error: {e}"));
-    let mut sink = sink_builder
-        .open_stream()
-        .map_err(|e| format!("Failed to open default sink: {e}"))?;
-    sink.log_on_drop(false);
+fn open_output_stream(
+    pending_rx: mpsc::Receiver<ResampledSource>,
+) -> Result<(cpal::Stream, OutputConfig), String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or("No default output device")?;
+    let cfg = device
+        .default_output_config()
+        .map_err(|e| format!("Failed to get output config: {e}"))?;
 
-    let rodio_mixer = sink.mixer().clone();
+    let sample_rate = cfg.sample_rate();
+    let channels = cfg.channels();
 
-    // Infinite silence keeps mixer attached to the output stream.
-    rodio_mixer.add(Zero::new(
-        NonZero::new(1u16).unwrap(),
-        NonZero::new(16000u32).unwrap(),
-    ));
+    let config = StreamConfig {
+        channels,
+        sample_rate,
+        buffer_size: cpal::BufferSize::Default,
+    };
 
-    Ok((sink, rodio_mixer))
+    info!(
+        "cpal output: {}Hz {}ch on {:?}",
+        sample_rate,
+        channels,
+        device
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_default()
+    );
+
+    let mut sources: Vec<ResampledSource> = Vec::new();
+
+    let stream = device
+        .build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                while let Ok(source) = pending_rx.try_recv() {
+                    sources.push(source);
+                }
+                sources.retain(|s| s.tx.strong_count() > 0);
+                for sample in data.iter_mut() {
+                    let mut acc = 0.0f32;
+                    for source in sources.iter_mut() {
+                        if let Some(s) = source.iter.next() {
+                            acc += s;
+                        }
+                    }
+                    *sample = acc.clamp(-1.0, 1.0);
+                }
+            },
+            |err| error!("cpal stream error: {err}"),
+            None,
+        )
+        .map_err(|e| format!("Failed to build output stream: {e}"))?;
+
+    stream
+        .play()
+        .map_err(|e| format!("Failed to start stream: {e}"))?;
+
+    Ok((
+        stream,
+        OutputConfig {
+            sample_rate: NonZero::new(sample_rate).unwrap(),
+            channels: NonZero::new(channels).unwrap(),
+        },
+    ))
 }
 
 impl MixerHandle {
     pub fn new() -> Result<Self, String> {
-        let (sink, mixer) = create_sink_and_mixer()?;
+        let (source_tx, pending_rx) = mpsc::channel();
+        let (stream, output) = open_output_stream(pending_rx)?;
         Ok(Self {
             inner: Arc::new(Mutex::new(MixerInner {
-                _sink: sink,
-                mixer,
+                _stream: stream,
+                source_tx,
                 sources: Vec::new(),
+                output,
             })),
         })
     }
 
     pub fn add_source(&self, sample_rate: u32, channels: u16) -> AudioSource {
-        let (tx, rx) = queue::queue(true);
-        let shared_tx = Arc::new(Mutex::new(tx));
+        let ch = NonZero::new(channels).unwrap();
+        let sr = NonZero::new(sample_rate).unwrap();
 
+        let (tx, rx) = queue::queue(true);
+        // Prime queue so USI reads correct metadata on bootstrap
+        tx.append(SamplesBuffer::new(ch, sr, vec![0.0f32; channels as usize]));
+
+        let shared_tx = Arc::new(Mutex::new(tx));
         let mut inner = self.inner.lock().unwrap();
-        inner.mixer.add(rx);
-        inner.sources.push(SourceEntry {
+
+        let usi = UniformSourceIterator::new(rx, inner.output.channels, inner.output.sample_rate);
+        let _ = inner.source_tx.send(ResampledSource {
+            iter: usi,
             tx: Arc::downgrade(&shared_tx),
         });
 
+        inner.sources.push(SourceMeta {
+            tx: Arc::downgrade(&shared_tx),
+            channels: ch,
+            sample_rate: sr,
+        });
+
         AudioSource {
-            channels: NonZero::new(channels).unwrap(),
-            sample_rate: NonZero::new(sample_rate).unwrap(),
+            channels: ch,
+            sample_rate: sr,
             tx: shared_tx,
         }
     }
 
-    // TODO: test this doesn't leak anything
     pub fn reconnect(&self) -> Result<(), String> {
-        let (sink, mixer) = create_sink_and_mixer()?;
+        let (source_tx, pending_rx) = mpsc::channel();
+        let (stream, output) = open_output_stream(pending_rx)?;
 
         let mut inner = self.inner.lock().unwrap();
 
-        // Rewire each live source to the new mixer; drop entries whose AudioSource was dropped
         let mut live = 0usize;
-        inner.sources.retain(|source| {
-            let Some(tx) = source.tx.upgrade() else {
+        inner.sources.retain(|meta| {
+            let Some(tx_arc) = meta.tx.upgrade() else {
                 return false;
             };
             let (new_tx, new_rx) = queue::queue(true);
-            mixer.add(new_rx);
-            // Old tx drops here → old queue's buffered samples discarded
-            *tx.lock().unwrap() = new_tx;
+            new_tx.append(SamplesBuffer::new(
+                meta.channels,
+                meta.sample_rate,
+                vec![0.0f32; meta.channels.get() as usize],
+            ));
+            let usi = UniformSourceIterator::new(new_rx, output.channels, output.sample_rate);
+            *tx_arc.lock().unwrap() = new_tx;
+            let _ = source_tx.send(ResampledSource {
+                iter: usi,
+                tx: Arc::downgrade(&tx_arc),
+            });
             live += 1;
             true
         });
 
         info!("Audio output reconnected ({live} sources)");
 
-        inner._sink = sink;
-        inner.mixer = mixer;
-
+        inner._stream = stream;
+        inner.source_tx = source_tx;
+        inner.output = output;
         Ok(())
     }
 }
