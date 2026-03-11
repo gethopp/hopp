@@ -5,9 +5,10 @@ use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::native::audio_mixer::{self, AudioMixer};
 use livekit::webrtc::native::audio_resampler::AudioResampler;
 use log::{error, info};
+use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub type SharedProcessor = Arc<Mutex<AudioProcessingModule>>;
 
@@ -42,7 +43,7 @@ pub struct AudioSource {
 
 impl AudioSource {
     pub fn push_samples(&self, samples: &[i16]) {
-        let mut buffer = self.buffer.lock().unwrap();
+        let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
         // Drop old frames if consumer is slow (keep ~100ms)
         while buffer.len() > 10 {
@@ -61,7 +62,7 @@ impl audio_mixer::AudioMixerSource for AudioSource {
     }
 
     fn get_audio_frame_with_info(&self, _target_sample_rate: u32) -> Option<AudioFrame<'_>> {
-        let buf = self.buffer.lock().unwrap().pop_front()?;
+        let buf = self.buffer.lock().pop_front()?;
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
@@ -120,7 +121,7 @@ fn open_output_stream(
                         data = suffix;
                     }
                     // Mix a new 10ms frame from all sources (mono at MIXER_SAMPLE_RATE)
-                    let mut mixer_guard = mixer.lock().unwrap();
+                    let mut mixer_guard = mixer.lock();
                     let mixed = mixer_guard.mix(MIXER_NUM_CHANNELS as usize);
                     let sampled = resampler.remix_and_resample(
                         mixed,
@@ -131,7 +132,8 @@ fn open_output_stream(
                         output_sample_rate,
                     );
                     // Feed copy to APM reverse stream (modifies buffer in-place)
-                    if let Ok(mut proc) = apm.try_lock() {
+                    {
+                        let mut proc = apm.lock();
                         reverse_buf.clear();
                         reverse_buf.extend_from_slice(sampled);
                         let _ = proc.process_reverse_stream(
@@ -177,7 +179,7 @@ impl MixerHandle {
     }
 
     pub fn add_source(&self, sample_rate: u32, channels: u16) -> AudioSource {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let ssrc = inner.next_ssrc;
         inner.next_ssrc += 1;
         let source = AudioSource {
@@ -186,12 +188,12 @@ impl MixerHandle {
             num_channels: channels as u32,
             buffer: Arc::new(Mutex::new(VecDeque::new())),
         };
-        inner.mixer.lock().unwrap().add_source(source.clone());
+        inner.mixer.lock().add_source(source.clone());
         source
     }
 
     pub fn reconnect(&self) -> Result<(), String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let stream = open_output_stream(inner.mixer.clone(), inner.apm.clone())?;
         inner._stream = stream;
         info!("Audio output reconnected");

@@ -115,7 +115,7 @@ async fn process_audio_samples(
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
             {
-                let mut p = processor.lock().unwrap();
+                let mut p = processor.lock();
                 let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
             }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;

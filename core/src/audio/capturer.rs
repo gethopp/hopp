@@ -176,11 +176,6 @@ impl Capturer {
         self.stop_flag.store(false, Ordering::Relaxed);
         let stop_flag = Arc::clone(&self.stop_flag);
 
-        // Sleep for slightly less than the buffer duration so samples are ready
-        let sleep_duration = std::time::Duration::from_millis(
-            (buffer_frames as u64 * 1000 / TARGET_SAMPLE_RATE as u64).saturating_sub(2),
-        );
-
         self.active_device_name = device_name.map(|s| s.to_string());
         self.sample_tx = Some(sample_tx.clone());
 
@@ -190,8 +185,6 @@ impl Capturer {
             let mut output = Vec::with_capacity(buffer_frames);
 
             loop {
-                std::thread::sleep(sleep_duration);
-
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
