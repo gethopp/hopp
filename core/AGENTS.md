@@ -29,6 +29,7 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 - Platform modules use `#[cfg_attr(target_os = "macos", path = "macos.rs")] mod platform;` to conditionally select the platform file at compile time.
 - Core subsystems: `capture/`, `graphics/`, `input/`, `room_service/`.
 - Logging uses `env_logger`; set `RUST_LOG=hopp_core=info` (use `debug` only when needed).
+- Variable names should be descriptive and not just letters, e.g. not use ss for screen_sharing.
 
 ## Architecture Overview
 
