@@ -517,7 +517,7 @@ impl ScreensharingWindow {
             format,
             width: physical_size.width.max(1),
             height: physical_size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: wgpu::PresentMode::Immediate,
             alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 0,

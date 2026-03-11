@@ -2299,6 +2299,7 @@ async fn handle_room_events(
                                 stop_rx,
                                 format!("screenshare_{}", participant_sid),
                                 false,
+                                Some(event_loop_proxy.clone()),
                             ));
 
                             // Derive the audio participant identity from the video participant identity
@@ -2359,6 +2360,7 @@ async fn handle_room_events(
                                 stop_rx,
                                 participant_sid.clone(),
                                 true,
+                                None,
                             ));
                         }
                         source => {

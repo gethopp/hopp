@@ -938,6 +938,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending start screen share result: {e:?}");
                 }
             }
+            UserEvent::ScreenShareFrameReady => {
+                if let Some(screensharing_window) = &self.screensharing_window {
+                    screensharing_window.request_redraw();
+                }
+            }
             UserEvent::StopScreenShare => {
                 self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_ref() {
@@ -1984,6 +1989,7 @@ pub enum UserEvent {
     CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
+    ScreenShareFrameReady,
     RequestRedraw,
     SharerPosition(f64, f64),
     Tick(u128),

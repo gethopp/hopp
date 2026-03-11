@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use winit::event_loop::EventLoopProxy;
 
 /// Align a value up to the given alignment.
 fn align_to(value: u32, alignment: u32) -> u32 {
@@ -72,7 +73,7 @@ impl VideoBuffer {
 
         let y_stride = self.stride_y;
         let uv_stride = self.stride_u;
-        let ch = (height + 1) / 2;
+        let chroma_height = (height + 1) / 2;
 
         // Row-by-row copy — only the pixel data, padding bytes stay from resize/previous fill
         for row in 0..height as usize {
@@ -83,13 +84,13 @@ impl VideoBuffer {
         }
 
         let uv_w = (width / 2) as usize;
-        for row in 0..ch as usize {
+        for row in 0..chroma_height as usize {
             let src_start = row * src_stride_u as usize;
             let dst_start = row * uv_stride as usize;
             self.u[dst_start..dst_start + uv_w].copy_from_slice(&du[src_start..src_start + uv_w]);
         }
 
-        for row in 0..ch as usize {
+        for row in 0..chroma_height as usize {
             let src_start = row * src_stride_v as usize;
             let dst_start = row * uv_stride as usize;
             self.v[dst_start..dst_start + uv_w].copy_from_slice(&dv[src_start..src_start + uv_w]);
@@ -165,6 +166,7 @@ pub async fn process_video_stream(
     mut stop_rx: mpsc::UnboundedReceiver<()>,
     stream_key: String,
     is_camera: bool,
+    event_loop_proxy: Option<EventLoopProxy<crate::UserEvent>>,
 ) {
     let stream_type = if is_camera { "camera" } else { "screen share" };
     log::info!(
@@ -174,9 +176,6 @@ pub async fn process_video_stream(
     );
 
     let mut sink = NativeVideoStream::new(video_track.rtc_track());
-    let mut frames = 0u64;
-    let mut fps_frames = 0u32;
-    let mut fps_last = std::time::Instant::now();
     let timeout_duration = std::time::Duration::from_secs(1);
 
     loop {
@@ -195,22 +194,8 @@ pub async fn process_video_stream(
                         }
                         manager.advance_write();
 
-                        frames += 1;
-                        fps_frames += 1;
-                        let elapsed = fps_last.elapsed();
-                        if elapsed >= std::time::Duration::from_secs(5) {
-                            let fps = fps_frames as f32 / elapsed.as_secs_f32();
-                            log::info!(
-                                "process_video_stream: {} [{}] fps={:.1} total_frames={} ({}x{})",
-                                stream_key,
-                                stream_type,
-                                fps,
-                                frames,
-                                width,
-                                height
-                            );
-                            fps_frames = 0;
-                            fps_last = std::time::Instant::now();
+                        if let Some(proxy) = &event_loop_proxy {
+                            let _ = proxy.send_event(crate::UserEvent::ScreenShareFrameReady);
                         }
                     }
                     Ok(None) => {
@@ -229,7 +214,6 @@ pub async fn process_video_stream(
                             e,
                         );
                         manager.set_inactive(true);
-                        // Continue waiting for frames instead of breaking
                     }
                 }
             }
