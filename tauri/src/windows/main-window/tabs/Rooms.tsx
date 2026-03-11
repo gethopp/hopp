@@ -276,8 +276,6 @@ export const Rooms = () => {
         }
 
         sounds.callAccepted.play();
-        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-        await tauriUtils.setDockIconVisible(true);
         setCallTokens({
           ...tokens,
           isRoomCall: true,
@@ -288,7 +286,16 @@ export const Rooms = () => {
           isRemoteControlEnabled: true,
           room: room,
           participants: [],
+          isInitialisingCall: true,
         });
+        try {
+          await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+          await tauriUtils.setDockIconVisible(true);
+        } catch {
+          setCallTokens(null);
+          toast.error("Failed to start call");
+          return;
+        }
       } catch (error: any) {
         if (error?.error === "trial-ended") {
           toast.error("Trial has expired, contact us if you want to extend it");

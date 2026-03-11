@@ -28,6 +28,7 @@ export type CallState = {
   isRoomCall?: boolean;
   room?: components["schemas"]["Room"];
   isReconnecting?: boolean;
+  isInitialisingCall?: boolean;
   participants: CoreParticipantState[];
 } & TCallTokensMessage["payload"];
 
@@ -237,7 +238,7 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
   const { callTokens, user } = useStore.getState();
   if (!callTokens) return;
 
-  const updates: Partial<CallState> = { participants: event.payload };
+  const updates: Partial<CallState> = { participants: event.payload, isInitialisingCall: false };
 
   if (user) {
     const localParticipant = event.payload.find((p) => p.identity.includes(user.id));

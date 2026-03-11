@@ -1024,6 +1024,29 @@ async fn monitor_app_activation(
                 *rr = true;
             }
 
+            // Brief delay for macOS to settle focus state after activation
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // If the main Tauri window is already focused (user clicked on it directly),
+            // don't steal focus by bringing core windows to front.
+            let main_is_focused = app_handle
+                .get_webview_window("main")
+                .and_then(|w| w.is_focused().ok())
+                .unwrap_or(false);
+
+            if main_is_focused {
+                log::info!(
+                    "monitor_app_activation: main window focused, skipping BringWindowsToFront"
+                );
+                let rr_clone = reopen_requested.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    *rr_clone.lock().unwrap() = false;
+                });
+                was_active = is_active;
+                continue;
+            }
+
             let dock_is_enabled = {
                 let data = app_handle.state::<Mutex<AppData>>();
                 let data = data.lock().unwrap();
@@ -1064,8 +1087,17 @@ async fn monitor_app_activation(
             }
 
             if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+                let tray_rect = {
+                    let data = app_handle.state::<Mutex<AppData>>();
+                    let data = data.lock().unwrap();
+                    data.tray_state.as_ref().and_then(|t| t.rect())
+                };
+                if let Some(rect) = tray_rect {
+                    hopp::center_window_on_tray(&window, rect, true);
+                } else {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
 
             let rr_clone = reopen_requested.clone();

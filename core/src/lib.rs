@@ -49,6 +49,7 @@ pub(crate) mod window {
     pub(crate) mod camera_window;
     pub(crate) mod screensharing_window;
     pub(crate) mod stats_window;
+    pub(crate) mod vibrancy;
 }
 pub(crate) mod components;
 pub(crate) mod overlay_window;

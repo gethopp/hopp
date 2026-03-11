@@ -142,8 +142,6 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
-          await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-          await tauriUtils.setDockIconVisible(true);
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
@@ -152,7 +150,14 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
             participants: [],
+            isInitialisingCall: true,
           });
+          try {
+            await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+            await tauriUtils.setDockIconVisible(true);
+          } catch {
+            setCallTokens(null);
+          }
           break;
       }
     });

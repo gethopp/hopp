@@ -355,7 +355,7 @@ pub fn get_log_level() -> LevelFilter {
 
 /// Centers the window relative to the tray icon position with multi-monitor support.
 #[cfg(target_os = "macos")]
-fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
+pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
     log::info!("center_window_on_tray: tray_rect: {tray_rect:?}, show_window: {show_window:?}");
     /*
      * Because centering the window using the move_window function is

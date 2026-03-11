@@ -56,9 +56,6 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         console.log("Received call_tokens", data);
         tokensReceived = true;
         sounds.callAccepted.play();
-        await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-        await tauriUtils.setDockIconVisible(true);
-
         setCallTokens({
           ...data.payload,
           timeStarted: new Date(),
@@ -67,7 +64,14 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           participants: [],
+          isInitialisingCall: true,
         });
+        try {
+          await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+          await tauriUtils.setDockIconVisible(true);
+        } catch {
+          setCallTokens(null);
+        }
 
         toast.dismiss(toastId);
       }

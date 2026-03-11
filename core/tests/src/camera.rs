@@ -373,19 +373,20 @@ pub fn test_call(
 ///
 /// Usage: `cargo run -- camera open`
 ///
-/// Requires a running core process (`task dev` in core/).
-/// The camera window will stay open for 30 seconds.
+/// Requires a running core process (`task dev` in core/) and
+/// LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET env vars.
 pub fn test_open_camera() -> io::Result<()> {
     println!("\n=== TEST: Open Camera Window ===");
 
-    let (sender, _event_socket) = screenshare_client::connect_socket()?;
-    println!("Connected to socket.");
+    let (sender, event_socket) = connect_socket()?;
+    setup_camera(&sender, &event_socket, "Test Camera")?;
+    println!("Connected to socket and joined room.");
 
     screenshare_client::open_camera(&sender)?;
     println!("OpenCamera sent. Camera window should appear.");
-    println!("You have 15_000 seconds to interact with the window...");
+    println!("You have 60_000 seconds to interact with the window...");
 
-    std::thread::sleep(Duration::from_secs(15_000));
+    std::thread::sleep(Duration::from_secs(60_000));
 
     println!("Test completed.");
     Ok(())

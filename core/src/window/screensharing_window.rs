@@ -16,6 +16,7 @@ use std::time::{Duration, Instant as StdInstant};
 use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
+    Shadow, Vector,
 };
 use iced_core::clipboard::Kind;
 use iced_wgpu::core::mouse;
@@ -486,29 +487,7 @@ impl ScreensharingWindow {
             .find(|f| !f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
-        // On macOS, use PreMultiplied so the alpha channel is honoured by the
-        // compositor and the NSVisualEffectView vibrancy shows through.
-        log::info!(
-            "ScreensharingWindow: available alpha modes: {:?}",
-            caps.alpha_modes
-        );
-        let alpha_mode = if cfg!(target_os = "macos") {
-            if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PreMultiplied
-            } else if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PostMultiplied
-            } else {
-                wgpu::CompositeAlphaMode::Auto
-            }
-        } else {
-            wgpu::CompositeAlphaMode::Auto
-        };
+        let alpha_mode = super::vibrancy::pick_transparent_alpha_mode(&caps);
         log::info!("ScreensharingWindow: selected alpha_mode: {:?}", alpha_mode);
 
         let physical_size = window.inner_size();
@@ -549,9 +528,7 @@ impl ScreensharingWindow {
 
         #[cfg(target_os = "macos")]
         {
-            // Apply macOS vibrancy (frosted glass) after wgpu surface is set up,
-            // so the NSVisualEffectView sits behind the Metal layer.
-            apply_macos_vibrancy(&window);
+            super::vibrancy::apply_macos_vibrancy(&window, 10.0);
             // Gray out the green fullscreen/zoom traffic-light button.
             disable_macos_fullscreen_button(&window);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
@@ -1532,6 +1509,11 @@ impl ScreensharingWindow {
                         width: 1.0,
                         radius: 12.0.into(),
                     },
+                    shadow: Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.20),
+                        offset: Vector::new(0.0, 6.0),
+                        blur_radius: 6.0,
+                    },
                     ..Default::default()
                 })
                 .clip(true),
@@ -1776,124 +1758,6 @@ impl ScreensharingWindow {
 
         self.participants_manager.update_auto_clear()
     }
-}
-
-/// Apply macOS vibrancy (frosted glass) effect to the window.
-///
-/// Uses `NSVisualEffectView` with the HUDWindow material for a dark translucent
-/// background that blends with the desktop, following Apple's
-/// [Human Interface Guidelines for materials](https://developer.apple.com/design/human-interface-guidelines/materials).
-///
-/// Also forces the NSWindow, content view, and CAMetalLayer to be non-opaque
-/// so the compositor honours the alpha channel from the wgpu surface.
-/// Example code that replicates this effect:
-/// https://stackoverflow.com/a/70222106
-#[cfg(target_os = "macos")]
-fn apply_macos_vibrancy(window: &Window) {
-    use objc2::rc::Retained;
-    use objc2::{msg_send, AnyThread, ClassType, MainThreadMarker, MainThreadOnly};
-    use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSImage, NSView,
-        NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
-        NSVisualEffectView, NSWindowOrderingMode,
-    };
-    use objc2_foundation::{NSEdgeInsets, NSPoint, NSRect, NSSize};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let Some(mtm) = MainThreadMarker::new() else {
-        log::warn!("apply_macos_vibrancy: not on main thread, skipping");
-        return;
-    };
-
-    let Ok(raw_handle) = window.window_handle() else {
-        log::warn!("apply_macos_vibrancy: failed to get window handle");
-        return;
-    };
-
-    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
-        log::warn!("apply_macos_vibrancy: not an AppKit handle");
-        return;
-    };
-
-    unsafe {
-        let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
-        let Some(ns_view) = ns_view else {
-            log::warn!("apply_macos_vibrancy: failed to retain NSView");
-            return;
-        };
-
-        // Force the NSWindow to be non-opaque with a clear background.
-        // winit's with_transparent(true) should do this, but wgpu's surface
-        // setup may override it — re-apply after surface configuration.
-        let Some(ns_window) = ns_view.window() else {
-            log::warn!("apply_macos_vibrancy: NSView has no window");
-            return;
-        };
-        ns_window.setOpaque(false);
-        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
-
-        // Force the CAMetalLayer (wgpu's backing layer) to be non-opaque so
-        // the compositor actually uses the alpha channel we write.
-        let layer: *mut objc2::runtime::AnyObject = msg_send![&*ns_view, layer];
-        if !layer.is_null() {
-            let _: () = msg_send![layer, setOpaque: false];
-            log::info!("apply_macos_vibrancy: CAMetalLayer.isOpaque set to false");
-        }
-
-        let Some(frame_view) = ns_view.superview() else {
-            log::warn!("apply_macos_vibrancy: content view has no superview");
-            return;
-        };
-
-        let bounds = frame_view.bounds();
-
-        let vibrancy_view: Retained<NSVisualEffectView> =
-            msg_send![NSVisualEffectView::alloc(mtm), initWithFrame: bounds];
-
-        vibrancy_view.setMaterial(NSVisualEffectMaterial(9)); // UltraDark
-        vibrancy_view.setBlendingMode(NSVisualEffectBlendingMode(0)); // BehindWindow
-        vibrancy_view.setState(NSVisualEffectState(1)); // Active
-        vibrancy_view.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-
-        // Rounded-corner mask so vibrancy edges match the window frame.
-        let corner_radius: f64 = 10.0;
-        let mask_size = NSSize::new(corner_radius * 2.0, corner_radius * 2.0);
-        let mask_image: Retained<NSImage> = msg_send![NSImage::alloc(), initWithSize: mask_size];
-
-        let _: () = msg_send![&*mask_image, lockFocus];
-        let mask_rect = NSRect::new(NSPoint::new(0.0, 0.0), mask_size);
-        let path: Retained<NSBezierPath> = msg_send![
-            NSBezierPath::class(),
-            bezierPathWithRoundedRect: mask_rect,
-            xRadius: corner_radius,
-            yRadius: corner_radius
-        ];
-        let _: () = msg_send![&NSColor::blackColor(), set];
-        let _: () = msg_send![&*path, fill];
-        let _: () = msg_send![&*mask_image, unlockFocus];
-
-        let insets = NSEdgeInsets {
-            top: corner_radius,
-            left: corner_radius,
-            bottom: corner_radius,
-            right: corner_radius,
-        };
-        let _: () = msg_send![&*mask_image, setCapInsets: insets];
-        let _: () = msg_send![&*mask_image, setResizingMode: 1_isize]; // .stretch
-
-        let _: () = msg_send![&*vibrancy_view, setMaskImage: &*mask_image];
-
-        frame_view.addSubview_positioned_relativeTo(
-            &vibrancy_view,
-            NSWindowOrderingMode::Below,
-            Some(&ns_view),
-        );
-    }
-
-    log::info!("apply_macos_vibrancy: vibrancy applied successfully");
 }
 
 /// Disable (gray out) the green fullscreen/zoom traffic-light button on macOS.

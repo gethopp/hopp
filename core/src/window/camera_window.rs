@@ -125,6 +125,7 @@ pub struct CameraWindow {
     device: wgpu::Device,
     _queue: wgpu::Queue,
     format: wgpu::TextureFormat,
+    alpha_mode: wgpu::CompositeAlphaMode,
     _engine: Engine,
     renderer: iced::Renderer,
     viewport: Viewport,
@@ -171,6 +172,7 @@ impl CameraWindow {
                 .with_title_hidden(true)
                 .with_titlebar_transparent(true)
                 .with_fullsize_content_view(true)
+                .with_transparent(true)
                 .with_window_level(WindowLevel::AlwaysOnTop)
                 .with_enabled_buttons(WindowButtons::MINIMIZE)
         };
@@ -225,6 +227,8 @@ impl CameraWindow {
             .find(|f| !f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
+        let alpha_mode = super::vibrancy::pick_transparent_alpha_mode(&caps);
+
         let physical_size = window.inner_size();
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -232,7 +236,7 @@ impl CameraWindow {
             width: physical_size.width.max(1),
             height: physical_size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -261,6 +265,11 @@ impl CameraWindow {
         );
         let clipboard = Clipboard::connect(window.clone());
 
+        #[cfg(target_os = "macos")]
+        {
+            super::vibrancy::apply_macos_vibrancy(&window, 18.0);
+        }
+
         let logical = viewport.logical_size();
         let camera_active = participants
             .read()
@@ -277,6 +286,7 @@ impl CameraWindow {
             device,
             _queue: queue,
             format,
+            alpha_mode,
             _engine: engine,
             renderer,
             viewport,
@@ -488,13 +498,19 @@ impl CameraWindow {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        // ── Outer frame (matching iced-poc: Slate600 bg, white 50% border, 18px radius)
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(ColorToken::Slate600.to_color())),
-                ..Default::default()
+            .style(|_theme: &Theme| {
+                let bg = if cfg!(target_os = "macos") {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.05)
+                } else {
+                    ColorToken::Slate600.to_color()
+                };
+                container::Style {
+                    background: Some(Background::Color(bg)),
+                    ..Default::default()
+                }
             })
             .into()
     }
@@ -556,7 +572,7 @@ impl CameraWindow {
                         width: size.width,
                         height: size.height,
                         present_mode: wgpu::PresentMode::AutoVsync,
-                        alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                        alpha_mode: self.alpha_mode,
                         view_formats: vec![],
                         desired_maximum_frame_latency: 2,
                     },
@@ -613,7 +629,12 @@ impl CameraWindow {
             iced::Renderer::Primary(r) => r,
             _ => unreachable!(),
         };
-        wgpu_renderer.present(None, output.texture.format(), &view, &self.viewport);
+        let clear_color = if cfg!(target_os = "macos") {
+            Some(Color::TRANSPARENT)
+        } else {
+            None
+        };
+        wgpu_renderer.present(clear_color, output.texture.format(), &view, &self.viewport);
 
         self.window.pre_present_notify();
         output.present();
@@ -790,8 +811,8 @@ fn name_label<'a>(
     .into()
 }
 
-/// Tile corner radius for participant cards.
-const TILE_RADIUS: f32 = 8.0;
+/// Tile corner radius for participant cards (Figma: 6px).
+const TILE_RADIUS: f32 = 6.0;
 
 /// Create a participant card tile.
 ///
@@ -854,24 +875,50 @@ fn participant_card<'a>(
     .height(Length::Fill)
     .padding(overlay_padding);
 
-    // Stack background and overlay, clip to rounded rect so the shader
-    // output is masked to the tile radius.
-    let stacked = container(iced::widget::stack![bg_element, overlay])
-        .width(Length::Fixed(tile_size))
-        .height(Length::Fixed(tile_size))
+    // Clipped content: video + name label, masked to rounded corners.
+    let clipped_content = container(iced::widget::stack![bg_element, overlay])
+        .width(Length::Fill)
+        .height(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
-            background: None,
             border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
                 radius: TILE_RADIUS.into(),
+                ..Default::default()
             },
-            shadow: ShadowToken::Xl.to_shadow(),
             ..Default::default()
         })
         .clip(true);
 
-    stacked.into()
+    // Border overlay drawn ON TOP of video so the shader can't cover it.
+    let border_frame = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+                width: 1.0,
+                radius: TILE_RADIUS.into(),
+            },
+            ..Default::default()
+        });
+
+    // Stack: clipped video below, border on top.
+    let tile = container(iced::widget::stack![clipped_content, border_frame])
+        .width(Length::Fixed(tile_size))
+        .height(Length::Fixed(tile_size))
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                radius: TILE_RADIUS.into(),
+                ..Default::default()
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                offset: iced::Vector::new(0.0, 0.0),
+                blur_radius: 7.0,
+            },
+            ..Default::default()
+        });
+
+    tile.into()
 }
 
 /// Hash a SID string to a u64 for GPU texture keying.
