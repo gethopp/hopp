@@ -95,6 +95,10 @@ use crate::utils::geometry::Position;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
+#[cfg(debug_assertions)]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
+#[cfg(not(debug_assertions))]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 
 #[derive(Error, Debug)]
@@ -2094,7 +2098,43 @@ impl RenderEventLoop {
          * Thread for dispatching socket events to the winit event loop.
          */
         std::thread::spawn(move || {
-            for message in event_socket.events.iter() {
+            loop {
+                let message =
+                    match event_socket
+                        .events
+                        .recv_timeout(std::time::Duration::from_secs(
+                            SOCKET_MESSAGE_TIMEOUT_SECONDS,
+                        )) {
+                        Ok(msg) => msg,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket message timeout, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket event channel closed, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                    };
                 let user_event = match message {
                     Message::GetAvailableContent => UserEvent::GetAvailableContent,
                     Message::CallStart(call_start_message) => {
@@ -2147,17 +2187,6 @@ impl RenderEventLoop {
                     );
                 }
             }
-            // Channel closed = disconnect
-            log::error!("RenderEventLoop::run Socket event channel closed, terminating.");
-            let res = event_loop_proxy.send_event(UserEvent::Terminate);
-            if res.is_err() {
-                log::error!(
-                    "RenderEventLoop::run Error sending terminate event: {:?}",
-                    res.err()
-                );
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            std::process::exit(PROCESS_EXIT_CODE_ERROR);
         });
 
         let proxy = self.event_loop.create_proxy();
