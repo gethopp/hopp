@@ -54,7 +54,7 @@ fn recv_expected_response<T>(
                     log::error!(
                         "recv_expected_response<{t}>: unexpected response (stale?): {other:?}"
                     );
-                    sentry_utils::simple_event(format!(
+                    sentry_utils::upload_logs_event(format!(
                         "recv_expected_response<{t}>: unexpected response: {other:?}"
                     ));
                 }
