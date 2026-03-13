@@ -36,7 +36,11 @@ enum Commands {
         test_type: CursorTest,
     },
     /// Test keyboard functionality
-    Keyboard,
+    Keyboard {
+        /// Type of keyboard test to run
+        #[arg(value_enum)]
+        test_type: KeyboardTest,
+    },
     /// Test clipboard functionality
     Clipboard {
         /// Type of clipboard test to run
@@ -100,6 +104,14 @@ enum Commands {
         #[arg(long)]
         screenshare: bool,
     },
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum KeyboardTest {
+    /// Test keyboard characters (letters, numbers, symbols)
+    Chars,
+    /// Test function keys (PageUp, PageDown, Home, End)
+    FnKeys,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -281,9 +293,17 @@ async fn main() -> io::Result<()> {
             }
             println!("Cursor test finished.");
         }
-        Commands::Keyboard => {
-            println!("Running keyboard test...");
-            remote_keyboard::test_keyboard_chars().await?;
+        Commands::Keyboard { test_type } => {
+            match test_type {
+                KeyboardTest::Chars => {
+                    println!("Running keyboard chars test...");
+                    remote_keyboard::test_keyboard_chars().await?;
+                }
+                KeyboardTest::FnKeys => {
+                    println!("Running keyboard fn keys test...");
+                    remote_keyboard::test_keyboard_fn_keys().await?;
+                }
+            }
             println!("Keyboard test finished.");
         }
         Commands::Clipboard { test_type } => {

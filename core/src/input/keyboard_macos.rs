@@ -182,6 +182,8 @@ impl KeyboardLayoutTrait for KeyboardLayout {
         independent_codes.insert("ArrowRight", 0x7C);
         independent_codes.insert("PageUp", 0x74);
         independent_codes.insert("PageDown", 0x79);
+        independent_codes.insert("Home", 0x73);
+        independent_codes.insert("End", 0x77);
         independent_codes.insert("Delete", 0x75);
         independent_codes.insert("Control", 0x3B);
         independent_codes.insert("Shift", 0x38);

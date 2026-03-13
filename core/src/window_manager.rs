@@ -124,6 +124,7 @@ impl WindowManager {
     pub fn show_window(
         &mut self,
         monitor: &MonitorHandle,
+        event_loop: &ActiveEventLoop,
     ) -> Result<Arc<Window>, WindowManagerError> {
         let target_id = ScreenshareFunctions::get_monitor_id(monitor);
         log::info!(
@@ -131,16 +132,42 @@ impl WindowManager {
             target_id
         );
 
-        let entry = self
+        let mut entry = self
             .windows
             .iter()
             .find(|entry| entry.monitor_id == target_id)
             .ok_or(WindowManagerError::MonitorNotFound)?;
 
-        if let Err(e) = set_fullscreen(&entry.window, monitor.clone()) {
+        let max_retries = 5;
+        let mut last_err = None;
+        for retry in 0..max_retries {
+            match set_fullscreen(&entry.window, monitor.clone()) {
+                Ok(_) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    log::error!(
+                        "WindowManager::show_window: error setting fullscreen: {:?}, retry {}/{}",
+                        e,
+                        retry + 1,
+                        max_retries
+                    );
+                    last_err = Some(e);
+                }
+            }
+
+            let monitor_id = entry.monitor_id.clone();
+            self.windows.retain(|e| e.monitor_id != monitor_id);
+            self.windows
+                .push(Self::create_window_entry(event_loop, monitor)?);
+            entry = self.windows.last().unwrap();
+        }
+
+        if let Some(e) = last_err {
             log::error!(
-                "WindowManager::show_window: error setting fullscreen: {:?}",
-                e
+                "WindowManager::show_window: failed to set fullscreen after {} retries",
+                max_retries
             );
             return Err(WindowManagerError::FullscreenError(e.to_string()));
         }
@@ -345,7 +372,7 @@ fn set_fullscreen(
     // validation errors in wgpu.
     let expected_size = selected_monitor.size();
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(5);
+    let timeout = std::time::Duration::from_secs(3);
 
     loop {
         let current_size = window.inner_size();
