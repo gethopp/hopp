@@ -35,7 +35,7 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string, useAv1: boolean) => {
+const createContentPickerWindow = async () => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
   if (isWindowOpen) {
@@ -49,7 +49,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
 
   if (isTauri) {
     try {
-      await invoke("create_content_picker_window", { videoToken, useAv1 });
+      await invoke("create_content_picker_window", {});
       const windowHandle = await WebviewWindow.getByLabel("contentPicker");
       if (windowHandle) {
         await windowHandle.setFocus();
@@ -58,7 +58,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
       console.error("Failed to create content picker window:", error);
     }
   } else {
-    const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
+    const URL = `contentPicker.html`;
     window.open(URL);
   }
 };

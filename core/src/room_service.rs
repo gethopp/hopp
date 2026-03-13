@@ -299,19 +299,14 @@ impl RoomService {
     ///
     /// * `width` - The width of the video track
     /// * `height` - The height of the video track
-    /// * `use_av1` - If av1 codec is being used
     ///
     /// # Returns
     ///
     /// * `Ok(())` - The track was published successfully
     /// * `Err(())` - The track was not published successfully
-    pub fn publish_track(
-        &self,
-        width: u32,
-        height: u32,
-        use_av1: bool,
-    ) -> Result<(), RoomServiceError> {
+    pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
         log::info!("publish_track: {width:?}, {height:?}");
+        let use_av1 = false;
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::PublishTrack {

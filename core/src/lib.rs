@@ -391,11 +391,10 @@ impl<'a> Application<'a> {
         monitors: Vec<MonitorHandle>,
     ) -> Result<(), ServerError> {
         log::info!(
-            "screenshare: resolution: {:?} content: {} accessibility_permission: {} use_av1: {}",
+            "screenshare: resolution: {:?} content: {} accessibility_permission: {}",
             screenshare_input.resolution,
             screenshare_input.content,
             screenshare_input.accessibility_permission,
-            screenshare_input.use_av1
         );
 
         self.stop_screenshare();
@@ -437,11 +436,7 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.publish_track(
-            extent.width as u32,
-            extent.height as u32,
-            screenshare_input.use_av1,
-        );
+        let res = room_service.publish_track(extent.width as u32, extent.height as u32);
         if let Err(error) = res {
             log::error!("screenshare: error publishing track: {error:?}");
             drop(screen_capturer);
@@ -1430,6 +1425,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
                 self.open_screensharing_window(event_loop, buffer, None, None);
             }
+            UserEvent::OpenContentPicker => {
+                log::info!("user_event: OpenContentPicker");
+                if let Err(e) = self.socket.send(Message::OpenContentPicker) {
+                    log::error!("user_event: Error sending OpenContentPicker: {e:?}");
+                }
+            }
             UserEvent::OpenScreenShareWindow {
                 sid: participant_sid,
                 name: participant_name,
@@ -2027,6 +2028,7 @@ pub enum UserEvent {
     StopCamera,
     OpenCamera,
     OpenScreensharing,
+    OpenContentPicker,
     OpenScreenShareWindow {
         sid: Option<String>,
         name: Option<String>,

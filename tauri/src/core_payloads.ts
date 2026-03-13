@@ -70,7 +70,6 @@ export interface ScreenShareMessage {
   content: Content;
   resolution: Extent;
   accessibility_permission: boolean;
-  use_av1: boolean;
 }
 
 export interface CallStartMessage {
@@ -130,10 +129,8 @@ export interface CommandMap {
   screenshare: {
     args: {
       content: Content;
-      token: string;
       resolution: Extent;
       accessibilityPermission: boolean;
-      useAv1: boolean;
     };
     return: void;
   };
@@ -190,7 +187,7 @@ export interface CommandMap {
   // Windows
   create_screenshare_window: { args: { videoToken: string }; return: void };
   create_camera_window: { args: { cameraToken: string }; return: void };
-  create_content_picker_window: { args: { videoToken: string; useAv1: boolean }; return: void };
+  create_content_picker_window: { args: void; return: void };
   create_feedback_window: { args: { teamId: string; roomId: string; participantId: string }; return: void };
 
   // Sentry

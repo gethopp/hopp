@@ -68,17 +68,10 @@ fn recv_expected_response<T>(
 async fn screenshare(
     app: tauri::AppHandle,
     content: Content,
-    token: String,
     resolution: Extent,
     accessibility_permission: bool,
-    use_av1: bool,
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
-    log::debug!("screenshare: token: {token}");
-
-    if use_av1 {
-        sentry_utils::simple_event("AV1 used".to_string());
-    }
 
     /*
      * If the user was previously a controller, we need to hide the viewing
@@ -97,10 +90,8 @@ async fn screenshare(
         .sender
         .send(Message::StartScreenShare(ScreenShareMessage {
             content,
-            // token: token.clone(),
             resolution,
             accessibility_permission,
-            use_av1,
         }))
     {
         log::error!("screenshare: failed to send message: {e:?}");
@@ -590,27 +581,15 @@ async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Re
 }
 
 #[tauri::command]
-async fn create_content_picker_window(
-    app: tauri::AppHandle,
-    video_token: String,
-    use_av1: bool,
-) -> Result<(), String> {
-    log::info!(
-        "create_content_picker_window with token: {}, use_av1: {}",
-        video_token,
-        use_av1
-    );
+async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("create_content_picker_window");
 
-    let url = format!(
-        "contentPicker.html?videoToken={}&useAv1={}",
-        video_token, use_av1
-    );
     hopp::create_media_window(
         &app,
         hopp::MediaWindowConfig {
             label: "contentPicker",
             title: "Content picker",
-            url: &url,
+            url: "contentPicker.html",
             width: 800.0,
             height: 450.0,
             resizable: true,
@@ -968,6 +947,29 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 log::info!("forward_core_events: call ended");
                 if let Err(e) = app.emit("core_call_ended", &()) {
                     log::error!("forward_core_events: failed to emit call ended: {e:?}");
+                }
+            }
+            Message::OpenContentPicker => {
+                log::info!("forward_core_events: open content picker");
+                if let Err(e) = hopp::create_media_window(
+                    &app,
+                    hopp::MediaWindowConfig {
+                        label: "contentPicker",
+                        title: "Content picker",
+                        url: "contentPicker.html",
+                        width: 800.0,
+                        height: 450.0,
+                        resizable: true,
+                        always_on_top: true,
+                        content_protected: false,
+                        maximizable: false,
+                        minimizable: true,
+                        decorations: true,
+                        transparent: false,
+                        background_color: None,
+                    },
+                ) {
+                    log::error!("forward_core_events: failed to open content picker: {e}");
                 }
             }
             other => {

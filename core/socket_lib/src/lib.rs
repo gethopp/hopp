@@ -100,7 +100,6 @@ pub struct ScreenShareMessage {
     pub content: Content,
     pub resolution: Extent,
     pub accessibility_permission: bool,
-    pub use_av1: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -210,6 +209,7 @@ pub enum Message {
     ParticipantsSnapshot(Vec<CoreParticipantState>),
     RoleChange(CoreRoleEvent),
     CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
+    OpenContentPicker,
 }
 
 impl Message {

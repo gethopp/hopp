@@ -43,9 +43,7 @@ async function getContent(setContent: React.Dispatch<React.SetStateAction<Captur
 async function screenshare(
   content: CaptureContent["content"],
   resolution: ResolutionKey,
-  videoToken: string,
   accessibilityPermission: boolean,
-  useAv1: boolean,
 ) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
@@ -57,10 +55,8 @@ async function screenshare(
 
   await invoke("screenshare", {
     content: content,
-    token: videoToken,
     resolution: resolutionMap[resolution],
     accessibilityPermission: accessibilityPermission,
-    useAv1: useAv1,
   });
   return true;
 }
@@ -71,7 +67,6 @@ function Window() {
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
-  const videoToken = tauriUtils.getTokenParam("videoToken");
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
@@ -96,22 +91,12 @@ function Window() {
   const handleItemClick = async (content: CaptureContent["content"]) => {
     // TODO make this faster
     try {
-      if (videoToken == null || videoToken == "") {
-        toast.error("No video token found");
-        return;
-      }
       if (hasClickedRef.current) {
         return;
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(
-        content,
-        resolution,
-        videoToken,
-        accessibilityPermission,
-        tauriUtils.getTokenParam("useAv1") === "true",
-      );
+      const success = await screenshare(content, resolution, accessibilityPermission);
       if (success) {
         await appWindow.close();
       }
