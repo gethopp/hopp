@@ -48,6 +48,8 @@ const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
 const WIDTH_THRESHOLD_2560: u32 = 2560;
 
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
+
 #[derive(Debug)]
 enum RoomServiceCommand {
     CreateRoom {
@@ -106,6 +108,8 @@ pub enum RoomServiceError {
     CreateRoom(String),
     #[error("Failed to publish track: {0}")]
     PublishTrack(String),
+    #[error("Command timed out")]
+    Timeout,
 }
 
 #[derive(Debug)]
@@ -276,12 +280,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::CreateRoom(
                 "Failed to create room".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::CreateRoom(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -319,12 +324,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -511,12 +517,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish audio track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -556,12 +563,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish camera track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
