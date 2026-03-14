@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use winit::event_loop::EventLoopProxy;
 
-use crate::{audio, room_service, ParticipantData, UserEvent};
+use crate::{audio, ParticipantData, UserEvent};
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -857,8 +857,8 @@ async fn room_service_commands(
                 let connect_result = Room::connect(&url, &token, RoomOptions::default()).await;
                 let (room, rx) = match connect_result {
                     Ok((room, rx)) => (room, rx),
-                    Err(_) => {
-                        log::error!("room_service_commands: Failed to connect to room");
+                    Err(e) => {
+                        log::error!("room_service_commands: Failed to connect to room {:?}", e);
                         let res = tx.send(RoomServiceCommandResult::Failure);
                         if let Err(e) = res {
                             log::error!("room_service_commands: Failed to send result: {e:?}");
