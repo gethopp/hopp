@@ -68,7 +68,6 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         });
         try {
           await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-          await tauriUtils.setDockIconVisible(true);
         } catch {
           setCallTokens(null);
         }

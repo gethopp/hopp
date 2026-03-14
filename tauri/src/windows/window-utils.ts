@@ -90,7 +90,6 @@ const closeCameraWindow = async () => {
     const cameraWindow = await WebviewWindow.getByLabel("camera");
     if (cameraWindow) {
       await cameraWindow.close();
-      await setDockIconVisible(false);
     }
   }
 };
@@ -167,7 +166,6 @@ const endCallCleanup = async () => {
   await resetCoreProcess();
   await closeScreenShareWindow();
   await closeContentPickerWindow();
-  await setDockIconVisible(false);
   await closeCameraWindow();
 };
 
@@ -213,10 +211,6 @@ const getCameraPermission = async () => {
 
 const hideTrayIconInstruction = async () => {
   await invoke("skip_tray_notification_selection_window");
-};
-
-const setDockIconVisible = async (visible: boolean) => {
-  await invoke("set_dock_icon_visible", { visible });
 };
 
 const getLastUsedMic = async () => {
@@ -358,7 +352,6 @@ export const tauriUtils = {
   getMicPermission,
   getScreenSharePermission,
   getCameraPermission,
-  setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
   getLastMode,

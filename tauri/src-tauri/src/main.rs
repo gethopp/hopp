@@ -400,29 +400,6 @@ fn skip_tray_notification_selection_window(app: tauri::AppHandle) {
     data.app_state.set_tray_notification(false);
 }
 
-#[allow(unused_variables)]
-#[tauri::command]
-fn set_dock_icon_visible(app: tauri::AppHandle, visible: bool) {
-    log::info!("set_dock_icon_visible: {visible}");
-    #[cfg(target_os = "macos")]
-    {
-        if visible {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        } else {
-            let content_picker_window = app.get_webview_window("contentPicker");
-            if content_picker_window.is_none() {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
-        }
-
-        {
-            let data = app.state::<Mutex<AppData>>();
-            let data = data.lock().unwrap();
-            *data.dock_enabled.lock().unwrap() = visible;
-        }
-    }
-}
-
 #[tauri::command]
 fn get_last_used_mic(app: tauri::AppHandle) -> Option<String> {
     log::info!("get_last_used_mic");
@@ -980,139 +957,6 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
     log::info!("forward_core_events: event forwarding thread exiting");
 }
 
-#[cfg(target_os = "macos")]
-// Enable Alt+Tab activation until its supported from tauri:
-// https://github.com/tauri-apps/tauri/issues/15060
-async fn monitor_app_activation(
-    app_handle: tauri::AppHandle,
-    location_set: Arc<Mutex<bool>>,
-    reopen_requested: Arc<Mutex<bool>>,
-) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyClass;
-
-    let mut was_active = true;
-
-    loop {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let is_active: bool = unsafe {
-            let cls = AnyClass::get(c"NSApplication").unwrap();
-            let app: *const objc2::runtime::AnyObject = msg_send![cls, sharedApplication];
-            msg_send![&*app, isActive]
-        };
-
-        if is_active && !was_active {
-            log::info!("monitor_app_activation: app became active");
-
-            {
-                let loc = location_set.lock().unwrap();
-                if !*loc {
-                    was_active = is_active;
-                    continue;
-                }
-            }
-
-            {
-                let rr = reopen_requested.lock().unwrap();
-                if *rr {
-                    was_active = is_active;
-                    continue;
-                }
-            }
-
-            {
-                let mut rr = reopen_requested.lock().unwrap();
-                *rr = true;
-            }
-
-            // Brief delay for macOS to settle focus state after activation
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            // If the main Tauri window is already focused (user clicked on it directly),
-            // don't steal focus by bringing core windows to front.
-            let main_is_focused = app_handle
-                .get_webview_window("main")
-                .and_then(|w| w.is_focused().ok())
-                .unwrap_or(false);
-
-            if main_is_focused {
-                log::info!(
-                    "monitor_app_activation: main window focused, skipping BringWindowsToFront"
-                );
-                let rr_clone = reopen_requested.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    *rr_clone.lock().unwrap() = false;
-                });
-                was_active = is_active;
-                continue;
-            }
-
-            let dock_is_enabled = {
-                let data = app_handle.state::<Mutex<AppData>>();
-                let data = data.lock().unwrap();
-                let enabled = *data.dock_enabled.lock().unwrap();
-                enabled
-            };
-
-            if dock_is_enabled {
-                let core_focused = {
-                    let data = app_handle.state::<Mutex<AppData>>();
-                    let mut data = data.lock().unwrap();
-                    if let Err(e) = data.sender.send(socket_lib::Message::BringWindowsToFront) {
-                        log::error!("monitor_app_activation: send failed: {e:?}");
-                        false
-                    } else {
-                        match recv_expected_response(&data.event_socket, |msg| match msg {
-                            socket_lib::Message::BringWindowsToFrontResult(f) => Ok(f),
-                            other => Err(other),
-                        }) {
-                            Ok(focused) => focused,
-                            Err(e) => {
-                                log::error!("monitor_app_activation: recv failed: {e:?}");
-                                false
-                            }
-                        }
-                    }
-                };
-                if core_focused {
-                    log::info!("monitor_app_activation: core windows brought to front");
-                    let rr_clone = reopen_requested.clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        *rr_clone.lock().unwrap() = false;
-                    });
-                    was_active = is_active;
-                    continue;
-                }
-            }
-
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let tray_rect = {
-                    let data = app_handle.state::<Mutex<AppData>>();
-                    let data = data.lock().unwrap();
-                    data.tray_state.as_ref().and_then(|t| t.rect())
-                };
-                if let Some(rect) = tray_rect {
-                    hopp::center_window_on_tray(&window, rect, true);
-                } else {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-
-            let rr_clone = reopen_requested.clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                *rr_clone.lock().unwrap() = false;
-            });
-        }
-
-        was_active = is_active;
-    }
-}
-
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 
@@ -1131,11 +975,6 @@ fn main() {
     let reopen_requested = Arc::new(Mutex::new(false));
     #[allow(unused_variables)]
     let reopen_requested_clone = reopen_requested.clone();
-    #[allow(unused_variables)]
-    let reopen_requested_run = reopen_requested.clone();
-
-    /* This is used to guard against hiding the dock icon if the dock has been enabled by the ui. */
-    let dock_enabled = Arc::new(Mutex::new(false));
 
     /* This is used to guard against showing the main window if the location is not set. */
     #[allow(unused_variables)]
@@ -1230,7 +1069,6 @@ fn main() {
                 sender,
                 event_socket,
                 deactivate_hiding_clone,
-                dock_enabled,
                 app_state,
             ));
             app.manage(data);
@@ -1320,14 +1158,13 @@ fn main() {
             /* macOS specific setup */
             #[cfg(target_os = "macos")]
             {
-                /* Hide dock icon on macos */
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                /* Always show dock icon on macOS */
+                app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
                 /*
                  * First show the notification window which explains that hopp lives in the
                  * menubar. Then show the permissions window if needed.
                  */
-                let mut show_dock = false;
                 let show_tray_notification_selection = {
                     let data = app.state::<Mutex<AppData>>();
                     let data = data.lock().unwrap();
@@ -1357,7 +1194,6 @@ fn main() {
                         let notification_window = notification_window.unwrap();
                         let _ = notification_window.show();
                         let _ = notification_window.set_focus();
-                        show_dock = true;
                     }
                 }
 
@@ -1399,28 +1235,23 @@ fn main() {
                          * When the notification window is shown we open the permissions window
                          * when it's closed.
                          */
-                        if !show_dock {
+                        if !show_tray_notification_selection {
                             let _ = permissions_window.show();
                             let _ = permissions_window.set_focus();
                         }
-                        show_dock = true;
                     }
-                }
-
-                if show_dock {
-                    app.set_activation_policy(tauri::ActivationPolicy::Regular);
                 }
 
                 // Tackles Alt+Tab activation
                 {
-                    let app_handle = app.handle().clone();
-                    let location_set_activate = location_set_setup.clone();
-                    let reopen_requested_activate = reopen_requested_clone.clone();
-                    tauri::async_runtime::spawn(monitor_app_activation(
-                        app_handle,
-                        location_set_activate,
-                        reopen_requested_activate,
-                    ));
+                    let data = app.state::<Mutex<AppData>>();
+                    let mut data = data.lock().unwrap();
+                    data.activation_observer =
+                        Some(hopp::app_activation::AppActivationObserver::new(
+                            app.handle().clone(),
+                            location_set_setup.clone(),
+                            reopen_requested_clone.clone(),
+                        ));
                 }
             }
 
@@ -1484,7 +1315,6 @@ fn main() {
             get_microphone_permission,
             get_screenshare_permission,
             skip_tray_notification_selection_window,
-            set_dock_icon_visible,
             set_last_used_mic,
             get_last_used_mic,
             set_last_mode,
@@ -1530,85 +1360,6 @@ fn main() {
         tauri::RunEvent::ExitRequested { .. } => {
             log::info!("Exit requested");
         }
-        #[cfg(target_os = "macos")]
-        tauri::RunEvent::Reopen { .. } => {
-            log::info!("reopen requested");
-            let dock_is_enabled = {
-                let data = app_handle.state::<Mutex<AppData>>();
-                let data = data.lock().unwrap();
-                let enabled = *data.dock_enabled.lock().unwrap();
-                enabled
-            };
-
-            if !dock_is_enabled {
-                log::info!("Dock icon is not enabled, setting activation policy to accessory");
-                let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
-
-            let location_set = location_set.lock().unwrap();
-            if !*location_set {
-                log::info!("Location not set, don't show the main window");
-                return;
-            }
-
-            // When in a call, try to bring native core windows to front first
-            if dock_is_enabled {
-                let core_focused = {
-                    let data = app_handle.state::<Mutex<AppData>>();
-                    let mut data = data.lock().unwrap();
-                    if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
-                        log::error!("reopen: failed to send BringWindowsToFront: {e:?}");
-                        false
-                    } else {
-                        match recv_expected_response(&data.event_socket, |msg| match msg {
-                            Message::BringWindowsToFrontResult(f) => Ok(f),
-                            other => Err(other),
-                        }) {
-                            Ok(focused) => focused,
-                            Err(e) => {
-                                log::error!("reopen: recv failed: {e:?}");
-                                false
-                            }
-                        }
-                    }
-                };
-                if core_focused {
-                    log::info!("reopen: core windows brought to front");
-                    return;
-                }
-            }
-
-            {
-                let mut reopen_requested = reopen_requested_run.lock().unwrap();
-                *reopen_requested = true;
-            }
-
-            let screenshare_window = app_handle.get_webview_window("screenshare");
-            if let Some(window) = screenshare_window {
-                let _ = window.show();
-                let _ = window.set_focus();
-            } else {
-                let main_window = app_handle.get_webview_window("main");
-                if let Some(window) = main_window {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                } else {
-                    log::error!("Main window not found");
-                }
-            }
-
-            let reopen_requested_thread = reopen_requested_run.clone();
-            /*
-             * When reopen is requested app is losing focus as soon as the window opens.
-             * The reopen_requested flag is used to disable hiding the window on focus lost.
-             * We wait 500ms before allowing again hiding on focus lost.
-             */
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                let mut reopen_requested = reopen_requested_thread.lock().unwrap();
-                *reopen_requested = false;
-            });
-        }
         tauri::RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::CloseRequested { .. },
@@ -1622,16 +1373,7 @@ fn main() {
                     log::info!("Show permissions window");
                     let _ = window.show();
                     let _ = window.set_focus();
-                } else {
-                    #[cfg(target_os = "macos")]
-                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
-            } else if label == "permissions" {
-                /*
-                 * Permissions will always be the last window so hide the dock icon.
-                 */
-                #[cfg(target_os = "macos")]
-                let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
         }
         _ => {}

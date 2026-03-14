@@ -156,7 +156,7 @@ export interface CommandMap {
   set_deactivate_hiding: { args: { deactivate: boolean }; return: void };
   set_controller_cursor: { args: { enabled: boolean }; return: void };
   minimize_main_window: { args: void; return: void };
-  set_dock_icon_visible: { args: { visible: boolean }; return: void };
+
   set_tray_notification: { args: { enabled: boolean }; return: void };
 
   // Permissions

@@ -290,7 +290,6 @@ export const Rooms = () => {
         });
         try {
           await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-          await tauriUtils.setDockIconVisible(true);
         } catch {
           setCallTokens(null);
           toast.error("Failed to start call");

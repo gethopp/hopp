@@ -2202,6 +2202,7 @@ version = "0.0.33"
 dependencies = [
  "accessibility-sys",
  "av-foundation",
+ "block2 0.6.2",
  "core-graphics",
  "dirs 5.0.1",
  "log",

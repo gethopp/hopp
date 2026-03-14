@@ -1,3 +1,4 @@
+pub mod app_activation;
 pub mod app_state;
 pub mod permissions;
 pub mod sounds;
@@ -63,13 +64,6 @@ pub struct AppData {
     /// This is set to true when the user is writing feedback.
     pub deactivate_hiding: Arc<Mutex<bool>>,
 
-    /// On macOS, controls the application's activation policy and dock icon visibility.
-    /// Wrapped in Arc<Mutex<>> for thread-safe access.
-    /// On macOS we want to have a doc icon when the user is a controller in a call
-    /// and when the onboarding windows are open. The icon is needed in order to
-    /// allow cmd+tab to cycle through the windows.
-    pub dock_enabled: Arc<Mutex<bool>>,
-
     /// Persistent application state that survives across app restarts.
     /// Manages settings like first run status, tray notifications, and user preferences.
     pub app_state: app_state::AppState,
@@ -79,6 +73,10 @@ pub struct AppData {
 
     /// Tray icon state. On macOS, contains the actual tray state.
     pub tray_state: Option<tray::TrayState>,
+
+    /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
+    #[cfg(target_os = "macos")]
+    pub activation_observer: Option<app_activation::AppActivationObserver>,
 }
 
 impl AppData {
@@ -86,7 +84,6 @@ impl AppData {
         sender: SocketSender,
         event_socket: EventSocket,
         deactivate_hiding: Arc<Mutex<bool>>,
-        dock_enabled: Arc<Mutex<bool>>,
         app_state: app_state::AppState,
     ) -> Self {
         AppData {
@@ -94,10 +91,11 @@ impl AppData {
             event_socket,
             sound_entries: Vec::new(),
             deactivate_hiding,
-            dock_enabled,
             app_state,
             livekit_server_url: "".to_string(),
             tray_state: None,
+            #[cfg(target_os = "macos")]
+            activation_observer: None,
         }
     }
 }

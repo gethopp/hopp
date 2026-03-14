@@ -154,7 +154,6 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           });
           try {
             await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-            await tauriUtils.setDockIconVisible(true);
           } catch {
             setCallTokens(null);
           }
