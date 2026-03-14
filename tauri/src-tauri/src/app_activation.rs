@@ -34,7 +34,7 @@ impl AppActivationObserver {
                     .and_then(|w| w.is_focused().ok())
                     .unwrap_or(false)
                 {
-                    log::info!("app_activation: {label} window already focused, skipping");
+                    log::info!("app_activation: main window already focused, skipping");
                     return;
                 }
 
