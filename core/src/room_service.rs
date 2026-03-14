@@ -959,7 +959,7 @@ async fn room_service_commands(
 
                 let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
                 let video_codec = if use_av1 {
-                    VideoCodec::H264
+                    VideoCodec::AV1
                 } else {
                     VideoCodec::VP9
                 };
