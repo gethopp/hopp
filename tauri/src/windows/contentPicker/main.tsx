@@ -121,7 +121,7 @@ function Window() {
     }
   };
 
-  const [resolution, setResolution] = useState<ResolutionKey>("1440p");
+  const [resolution, setResolution] = useState<ResolutionKey>("4K");
   const updateResolution = (value: string) => {
     setResolution(value as ResolutionKey);
   };

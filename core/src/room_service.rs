@@ -306,7 +306,7 @@ impl RoomService {
     /// * `Err(())` - The track was not published successfully
     pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
         log::info!("publish_track: {width:?}, {height:?}");
-        let use_av1 = false;
+        let use_av1 = true;
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::PublishTrack {
