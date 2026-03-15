@@ -15,7 +15,8 @@ export const RoomButton: React.FC<
     <button
       {...props}
       className={clsx(
-        "group h-16 flex flex-col p-2 justify-between border border-gray-200 rounded-md overflow-hidden shadow-xs relative cursor-pointer",
+        "group h-16 flex flex-col p-2 justify-between border border-gray-200 rounded-md overflow-hidden shadow-xs relative",
+        props.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
         className,
       )}
     >

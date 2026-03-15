@@ -154,6 +154,8 @@ export const Rooms = () => {
     refetchInterval: 30_000,
     retry: true,
     queryHash: `rooms-${authToken}`,
+    // Avoid refetching on tab change
+    staleTime: 30_000,
   });
 
   // Poll for room presence every 10 seconds
@@ -381,6 +383,7 @@ export const Rooms = () => {
                   <RoomButton
                     key={room.id}
                     onClick={() => handleJoinRoom(room)}
+                    disabled={!!callTokens?.isInitialisingCall}
                     size="unsized"
                     title={room.name}
                     className="flex-1 min-w-0 text-slate-600"
@@ -514,7 +517,8 @@ const SelectedRoom = ({ room }: { room: Room }) => {
 
   // Play sound when a new participant connects (count increases)
   useEffect(() => {
-    if (coreParticipants.length > prevCountRef.current) {
+    // Check with 0 to avoid double join sound
+    if (coreParticipants.length > prevCountRef.current && prevCountRef.current !== 0) {
       sounds.callAccepted.play();
     }
     prevCountRef.current = coreParticipants.length;

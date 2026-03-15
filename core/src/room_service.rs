@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::participant::ConnectionQuality;
@@ -14,8 +15,7 @@ use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_video_stream, VideoBufferManager};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use winit::event_loop::EventLoopProxy;
 
 use crate::{audio, room_service, ParticipantData, UserEvent};
@@ -131,7 +131,7 @@ pub(crate) struct RoomServiceInner {
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
-    // TODO: be careful on how to do participants update, with locking, when the camera window integration will happen.
+    cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
 }
 
 /// Inserts a remote participant into the map if not already present.
@@ -215,6 +215,7 @@ impl RoomService {
             },
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
+            cancel_connect: std::sync::Mutex::new(Vec::new()),
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -264,28 +265,15 @@ impl RoomService {
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room");
-        let res = self
-            .service_command_tx
+        self.service_command_tx
             .send(RoomServiceCommand::CreateRoom {
                 token,
                 video_token,
                 event_loop_proxy,
-            });
-        if let Err(e) = res {
-            return Err(RoomServiceError::CreateRoom(format!(
-                "Failed to send command: {e:?}"
-            )));
-        }
-        let res = self.service_command_res_rx.recv();
-        match res {
-            Ok(RoomServiceCommandResult::Success) => Ok(()),
-            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::CreateRoom(
-                "Failed to create room".to_string(),
-            )),
-            Err(e) => Err(RoomServiceError::CreateRoom(format!(
-                "Failed to receive result: {e:?}"
-            ))),
-        }
+            })
+            .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
+        log::info!("create_room: command dispatched (non-blocking)");
+        Ok(())
     }
 
     /// Publishes a video track, this will block until the room is created.
@@ -334,6 +322,14 @@ impl RoomService {
     /// Destroys the current room connection.
     pub fn destroy_room(&self) {
         log::info!("destroy_room");
+
+        // Cancel any in-flight connection of CreateRoom attempt immediately.
+        // Dropping all senders causes each corresponding cancel_rx to resolve.
+        {
+            let mut guard = self.inner.cancel_connect.lock().unwrap();
+            guard.clear();
+        }
+
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::DestroyRoom);
@@ -822,6 +818,18 @@ async fn room_service_commands(
                 video_token,
                 event_loop_proxy,
             } => {
+                log::info!("room_service_commands: CreateRoom");
+                let total_connect_start = Instant::now();
+
+                // Create two oneshot channels so destroy_room() can cancel both
+                // in-flight connects simultaneously by dropping all senders.
+                let (cancel_tx_1, cancel_rx_1) = oneshot::channel::<()>();
+                let (cancel_tx_2, cancel_rx_2) = oneshot::channel::<()>();
+                {
+                    let mut guard = inner.cancel_connect.lock().unwrap();
+                    *guard = vec![cancel_tx_1, cancel_tx_2];
+                }
+
                 {
                     let mut inner_room = inner.room.lock().await;
                     if inner_room.is_some() {
@@ -833,6 +841,7 @@ async fn room_service_commands(
                         }
                     }
                 }
+                log::info!("room_service_commands: Closed room");
                 {
                     let mut inner_video_room = inner.video_room.lock().await;
                     if let Some(video_room) = inner_video_room.take() {
@@ -842,40 +851,136 @@ async fn room_service_commands(
                         }
                     }
                 }
-
+                log::info!("room_service_commands: Closed video room");
                 // Clear participants when joining a new room
                 {
                     let mut participants = inner.participants.write().unwrap();
                     participants.clear();
                 }
 
+                log::info!("room_service_commands: Connecting to room and video room in parallel");
                 let url = livekit_server_url.clone();
+                let connect_start = Instant::now();
 
-                let connect_result = Room::connect(&url, &token, RoomOptions::default()).await;
-                let (room, rx) = match connect_result {
-                    Ok((room, rx)) => (room, rx),
-                    Err(_) => {
-                        log::error!("room_service_commands: Failed to connect to room");
-                        let res = tx.send(RoomServiceCommandResult::Failure);
-                        if let Err(e) = res {
-                            log::error!("room_service_commands: Failed to send result: {e:?}");
+                // Uncomment below and tweak to test racing
+                // conditions on connection
+                // let connect_fut = async {
+                //     tokio::time::sleep(Duration::from_secs(15)).await;
+                //     tokio::time::timeout(
+                //         Duration::from_secs(10),
+                //         Room::connect(&url, &token, RoomOptions::default()),
+                //     )
+                //     .await
+                // };
+                let connect_fut = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    Room::connect(&url, &token, RoomOptions::default()),
+                );
+                let video_connect_fut = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    Room::connect(&url, &video_token, RoomOptions::default()),
+                );
+
+                // Run both connects concurrently. Each branch is independently
+                // cancellable: dropping the corresponding sender in
+                // cancel_connect resolves cancel_rx, causing that branch to
+                // return None.
+                let (regular_outcome, video_outcome) = tokio::join!(
+                    async {
+                        tokio::select! {
+                            _ = cancel_rx_1 => {
+                                log::info!(
+                                    "room_service_commands: CreateRoom cancelled during regular room connect after {}ms",
+                                    connect_start.elapsed().as_millis()
+                                );
+                                None
+                            }
+                            result = connect_fut => Some(result),
                         }
+                    },
+                    async {
+                        tokio::select! {
+                            _ = cancel_rx_2 => {
+                                log::info!(
+                                    "room_service_commands: CreateRoom cancelled during video room connect after {}ms",
+                                    connect_start.elapsed().as_millis()
+                                );
+                                None
+                            }
+                            result = video_connect_fut => Some(result),
+                        }
+                    },
+                );
+
+                // If either connect was cancelled, clean up any room that did
+                // manage to connect before the cancellation was observed.
+                if regular_outcome.is_none() || video_outcome.is_none() {
+                    if let Some(Ok(Ok((room, _)))) = regular_outcome {
+                        let _ = room.close().await;
+                    }
+                    if let Some(Ok(Ok((video_room, _)))) = video_outcome {
+                        let _ = video_room.close().await;
+                    }
+                    log::info!(
+                        "room_service_commands: CreateRoom cancelled, cleaned up after {}ms",
+                        total_connect_start.elapsed().as_millis()
+                    );
+                    continue;
+                }
+
+                // Both futures completed (not cancelled). Unwrap the Option layer.
+                let regular_result = regular_outcome.unwrap();
+                let video_result = video_outcome.unwrap();
+
+                // Handle regular room result
+                let (room, rx) = match regular_result {
+                    Ok(Ok((room, rx))) => {
+                        log::info!(
+                            "room_service_commands: Regular room connected in {}ms",
+                            connect_start.elapsed().as_millis()
+                        );
+                        (room, rx)
+                    }
+                    Ok(Err(e)) => {
+                        log::error!(
+                            "room_service_commands: Failed to connect to room after {}ms: {e:?}",
+                            connect_start.elapsed().as_millis()
+                        );
+                        if let Ok(Ok((video_room, _))) = video_result {
+                            let _ = video_room.close().await;
+                        }
+                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Err(
+                            "Failed to connect to room".into(),
+                        )));
+                        continue;
+                    }
+                    Err(_) => {
+                        log::error!(
+                            "room_service_commands: Room connection timed out after {}ms",
+                            connect_start.elapsed().as_millis()
+                        );
+                        if let Ok(Ok((video_room, _))) = video_result {
+                            let _ = video_room.close().await;
+                        }
+                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Err(
+                            "Room connection timed out".into(),
+                        )));
                         continue;
                     }
                 };
 
+                log::info!("room_service_commands: Connected to room");
                 if let Some(task) = stats_task.take() {
                     task.abort();
                 }
                 stats_task = Some(tokio::spawn(crate::livekit::stats::stats_loop(
                     inner.clone(),
                 )));
-
+                log::info!("room_service_commands: Spawned stats task");
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 let user_identity = room.local_participant().identity().as_str().to_string();
                 let user_name = room.local_participant().name();
-
-                // Insert local participant into participants map
+                log::info!("room_service_commands: Got user sid and name");
                 {
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
@@ -883,25 +988,45 @@ async fn room_service_commands(
                         ParticipantInfo::new(user_identity, user_name, false, false),
                     );
                 }
+                log::info!(
+                    "room_service_commands: Inserted local participant into participants map"
+                );
 
-                // Connect video room for screen share publishing
-                let video_participant_sid =
-                    match Room::connect(&url, &video_token, RoomOptions::default()).await {
-                        Ok((video_room, _video_rx)) => {
-                            let sid = video_room.local_participant().sid().as_str().to_string();
-                            let mut inner_video_room = inner.video_room.lock().await;
-                            *inner_video_room = Some(video_room);
-                            sid
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "room_service_commands: Failed to connect video room: {e:?}"
-                            );
-                            String::new()
-                        }
-                    };
-
-                /* Spawn thread for handling livekit data events. */
+                // Handle video room result — optional, failure is non-fatal.
+                let video_participant_sid = match video_result {
+                    Ok(Ok((video_room, _video_rx))) => {
+                        log::info!(
+                            "room_service_commands: Video room connected in {}ms (total {}ms)",
+                            connect_start.elapsed().as_millis(),
+                            total_connect_start.elapsed().as_millis()
+                        );
+                        let sid = video_room.local_participant().sid().as_str().to_string();
+                        let mut inner_video_room = inner.video_room.lock().await;
+                        *inner_video_room = Some(video_room);
+                        sid
+                    }
+                    Ok(Err(e)) => {
+                        log::error!(
+                            "room_service_commands: Failed to connect video room after {}ms (total {}ms): {e:?}",
+                            connect_start.elapsed().as_millis(),
+                            total_connect_start.elapsed().as_millis()
+                        );
+                        String::new()
+                    }
+                    Err(_) => {
+                        log::error!(
+                            "room_service_commands: Video room connection timed out after {}ms (total {}ms)",
+                            connect_start.elapsed().as_millis(),
+                            total_connect_start.elapsed().as_millis()
+                        );
+                        String::new()
+                    }
+                };
+                log::info!(
+                    "room_service_commands: Finished room setup in {}ms",
+                    total_connect_start.elapsed().as_millis()
+                );
+                let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(())));
                 tokio::spawn(handle_room_events(
                     rx,
                     event_loop_proxy,
@@ -916,13 +1041,9 @@ async fn room_service_commands(
                     },
                     inner.connection_quality.clone(),
                 ));
-
+                log::info!("room_service_commands: Spawned handle_room_events");
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
-                let res = tx.send(RoomServiceCommandResult::Success);
-                if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to send result: {e:?}");
-                }
             }
             RoomServiceCommand::PublishTrack {
                 width,

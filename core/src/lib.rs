@@ -849,28 +849,53 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallStart(call_start) => {
                 log::info!("user_event: CallStart");
-                let result = if let Some(room_service) = self.room_service.as_ref() {
+                if let Some(room_service) = self.room_service.as_ref() {
                     match room_service.create_room(
                         call_start.audio_token,
                         call_start.video_token,
                         self.event_loop_proxy.clone(),
                     ) {
                         Ok(_) => {
-                            log::info!("user_event: Room created successfully");
-                            room_service.iterate_participants();
-                            Ok(())
+                            if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
+                                error!("user_event: Error sending CallStartResult ack: {e:?}");
+                            }
                         }
                         Err(e) => {
-                            log::error!("user_event: Failed to create room: {e:?}");
-                            Err(e.to_string())
+                            log::error!("user_event: Failed to dispatch create room: {e:?}");
+                            if let Err(e) = self
+                                .socket
+                                .send(Message::CallStartResult(Err(e.to_string())))
+                            {
+                                error!("user_event: Error sending CallStartResult: {e:?}");
+                            }
                         }
                     }
                 } else {
                     log::error!("user_event: Room service not found for CallStart");
-                    Err(ServerError::RoomServiceNotFound.to_string())
-                };
-                if let Err(e) = self.socket.send(Message::CallStartResult(result)) {
-                    error!("user_event: Error sending CallStartResult: {e:?}");
+                    if let Err(e) = self.socket.send(Message::CallStartResult(Err(
+                        ServerError::RoomServiceNotFound.to_string(),
+                    ))) {
+                        error!("user_event: Error sending CallStartResult: {e:?}");
+                    }
+                }
+            }
+            UserEvent::CreateRoomResult(result) => {
+                log::info!("user_event: CreateRoomResult: {result:?}");
+                match result {
+                    Ok(()) => {
+                        if let Some(room_service) = self.room_service.as_ref() {
+                            room_service.iterate_participants();
+                        }
+                    }
+                    Err(ref reason) => {
+                        log::error!("user_event: Room creation failed: {reason}");
+                        if let Err(e) = self
+                            .socket
+                            .send(Message::RoomConnectionFailed(reason.clone()))
+                        {
+                            error!("user_event: Error sending RoomConnectionFailed: {e:?}");
+                        }
+                    }
                 }
             }
             UserEvent::CallEnd => {
@@ -2033,6 +2058,7 @@ pub enum UserEvent {
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
+    CreateRoomResult(Result<(), String>),
 }
 
 pub struct RenderEventLoop {

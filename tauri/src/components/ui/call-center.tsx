@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
 import { Button } from "./button";
@@ -38,50 +38,14 @@ const Colors = {
 } as const;
 
 export function CallCenter() {
-  const { callTokens } = useStore();
-
-  if (!callTokens) return null;
-
-  return (
-    <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
-      {/* Reconnecting Banner */}
-      {callTokens.isReconnecting && (
-        <div className="bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
-          <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
-          <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
-        </div>
-      )}
-
-      <div className="w-full">
-        {/* Call Timer */}
-        {callTokens && (
-          <div className="w-full text-center mb-4">
-            <span className="text-xs font-medium">Pairing</span>{" "}
-            <span className="text-xs muted font-medium">
-              started{" "}
-              {formatDistanceToNow(callTokens.timeStarted, {
-                addSuffix: true,
-              })}
-            </span>
-          </div>
-        )}
-      </div>
-
-      <ConnectedActions />
-
-      {/* Horizontal line */}
-      <Separator className="w-full" />
-    </div>
-  );
-}
-
-export function ConnectedActions() {
   const { callTokens, teammates } = useStore();
   const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
 
   const handleEndCall = useEndCall();
+  const handleEndCallRef = useRef(handleEndCall);
+  handleEndCallRef.current = handleEndCall;
 
   // Determine remote participant state from core events
   const remoteParticipantState = callTokens?.participants?.find(
@@ -107,22 +71,64 @@ export function ConnectedActions() {
   }, [callTokens?.role]);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("core_call_ended", () => {
+    const unlisten = listen("core_call_ended", () => {
       console.log("core_call_ended event received");
       const { callTokens } = useStore.getState();
       if (!callTokens) return;
-      handleEndCall();
-    }).then((fn) => {
-      unlisten = fn;
+      handleEndCallRef.current();
     });
     return () => {
-      if (unlisten) unlisten();
+      unlisten.then((fn) => fn());
     };
-  }, [handleEndCall]);
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen("core_room_connection_failed", () => {
+      console.log("core_call_ended event received");
+      const { callTokens } = useStore.getState();
+      if (!callTokens) return;
+      handleEndCallRef.current();
+      toast.error("Failed to connect to call");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  if (!callTokens) return null;
 
   return (
-    <>
+    <div className="flex flex-col items-center w-full max-w-sm mx-auto bg-white pt-4 mb-4">
+      {/* Reconnecting Banner */}
+      {callTokens.isReconnecting && (
+        <div className="bg-amber-100 border border-amber-300 rounded-md px-3 py-2 mb-3 flex items-center justify-center gap-2">
+          <div className="animate-spin h-4 w-4 border-2 border-amber-600 border-t-transparent rounded-full" />
+          <span className="text-xs font-medium text-amber-800">Reconnecting...</span>
+        </div>
+      )}
+
+      <div className="w-full">
+        {/* Initial connecting banner */}
+        {callTokens.isInitialisingCall && (
+          <div className="mb-4 text-xs font-medium flex flex-row gap-2 items-center justify-center">
+            <div className="animate-spin size-3 border-[1.5px] border-slate-400 border-t-transparent rounded-full" />
+            Connecting to call
+          </div>
+        )}
+
+        {/* Call Timer */}
+        {!callTokens.isInitialisingCall && (
+          <div className="w-full text-center mb-4">
+            <span className="text-xs font-medium">Pairing</span>{" "}
+            <span className="text-xs muted font-medium">
+              started{" "}
+              {formatDistanceToNow(callTokens.timeStarted, {
+                addSuffix: true,
+              })}
+            </span>
+          </div>
+        )}
+      </div>
       <div
         className={clsx("gap-2 px-3 flex-nowrap grid mb-4 min-w-full", {
           "grid-cols-6": callTokens?.isRoomCall,
@@ -226,7 +232,9 @@ export function ConnectedActions() {
           </div>
         </div>
       </div>
-    </>
+      {/* Horizontal line */}
+      <Separator className="w-full" />
+    </div>
   );
 }
 
@@ -324,7 +332,8 @@ function MicrophoneIcon() {
 
   const { data: microphoneDevices = [], refetch: refetchMics } = useQuery({
     queryKey: ["list_microphones"],
-    queryFn: () => typedInvoke("list_microphones"),
+    enabled: !callTokens?.isInitialisingCall,
+    queryFn: async () => typedInvoke("list_microphones"),
     select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
@@ -346,6 +355,9 @@ function MicrophoneIcon() {
   }, [microphoneDevices]);
 
   useEffect(() => {
+    // Do not select microphone if we are still initialising the call
+    // Else AudioCapture will block other events from being processed.
+    if (callTokens?.isInitialisingCall) return;
     if (!activeMicId || !microphoneDevices.length) return;
     const found = microphoneDevices.find((d) => d.name === activeMicId);
     if (found) {

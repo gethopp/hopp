@@ -249,9 +249,12 @@ function App() {
     });
 
     socketService.on("call_end", (data: TWebSocketMessage) => {
+      // Guard if call is already finished
+      const { callTokens: currentCallTokens, user } = useStore.getState();
+      if (!currentCallTokens) return;
+
       if (data.type === "call_end") {
         // Get call info before clearing tokens
-        const { callTokens: currentCallTokens, user } = useStore.getState();
         const participantId = currentCallTokens?.participant || "";
         const roomId = currentCallTokens?.room?.id || data.payload.call_id || "";
         const teamId = user?.team_id?.toString() || "";

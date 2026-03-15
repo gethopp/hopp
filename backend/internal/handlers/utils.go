@@ -92,18 +92,17 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 			Room:     roomName,
 		})
 
+	// Name is the display name without "audio" suffix
+	// Only video will have a suffix
 	audio := auth.
 		NewAccessToken(s.Config.Livekit.APIKey, s.Config.Livekit.Secret).
 		SetIdentity(audioID).
 		SetValidFor(24 * time.Hour).
-		SetName(participant.GetDisplayName() + " " + "audio").
+		SetName(participant.GetDisplayName()).
 		SetVideoGrant(&auth.VideoGrant{
 			RoomJoin:             true,
 			Room:                 roomName,
 			CanUpdateOwnMetadata: &[]bool{true}[0],
-		}).
-		SetAttributes(map[string]string{
-			"av1Support": "false",
 		})
 
 	camera := auth.
