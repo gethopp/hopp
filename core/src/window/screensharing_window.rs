@@ -654,7 +654,9 @@ impl ScreensharingWindow {
     }
 
     pub fn focus_window(&self) {
-        self.window.set_visible(true);
+        if self.window.is_visible() == Some(false) {
+            self.window.set_visible(true);
+        }
         self.window.focus_window();
     }
 

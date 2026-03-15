@@ -248,8 +248,9 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
 
       if (localParticipant.is_screensharing) {
         updates.role = ParticipantRole.SHARER;
-      } else if (callTokens.role === ParticipantRole.SHARER) {
-        updates.role = ParticipantRole.NONE;
+      } else {
+        const someoneElseSharing = event.payload.some((p) => p.is_screensharing && !p.identity.includes(user.id));
+        updates.role = someoneElseSharing ? ParticipantRole.CONTROLLER : ParticipantRole.NONE;
       }
     }
   }

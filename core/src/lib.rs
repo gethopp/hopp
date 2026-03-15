@@ -1456,25 +1456,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 name: participant_name,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
-                if self.screensharing_window.is_some() {
-                    log::info!("user_event: Screensharing window already exists, skipping");
-                    return;
-                }
-                // Stop any active local screenshare before opening remote view
-                self.stop_screenshare();
-                if let Some(room_service) = self.room_service.as_ref() {
-                    if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
-                        self.open_screensharing_window(
-                            event_loop,
-                            screen_share_buffer,
-                            participant_sid,
-                            participant_name,
-                        );
-                    } else {
-                        log::warn!("user_event: No screen share buffer available");
-                    }
+                if let Some(screensharing_window) = &self.screensharing_window {
+                    screensharing_window.focus_window();
                 } else {
-                    log::warn!("user_event: Room service not available");
+                    self.stop_screenshare();
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        let snapshot = room_service.participants_snapshot();
+                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                            self.open_screensharing_window(
+                                event_loop,
+                                screen_share_buffer,
+                                participant_sid,
+                                participant_name,
+                            );
+                        } else {
+                            log::warn!("user_event: No screen share buffer available");
+                        }
+                    } else {
+                        log::warn!("user_event: Room service not available");
+                    }
                 }
             }
             UserEvent::CloseScreenShareWindow => {

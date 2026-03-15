@@ -2441,6 +2441,21 @@ async fn handle_room_events(
                                     participant_sid.clone()
                                 }
                             };
+
+                            {
+                                let mut participants_guard = participants.write().unwrap();
+                                if let Some(info) = participants_guard.get_mut(&sharer_sid) {
+                                    info.set_is_screensharing(true);
+                                }
+                            }
+
+                            let snapshot = build_participants_snapshot(&participants);
+                            if let Err(e) = event_loop_proxy
+                                .send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                            {
+                                log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
+                            }
+
                             if let Err(e) =
                                 event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
                                     sid: Some(sharer_sid),
@@ -2569,6 +2584,35 @@ async fn handle_room_events(
                             // Clear publisher SID (keep the buffer for reuse)
                             {
                                 remote_screen_share.publisher_sid.lock().unwrap().take();
+                            }
+
+                            // Derive the audio participant SID to clear is_screensharing
+                            let audio_sid = {
+                                let video_identity = participant.identity().as_str().to_string();
+                                let audio_identity = video_identity
+                                    .strip_suffix(":video")
+                                    .map(|prefix| format!("{prefix}:audio"));
+                                if let Some(audio_id) = audio_identity {
+                                    let guard = participants.read().unwrap();
+                                    crate::livekit::participant::find_sid_by_identity(
+                                        &guard, &audio_id,
+                                    )
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(audio_sid) = audio_sid {
+                                let mut participants_guard = participants.write().unwrap();
+                                if let Some(info) = participants_guard.get_mut(&audio_sid) {
+                                    info.set_is_screensharing(false);
+                                }
+                            }
+
+                            let snapshot = build_participants_snapshot(&participants);
+                            if let Err(e) = event_loop_proxy
+                                .send_event(UserEvent::ParticipantsSnapshot(snapshot))
+                            {
+                                log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
                             }
 
                             // Close the screen share window
