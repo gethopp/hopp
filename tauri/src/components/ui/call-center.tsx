@@ -88,7 +88,7 @@ export function CallCenter() {
       const { callTokens } = useStore.getState();
       if (!callTokens) return;
       handleEndCallRef.current();
-      toast.error("Failed to connect to call");
+      toast.error("Failed to establish connection");
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -440,7 +440,7 @@ function ScreenShareIcon({ callTokens }: { callTokens: CallState | null }) {
     if (!callTokens) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
-      tauriUtils.createContentPickerWindow(callTokens.videoToken, false);
+      tauriUtils.createContentPickerWindow();
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -453,7 +453,7 @@ function ScreenShareIcon({ callTokens }: { callTokens: CallState | null }) {
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken, false);
+    tauriUtils.createContentPickerWindow();
   }, [callTokens]);
 
   return (

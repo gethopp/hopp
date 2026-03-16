@@ -95,6 +95,10 @@ use crate::utils::geometry::Position;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
+#[cfg(debug_assertions)]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
+#[cfg(not(debug_assertions))]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 
 #[derive(Error, Debug)]
@@ -387,11 +391,10 @@ impl<'a> Application<'a> {
         monitors: Vec<MonitorHandle>,
     ) -> Result<(), ServerError> {
         log::info!(
-            "screenshare: resolution: {:?} content: {} accessibility_permission: {} use_av1: {}",
+            "screenshare: resolution: {:?} content: {} accessibility_permission: {}",
             screenshare_input.resolution,
             screenshare_input.content,
             screenshare_input.accessibility_permission,
-            screenshare_input.use_av1
         );
 
         self.stop_screenshare();
@@ -433,11 +436,7 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.publish_track(
-            extent.width as u32,
-            extent.height as u32,
-            screenshare_input.use_av1,
-        );
+        let res = room_service.publish_track(extent.width as u32, extent.height as u32);
         if let Err(error) = res {
             log::error!("screenshare: error publishing track: {error:?}");
             drop(screen_capturer);
@@ -562,7 +561,7 @@ impl<'a> Application<'a> {
             .window_manager
             .as_mut()
             .ok_or(ServerError::WindowCreationError)?
-            .show_window(&selected_monitor)
+            .show_window(&selected_monitor, event_loop)
             .map_err(|e| {
                 log::error!("create_overlay_window: Error showing window: {:?}", e);
                 ServerError::from(e)
@@ -1451,6 +1450,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
                 self.open_screensharing_window(event_loop, buffer, None, None);
             }
+            UserEvent::OpenContentPicker => {
+                log::info!("user_event: OpenContentPicker");
+                if let Err(e) = self.socket.send(Message::OpenContentPicker) {
+                    log::error!("user_event: Error sending OpenContentPicker: {e:?}");
+                }
+            }
             UserEvent::OpenScreenShareWindow {
                 sid: participant_sid,
                 name: participant_name,
@@ -1489,8 +1494,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
-                if let Some(ss) = &self.screensharing_window {
-                    ss.focus_window();
+                if let Some(screen_sharing_window) = &self.screensharing_window {
+                    screen_sharing_window.focus_window();
                     focused = true;
                 }
                 if let Some(cam) = &self.camera_window {
@@ -2049,6 +2054,7 @@ pub enum UserEvent {
     StopCamera,
     OpenCamera,
     OpenScreensharing,
+    OpenContentPicker,
     OpenScreenShareWindow {
         sid: Option<String>,
         name: Option<String>,
@@ -2121,7 +2127,43 @@ impl RenderEventLoop {
          * Thread for dispatching socket events to the winit event loop.
          */
         std::thread::spawn(move || {
-            for message in event_socket.events.iter() {
+            loop {
+                let message =
+                    match event_socket
+                        .events
+                        .recv_timeout(std::time::Duration::from_secs(
+                            SOCKET_MESSAGE_TIMEOUT_SECONDS,
+                        )) {
+                        Ok(msg) => msg,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket message timeout, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket event channel closed, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                    };
                 let user_event = match message {
                     Message::GetAvailableContent => UserEvent::GetAvailableContent,
                     Message::CallStart(call_start_message) => {
@@ -2174,17 +2216,6 @@ impl RenderEventLoop {
                     );
                 }
             }
-            // Channel closed = disconnect
-            log::error!("RenderEventLoop::run Socket event channel closed, terminating.");
-            let res = event_loop_proxy.send_event(UserEvent::Terminate);
-            if res.is_err() {
-                log::error!(
-                    "RenderEventLoop::run Error sending terminate event: {:?}",
-                    res.err()
-                );
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            std::process::exit(PROCESS_EXIT_CODE_ERROR);
         });
 
         let proxy = self.event_loop.create_proxy();

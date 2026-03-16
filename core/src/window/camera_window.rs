@@ -537,7 +537,13 @@ impl CameraWindow {
                 }
             }
             CameraMessage::ScreenShare => {
-                log::info!("CameraWindow: screen share requested");
+                log::info!("CameraWindow: screen share -> OpenContentPicker");
+                if let Err(e) = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::OpenContentPicker)
+                {
+                    log::error!("CameraWindow: failed to send OpenContentPicker event: {e:?}");
+                }
             }
             CameraMessage::VideoToggle => {
                 let event = if self.state.camera_active {

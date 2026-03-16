@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use winit::event_loop::EventLoopProxy;
 
-use crate::{audio, room_service, ParticipantData, UserEvent};
+use crate::{audio, ParticipantData, UserEvent};
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -43,10 +43,17 @@ const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
 const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
 const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
 
+const H264_BITRATE_1920: u64 = 3_000_000; // 3 Mbps
+const H264_BITRATE_2048: u64 = 5_250_000; // 5.25 Mbps
+const H264_BITRATE_2560: u64 = 7_500_000; // 7.5 Mbps
+const H264_BITRATE_DEFAULT: u64 = 12_000_000; // 12 Mbps
+
 // Resolution thresholds
 const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
 const WIDTH_THRESHOLD_2560: u32 = 2560;
+
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
 
 #[derive(Debug)]
 enum RoomServiceCommand {
@@ -106,6 +113,8 @@ pub enum RoomServiceError {
     CreateRoom(String),
     #[error("Failed to publish track: {0}")]
     PublishTrack(String),
+    #[error("Command timed out")]
+    Timeout,
 }
 
 #[derive(Debug)]
@@ -282,19 +291,14 @@ impl RoomService {
     ///
     /// * `width` - The width of the video track
     /// * `height` - The height of the video track
-    /// * `use_av1` - If av1 codec is being used
     ///
     /// # Returns
     ///
     /// * `Ok(())` - The track was published successfully
     /// * `Err(())` - The track was not published successfully
-    pub fn publish_track(
-        &self,
-        width: u32,
-        height: u32,
-        use_av1: bool,
-    ) -> Result<(), RoomServiceError> {
+    pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
         log::info!("publish_track: {width:?}, {height:?}");
+        let use_av1 = false;
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::PublishTrack {
@@ -307,12 +311,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -507,12 +512,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish audio track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -552,12 +558,13 @@ impl RoomService {
                 "Failed to send command: {e:?}"
             )));
         }
-        let res = self.service_command_res_rx.recv();
+        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
         match res {
             Ok(RoomServiceCommandResult::Success) => Ok(()),
             Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
                 "Failed to publish camera track".to_string(),
             )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
             Err(e) => Err(RoomServiceError::PublishTrack(format!(
                 "Failed to receive result: {e:?}"
             ))),
@@ -862,20 +869,20 @@ async fn room_service_commands(
                 let url = livekit_server_url.clone();
                 let connect_start = Instant::now();
 
-                // Uncomment below and tweak to test racing
-                // conditions on connection
-                // let connect_fut = async {
-                //     tokio::time::sleep(Duration::from_secs(15)).await;
-                //     tokio::time::timeout(
-                //         Duration::from_secs(10),
-                //         Room::connect(&url, &token, RoomOptions::default()),
-                //     )
-                //     .await
-                // };
                 let connect_fut = tokio::time::timeout(
-                    Duration::from_secs(15),
+                    // Duration::from_secs(15),
+                    Duration::from_secs(2),
                     Room::connect(&url, &token, RoomOptions::default()),
                 );
+                // Uncomment below to test artificial delay for testing racing conditions.
+                // let connect_fut = async {
+                //     tokio::time::timeout(Duration::from_secs(5), async {
+                //         // Artificial delay for testing — set above timeout to trigger error handling.
+                //         tokio::time::sleep(Duration::from_secs(6)).await;
+                //         Room::connect(&url, &token, RoomOptions::default()).await
+                //     })
+                //     .await
+                // };
                 let video_connect_fut = tokio::time::timeout(
                     Duration::from_secs(15),
                     Room::connect(&url, &video_token, RoomOptions::default()),
@@ -1068,18 +1075,18 @@ async fn room_service_commands(
                 );
 
                 /* Have different max_bitrate based on width. */
-                let (av1_bitrate, vp9_bitrate) = match width {
-                    WIDTH_THRESHOLD_1920 => (AV1_BITRATE_1920, BITRATE_1920),
-                    WIDTH_THRESHOLD_2048 => (AV1_BITRATE_2048, BITRATE_2048),
-                    WIDTH_THRESHOLD_2560 => (AV1_BITRATE_2560, BITRATE_2560),
-                    _ => (AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
+                let (h264_bitrate, av1_bitrate, vp9_bitrate) = match width {
+                    WIDTH_THRESHOLD_1920 => (H264_BITRATE_1920, AV1_BITRATE_1920, BITRATE_1920),
+                    WIDTH_THRESHOLD_2048 => (H264_BITRATE_2048, AV1_BITRATE_2048, BITRATE_2048),
+                    WIDTH_THRESHOLD_2560 => (H264_BITRATE_2560, AV1_BITRATE_2560, BITRATE_2560),
+                    _ => (H264_BITRATE_DEFAULT, AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
                 };
 
-                let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
+                let max_bitrate = if use_av1 { av1_bitrate } else { h264_bitrate };
                 let video_codec = if use_av1 {
                     VideoCodec::AV1
                 } else {
-                    VideoCodec::VP9
+                    VideoCodec::H264
                 };
 
                 let res = room

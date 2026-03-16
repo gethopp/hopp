@@ -49,7 +49,7 @@ use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
 use crate::graphics::graphics_context::participant::{ParticipantError, ParticipantsManager};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::utils::clock;
-use crate::utils::geometry::Position;
+use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
@@ -85,17 +85,131 @@ const fn min_window_size() -> (f64, f64) {
     (SCREENSHARING_WINDOW_MIN_WIDTH, min_h)
 }
 
-fn auto_window_position(window: &Window) -> (f64, f64) {
-    let Some(monitor) = window.current_monitor() else {
-        return (0., 0.);
+/// Available screen area detected at runtime by probing with a temporary window.
+/// This replaces hardcoded OS chrome offsets (menubar, taskbar, dock) with
+/// actual values from the window manager.
+struct ScreenArea {
+    /// Top-left position of the available area in logical pixels.
+    position: Position,
+    /// Available dimensions in logical pixels.
+    extent: Extent,
+}
+
+/// Probe the available screen area by creating a temporary borderless, maximized,
+/// invisible window. The window manager will constrain it to the usable area
+/// (excluding menubar, dock, taskbar), letting us read back the true offsets.
+/// Retries for up to 100ms if the window manager returns zero dimensions.
+/// Falls back to monitor size with hardcoded OS chrome offsets on failure.
+fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
+    let start = StdInstant::now();
+    let timeout = Duration::from_millis(100);
+
+    let attrs = WindowAttributes::default()
+        .with_decorations(false)
+        .with_maximized(true)
+        .with_transparent(true)
+        .with_visible(false);
+
+    let Some(window) = event_loop.create_window(attrs).ok() else {
+        log::warn!("probe_available_screen_area: failed to create probe window, using defaults");
+        return default_screen_area_from_hardcoded();
     };
 
-    let monitor_pos: winit::dpi::LogicalPosition<f64> =
+    let mut area = fallback_screen_area_from_monitor(&window);
+    let scale = window.scale_factor();
+
+    loop {
+        let inner: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(scale);
+        let pos: Option<winit::dpi::LogicalPosition<f64>> =
+            window.outer_position().ok().map(|p| p.to_logical(scale));
+
+        if inner.width > 0.0 && inner.height > 0.0 && pos.is_some() {
+            let pos = pos.unwrap();
+            let elapsed = start.elapsed();
+            log::info!(
+                "probe_available_screen_area: position=({:.1}, {:.1}), size={:.1}x{:.1} (took {:.1?})",
+                pos.x,
+                pos.y,
+                inner.width,
+                inner.height,
+                elapsed
+            );
+            area = ScreenArea {
+                position: Position { x: pos.x, y: pos.y },
+                extent: Extent {
+                    width: inner.width,
+                    height: inner.height,
+                },
+            };
+            break;
+        }
+
+        if start.elapsed() >= timeout {
+            let elapsed = start.elapsed();
+            log::warn!(
+                "probe_available_screen_area: still zero dimensions after {:.1?}, using defaults",
+                elapsed
+            );
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    area
+}
+
+/// Build a fallback `ScreenArea` from the monitor attached to the given window,
+/// subtracting hardcoded OS chrome heights.
+fn fallback_screen_area_from_monitor(window: &Window) -> ScreenArea {
+    let Some(monitor) = window.current_monitor() else {
+        return default_screen_area_from_hardcoded();
+    };
+    let logical_size: winit::dpi::LogicalSize<f64> =
+        monitor.size().to_logical(monitor.scale_factor());
+    let logical_pos: winit::dpi::LogicalPosition<f64> =
         monitor.position().to_logical(monitor.scale_factor());
 
-    let offset_y = if cfg!(target_os = "macos") { 25.0 } else { 0.0 };
+    let os_chrome_height = if cfg!(target_os = "macos") {
+        30.0
+    } else if cfg!(target_os = "windows") {
+        70.0
+    } else {
+        0.0
+    };
 
-    (monitor_pos.x, monitor_pos.y + offset_y)
+    ScreenArea {
+        position: Position {
+            x: logical_pos.x,
+            y: logical_pos.y + os_chrome_height,
+        },
+        extent: Extent {
+            width: logical_size.width,
+            height: logical_size.height - os_chrome_height,
+        },
+    }
+}
+
+/// Last-resort fallback when no monitor info is available at all.
+fn default_screen_area_from_hardcoded() -> ScreenArea {
+    let os_chrome_height = if cfg!(target_os = "macos") {
+        30.0
+    } else if cfg!(target_os = "windows") {
+        70.0
+    } else {
+        0.0
+    };
+
+    ScreenArea {
+        position: Position {
+            x: 0.0,
+            y: os_chrome_height,
+        },
+        extent: Extent {
+            width: SCREENSHARING_WINDOW_WIDTH,
+            height: 900.0,
+        },
+    }
 }
 
 /// Target redraw interval: 60 FPS
@@ -391,6 +505,7 @@ pub struct ScreensharingWindow {
     mouse_in_participant_area: bool,
     /// True when participant_in_control names the local participant (use OS cursor in control tab).
     local_participant_in_control: bool,
+    screen_area: ScreenArea,
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     participants_manager: ParticipantsManager,
     click_animation_renderer: ClickAnimationRenderer,
@@ -414,6 +529,8 @@ impl ScreensharingWindow {
         participant_name: Option<String>,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
+
+        let screen_area = probe_available_screen_area(event_loop);
 
         let (init_w, init_h) = default_window_size();
         let (min_w, min_h) = min_window_size();
@@ -628,6 +745,7 @@ impl ScreensharingWindow {
                 sharer_name: sharer_first_name,
                 ..Default::default()
             },
+            screen_area,
             programmatic_resize: false,
             mouse_in_participant_area: false,
             local_participant_in_control: false,
@@ -1635,14 +1753,17 @@ impl ScreensharingWindow {
 
                 let (width, height) = if !self.state.user_has_resized {
                     // Auto-maximize to fit monitor
-                    calculate_max_window_size(&self.window, aspect).unwrap_or_else(|| {
-                        let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
-                        let content_h = content_w / aspect;
-                        (
-                            SCREENSHARING_WINDOW_WIDTH,
-                            content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
-                        )
-                    })
+                    calculate_max_window_size(self.screen_area.extent, aspect).unwrap_or_else(
+                        || {
+                            let content_w =
+                                SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+                            let content_h = content_w / aspect;
+                            (
+                                SCREENSHARING_WINDOW_WIDTH,
+                                content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
+                            )
+                        },
+                    )
                 } else {
                     // User manually resized: keep current width, adjust height for new aspect
                     let current_size: winit::dpi::LogicalSize<f64> = self
@@ -1667,9 +1788,11 @@ impl ScreensharingWindow {
                     .request_inner_size(winit::dpi::LogicalSize::new(width, height));
 
                 if !self.state.user_has_resized {
-                    let (pos_x, pos_y) = auto_window_position(&self.window);
                     self.window
-                        .set_outer_position(winit::dpi::LogicalPosition::new(pos_x, pos_y));
+                        .set_outer_position(winit::dpi::LogicalPosition::new(
+                            self.screen_area.position.x,
+                            self.screen_area.position.y,
+                        ));
                 } else if let Ok(pos) = saved_pos {
                     // Restore position so the window doesn't jump when aspect changes.
                     self.window.set_outer_position(pos);
@@ -1797,34 +1920,10 @@ fn disable_macos_fullscreen_button(window: &Window) {
     }
 }
 
-/// Calculate the maximum logical window size that fits the current monitor
-/// while preserving the stream aspect ratio.
-fn calculate_max_window_size(window: &Window, stream_aspect: f64) -> Option<(f64, f64)> {
-    let monitor = window.current_monitor()?;
-    let logical_size: winit::dpi::LogicalSize<f64> =
-        monitor.size().to_logical(monitor.scale_factor());
-
-    let monitor_w = logical_size.width;
-    let monitor_h = logical_size.height;
-
-    // OS menubar/taskbar offset (logical pixels) — matches JS utils.ts
-    // TODO(@konsalex): Use MacOS APIs like
-    // NSStatusBar.system.thickness
-    // NSScreen.visibleFrame
-    // to get the correct values, but also the actual
-    // available height and width without the dock and menubar.
-    let os_chrome_height = if cfg!(target_os = "macos") {
-        25.0
-    } else if cfg!(target_os = "windows") {
-        70.0
-    } else {
-        0.0
-    };
-
-    let available_h = monitor_h - os_chrome_height;
-    let available_content_w = monitor_w;
-
-    if available_content_w <= 0.0 || available_h <= 0.0 {
+/// Calculate the maximum logical window size that fits the given available
+/// screen extent while preserving the stream aspect ratio.
+fn calculate_max_window_size(available: Extent, stream_aspect: f64) -> Option<(f64, f64)> {
+    if available.width <= 0.0 || available.height <= 0.0 {
         log::warn!("calculate_max_window_size: available space is zero or negative, falling back");
         return None;
     }
@@ -1832,8 +1931,8 @@ fn calculate_max_window_size(window: &Window, stream_aspect: f64) -> Option<(f64
     // Subtract UI chrome to get the maximum available content area.
     let chrome_h = HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
     let chrome_w = 2.0 * CONTENT_PADDING as f64;
-    let max_content_h = available_h - chrome_h;
-    let max_content_w = available_content_w - chrome_w;
+    let max_content_h = available.height - chrome_h;
+    let max_content_w = available.width - chrome_w;
 
     // Fit content preserving aspect ratio (height- or width-constrained).
     let (content_w, content_h) = if max_content_w / max_content_h > stream_aspect {

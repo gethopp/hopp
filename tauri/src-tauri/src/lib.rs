@@ -1,3 +1,4 @@
+pub mod app_activation;
 pub mod app_state;
 pub mod permissions;
 pub mod sounds;
@@ -8,6 +9,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use sounds::SoundEntry;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
@@ -63,13 +65,6 @@ pub struct AppData {
     /// This is set to true when the user is writing feedback.
     pub deactivate_hiding: Arc<Mutex<bool>>,
 
-    /// On macOS, controls the application's activation policy and dock icon visibility.
-    /// Wrapped in Arc<Mutex<>> for thread-safe access.
-    /// On macOS we want to have a doc icon when the user is a controller in a call
-    /// and when the onboarding windows are open. The icon is needed in order to
-    /// allow cmd+tab to cycle through the windows.
-    pub dock_enabled: Arc<Mutex<bool>>,
-
     /// Persistent application state that survives across app restarts.
     /// Manages settings like first run status, tray notifications, and user preferences.
     pub app_state: app_state::AppState,
@@ -79,6 +74,17 @@ pub struct AppData {
 
     /// Tray icon state. On macOS, contains the actual tray state.
     pub tray_state: Option<tray::TrayState>,
+
+    /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
+    #[cfg(target_os = "macos")]
+    pub activation_observer: Option<app_activation::AppActivationObserver>,
+
+    /// Tracks whether the activation policy is currently Regular (true) or Accessory (false).
+    #[cfg(target_os = "macos")]
+    pub activation_policy_regular: bool,
+
+    /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
+    pub suppress_hide_on_call_end: Arc<AtomicBool>,
 }
 
 impl AppData {
@@ -86,18 +92,53 @@ impl AppData {
         sender: SocketSender,
         event_socket: EventSocket,
         deactivate_hiding: Arc<Mutex<bool>>,
-        dock_enabled: Arc<Mutex<bool>>,
         app_state: app_state::AppState,
+        suppress_hide_on_call_end: Arc<AtomicBool>,
     ) -> Self {
         AppData {
             sender,
             event_socket,
             sound_entries: Vec::new(),
             deactivate_hiding,
-            dock_enabled,
             app_state,
             livekit_server_url: "".to_string(),
             tray_state: None,
+            #[cfg(target_os = "macos")]
+            activation_observer: None,
+            #[cfg(target_os = "macos")]
+            activation_policy_regular: false,
+            suppress_hide_on_call_end,
+        }
+    }
+}
+
+/// Receive a response from core, retrying if a stale response from a
+/// previous timed-out request arrives first. The `extract` closure returns
+/// `Ok(T)` for the expected variant or `Err(Message)` for unexpected ones.
+pub fn recv_expected_response<T>(
+    event_socket: &EventSocket,
+    extract: impl Fn(Message) -> Result<T, Message>,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+        }
+        match event_socket.responses.recv_timeout(remaining) {
+            Ok(msg) => match extract(msg) {
+                Ok(val) => return Ok(val),
+                Err(other) => {
+                    let t = std::any::type_name::<T>();
+                    log::error!(
+                        "recv_expected_response<{t}>: unexpected response (stale?): {other:?}"
+                    );
+                    sentry_utils::upload_logs_event(format!(
+                        "recv_expected_response<{t}>: unexpected response: {other:?}"
+                    ));
+                }
+            },
+            Err(e) => return Err(e),
         }
     }
 }
@@ -357,6 +398,7 @@ pub fn get_log_level() -> LevelFilter {
 #[cfg(target_os = "macos")]
 pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
     log::info!("center_window_on_tray: tray_rect: {tray_rect:?}, show_window: {show_window:?}");
+
     /*
      * Because centering the window using the move_window function is
      * broken we have to calculate the position of the window manually.
@@ -373,6 +415,7 @@ pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_windo
     let mut scale = 1.0;
     /* The tray rect position is in physical units */
     let tray_pos: PhysicalPosition<i32> = tray_rect.position.to_physical(1.0);
+    let mut found_monitor = false;
     let monitors = window.available_monitors();
     if let Ok(monitors) = monitors {
         for monitor in monitors {
@@ -387,11 +430,19 @@ pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_windo
             {
                 log::info!("center_window_on_tray: Found monitor: {monitor:?}");
                 scale = monitor.scale_factor();
+                found_monitor = true;
                 break;
             }
         }
     } else {
         log::warn!("center_window_on_tray: Available monitors errored scale to 1.0");
+    }
+
+    if !found_monitor {
+        log::warn!(
+            "center_window_on_tray: Tray position {tray_pos:?} is outside all monitors, skipping"
+        );
+        return;
     }
 
     let tray_size: PhysicalSize<f64> = tray_rect.size.to_physical(scale);
@@ -430,6 +481,7 @@ pub fn setup_tray_icon(
     app: &mut App<Wry>,
     menu: &tauri::menu::Menu<Wry>,
     location_set: Arc<Mutex<bool>>,
+    tray_clicked: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     {
@@ -459,6 +511,13 @@ pub fn setup_tray_icon(
                     ..
                 } = event
                 {
+                    tray_clicked.store(true, Ordering::Relaxed);
+                    let tray_clicked_reset = tray_clicked.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        tray_clicked_reset.store(false, Ordering::Relaxed);
+                    });
+
                     let app_handle = tray.app_handle();
                     if let Some(window) = app_handle.get_webview_window("main") {
                         match window.is_visible() {
@@ -562,7 +621,7 @@ pub fn setup_tray_icon(
                             let is_visible = window.is_visible();
 
                             if let Ok(true) = is_visible {
-                                center_window_on_tray(&window, rect, true);
+                                center_window_on_tray(&window, rect, false);
                             }
                         }
                     }

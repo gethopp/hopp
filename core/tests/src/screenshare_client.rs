@@ -80,7 +80,6 @@ pub fn request_screenshare(
         },
         resolution: Extent { width, height },
         accessibility_permission: true,
-        use_av1: false,
     });
     sender.send(message).unwrap();
 

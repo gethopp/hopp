@@ -35,7 +35,7 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string, useAv1: boolean) => {
+const createContentPickerWindow = async () => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
   if (isWindowOpen) {
@@ -49,7 +49,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
 
   if (isTauri) {
     try {
-      await invoke("create_content_picker_window", { videoToken, useAv1 });
+      await invoke("create_content_picker_window", {});
       const windowHandle = await WebviewWindow.getByLabel("contentPicker");
       if (windowHandle) {
         await windowHandle.setFocus();
@@ -58,7 +58,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
       console.error("Failed to create content picker window:", error);
     }
   } else {
-    const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
+    const URL = `contentPicker.html`;
     window.open(URL);
   }
 };
@@ -90,7 +90,6 @@ const closeCameraWindow = async () => {
     const cameraWindow = await WebviewWindow.getByLabel("camera");
     if (cameraWindow) {
       await cameraWindow.close();
-      await setDockIconVisible(false);
     }
   }
 };
@@ -167,7 +166,6 @@ const endCallCleanup = async () => {
   await resetCoreProcess();
   await closeScreenShareWindow();
   await closeContentPickerWindow();
-  await setDockIconVisible(false);
   await closeCameraWindow();
 };
 
@@ -213,10 +211,6 @@ const getCameraPermission = async () => {
 
 const hideTrayIconInstruction = async () => {
   await invoke("skip_tray_notification_selection_window");
-};
-
-const setDockIconVisible = async (visible: boolean) => {
-  await invoke("set_dock_icon_visible", { visible });
 };
 
 const getLastUsedMic = async () => {
@@ -358,7 +352,6 @@ export const tauriUtils = {
   getMicPermission,
   getScreenSharePermission,
   getCameraPermission,
-  setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
   getLastMode,
