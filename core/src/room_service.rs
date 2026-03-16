@@ -43,6 +43,11 @@ const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
 const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
 const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
 
+const H264_BITRATE_1920: u64 = 3_000_000; // 3 Mbps
+const H264_BITRATE_2048: u64 = 5_250_000; // 5.25 Mbps
+const H264_BITRATE_2560: u64 = 7_500_000; // 7.5 Mbps
+const H264_BITRATE_DEFAULT: u64 = 12_000_000; // 12 Mbps
+
 // Resolution thresholds
 const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
@@ -306,7 +311,7 @@ impl RoomService {
     /// * `Err(())` - The track was not published successfully
     pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
         log::info!("publish_track: {width:?}, {height:?}");
-        let use_av1 = true;
+        let use_av1 = false;
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::PublishTrack {
@@ -950,18 +955,18 @@ async fn room_service_commands(
                 );
 
                 /* Have different max_bitrate based on width. */
-                let (av1_bitrate, vp9_bitrate) = match width {
-                    WIDTH_THRESHOLD_1920 => (AV1_BITRATE_1920, BITRATE_1920),
-                    WIDTH_THRESHOLD_2048 => (AV1_BITRATE_2048, BITRATE_2048),
-                    WIDTH_THRESHOLD_2560 => (AV1_BITRATE_2560, BITRATE_2560),
-                    _ => (AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
+                let (h264_bitrate, av1_bitrate, vp9_bitrate) = match width {
+                    WIDTH_THRESHOLD_1920 => (H264_BITRATE_1920, AV1_BITRATE_1920, BITRATE_1920),
+                    WIDTH_THRESHOLD_2048 => (H264_BITRATE_2048, AV1_BITRATE_2048, BITRATE_2048),
+                    WIDTH_THRESHOLD_2560 => (H264_BITRATE_2560, AV1_BITRATE_2560, BITRATE_2560),
+                    _ => (H264_BITRATE_DEFAULT, AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
                 };
 
-                let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
+                let max_bitrate = if use_av1 { av1_bitrate } else { h264_bitrate };
                 let video_codec = if use_av1 {
                     VideoCodec::AV1
                 } else {
-                    VideoCodec::VP9
+                    VideoCodec::H264
                 };
 
                 let res = room

@@ -1468,8 +1468,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
-                if let Some(ss) = &self.screensharing_window {
-                    ss.focus_window();
+                if let Some(screen_sharing_window) = &self.screensharing_window {
+                    screen_sharing_window.focus_window();
                     focused = true;
                 }
                 if let Some(cam) = &self.camera_window {
