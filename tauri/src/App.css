@@ -537,6 +537,16 @@ button {
   cursor: default;
 }
 
+/* Hide scrollbar across all platforms (macOS, Windows, Linux) */
+.scrollarea {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollarea::-webkit-scrollbar {
+  display: none;
+}
+
 /* Windows Customisations */
 .windows {
   &#root {
@@ -545,10 +555,6 @@ button {
     width: calc(100% - 1px);
   }
 
-  .scrollarea {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
 }
 
 .main-app.windows {
