@@ -21,10 +21,11 @@ use tauri_plugin_log::{Target, TargetKind};
 use hopp::{
     app_state::{AppState, StoredMode},
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
-    setup_start_on_launch, setup_tray_icon, AppData,
+    recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
 };
 #[cfg(target_os = "macos")]
 use hopp::{set_window_corner_radius_and_decorations, CORNER_RADIUS};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
@@ -32,37 +33,6 @@ use std::time::Duration;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
-
-/// Receive a response from core, retrying if a stale response from a
-/// previous timed-out request arrives first. The `extract` closure returns
-/// `Ok(T)` for the expected variant or `Err(Message)` for unexpected ones.
-fn recv_expected_response<T>(
-    event_socket: &socket_lib::EventSocket,
-    extract: impl Fn(Message) -> Result<T, Message>,
-) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
-        }
-        match event_socket.responses.recv_timeout(remaining) {
-            Ok(msg) => match extract(msg) {
-                Ok(val) => return Ok(val),
-                Err(other) => {
-                    let t = std::any::type_name::<T>();
-                    log::error!(
-                        "recv_expected_response<{t}>: unexpected response (stale?): {other:?}"
-                    );
-                    sentry_utils::upload_logs_event(format!(
-                        "recv_expected_response<{t}>: unexpected response: {other:?}"
-                    ));
-                }
-            },
-            Err(e) => return Err(e),
-        }
-    }
-}
 
 #[tauri::command]
 async fn screenshare(
@@ -604,6 +574,11 @@ fn call_started(
     log::info!("call_started");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        data.activation_policy_regular = true;
+    }
     if let Err(e) = data
         .sender
         .send(Message::CallStart(socket_lib::CallStartMessage {
@@ -889,9 +864,20 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
 #[tauri::command]
 fn end_call(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
+    let mut data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::CallEnd) {
         log::error!("end_call: failed to send: {e:?}");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let suppress = data.suppress_hide_on_call_end.clone();
+        suppress.store(true, Ordering::Relaxed);
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        data.activation_policy_regular = false;
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            suppress.store(false, Ordering::Relaxed);
+        });
     }
 }
 
@@ -924,6 +910,20 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 log::info!("forward_core_events: call ended");
                 if let Err(e) = app.emit("core_call_ended", &()) {
                     log::error!("forward_core_events: failed to emit call ended: {e:?}");
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    let data = app.state::<Mutex<AppData>>();
+                    let mut data = data.lock().unwrap();
+                    data.activation_policy_regular = false;
+                    let suppress = data.suppress_hide_on_call_end.clone();
+                    drop(data);
+                    suppress.store(true, Ordering::Relaxed);
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        suppress.store(false, Ordering::Relaxed);
+                    });
                 }
             }
             Message::OpenContentPicker => {
@@ -983,6 +983,13 @@ fn main() {
     let location_set_clone = location_set.clone();
     #[allow(unused_variables)]
     let location_set_setup = location_set.clone();
+
+    /* Flag set during tray icon clicks to suppress spurious activation events. */
+    let tray_clicked = Arc::new(AtomicBool::new(false));
+
+    /* Flag to suppress main window hide when activation policy switches to Accessory after a call ends. */
+    let suppress_hide_on_call_end = Arc::new(AtomicBool::new(false));
+    let suppress_hide_on_call_end_clone = suppress_hide_on_call_end.clone();
 
     let log_level = get_log_level();
     let mut app = tauri::Builder::default().plugin(tauri_plugin_opener::init());
@@ -1070,6 +1077,7 @@ fn main() {
                 event_socket,
                 deactivate_hiding_clone,
                 app_state,
+                suppress_hide_on_call_end.clone(),
             ));
             app.manage(data);
 
@@ -1085,7 +1093,7 @@ fn main() {
                 .build(app)?;
             let menu = MenuBuilder::new(app).items(&[&quit]).build()?;
 
-            setup_tray_icon(app, &menu, location_set_setup.clone())?;
+            setup_tray_icon(app, &menu, location_set_setup.clone(), tray_clicked.clone())?;
 
             /* Clear app logs in the beginning of a session. */
             let dir = app.path().app_log_dir();
@@ -1158,13 +1166,14 @@ fn main() {
             /* macOS specific setup */
             #[cfg(target_os = "macos")]
             {
-                /* Always show dock icon on macOS */
-                app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                /* Start as Accessory — switch to Regular during calls or when permission windows are visible */
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
                 /*
                  * First show the notification window which explains that hopp lives in the
                  * menubar. Then show the permissions window if needed.
                  */
+                let mut show_dock = false;
                 let show_tray_notification_selection = {
                     let data = app.state::<Mutex<AppData>>();
                     let data = data.lock().unwrap();
@@ -1194,6 +1203,7 @@ fn main() {
                         let notification_window = notification_window.unwrap();
                         let _ = notification_window.show();
                         let _ = notification_window.set_focus();
+                        show_dock = true;
                     }
                 }
 
@@ -1219,6 +1229,7 @@ fn main() {
                         log::error!("Failed to create permissions window: {e:?}");
                     } else {
                         let permissions_window = permissions_window.unwrap();
+                        show_dock = true;
 
                         // Apply native styling on macOS
                         #[cfg(target_os = "macos")]
@@ -1243,14 +1254,21 @@ fn main() {
                 }
 
                 // Tackles Alt+Tab activation
+                if show_dock {
+                    app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                }
                 {
                     let data = app.state::<Mutex<AppData>>();
                     let mut data = data.lock().unwrap();
+                    if show_dock {
+                        data.activation_policy_regular = true;
+                    }
                     data.activation_observer =
                         Some(hopp::app_activation::AppActivationObserver::new(
                             app.handle().clone(),
                             location_set_setup.clone(),
                             reopen_requested_clone.clone(),
+                            tray_clicked.clone(),
                         ));
                 }
             }
@@ -1286,6 +1304,7 @@ fn main() {
                     && !cfg!(debug_assertions)
                     && !*deactivate_hiding
                     && !*reopen_requested
+                    && !suppress_hide_on_call_end_clone.load(Ordering::Relaxed)
                 {
                     log::info!("Hiding main window on focus lost: {}", *reopen_requested);
 
@@ -1373,6 +1392,27 @@ fn main() {
                     log::info!("Show permissions window");
                     let _ = window.show();
                     let _ = window.set_focus();
+                } else {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ =
+                            app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                        app_handle
+                            .state::<Mutex<AppData>>()
+                            .lock()
+                            .unwrap()
+                            .activation_policy_regular = false;
+                    }
+                }
+            } else if label == "permissions" {
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    app_handle
+                        .state::<Mutex<AppData>>()
+                        .lock()
+                        .unwrap()
+                        .activation_policy_regular = false;
                 }
             }
         }

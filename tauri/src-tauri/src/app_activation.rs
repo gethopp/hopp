@@ -1,8 +1,11 @@
+use crate::AppData;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_app_kit::NSApplicationDidBecomeActiveNotification;
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol};
+use socket_lib::Message;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -21,12 +24,62 @@ impl AppActivationObserver {
         app_handle: tauri::AppHandle,
         location_set: Arc<Mutex<bool>>,
         reopen_requested: Arc<Mutex<bool>>,
+        tray_clicked: Arc<AtomicBool>,
     ) -> Self {
         let observer = unsafe {
             let center = NSNotificationCenter::defaultCenter();
 
             let block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
                 log::info!("app_activation: received NSApplicationDidBecomeActiveNotification");
+
+                // Guard: skip if activation was triggered by a tray click
+                if tray_clicked.load(Ordering::Relaxed) {
+                    log::info!("app_activation: tray_clicked flag set, skipping");
+                    return;
+                }
+
+                // Regular mode is either when permissions/notification windows are open, or when we are in a call.
+                if app_handle
+                    .state::<Mutex<AppData>>()
+                    .lock()
+                    .unwrap()
+                    .activation_policy_regular
+                {
+                    log::info!("app_activation: activation_policy_regular is true, showing permissions window if exists");
+                    if let Some(window) = app_handle.get_webview_window("permissions") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    } else {
+                        let data = app_handle.state::<Mutex<AppData>>();
+                        let data = data.lock().unwrap();
+                        if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
+                            log::error!(
+                                "app_activation: failed to send BringWindowsToFront: {e:?}"
+                            );
+                        } else {
+                            let focused = crate::recv_expected_response(
+                                &data.event_socket,
+                                |msg| match msg {
+                                    Message::BringWindowsToFrontResult(f) => Ok(f),
+                                    other => Err(other),
+                                },
+                            )
+                            .unwrap_or(false);
+
+                            if !focused {
+                                log::info!("app_activation: BringWindowsToFront returned false, showing main window");
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                    }
+                    return;
+                } else {
+                    log::info!("app_activation: reset policy to accessory");
+                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
 
                 // If the user directly clicked the main
                 if app_handle
