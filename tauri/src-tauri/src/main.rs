@@ -5,7 +5,7 @@ use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
     AudioCaptureMessage, AudioDevice, CameraDevice, CaptureContent, Content, DrawingEnabled,
-    Extent, Message, ScreenShareMessage, SentryMetadata,
+    Extent, Message, ScreenShareMessage, SentryMetadata, VideoCodecChoice,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -70,6 +70,7 @@ async fn screenshare(
     content: Content,
     resolution: Extent,
     accessibility_permission: bool,
+    codec: VideoCodecChoice,
 ) -> Result<(), String> {
     log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
 
@@ -92,6 +93,7 @@ async fn screenshare(
             content,
             resolution,
             accessibility_permission,
+            codec,
         }))
     {
         log::error!("screenshare: failed to send message: {e:?}");

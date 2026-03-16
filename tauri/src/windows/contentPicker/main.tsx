@@ -18,6 +18,7 @@ import clsx from "clsx";
 const appWindow = getCurrentWebviewWindow();
 
 type ResolutionKey = "1080p" | "2K" | "1440p" | "2160p" | "4K";
+type CodecKey = "AV1" | "VP9" | "H264";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -44,6 +45,7 @@ async function screenshare(
   content: CaptureContent["content"],
   resolution: ResolutionKey,
   accessibilityPermission: boolean,
+  codec: CodecKey,
 ) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
@@ -57,6 +59,7 @@ async function screenshare(
     content: content,
     resolution: resolutionMap[resolution],
     accessibilityPermission: accessibilityPermission,
+    codec: codec,
   });
   return true;
 }
@@ -96,7 +99,7 @@ function Window() {
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(content, resolution, accessibilityPermission);
+      const success = await screenshare(content, resolution, accessibilityPermission, codec);
       if (success) {
         await appWindow.close();
       }
@@ -122,6 +125,7 @@ function Window() {
   };
 
   const [resolution, setResolution] = useState<ResolutionKey>("4K");
+  const [codec, setCodec] = useState<CodecKey>("AV1");
   const updateResolution = (value: string) => {
     setResolution(value as ResolutionKey);
   };
@@ -172,6 +176,19 @@ function Window() {
             <SelectItem value="1440p">1440p</SelectItem>
             <SelectItem value="2160p">2160p</SelectItem>
             <SelectItem value="4K">4K</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-col items-start gap-2 px-4 py-2">
+        <span className="mr-2 small">Choose codec:</span>
+        <Select onValueChange={(v) => setCodec(v as CodecKey)} value={codec}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Select codec" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="AV1">AV1</SelectItem>
+            <SelectItem value="VP9">VP9</SelectItem>
+            <SelectItem value="H264">H264</SelectItem>
           </SelectContent>
         </Select>
       </div>

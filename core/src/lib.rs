@@ -436,7 +436,11 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.publish_track(extent.width as u32, extent.height as u32);
+        let res = room_service.publish_track(
+            extent.width as u32,
+            extent.height as u32,
+            screenshare_input.codec,
+        );
         if let Err(error) = res {
             log::error!("screenshare: error publishing track: {error:?}");
             drop(screen_capturer);

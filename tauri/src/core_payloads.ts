@@ -66,10 +66,13 @@ export interface AvailableContentMessage {
   content: CaptureContent[];
 }
 
+export type VideoCodecChoice = "AV1" | "VP9" | "H264";
+
 export interface ScreenShareMessage {
   content: Content;
   resolution: Extent;
   accessibility_permission: boolean;
+  codec: VideoCodecChoice;
 }
 
 export interface CallStartMessage {
@@ -131,6 +134,7 @@ export interface CommandMap {
       content: Content;
       resolution: Extent;
       accessibilityPermission: boolean;
+      codec: VideoCodecChoice;
     };
     return: void;
   };

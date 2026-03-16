@@ -95,11 +95,19 @@ pub struct AvailableContentMessage {
     pub content: Vec<CaptureContent>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum VideoCodecChoice {
+    AV1,
+    VP9,
+    H264,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenShareMessage {
     pub content: Content,
     pub resolution: Extent,
     pub accessibility_permission: bool,
+    pub codec: VideoCodecChoice,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

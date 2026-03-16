@@ -3479,7 +3479,6 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
 dependencies = [
  "cxx",
  "glib",
@@ -3550,8 +3549,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "livekit"
-version = "0.7.32"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
+version = "0.7.33"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -3576,8 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "livekit-api"
-version = "0.4.14"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
+version = "0.4.15"
 dependencies = [
  "async-tungstenite",
  "base64 0.21.7",
@@ -3605,7 +3602,6 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -3621,7 +3617,6 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -7661,8 +7656,7 @@ dependencies = [
 
 [[package]]
 name = "webrtc-sys"
-version = "0.3.23"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
+version = "0.3.24"
 dependencies = [
  "cc",
  "cxx",
@@ -7676,7 +7670,6 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/gethopp/rust-sdks?branch=hopp#6544cf63dc50e2391bd1ec36caf3a5dcc8afba7c"
 dependencies = [
  "anyhow",
  "fs2",

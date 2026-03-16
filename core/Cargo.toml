@@ -63,7 +63,8 @@ raw-window-handle = "0.6.2"
 env_logger = "0.11.5"
 log = "0.4.22"
 base64 = "0.22.1"
-livekit = { git = "https://github.com/gethopp/rust-sdks", branch = "hopp", features = ["native-tls"] }
+#livekit = { git = "https://github.com/gethopp/rust-sdks", branch = "hopp", features = ["native-tls"] }
+livekit = { path = "/Volumes/nvme/Github/rust-sdks/livekit", features = ["native-tls"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 dirs = "5.0.1"

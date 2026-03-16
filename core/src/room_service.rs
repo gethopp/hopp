@@ -12,6 +12,7 @@ use crate::audio::mixer::SharedProcessor;
 use crate::livekit::audio::AudioPublisher;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::{process_video_stream, VideoBufferManager};
+use socket_lib::VideoCodecChoice;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -27,7 +28,7 @@ const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
-const MAX_FRAMERATE: f64 = 40.0;
+const MAX_FRAMERATE: f64 = 30.0;
 const CAMERA_TRACK_NAME: &str = "camera";
 const CAMERA_MAX_BITRATE: u64 = 1_700_000;
 const CAMERA_MAX_FRAMERATE: f64 = 30.0;
@@ -36,12 +37,17 @@ const CAMERA_MAX_FRAMERATE: f64 = 30.0;
 const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
 const BITRATE_2048: u64 = 3_500_000; // 3.5 Mbps
 const BITRATE_2560: u64 = 5_000_000; // 5 Mbps
-const BITRATE_DEFAULT: u64 = 8_000_000; // 8 Mbps
+const BITRATE_DEFAULT: u64 = 12_000_000; // 8 Mbps
 
 const AV1_BITRATE_1920: u64 = 1_500_000; // 1.5 Mbps
 const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
 const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
-const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
+const AV1_BITRATE_DEFAULT: u64 = 7_000_000; // 5 Mbps
+
+const H264_BITRATE_1920: u64 = 3_500_000; // 2.5 Mbps
+const H264_BITRATE_2048: u64 = 7_000_000; // 4 Mbps
+const H264_BITRATE_2560: u64 = 12_000_000; // 6 Mbps
+const H264_BITRATE_DEFAULT: u64 = 20_000_000; // 9 Mbps
 
 // Resolution thresholds
 const WIDTH_THRESHOLD_1920: u32 = 1920;
@@ -60,7 +66,7 @@ enum RoomServiceCommand {
     PublishTrack {
         width: u32,
         height: u32,
-        use_av1: bool,
+        codec: VideoCodecChoice,
     },
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -304,15 +310,19 @@ impl RoomService {
     ///
     /// * `Ok(())` - The track was published successfully
     /// * `Err(())` - The track was not published successfully
-    pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
-        log::info!("publish_track: {width:?}, {height:?}");
-        let use_av1 = true;
+    pub fn publish_track(
+        &self,
+        width: u32,
+        height: u32,
+        codec: VideoCodecChoice,
+    ) -> Result<(), RoomServiceError> {
+        log::info!("publish_track: {width:?}, {height:?}, codec: {codec:?}");
         let res = self
             .service_command_tx
             .send(RoomServiceCommand::PublishTrack {
                 width,
                 height,
-                use_av1,
+                codec,
             });
         if let Err(e) = res {
             return Err(RoomServiceError::PublishTrack(format!(
@@ -930,7 +940,7 @@ async fn room_service_commands(
             RoomServiceCommand::PublishTrack {
                 width,
                 height,
-                use_av1,
+                codec,
             } => {
                 let inner_video_room = inner.video_room.lock().await;
                 if inner_video_room.is_none() {
@@ -949,19 +959,34 @@ async fn room_service_commands(
                     RtcVideoSource::Native(buffer_source.clone()),
                 );
 
-                /* Have different max_bitrate based on width. */
-                let (av1_bitrate, vp9_bitrate) = match width {
-                    WIDTH_THRESHOLD_1920 => (AV1_BITRATE_1920, BITRATE_1920),
-                    WIDTH_THRESHOLD_2048 => (AV1_BITRATE_2048, BITRATE_2048),
-                    WIDTH_THRESHOLD_2560 => (AV1_BITRATE_2560, BITRATE_2560),
-                    _ => (AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
-                };
-
-                let max_bitrate = if use_av1 { av1_bitrate } else { vp9_bitrate };
-                let video_codec = if use_av1 {
-                    VideoCodec::AV1
-                } else {
-                    VideoCodec::VP9
+                let (max_bitrate, video_codec) = match codec {
+                    VideoCodecChoice::AV1 => {
+                        let bitrate = match width {
+                            WIDTH_THRESHOLD_1920 => AV1_BITRATE_1920,
+                            WIDTH_THRESHOLD_2048 => AV1_BITRATE_2048,
+                            WIDTH_THRESHOLD_2560 => AV1_BITRATE_2560,
+                            _ => AV1_BITRATE_DEFAULT,
+                        };
+                        (bitrate, VideoCodec::AV1)
+                    }
+                    VideoCodecChoice::VP9 => {
+                        let bitrate = match width {
+                            WIDTH_THRESHOLD_1920 => BITRATE_1920,
+                            WIDTH_THRESHOLD_2048 => BITRATE_2048,
+                            WIDTH_THRESHOLD_2560 => BITRATE_2560,
+                            _ => BITRATE_DEFAULT,
+                        };
+                        (bitrate, VideoCodec::VP9)
+                    }
+                    VideoCodecChoice::H264 => {
+                        let bitrate = match width {
+                            WIDTH_THRESHOLD_1920 => H264_BITRATE_1920,
+                            WIDTH_THRESHOLD_2048 => H264_BITRATE_2048,
+                            WIDTH_THRESHOLD_2560 => H264_BITRATE_2560,
+                            _ => H264_BITRATE_DEFAULT,
+                        };
+                        (bitrate, VideoCodec::H264)
+                    }
                 };
 
                 let res = room
