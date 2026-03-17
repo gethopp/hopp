@@ -499,8 +499,8 @@ pub struct ScreensharingWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: ScreensharingState,
-    /// Guard: true while a programmatic resize is in flight.
-    programmatic_resize: bool,
+    /// Target size of a programmatic resize in flight (logical pixels).
+    programmatic_resize_target: Option<(f64, f64)>,
     /// True when the mouse cursor is inside the participant image area.
     mouse_in_participant_area: bool,
     /// True when participant_in_control names the local participant (use OS cursor in control tab).
@@ -746,7 +746,7 @@ impl ScreensharingWindow {
                 ..Default::default()
             },
             screen_area,
-            programmatic_resize: false,
+            programmatic_resize_target: None,
             mouse_in_participant_area: false,
             local_participant_in_control: false,
             screen_share_buffer,
@@ -1402,15 +1402,34 @@ impl ScreensharingWindow {
                 if new_size.width > 0 && new_size.height > 0 {
                     let logical: winit::dpi::LogicalSize<f64> =
                         new_size.to_logical(self.window.scale_factor());
-                    let (default_w, default_h) = default_window_size();
-                    let is_initial = (logical.width - default_w).abs() < 1.0
-                        && (logical.height - default_h).abs() < 1.0;
 
-                    if self.programmatic_resize {
-                        self.programmatic_resize = false;
-                    } else if is_initial {
-                        // initial window creation — do not flag as user resize
+                    // Classify this resize event.
+                    if let Some((target_w, target_h)) = self.programmatic_resize_target {
+                        let matches_target = (logical.width - target_w).abs() < 2.0
+                            && (logical.height - target_h).abs() < 2.0;
+                        if matches_target {
+                            self.programmatic_resize_target = None;
+                            log::info!(
+                                "ScreensharingWindow: programmatic resize landed at {:.1}x{:.1}",
+                                logical.width,
+                                logical.height
+                            );
+                        } else {
+                            // Stale/reordered event while programmatic resize in flight — skip.
+                            log::info!(
+                                "ScreensharingWindow: ignoring stale resize {:.1}x{:.1} (waiting for {:.1}x{:.1})",
+                                logical.width, logical.height, target_w, target_h
+                            );
+                        }
+                    } else if self.state.last_stream_width == 0 {
+                        // No stream data yet — all resizes are part of window creation.
+                        log::info!(
+                            "ScreensharingWindow: creation-phase resize to {:.1}x{:.1} (ignored)",
+                            logical.width,
+                            logical.height
+                        );
                     } else {
+                        // Stream has been received and no programmatic resize pending — user resize.
                         self.state.user_has_resized = true;
                         log::info!(
                             "ScreensharingWindow: user resize to {:.1}x{:.1} (logical)",
@@ -1418,12 +1437,8 @@ impl ScreensharingWindow {
                             logical.height
                         );
                     }
-                    // Re-apply aspect ratio on macOS.  Winit's window delegate
-                    // calls setResizeIncrements: at the start/end of every live
-                    // resize, which clears NSWindow.aspectRatio (the two are
-                    // mutually exclusive per Apple docs).  We must restore it on
-                    // each Resized event so the OS enforces the ratio for all
-                    // subsequent drag movements.
+
+                    // Always reconfigure surface + viewport.
                     #[cfg(target_os = "macos")]
                     set_macos_window_aspect_ratio(&self.window, self.state.img_aspect);
                     self.surface.configure(
@@ -1433,7 +1448,7 @@ impl ScreensharingWindow {
                             format: self.format,
                             width: new_size.width,
                             height: new_size.height,
-                            present_mode: wgpu::PresentMode::AutoVsync,
+                            present_mode: wgpu::PresentMode::Immediate,
                             alpha_mode: self.alpha_mode,
                             view_formats: vec![],
                             desired_maximum_frame_latency: 0,
@@ -1782,7 +1797,7 @@ impl ScreensharingWindow {
                 set_macos_window_aspect_ratio(&self.window, aspect);
 
                 let saved_pos = self.window.outer_position();
-                self.programmatic_resize = true;
+                self.programmatic_resize_target = Some((width, height));
                 let _ = self
                     .window
                     .request_inner_size(winit::dpi::LogicalSize::new(width, height));
