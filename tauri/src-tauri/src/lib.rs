@@ -668,8 +668,7 @@ pub fn disable_app_nap() {
     use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 
     let process_info = NSProcessInfo::processInfo();
-    let reason =
-        NSString::from_str("Avoid WebKit throttling for uninterrupted operation");
+    let reason = NSString::from_str("Avoid WebKit throttling for uninterrupted operation");
 
     let activity = unsafe {
         process_info.beginActivityWithOptions_reason(
