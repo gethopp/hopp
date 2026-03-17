@@ -22,7 +22,7 @@ use hopp::{
     setup_start_on_launch, setup_tray_icon, AppData,
 };
 #[cfg(target_os = "macos")]
-use hopp::{set_window_corner_radius_and_decorations, CORNER_RADIUS};
+use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
@@ -906,6 +906,8 @@ fn main() {
             /* macOS specific setup */
             #[cfg(target_os = "macos")]
             {
+                disable_app_nap();
+
                 /* Hide dock icon on macos */
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
