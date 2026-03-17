@@ -254,6 +254,8 @@ function App() {
     socketService.on("call_end", (data: TWebSocketMessage) => {
       if (data.type === "call_end") {
         // Get call info before clearing tokens
+        toast.dismiss("call-banner");
+
         const { callTokens: currentCallTokens, user } = useStore.getState();
         const participantId = currentCallTokens?.participant || "";
         const roomId = currentCallTokens?.room?.id || data.payload.call_id || "";
@@ -362,7 +364,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("ping", () => {});
+      const unlistenFn = await listen("ping", () => { });
 
       return unlistenFn;
     };
@@ -429,8 +431,8 @@ function App() {
                     needsUpdate ?
                       updateInProgress ?
                         "loading"
-                      : "default"
-                    : "hidden"
+                        : "default"
+                      : "hidden"
                   }
                   isLoading={updateInProgress}
                   disabled={!!callTokens}

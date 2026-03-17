@@ -29,7 +29,7 @@
   },
   "productName": "hopp",
   "mainBinaryName": "hopp",
-  "version": "0.0.68",
+  "version": "0.0.69",
   "identifier": "com.hopp.app",
   "plugins": {
     "updater": {
@@ -64,7 +64,8 @@
         "alwaysOnTop": true,
         "useHttpsScheme": true,
         "dragDropEnabled": false,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required",
+        "backgroundThrottling": "disabled"
       }
     ]
   }

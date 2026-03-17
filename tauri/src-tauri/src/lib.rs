@@ -663,6 +663,26 @@ pub fn set_window_corner_radius_and_decorations(
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn disable_app_nap() {
+    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
+
+    let process_info = NSProcessInfo::processInfo();
+    let reason = NSString::from_str("Avoid WebKit throttling for uninterrupted operation");
+
+    let activity = unsafe {
+        process_info.beginActivityWithOptions_reason(
+            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+            &reason,
+        )
+    };
+
+    // Leak the activity token so App Nap stays disabled for the lifetime of the process.
+    std::mem::forget(activity);
+
+    log::info!("App Nap disabled");
+}
+
 fn create_random_suffix() -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
