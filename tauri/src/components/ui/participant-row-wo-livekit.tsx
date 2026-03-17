@@ -200,6 +200,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           variant="gradient-white"
           onClick={() => {
             if (isCalling) {
+              callResolvedRef.current = true;
               sounds.ringing.stop();
               setCalling(null);
               socketService.send({
