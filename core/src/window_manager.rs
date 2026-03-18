@@ -189,6 +189,10 @@ impl WindowManager {
                 .iter()
                 .find(|entry| entry.monitor_id == active_id)
             {
+                #[cfg(target_os = "macos")]
+                {
+                    entry.window.set_simple_fullscreen(false);
+                }
                 entry.window.set_visible(false);
             }
         }

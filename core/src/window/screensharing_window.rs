@@ -88,6 +88,7 @@ const fn min_window_size() -> (f64, f64) {
 /// Available screen area detected at runtime by probing with a temporary window.
 /// This replaces hardcoded OS chrome offsets (menubar, taskbar, dock) with
 /// actual values from the window manager.
+#[derive(Debug)]
 struct ScreenArea {
     /// Top-left position of the available area in logical pixels.
     position: Position,
@@ -102,7 +103,7 @@ struct ScreenArea {
 /// Falls back to monitor size with hardcoded OS chrome offsets on failure.
 fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
     let start = StdInstant::now();
-    let timeout = Duration::from_millis(100);
+    let timeout = Duration::from_millis(200);
 
     let attrs = WindowAttributes::default()
         .with_decorations(false)
@@ -118,6 +119,16 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
     let mut area = fallback_screen_area_from_monitor(&window);
     let scale = window.scale_factor();
 
+    // On macOS, read monitor origin to detect if WM has placed the window yet.
+    #[cfg(target_os = "macos")]
+    let monitor_origin_y: f64 = window
+        .current_monitor()
+        .map(|m| {
+            let p: winit::dpi::LogicalPosition<f64> = m.position().to_logical(m.scale_factor());
+            p.y
+        })
+        .unwrap_or(0.0);
+
     loop {
         let inner: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(scale);
         let pos: Option<winit::dpi::LogicalPosition<f64>> =
@@ -125,15 +136,6 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
 
         if inner.width > 0.0 && inner.height > 0.0 && pos.is_some() {
             let pos = pos.unwrap();
-            let elapsed = start.elapsed();
-            log::info!(
-                "probe_available_screen_area: position=({:.1}, {:.1}), size={:.1}x{:.1} (took {:.1?})",
-                pos.x,
-                pos.y,
-                inner.width,
-                inner.height,
-                elapsed
-            );
             area = ScreenArea {
                 position: Position { x: pos.x, y: pos.y },
                 extent: Extent {
@@ -141,15 +143,45 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
                     height: inner.height,
                 },
             };
-            break;
+
+            // On macOS, position must differ from the monitor origin
+            // to confirm the WM accounted for the menu bar.
+            #[cfg(target_os = "macos")]
+            let settled = (pos.y - monitor_origin_y).abs() >= 1.0;
+            #[cfg(not(target_os = "macos"))]
+            let settled = true;
+
+            if settled {
+                let elapsed = start.elapsed();
+                log::info!(
+                    "probe_available_screen_area: position=({:.1}, {:.1}), size={:.1}x{:.1} (took {:.1?})",
+                    pos.x,
+                    pos.y,
+                    inner.width,
+                    inner.height,
+                    elapsed
+                );
+                break;
+            }
         }
 
         if start.elapsed() >= timeout {
             let elapsed = start.elapsed();
             log::warn!(
-                "probe_available_screen_area: still zero dimensions after {:.1?}, using defaults",
+                "probe_available_screen_area: area {:?} after {:.1?}",
+                area,
                 elapsed
             );
+
+            // On macOS, if position never moved from monitor origin,
+            // the WM didn't account for the menu bar. Apply 35px offset.
+            #[cfg(target_os = "macos")]
+            if (area.position.y - monitor_origin_y).abs() < 1.0 {
+                area.position.y += 35.0;
+                area.extent.height -= 35.0;
+                log::info!("probe_available_screen_area: applied 35px macOS menu bar offset");
+            }
+
             break;
         }
 
