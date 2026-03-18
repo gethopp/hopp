@@ -103,7 +103,7 @@ async fn internal_test_keyboard_fn_keys(room: &Room) -> io::Result<()> {
 /// Connects screenshare, runs the function key test, and stops screenshare.
 pub async fn test_keyboard_fn_keys() -> io::Result<()> {
     println!("Starting function key test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (mut cursor_socket, _, _) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 

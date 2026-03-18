@@ -870,8 +870,7 @@ async fn room_service_commands(
                 let connect_start = Instant::now();
 
                 let connect_fut = tokio::time::timeout(
-                    // Duration::from_secs(15),
-                    Duration::from_secs(2),
+                    Duration::from_secs(15),
                     Room::connect(&url, &token, RoomOptions::default()),
                 );
                 // Uncomment below to test artificial delay for testing racing conditions.

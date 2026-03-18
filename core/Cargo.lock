@@ -2660,6 +2660,7 @@ dependencies = [
  "sentry_utils",
  "serde",
  "serde_json",
+ "simple-easing",
  "socket_lib",
  "sysinfo",
  "thiserror 2.0.18",
@@ -6212,6 +6213,12 @@ checksum = "95890f873bec569a0362c235787f3aca6e1e887302ba4840839bcc6459c42da6"
 dependencies = [
  "quote",
 ]
+
+[[package]]
+name = "simple-easing"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c82d449ab1bccfeec125893c6875008206f038d4eb8a09e1e10caf86f44d574e"
 
 [[package]]
 name = "simplecss"

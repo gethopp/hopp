@@ -29,6 +29,8 @@ impl AppActivationObserver {
         let observer = unsafe {
             let center = NSNotificationCenter::defaultCenter();
 
+            let bringing_to_front = Arc::new(AtomicBool::new(false));
+
             let block = block2::RcBlock::new(move |_notification: NonNull<NSNotification>| {
                 log::info!("app_activation: received NSApplicationDidBecomeActiveNotification");
 
@@ -49,7 +51,20 @@ impl AppActivationObserver {
                     if let Some(window) = app_handle.get_webview_window("permissions") {
                         let _ = window.show();
                         let _ = window.set_focus();
+                    } else if bringing_to_front.load(Ordering::Relaxed) {
+                        log::info!(
+                            "app_activation: BringWindowsToFront already in flight, skipping"
+                        );
+                    } else if app_handle
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_focused().ok())
+                        .unwrap_or(false)
+                    {
+                        log::info!(
+                            "app_activation: main window focused, skipping BringWindowsToFront"
+                        );
                     } else {
+                        bringing_to_front.store(true, Ordering::Relaxed);
                         let data = app_handle.state::<Mutex<AppData>>();
                         let data = data.lock().unwrap();
                         if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
@@ -74,6 +89,7 @@ impl AppActivationObserver {
                                 }
                             }
                         }
+                        bringing_to_front.store(false, Ordering::Relaxed);
                     }
                     return;
                 } else {

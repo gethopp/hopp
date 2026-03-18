@@ -1375,6 +1375,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 if let Err(ref e) = result {
                     log::error!("user_event: StartCamera failed: {e}");
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.show_error_toast("Failed to start camera");
+                    }
                 }
 
                 // Open camera window if camera started successfully and window is enabled

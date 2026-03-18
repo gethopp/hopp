@@ -82,3 +82,4 @@ yuv-sys = "0.3"
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 cpal = "0.17.3"
 parking_lot = "0.12"
+simple-easing = "1.0"

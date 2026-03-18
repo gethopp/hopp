@@ -178,16 +178,10 @@ fn compute_indicator_x(active_idx: usize, anim: &Option<SegmentedControlAnim>) -
     }
 
     let t = (elapsed as f32) / (ANIM_DURATION_MS as f32); // 0.0 → 1.0
-    let eased = ease_out_cubic(t);
+    let eased = simple_easing::cubic_out(t);
 
     let from_x = a.from_idx as f32 * TAB_WIDTH;
     from_x + (target_x - from_x) * eased
-}
-
-/// Ease-out cubic: decelerating towards the end.
-#[inline]
-fn ease_out_cubic(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(3)
 }
 
 /// Build a single transparent icon button inside the segmented control.

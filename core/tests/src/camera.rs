@@ -185,6 +185,11 @@ pub fn test_call(
     let (sender, event_socket) = connect_socket()?;
     setup_camera(&sender, &event_socket, name)?;
 
+    // CallStartResult is sent before the room finishes connecting (non-blocking dispatch),
+    // so we need to wait for the room to be ready before sending StartCamera.
+    // TODO: Make the waiting for robust/deterministic.
+    std::thread::sleep(Duration::from_secs(3));
+
     // Start camera — validate the name against available devices first
     let mut camera_started = false;
 
@@ -245,28 +250,28 @@ pub fn test_call(
         }
     };
 
-    // if let Some(device_name) = device_name {
-    //     sender.send(Message::StartCamera(CameraStartMessage {
-    //         device_name: Some(device_name),
-    //     }))?;
+    if let Some(device_name) = device_name {
+        sender.send(Message::StartCamera(CameraStartMessage {
+            device_name: Some(device_name),
+        }))?;
 
-    //     match event_socket
-    //         .responses
-    //         .recv_timeout(Duration::from_secs(10))
-    //         .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
-    //     {
-    //         Message::StartCameraResult(Ok(())) => {
-    //             println!("Camera started successfully");
-    //             camera_started = true;
-    //         }
-    //         Message::StartCameraResult(Err(e)) => {
-    //             println!("Camera start failed: {e}. Continuing without camera.");
-    //         }
-    //         other => {
-    //             return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-    //         }
-    //     }
-    // }
+        match event_socket
+            .responses
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|e| io::Error::other(format!("Failed to receive StartCameraResult: {e:?}")))?
+        {
+            Message::StartCameraResult(Ok(())) => {
+                println!("Camera started successfully");
+                camera_started = true;
+            }
+            Message::StartCameraResult(Err(e)) => {
+                println!("Camera start failed: {e}. Continuing without camera.");
+            }
+            other => {
+                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
+            }
+        }
+    }
 
     // Start mic
     let device_name = if let Some(name) = mic_id {

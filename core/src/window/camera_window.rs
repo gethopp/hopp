@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant as StdInstant};
 
-use iced::widget::{button, column, container, row, shader, text, Space};
+use iced::widget::{button, column, container, row, shader, stack, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
     Size as IcedSize,
@@ -37,6 +37,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use thiserror::Error;
 
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
+use crate::components::toast::{self, ToastPosition, ToastState};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
@@ -50,8 +51,8 @@ const CAMERA_WINDOW_WIDTH: f64 = 1035.0;
 const CAMERA_WINDOW_HEIGHT: f64 = 555.0;
 
 /// Minimum camera window dimensions.
-const CAMERA_WINDOW_MIN_WIDTH: f64 = 400.0;
-const CAMERA_WINDOW_MIN_HEIGHT: f64 = 400.0;
+const CAMERA_WINDOW_MIN_WIDTH: f64 = 300.0;
+const CAMERA_WINDOW_MIN_HEIGHT: f64 = 300.0;
 
 /// Target redraw interval: 60 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 30);
@@ -76,6 +77,11 @@ const ICON_SCREEN_SHARE: char = '\u{F102}';
 const ICON_VIDEO: char = '\u{F101}';
 const ICON_PHONE_OFF: char = '\u{F103}';
 
+const AVATAR_SIZE: f32 = 130.0;
+const AVATAR_RADIUS: f32 = 20.0;
+const AVATAR_FONT_SIZE: f32 = 42.0;
+const AVATAR_LETTER_SPACING: f32 = -3.0;
+
 #[derive(Error, Debug)]
 pub enum CameraWindowError {
     #[error("Failed to create window")]
@@ -97,10 +103,10 @@ pub enum CameraMessage {
 }
 
 struct CameraState {
-    // Viewport logical size for responsive layout
     viewport_size: IcedSize,
     /// Local camera on/off state, updated from StartCamera/StopCamera handlers.
     camera_active: bool,
+    toast: Option<ToastState>,
 }
 
 impl Default for CameraState {
@@ -108,6 +114,7 @@ impl Default for CameraState {
         Self {
             viewport_size: IcedSize::new(CAMERA_WINDOW_WIDTH as f32, CAMERA_WINDOW_HEIGHT as f32),
             camera_active: false,
+            toast: None,
         }
     }
 }
@@ -498,7 +505,7 @@ impl CameraWindow {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        container(content)
+        let base = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme: &Theme| {
@@ -511,8 +518,42 @@ impl CameraWindow {
                     background: Some(Background::Color(bg)),
                     ..Default::default()
                 }
-            })
-            .into()
+            });
+
+        let toast_position: ToastPosition = if state.viewport_size.width < 500.0 {
+            ToastPosition {
+                top: None,
+                right: Some(15.0),
+                bottom: Some(15.0),
+                left: None,
+            }
+        } else {
+            ToastPosition {
+                top: Some(15.0),
+                right: Some(15.0),
+                bottom: None,
+                left: None,
+            }
+        };
+
+        if let Some(toast_el) = toast::toast_view(&state.toast, Some(&toast_position)) {
+            stack![base, toast_el].into()
+        } else {
+            base.into()
+        }
+    }
+
+    pub fn show_error_toast(&mut self, message: &str) {
+        self.state.toast = Some(toast::show_toast(
+            message.to_string(),
+            3000,
+            ToastPosition {
+                top: Some(15.0),
+                right: Some(15.0),
+                bottom: None,
+                left: None,
+            },
+        ));
     }
 
     /// Handle a camera UI message (state update).
@@ -586,6 +627,8 @@ impl CameraWindow {
             }
             self.resized = false;
         }
+
+        toast::tick_toast(&mut self.state.toast);
 
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
@@ -817,6 +860,107 @@ fn name_label<'a>(
     .into()
 }
 
+fn get_initials(name: &str) -> Vec<String> {
+    let parts: Vec<&str> = name.split_whitespace().collect();
+    match parts.len() {
+        0 => vec!["🤷".to_string()],
+        1 => parts[0]
+            .chars()
+            .next()
+            .map(|c| vec![c.to_uppercase().to_string()])
+            .unwrap_or_default(),
+        _ => {
+            let first = parts[0]
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
+            let last = parts
+                .last()
+                .unwrap()
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
+            vec![first, last]
+        }
+    }
+}
+
+fn initials_avatar<'a>(
+    name: &str,
+    tile_size: f32,
+) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    let scale = ((tile_size - 16.0).max(40.0) / AVATAR_SIZE).min(1.0);
+    let avatar_size = AVATAR_SIZE * scale;
+    let font_size = AVATAR_FONT_SIZE * scale;
+    let radius = AVATAR_RADIUS * scale;
+    let letter_spacing = AVATAR_LETTER_SPACING * scale;
+    let initials = get_initials(name);
+
+    let initials_row: iced::Element<'a, CameraMessage, Theme, iced::Renderer> = {
+        let mut r = row![];
+        for (i, ch) in initials.iter().enumerate() {
+            if i > 0 {
+                r = r.push(Space::new().width(Length::Fixed(letter_spacing)));
+            }
+            r = r.push(
+                text(ch.clone())
+                    .size(font_size)
+                    .color(Color::WHITE)
+                    .font(GEIST_MEDIUM),
+            );
+        }
+        r.align_y(Alignment::Center).into()
+    };
+
+    let inner = container(initials_row)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(ColorToken::Violet800.to_color())),
+            border: Border {
+                radius: radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    // Inner shadow approximation: white border overlay
+    // iced Shadow has no inset mode; approximate with a semi-transparent white border
+    // https://discourse.iced.rs/t/advanced-widget-rendering-styling/896
+    let inner_shadow_overlay = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                width: 1.0,
+                radius: radius.into(),
+            },
+            ..Default::default()
+        });
+
+    container(iced::widget::stack![inner, inner_shadow_overlay])
+        .width(Length::Fixed(avatar_size))
+        .height(Length::Fixed(avatar_size))
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                radius: radius.into(),
+                ..Default::default()
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.03),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 32.0,
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
 /// Tile corner radius for participant cards (Figma: 6px).
 const TILE_RADIUS: f32 = 6.0;
 
@@ -842,10 +986,11 @@ fn participant_card<'a>(
     // Background layer: GPU video if buffer exists and is active, Slate900 fallback otherwise
     let bg_element: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
         if buffers.is_inactive() {
-            // Use placeholder when stream is inactive
-            container(Space::new())
+            container(initials_avatar(name, tile_size))
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Color(ColorToken::Slate900.to_color())),
                     border: Border {
@@ -946,9 +1091,17 @@ fn create_participant_grid<'a>(
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
-    // Sort participants by name for stable ordering, skip local participant without camera
+    // Sort participants by name for stable ordering
     let mut sorted: Vec<(&String, &ParticipantInfo)> = participants_guard.iter().collect();
     sorted.sort_by(|a, b| a.1.name().cmp(b.1.name()));
+
+    // Uncomment to test with multiple participants
+    // #[cfg(debug_assertions)]
+    // {
+    //     let cloned = sorted.clone();
+    //     sorted.extend(cloned.iter().copied());
+    //     sorted.extend(cloned.iter().copied());
+    // }
 
     let participant_count = sorted.len();
     if participant_count == 0 {
