@@ -143,6 +143,50 @@ pub(crate) struct RoomServiceInner {
     cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
 }
 
+impl RoomServiceInner {
+    async fn clear(&self) {
+        {
+            let mut inner_room = self.room.lock().await;
+            if let Some(room) = inner_room.take() {
+                if let Err(e) = room.close().await {
+                    log::error!("RoomServiceInner::clear: Failed to close room: {e:?}");
+                }
+            }
+        }
+        {
+            let mut inner_video_room = self.video_room.lock().await;
+            if let Some(video_room) = inner_video_room.take() {
+                if let Err(e) = video_room.close().await {
+                    log::error!("RoomServiceInner::clear: Failed to close video room: {e:?}");
+                }
+            }
+        }
+        {
+            self.buffer_source.lock().unwrap().take();
+        }
+        {
+            self.camera_buffer_source.lock().unwrap().take();
+        }
+        {
+            let mut stop_tx_guard = self.remote_screen_share.stop_tx.lock().unwrap();
+            if let Some(tx) = stop_tx_guard.take() {
+                let _ = tx.send(());
+            }
+        }
+        {
+            self.participants.write().unwrap().clear();
+        }
+        {
+            self.remote_screen_share.buffer.lock().unwrap().take();
+            self.remote_screen_share
+                .publisher_sid
+                .lock()
+                .unwrap()
+                .take();
+        }
+    }
+}
+
 /// Inserts a remote participant into the map if not already present.
 /// Returns `true` if the participant was newly inserted.
 fn insert_participant_if_absent(
@@ -819,7 +863,6 @@ async fn room_service_commands(
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
         match command {
-            // TODO: Break this into create room and publish track commands
             RoomServiceCommand::CreateRoom {
                 token,
                 video_token,
@@ -837,40 +880,15 @@ async fn room_service_commands(
                     *guard = vec![cancel_tx_1, cancel_tx_2];
                 }
 
-                {
-                    let mut inner_room = inner.room.lock().await;
-                    if inner_room.is_some() {
-                        log::warn!("room_service_commands: Room already exists, killing it.");
-                        let room = inner_room.take().unwrap();
-                        let res = room.close().await;
-                        if let Err(e) = res {
-                            log::error!("room_service_commands: Failed to close room: {e:?}");
-                        }
-                    }
-                }
-                log::info!("room_service_commands: Closed room");
-                {
-                    let mut inner_video_room = inner.video_room.lock().await;
-                    if let Some(video_room) = inner_video_room.take() {
-                        log::warn!("room_service_commands: Video room already exists, killing it.");
-                        if let Err(e) = video_room.close().await {
-                            log::error!("room_service_commands: Failed to close video room: {e:?}");
-                        }
-                    }
-                }
-                log::info!("room_service_commands: Closed video room");
-                // Clear participants when joining a new room
-                {
-                    let mut participants = inner.participants.write().unwrap();
-                    participants.clear();
-                }
+                inner.clear().await;
+                log::info!("room_service_commands: Cleared previous room state");
 
                 log::info!("room_service_commands: Connecting to room and video room in parallel");
                 let url = livekit_server_url.clone();
                 let connect_start = Instant::now();
 
                 let connect_fut = tokio::time::timeout(
-                    Duration::from_secs(15),
+                    Duration::from_secs(30),
                     Room::connect(&url, &token, RoomOptions::default()),
                 );
                 // Uncomment below to test artificial delay for testing racing conditions.
@@ -883,7 +901,7 @@ async fn room_service_commands(
                 //     .await
                 // };
                 let video_connect_fut = tokio::time::timeout(
-                    Duration::from_secs(15),
+                    Duration::from_secs(30),
                     Room::connect(&url, &video_token, RoomOptions::default()),
                 );
 
@@ -1127,58 +1145,7 @@ async fn room_service_commands(
                     task.abort();
                 }
 
-                {
-                    let mut inner_room = inner.room.lock().await;
-                    if let Some(room) = inner_room.take() {
-                        if let Err(e) = room.close().await {
-                            log::error!("room_service_commands: Failed to close room: {e:?}");
-                        }
-                    }
-                }
-                {
-                    let mut inner_video_room = inner.video_room.lock().await;
-                    if let Some(video_room) = inner_video_room.take() {
-                        if let Err(e) = video_room.close().await {
-                            log::error!("room_service_commands: Failed to close video room: {e:?}");
-                        }
-                    }
-                }
-
-                // Clean up screen share buffer source
-                {
-                    let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                    inner_buffer_source.take();
-                }
-
-                // Clean up camera buffer source
-                {
-                    let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
-                    inner_buffer_source.take();
-                }
-
-                // Clean up remote screen share resources
-                {
-                    let mut stop_tx_guard = inner.remote_screen_share.stop_tx.lock().unwrap();
-                    if let Some(tx) = stop_tx_guard.take() {
-                        let _ = tx.send(());
-                    }
-                }
-
-                // Drop the participants
-                {
-                    let mut participants = inner.participants.write().unwrap();
-                    participants.clear();
-                }
-
-                {
-                    inner.remote_screen_share.buffer.lock().unwrap().take();
-                    inner
-                        .remote_screen_share
-                        .publisher_sid
-                        .lock()
-                        .unwrap()
-                        .take();
-                }
+                inner.clear().await;
             }
             RoomServiceCommand::PublishCursorPosition(x, y, _pointer) => {
                 let inner_room = inner.room.lock().await;
