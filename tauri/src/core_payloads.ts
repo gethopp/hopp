@@ -176,8 +176,10 @@ export interface CommandMap {
   set_last_used_mic: { args: { mic: string }; return: void };
   get_last_mode: { args: void; return: TStoredMode | null };
   set_last_mode: { args: { mode: TStoredMode }; return: void };
-  get_drawing_permanent: { args: void; return: boolean };
-  set_drawing_permanent: { args: { permanent: boolean }; return: void };
+  get_sharer_draw_persist: { args: void; return: boolean };
+  set_sharer_draw_persist: { args: { persist: boolean }; return: void };
+  get_controller_draw_persist: { args: void; return: boolean };
+  set_controller_draw_persist: { args: { persist: boolean }; return: void };
   enable_drawing: { args: { permanent: boolean }; return: void };
 
   // LiveKit

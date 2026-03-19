@@ -66,8 +66,12 @@ struct AppStateInternal {
     /// The user's preferred interaction mode for screen sharing sessions
     pub last_mode: Option<StoredMode>,
 
-    /// Whether drawing mode should persist until right-click (permanent mode)
-    pub drawing_permanent: Option<bool>,
+    /// Whether the sharer's drawing mode should persist until right-click
+    #[serde(alias = "drawing_permanent")]
+    pub sharer_draw_persist: Option<bool>,
+
+    /// Whether the controller's drawing mode should persist until right-click
+    pub controller_draw_persist: Option<bool>,
 }
 
 /// Legacy version of the application state structure.
@@ -90,7 +94,8 @@ impl Default for AppStateInternal {
     /// - Hopp server URL: none
     /// - Feedback disabled: false
     /// - Last mode: none
-    /// - Drawing permanent: none
+    /// - Sharer draw persist: none
+    /// - Controller draw persist: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -100,7 +105,8 @@ impl Default for AppStateInternal {
             hopp_server_url: None,
             feedback_disabled: false,
             last_mode: None,
-            drawing_permanent: None,
+            sharer_draw_persist: None,
+            controller_draw_persist: None,
         }
     }
 }
@@ -358,20 +364,35 @@ impl AppState {
         }
     }
 
-    /// Gets whether drawing mode should persist until right-click (permanent mode).
-    /// Returns false if the setting has not been configured.
-    pub fn drawing_permanent(&self) -> bool {
+    /// Gets whether the sharer's drawing mode should persist until right-click.
+    pub fn sharer_draw_persist(&self) -> bool {
         let _lock = self.lock.lock().unwrap();
-        self.state.drawing_permanent.unwrap_or(false)
+        self.state.sharer_draw_persist.unwrap_or(false)
     }
 
-    /// Updates the drawing permanent setting and saves to disk.
-    pub fn set_drawing_permanent(&mut self, permanent: bool) {
-        log::info!("set_drawing_permanent: {permanent}");
+    /// Updates the sharer draw persist setting and saves to disk.
+    pub fn set_sharer_draw_persist(&mut self, persist: bool) {
+        log::info!("set_sharer_draw_persist: {persist}");
         let _lock = self.lock.lock().unwrap();
-        self.state.drawing_permanent = Some(permanent);
+        self.state.sharer_draw_persist = Some(persist);
         if !self.save() {
-            log::error!("set_drawing_permanent: Failed to save app state");
+            log::error!("set_sharer_draw_persist: Failed to save app state");
+        }
+    }
+
+    /// Gets whether the controller's drawing mode should persist until right-click.
+    pub fn controller_draw_persist(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.controller_draw_persist.unwrap_or(false)
+    }
+
+    /// Updates the controller draw persist setting and saves to disk.
+    pub fn set_controller_draw_persist(&mut self, persist: bool) {
+        log::info!("set_controller_draw_persist: {persist}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.controller_draw_persist = Some(persist);
+        if !self.save() {
+            log::error!("set_controller_draw_persist: Failed to save app state");
         }
     }
 

@@ -559,6 +559,7 @@ impl ScreensharingWindow {
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participant_sid: Option<String>,
         participant_name: Option<String>,
+        draw_persist: bool,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
@@ -775,6 +776,7 @@ impl ScreensharingWindow {
             modifiers: ModifiersState::default(),
             state: ScreensharingState {
                 sharer_name: sharer_first_name,
+                draw_persist,
                 ..Default::default()
             },
             screen_area,

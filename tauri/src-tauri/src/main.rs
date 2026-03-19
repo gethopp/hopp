@@ -430,21 +430,39 @@ fn set_last_mode(app: tauri::AppHandle, mode: StoredMode) {
 }
 
 #[tauri::command(async)]
-fn get_drawing_permanent(app: tauri::AppHandle) -> bool {
-    log::info!("get_drawing_permanent");
+fn get_sharer_draw_persist(app: tauri::AppHandle) -> bool {
+    log::info!("get_sharer_draw_persist");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    let value = data.app_state.drawing_permanent();
-    log::info!("get_drawing_permanent: {value}");
+    let value = data.app_state.sharer_draw_persist();
+    log::info!("get_sharer_draw_persist: {value}");
     value
 }
 
 #[tauri::command(async)]
-fn set_drawing_permanent(app: tauri::AppHandle, permanent: bool) {
-    log::info!("set_drawing_permanent: {permanent}");
+fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
+    log::info!("set_sharer_draw_persist: {persist}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_drawing_permanent(permanent);
+    data.app_state.set_sharer_draw_persist(persist);
+}
+
+#[tauri::command(async)]
+fn get_controller_draw_persist(app: tauri::AppHandle) -> bool {
+    log::info!("get_controller_draw_persist");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.controller_draw_persist();
+    log::info!("get_controller_draw_persist: {value}");
+    value
+}
+
+#[tauri::command(async)]
+fn set_controller_draw_persist(app: tauri::AppHandle, persist: bool) {
+    log::info!("set_controller_draw_persist: {persist}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_controller_draw_persist(persist);
 }
 
 #[tauri::command(async)]
@@ -949,6 +967,12 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     });
                 }
             }
+            Message::ControllerDrawPersistChanged(persist) => {
+                log::info!("forward_core_events: controller draw persist changed: {persist}");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.app_state.set_controller_draw_persist(persist);
+            }
             Message::OpenContentPicker => {
                 log::info!("forward_core_events: open content picker");
                 if let Err(e) = hopp::create_media_window(
@@ -1103,6 +1127,9 @@ fn main() {
             let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
+            if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
+                log::error!("Failed to send initial controller_draw_persist: {e:?}");
+            }
             let data = Mutex::new(AppData::new(
                 sender,
                 event_socket,
@@ -1369,8 +1396,10 @@ fn main() {
             get_last_used_mic,
             set_last_mode,
             get_last_mode,
-            get_drawing_permanent,
-            set_drawing_permanent,
+            get_sharer_draw_persist,
+            set_sharer_draw_persist,
+            get_controller_draw_persist,
+            set_controller_draw_persist,
             enable_drawing,
             minimize_main_window,
             set_livekit_url,

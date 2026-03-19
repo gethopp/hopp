@@ -225,6 +225,7 @@ pub struct Application<'a> {
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
+    controller_draw_persist: bool,
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
@@ -330,6 +331,7 @@ impl<'a> Application<'a> {
                 previous_controllers_enabled: false,
                 cursor_set_times: 0,
             },
+            controller_draw_persist: false,
             window_manager: None,
             audio_capturer,
             audio_player,
@@ -507,7 +509,13 @@ impl<'a> Application<'a> {
         participant_sid: Option<String>,
         participant_name: Option<String>,
     ) {
-        match ScreensharingWindow::new(event_loop, buffer, participant_sid, participant_name) {
+        match ScreensharingWindow::new(
+            event_loop,
+            buffer,
+            participant_sid,
+            participant_name,
+            self.controller_draw_persist,
+        ) {
             Ok(win) => self.screensharing_window = Some(win),
             Err(e) => {
                 log::error!("Failed to open screensharing window: {e:?}");
@@ -1528,6 +1536,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::DefaultInputDeviceChanged => {
                 self.audio_capturer.handle_default_device_changed();
             }
+            UserEvent::ControllerDrawPersistChanged(persist) => {
+                self.controller_draw_persist = persist;
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1748,6 +1759,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                     || mode == crate::room_service::DrawingMode::ClickAnimation
                                 {
                                     rs.publish_draw_clear_all_paths();
+                                }
+                                if let crate::room_service::DrawingMode::Draw(settings) = &mode {
+                                    if settings.permanent != self.controller_draw_persist {
+                                        self.controller_draw_persist = settings.permanent;
+                                        if let Err(e) =
+                                            self.socket.send(Message::ControllerDrawPersistChanged(
+                                                settings.permanent,
+                                            ))
+                                        {
+                                            log::error!("Failed to send ControllerDrawPersistChanged: {e:?}");
+                                        }
+                                    }
                                 }
                                 rs.publish_drawing_mode(mode);
                             }
@@ -2046,6 +2069,7 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    ControllerDrawPersistChanged(bool),
     ListAudioDevices,
     StartAudioCapture(socket_lib::AudioCaptureMessage),
     StopAudioCapture,
@@ -2181,6 +2205,9 @@ impl RenderEventLoop {
                         UserEvent::ControllerCursorEnabled(enabled)
                     }
                     Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                    Message::ControllerDrawPersistChanged(persist) => {
+                        UserEvent::ControllerDrawPersistChanged(persist)
+                    }
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,

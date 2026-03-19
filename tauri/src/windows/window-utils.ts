@@ -229,12 +229,12 @@ const setLastMode = async (mode: TStoredMode): Promise<void> => {
   return await invoke("set_last_mode", { mode });
 };
 
-const getDrawingPermanent = async (): Promise<boolean> => {
-  return await invoke<boolean>("get_drawing_permanent");
+const getSharerDrawPersist = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_sharer_draw_persist");
 };
 
-const setDrawingPermanent = async (permanent: boolean): Promise<void> => {
-  return await invoke("set_drawing_permanent", { permanent });
+const setSharerDrawPersist = async (persist: boolean): Promise<void> => {
+  return await invoke("set_sharer_draw_persist", { persist });
 };
 
 const enableDrawing = async (permanent: boolean): Promise<void> => {
@@ -356,8 +356,8 @@ export const tauriUtils = {
   setLastUsedMic,
   getLastMode,
   setLastMode,
-  getDrawingPermanent,
-  setDrawingPermanent,
+  getSharerDrawPersist,
+  setSharerDrawPersist,
   enableDrawing,
   minimizeMainWindow,
   setLivekitUrl,

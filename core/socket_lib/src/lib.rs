@@ -211,6 +211,7 @@ pub enum Message {
     CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
     RoomConnectionFailed(String),
     OpenContentPicker,
+    ControllerDrawPersistChanged(bool),
 }
 
 impl Message {

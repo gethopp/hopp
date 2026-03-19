@@ -246,7 +246,7 @@ function DrawingEnableButton() {
   useEffect(() => {
     const loadPreference = async () => {
       try {
-        const permanent = await tauriUtils.getDrawingPermanent();
+        const permanent = await tauriUtils.getSharerDrawPersist();
         setDrawingPermanent(permanent);
       } catch (error) {
         console.error("Failed to load drawing permanent preference:", error);
@@ -258,7 +258,7 @@ function DrawingEnableButton() {
   const handlePermanentToggle = async (checked: boolean) => {
     setDrawingPermanent(checked);
     try {
-      await tauriUtils.setDrawingPermanent(checked);
+      await tauriUtils.setSharerDrawPersist(checked);
     } catch (error) {
       console.error("Failed to save drawing permanent preference:", error);
     }
