@@ -1301,7 +1301,6 @@ func (h *AuthHandler) SubmitFeedback(c echo.Context) error {
 	}
 
 	// Send Telegram notification
-	var message string
 	scoreEmojis := []string{"😡", "😕", "😐", "😊", "🤩"}
 	scoreEmoji := scoreEmojis[feedback.Score-1]
 
