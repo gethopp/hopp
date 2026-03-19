@@ -274,7 +274,7 @@ impl CameraWindow {
 
         #[cfg(target_os = "macos")]
         {
-            super::vibrancy::apply_macos_vibrancy(&window, 18.0);
+            super::vibrancy::apply_macos_vibrancy(&window, 10.0);
         }
 
         let logical = viewport.logical_size();
@@ -516,9 +516,14 @@ impl CameraWindow {
                 };
                 container::Style {
                     background: Some(Background::Color(bg)),
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
-            });
+            })
+            .clip(true);
 
         let toast_position: ToastPosition = if state.viewport_size.width < 500.0 {
             ToastPosition {

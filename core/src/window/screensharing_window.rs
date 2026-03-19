@@ -1708,8 +1708,13 @@ impl ScreensharingWindow {
                     } else {
                         Some(Background::Color(ColorToken::Slate600.to_color()))
                     },
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 })
+                .clip(true)
                 .into();
 
         if state.dropdown_open {
