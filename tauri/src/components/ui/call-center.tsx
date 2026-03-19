@@ -363,7 +363,7 @@ function MicrophoneIcon() {
     if (found) {
       typedInvoke("select_microphone", { deviceName: found.name });
     }
-  }, [activeMicId]);
+  }, [activeMicId, callTokens?.isInitialisingCall]);
 
   const handleMicToggle = useCallback(() => {
     const newState = !hasAudioEnabled;
