@@ -814,14 +814,17 @@ fn truncate_name(name: &str) -> String {
 
 /// Create a name label badge.
 ///
-/// Uses gradient backgrounds with the Lime palette when speaking
-/// or the Slate palette when not, matching the iced-poc name_label style.
+/// Variants
+/// - **Speaking**: Lime800→Lime950 gradient
+/// - **Default**: Slate950→Slate900 gradient
+/// - **Muted**: Slate800→Slate700 gradient + `ICON_MICROPHONE_OFF` (Slate400)
 fn name_label<'a>(
     name: &str,
     is_small_window: bool,
     is_speaking: bool,
+    is_muted: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
-    let font_size = if is_small_window { 12 } else { 16 };
+    let font_size = if is_small_window { 12.0 } else { 16.0 };
     let padding = if is_small_window {
         Padding::from([4, 10])
     } else {
@@ -830,39 +833,58 @@ fn name_label<'a>(
 
     let display_name = truncate_name(name);
 
-    container(
-        text(display_name)
-            .size(font_size)
-            .color(Color::WHITE)
-            .font(GEIST_MEDIUM),
-    )
-    .padding(padding)
-    .style(move |_theme: &Theme| {
-        // Linear gradient from top to bottom (180deg = PI radians)
-        let grad = if is_speaking {
-            // Speaking: Lime gradient
-            gradient::Linear::new(Radians(std::f32::consts::PI))
-                .add_stop(0.0, ColorToken::Lime800.to_color())
-                .add_stop(1.0, ColorToken::Lime950.to_color())
-        } else {
-            // Not speaking: Slate gradient
-            gradient::Linear::new(Radians(std::f32::consts::PI))
-                .add_stop(0.0, ColorToken::Slate950.to_color())
-                .add_stop(1.0, ColorToken::Slate900.to_color())
-        };
+    // Icon uses the same point size as the name so the row height matches the unmuted
+    // single-line label (a larger icon glyph would grow the pill vertically).
+    let name_el = text(display_name)
+        .size(font_size)
+        .color(Color::WHITE)
+        .font(GEIST_MEDIUM)
+        .align_y(Alignment::Center);
 
-        container::Style {
-            background: Some(Background::Gradient(grad.into())),
-            border: Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.3), // White with 30% opacity
-                width: 1.0,
-                radius: 20.0.into(),
-            },
-            shadow: ShadowToken::Xl.to_shadow(),
-            ..Default::default()
-        }
-    })
-    .into()
+    let label_row: iced::Element<'a, CameraMessage, Theme, iced::Renderer> = if is_muted {
+        let mic = text(ICON_MICROPHONE_OFF.to_string())
+            .font(ICONS_FONT)
+            .size(font_size)
+            .color(ColorToken::Slate400.to_color())
+            .align_y(Alignment::Center);
+        row![mic, Space::new().width(Length::Fixed(6.0)), name_el]
+            .spacing(0.0)
+            .align_y(Alignment::Center)
+            .into()
+    } else {
+        row![name_el].spacing(0.0).align_y(Alignment::Center).into()
+    };
+
+    container(label_row)
+        .padding(padding)
+        .style(move |_theme: &Theme| {
+            // Linear gradient from top to bottom (180deg = PI radians)
+            let grad = if is_muted {
+                gradient::Linear::new(Radians(std::f32::consts::PI))
+                    .add_stop(0.0, ColorToken::Slate800.to_color())
+                    .add_stop(1.0, ColorToken::Slate700.to_color())
+            } else if is_speaking {
+                gradient::Linear::new(Radians(std::f32::consts::PI))
+                    .add_stop(0.0, ColorToken::Lime800.to_color())
+                    .add_stop(1.0, ColorToken::Lime950.to_color())
+            } else {
+                gradient::Linear::new(Radians(std::f32::consts::PI))
+                    .add_stop(0.0, ColorToken::Slate950.to_color())
+                    .add_stop(1.0, ColorToken::Slate900.to_color())
+            };
+
+            container::Style {
+                background: Some(Background::Gradient(grad.into())),
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.3), // White with 30% opacity
+                    width: 1.0,
+                    radius: 20.0.into(),
+                },
+                shadow: ShadowToken::Xl.to_shadow(),
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 fn get_initials(name: &str) -> Vec<String> {
@@ -980,6 +1002,7 @@ fn participant_card<'a>(
     participant_id: u64,
     name: &str,
     is_speaking: bool,
+    is_muted: bool,
     buffers: Arc<VideoBufferManager>,
     tile_size: f32,
     is_small_window: bool,
@@ -1023,7 +1046,7 @@ fn participant_card<'a>(
     let overlay = container(
         column![
             Space::new().height(Length::Fill),
-            name_label(&name_owned, is_small_window, is_speaking),
+            name_label(&name_owned, is_small_window, is_speaking, is_muted),
         ]
         .width(Length::Fill),
     )
@@ -1179,6 +1202,7 @@ fn create_participant_grid<'a>(
                     id,
                     info.name(),
                     info.is_speaking(),
+                    info.muted(),
                     camera_buffers,
                     tile_size,
                     is_small_window,
