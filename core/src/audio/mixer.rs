@@ -38,6 +38,7 @@ pub struct AudioSource {
     ssrc: i32,
     sample_rate: u32,
     num_channels: u32,
+    last_mix: Arc<Mutex<Option<std::time::Instant>>>,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
 }
 
@@ -62,6 +63,21 @@ impl audio_mixer::AudioMixerSource for AudioSource {
     }
 
     fn get_audio_frame_with_info(&self, _target_sample_rate: u32) -> Option<AudioFrame<'_>> {
+        let now = std::time::Instant::now();
+        let mut last = self.last_mix.lock();
+        if let Some(prev) = *last {
+            let gap = now.duration_since(prev);
+            if gap.as_millis() > 100 {
+                log::warn!(
+                    "AudioSource: {}ms gap, flushing stale frames",
+                    gap.as_millis()
+                );
+                self.buffer.lock().clear();
+            }
+        }
+        *last = Some(now);
+        drop(last);
+
         let buf = self.buffer.lock().pop_front()?;
         Some(AudioFrame {
             data: Cow::Owned(buf),
@@ -186,6 +202,7 @@ impl MixerHandle {
             ssrc,
             sample_rate,
             num_channels: channels as u32,
+            last_mix: Arc::new(Mutex::new(None)),
             buffer: Arc::new(Mutex::new(VecDeque::new())),
         };
         inner.mixer.lock().add_source(source.clone());

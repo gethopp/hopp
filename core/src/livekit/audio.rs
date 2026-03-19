@@ -99,18 +99,40 @@ async fn process_audio_samples(
         "Mic capture sample rate must match APM rate"
     );
     let samples_per_unit = (MIXER_SAMPLE_RATE / 100) as usize;
+    let max_buffer_frames = 5; // 50ms max latency
+    let max_buffer_samples = max_buffer_frames * samples_per_unit;
+
     log::info!(
-        "Starting audio processing ({}Hz, {} samples per 10ms)",
+        "Starting audio processing ({}Hz, {} samples per 10ms, max buffer {}ms)",
         sample_rate,
-        samples_per_unit
+        samples_per_unit,
+        max_buffer_frames * 10,
     );
 
     let mut buffer: Vec<i16> = Vec::new();
     let mut chunk = vec![0i16; samples_per_unit];
 
     while let Some(audio_data) = rx.recv().await {
+        // Drain all pending messages into buffer
         buffer.extend_from_slice(&audio_data);
+        while let Ok(more) = rx.try_recv() {
+            buffer.extend_from_slice(&more);
+        }
 
+        // Trim oldest frames if over budget, aligned to frame boundary
+        if buffer.len() > max_buffer_samples {
+            let total_frames = buffer.len() / samples_per_unit;
+            let drop_frames = total_frames - max_buffer_frames;
+            let drop_samples = drop_frames * samples_per_unit;
+            log::warn!(
+                "Audio capture: dropping {}ms ({} frames) to cap latency",
+                drop_frames * 10,
+                drop_frames,
+            );
+            buffer.drain(..drop_samples);
+        }
+
+        // Process all complete frames
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
