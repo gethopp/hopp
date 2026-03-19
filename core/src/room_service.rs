@@ -2250,7 +2250,11 @@ async fn handle_room_events(
                 // Then set active speakers to speaking
                 for speaker in speakers {
                     let sid = speaker.sid().as_str().to_string();
-                    if let Some(info) = participants_guard.get_mut(&sid) {
+                    if sid == user_sid {
+                        if let Some(info) = participants_guard.get_mut("local") {
+                            info.set_is_speaking(true);
+                        }
+                    } else if let Some(info) = participants_guard.get_mut(&sid) {
                         info.set_is_speaking(true);
                     }
                 }
