@@ -46,8 +46,8 @@ impl AudioSource {
     pub fn push_samples(&self, samples: &[i16]) {
         let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
-        // Drop old frames if consumer is slow (keep ~100ms)
-        while buffer.len() > 10 {
+        // Drop old frames if consumer is slow (keep ~50ms)
+        while buffer.len() > 5 {
             buffer.pop_front();
         }
     }
