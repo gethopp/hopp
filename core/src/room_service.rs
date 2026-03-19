@@ -30,7 +30,7 @@ const TOPIC_DRAW: &str = "draw";
 const MAX_FRAMERATE: f64 = 40.0;
 const CAMERA_TRACK_NAME: &str = "camera";
 const CAMERA_MAX_BITRATE: u64 = 1_700_000;
-const CAMERA_MAX_FRAMERATE: f64 = 30.0;
+const CAMERA_MAX_FRAMERATE: f64 = 15.0;
 
 // Bitrate constants (in bits per second)
 const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
@@ -1535,7 +1535,7 @@ async fn room_service_commands(
                         LocalTrack::Video(track),
                         TrackPublishOptions {
                             source: TrackSource::Camera,
-                            video_codec: VideoCodec::VP8,
+                            video_codec: VideoCodec::H264,
                             simulcast: true,
                             video_encoding: Some(VideoEncoding {
                                 max_bitrate: CAMERA_MAX_BITRATE,
