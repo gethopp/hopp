@@ -40,7 +40,9 @@ use thiserror::Error;
 use fontdb::Database;
 use resvg::{tiny_skia, usvg};
 
-use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
+use crate::components::dropdown::dropdown_trigger_button;
+#[cfg(not(target_os = "macos"))]
+use crate::components::dropdown::{dropdown_overlay, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
@@ -543,6 +545,10 @@ pub struct ScreensharingWindow {
     click_animation_renderer: ClickAnimationRenderer,
     last_redraw: StdInstant,
     #[cfg(target_os = "macos")]
+    popover_selection: Arc<std::sync::atomic::AtomicU8>,
+    #[cfg(target_os = "macos")]
+    popover_open: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
     ns_cursor_pencil: objc2::rc::Retained<objc2_app_kit::NSCursor>,
@@ -787,6 +793,10 @@ impl ScreensharingWindow {
             participants_manager,
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
             last_redraw: StdInstant::now(),
+            #[cfg(target_os = "macos")]
+            popover_selection: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            #[cfg(target_os = "macos")]
+            popover_open: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
@@ -1496,6 +1506,36 @@ impl ScreensharingWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
+                #[cfg(target_os = "macos")]
+                {
+                    use std::sync::atomic::Ordering;
+                    let sel = self.popover_selection.swap(0, Ordering::Relaxed);
+                    if sel > 0 {
+                        self.state.dropdown_open = false;
+                        let index = (sel - 1) as usize;
+                        match index {
+                            0 => self.state.draw_persist = false,
+                            1 => self.state.draw_persist = true,
+                            _ => {}
+                        }
+                        log::info!(
+                            "ScreensharingWindow: popover draw_persist = {}",
+                            self.state.draw_persist
+                        );
+                        let mode = crate::room_service::DrawingMode::Draw(
+                            crate::room_service::DrawSettings {
+                                permanent: self.state.draw_persist,
+                            },
+                        );
+                        self.participants_manager
+                            .set_drawing_mode(LOCAL_PARTICIPANT_SID, mode.clone());
+                        input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                    } else if self.state.dropdown_open && !self.popover_open.load(Ordering::Relaxed)
+                    {
+                        self.state.dropdown_open = false;
+                    }
+                }
+
                 if self.last_redraw.elapsed() >= REDRAW_INTERVAL {
                     let cleared = self.redraw();
                     self.last_redraw = StdInstant::now();
@@ -1719,33 +1759,42 @@ impl ScreensharingWindow {
                 .clip(true)
                 .into();
 
-        if state.dropdown_open {
-            let items = [
-                DropdownItemDef {
-                    label: "Fade Out",
-                    icon: ICON_PENCIL_SVG,
-                    selected: !state.draw_persist,
-                },
-                DropdownItemDef {
-                    label: "Persist Until Right Click",
-                    icon: ICON_PENCIL_SVG,
-                    selected: state.draw_persist,
-                },
-            ];
-            let menu = crate::components::dropdown::dropdown_menu(
-                &items,
-                &[],
-                ScreensharingMessage::DropdownItemClicked,
-            );
-            dropdown_overlay(
-                base,
-                menu,
-                ScreensharingMessage::DismissDropdown,
-                HEADER_CHROME_HEIGHT,
-                HEADER_RIGHT_PADDING,
-            )
-        } else {
+        // On macOS the dropdown is a native NSPopover; on other platforms
+        // fall back to the iced overlay.
+        #[cfg(target_os = "macos")]
+        {
             base
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if state.dropdown_open {
+                let items = [
+                    DropdownItemDef {
+                        label: "Fade Out",
+                        icon: ICON_PENCIL_SVG,
+                        selected: !state.draw_persist,
+                    },
+                    DropdownItemDef {
+                        label: "Persist Until Right Click",
+                        icon: ICON_PENCIL_SVG,
+                        selected: state.draw_persist,
+                    },
+                ];
+                let menu = crate::components::dropdown::dropdown_menu(
+                    &items,
+                    &[],
+                    ScreensharingMessage::DropdownItemClicked,
+                );
+                dropdown_overlay(
+                    base,
+                    menu,
+                    ScreensharingMessage::DismissDropdown,
+                    HEADER_CHROME_HEIGHT,
+                    HEADER_RIGHT_PADDING,
+                )
+            } else {
+                base
+            }
         }
     }
 
@@ -1760,11 +1809,25 @@ impl ScreensharingWindow {
                 log::info!("ScreensharingWindow: tab selected = {}", id);
             }
             ScreensharingMessage::ToggleDropdown => {
-                self.state.dropdown_open = !self.state.dropdown_open;
-                log::info!(
-                    "ScreensharingWindow: dropdown toggled = {}",
-                    self.state.dropdown_open
-                );
+                #[cfg(target_os = "macos")]
+                {
+                    self.state.dropdown_open = true;
+                    super::native_popover::show_settings_popover(
+                        &self.window,
+                        self.state.draw_persist,
+                        self.popover_selection.clone(),
+                        self.popover_open.clone(),
+                    );
+                    log::info!("ScreensharingWindow: native popover shown");
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.state.dropdown_open = !self.state.dropdown_open;
+                    log::info!(
+                        "ScreensharingWindow: dropdown toggled = {}",
+                        self.state.dropdown_open
+                    );
+                }
             }
             ScreensharingMessage::DismissDropdown => {
                 self.state.dropdown_open = false;

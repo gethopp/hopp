@@ -47,6 +47,8 @@ pub mod utils {
 
 pub(crate) mod window {
     pub(crate) mod camera_window;
+    #[cfg(target_os = "macos")]
+    pub(crate) mod native_popover;
     pub(crate) mod screensharing_window;
     pub(crate) mod stats_window;
     pub(crate) mod vibrancy;

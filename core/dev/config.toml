@@ -18,7 +18,7 @@ rust_log = "hopp_core=info"
 [participants.streamer]
 name = "Costantinos"
 camera_name = ""
-# camera_name = "MacBook Pro Camera"
+#camera_name = "MacBook Pro Camera"
 screenshare = true
 
 [participants.viewer]
