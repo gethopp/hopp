@@ -215,7 +215,7 @@ impl Draw {
     fn make_stroke(&self) -> Stroke<'static> {
         Stroke {
             style: stroke::Style::Solid(self.color),
-            width: 5.0,
+            width: 3.0,
             line_cap: stroke::LineCap::Round,
             line_join: stroke::LineJoin::Round,
             line_dash: stroke::LineDash::default(),
@@ -227,7 +227,7 @@ impl Draw {
         glow_color.a *= 0.60;
         Stroke {
             style: stroke::Style::Solid(glow_color),
-            width: 5.0 + 1.5,
+            width: 3.0 + 1.5,
             line_cap: stroke::LineCap::Round,
             line_join: stroke::LineJoin::Round,
             line_dash: stroke::LineDash::default(),
