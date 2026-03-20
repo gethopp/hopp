@@ -26,6 +26,7 @@ pub struct VideoBuffer {
     pub v: Vec<u8>,
     pub frame_id: u64,
     pub receive_time: Option<std::time::Instant>,
+    pub ui_tree_read_time: Option<std::time::Instant>,
 }
 
 impl Default for VideoBuffer {
@@ -41,6 +42,7 @@ impl Default for VideoBuffer {
             v: Vec::new(),
             frame_id: 0,
             receive_time: None,
+            ui_tree_read_time: None,
         }
     }
 }
@@ -182,6 +184,8 @@ pub async fn process_video_stream(
     let mut sink = NativeVideoStream::new(video_track.rtc_track());
     let timeout_duration = std::time::Duration::from_secs(1);
     let mut frame_counter: u64 = 0;
+    let mut fps_last_time = std::time::Instant::now();
+    let mut fps_frame_count: u64 = 0;
 
     loop {
         tokio::select! {
@@ -198,27 +202,26 @@ pub async fn process_video_stream(
                         {
                             let mut guard = buf.lock().unwrap();
 
-                            let copy_start = std::time::Instant::now();
                             guard.copy_from_i420(&i420, width, height);
-                            let copy_delay = copy_start.elapsed();
 
                             guard.frame_id = frame_counter;
                             guard.receive_time = Some(receive_time);
+                            guard.ui_tree_read_time = None;
 
                             frame_counter += 1;
-
-                            if frame_counter % 30 == 0 {
-                                log::info!(
-                                    "video_latency [{}] [{}]: copy={:.2}ms",
-                                    stream_key, stream_type,
-                                    copy_delay.as_secs_f64() * 1000.0,
-                                );
-                            }
                         }
                         manager.advance_write();
 
+                        fps_frame_count += 1;
+                        let elapsed = fps_last_time.elapsed().as_secs_f64();
+                        if elapsed >= 5.0 {
+                            log::info!("video_fps [{}] {}: {:.1} fps", stream_type, stream_key, fps_frame_count as f64 / elapsed);
+                            fps_frame_count = 0;
+                            fps_last_time = std::time::Instant::now();
+                        }
+
                         if let Some(proxy) = &event_loop_proxy {
-                            let _ = proxy.send_event(crate::UserEvent::ScreenShareFrameReady);
+                            let _ = proxy.send_event(crate::UserEvent::ScreenShareFrameReady(std::time::Instant::now()));
                         }
                     }
                     Ok(None) => {

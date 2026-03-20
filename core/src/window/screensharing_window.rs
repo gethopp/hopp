@@ -626,6 +626,9 @@ pub struct ScreensharingWindow {
     participants_manager: ParticipantsManager,
     click_animation_renderer: ClickAnimationRenderer,
     last_redraw: StdInstant,
+    redraw_count: u32,
+    redraw_duration_sum_ms: f64,
+    fps_window_start: StdInstant,
     #[cfg(target_os = "macos")]
     _macos_zoom_delegate: objc2::rc::Retained<MacosZoomDelegate>,
     #[cfg(target_os = "macos")]
@@ -899,6 +902,9 @@ impl ScreensharingWindow {
             participants_manager,
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
             last_redraw: StdInstant::now(),
+            redraw_count: 0,
+            redraw_duration_sum_ms: 0.0,
+            fps_window_start: StdInstant::now(),
             #[cfg(target_os = "macos")]
             _macos_zoom_delegate: macos_zoom_delegate,
             #[cfg(target_os = "macos")]
@@ -1716,7 +1722,8 @@ impl ScreensharingWindow {
         // Check if buffer has data by peeking at the latest frame
         let has_data = {
             let frame_lock = screen_share_buffer.latest_frame();
-            let buf = frame_lock.lock().unwrap();
+            let mut buf = frame_lock.lock().unwrap();
+            buf.ui_tree_read_time = Some(std::time::Instant::now());
             buf.width > 0 && buf.height > 0
         };
 
@@ -1924,6 +1931,29 @@ impl ScreensharingWindow {
     /// Perform a full redraw: build UI, draw, present.
     /// Returns path IDs cleared by auto-expire during this frame.
     fn redraw(&mut self) -> Vec<u64> {
+        let redraw_start = StdInstant::now();
+        let result = self.redraw_inner();
+        let redraw_ms = redraw_start.elapsed().as_secs_f64() * 1000.0;
+
+        self.redraw_count += 1;
+        self.redraw_duration_sum_ms += redraw_ms;
+        let elapsed = self.fps_window_start.elapsed().as_secs_f64();
+        if elapsed >= 1.0 {
+            let fps = self.redraw_count as f64 / elapsed;
+            let avg_ms = self.redraw_duration_sum_ms / self.redraw_count as f64;
+            log::info!(
+                "screensharing redraw: {:.1} fps, avg {:.1}ms/frame",
+                fps,
+                avg_ms
+            );
+            self.redraw_count = 0;
+            self.redraw_duration_sum_ms = 0.0;
+            self.fps_window_start = StdInstant::now();
+        }
+        result
+    }
+
+    fn redraw_inner(&mut self) -> Vec<u64> {
         // Check if stream dimensions changed and update window size
         {
             let frame_lock = self.screen_share_buffer.latest_frame();

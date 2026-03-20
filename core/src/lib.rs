@@ -971,7 +971,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending start screen share result: {e:?}");
                 }
             }
-            UserEvent::ScreenShareFrameReady => {
+            UserEvent::ScreenShareFrameReady(sent_at) => {
+                let event_delay_ms = sent_at.elapsed().as_millis();
+                log::info!("video_event_delay: {:.1}ms", event_delay_ms);
                 if let Some(screensharing_window) = &self.screensharing_window {
                     screensharing_window.request_redraw();
                 }
@@ -2047,7 +2049,7 @@ pub enum UserEvent {
     CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
-    ScreenShareFrameReady,
+    ScreenShareFrameReady(std::time::Instant),
     RequestRedraw,
     SharerPosition(f64, f64),
     Tick(u128),
