@@ -180,8 +180,31 @@ pub fn play_remote_audio_track(
     let stream_key = participant_id.to_string();
     let task = tokio::spawn(async move {
         log::info!("Starting audio receive loop for {}", stream_key);
+        let mut frame_count: u64 = 0;
+        let mut total_samples: u64 = 0;
+        let start = std::time::Instant::now();
+        let mut last_log = start;
+
         while let Some(frame) = stream.next().await {
             source_clone.push_samples(&frame.data);
+            frame_count += 1;
+            total_samples += frame.data.len() as u64;
+
+            let now = std::time::Instant::now();
+            if now.duration_since(last_log).as_secs() >= 5 {
+                let elapsed = now.duration_since(start).as_secs_f64();
+                let expected_secs = total_samples as f64 / LIVEKIT_SAMPLE_RATE as f64;
+                let drift_ms = (expected_secs - elapsed) * 1000.0;
+                log::info!(
+                    "Audio receive [{}]: {} frames, drift {:.0}ms (expected {:.1}s, wall {:.1}s)",
+                    stream_key,
+                    frame_count,
+                    drift_ms,
+                    expected_secs,
+                    elapsed,
+                );
+                last_log = now;
+            }
         }
         log::info!("Audio receive loop ended for {}", stream_key);
     });
