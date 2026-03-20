@@ -40,6 +40,13 @@ use thiserror::Error;
 use fontdb::Database;
 use resvg::{tiny_skia, usvg};
 
+#[cfg(target_os = "macos")]
+use objc2::MainThreadOnly;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowDelegate};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSObject, NSObjectProtocol};
+
 use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
@@ -53,36 +60,46 @@ use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
-/// Sizing constants
-const SCREENSHARING_WINDOW_WIDTH: f64 = 600.0; // logical pixels
-const SCREENSHARING_WINDOW_MIN_WIDTH: f64 = 500.0;
-const CONTENT_PADDING: f32 = 12.0;
-/// Header chrome height: 4px top pad + ~26px segmented control + 12px bottom pad
-const HEADER_CHROME_HEIGHT: f32 = 42.0;
-/// Header right padding (less than content so the cog sits closer to the window edge)
-const HEADER_RIGHT_PADDING: f32 = 4.0;
+struct WindowConstant;
+
+impl WindowConstant {
+    /// Default window width in logical pixels.
+    const DEFAULT_WIDTH: f64 = 600.0;
+    /// Minimum window width in logical pixels.
+    const MIN_WIDTH: f64 = 500.0;
+    /// Content padding on all sides (left, right, bottom) — f32 for iced layout.
+    const PADDING: f32 = 12.0;
+    /// Header height: 4px top pad + ~26px segmented control + 12px bottom pad.
+    const HEADER_HEIGHT: f32 = 42.0;
+    /// Header right padding (less than content so the cog sits closer to the edge).
+    const HEADER_RIGHT_PADDING: f32 = 4.0;
+    /// Vertical skeleton: header + bottom padding (f64 for window-sizing math).
+    const SKELETON_H: f64 = Self::HEADER_HEIGHT as f64 + Self::PADDING as f64;
+    /// Horizontal skeleton: left + right padding (f64 for window-sizing math).
+    const SKELETON_W: f64 = 2.0 * Self::PADDING as f64;
+}
 
 const fn default_window_size() -> (f64, f64) {
-    let content_w = SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+    let content_w = WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
     let content_h = content_w / (16.0 / 9.0);
-    let h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-    (SCREENSHARING_WINDOW_WIDTH, h)
+    let h = content_h + WindowConstant::SKELETON_H;
+    (WindowConstant::DEFAULT_WIDTH, h)
 }
 
 /// Returns the minimum logical (width, height) for a given stream aspect ratio.
 fn min_window_size_for_aspect(aspect: f64) -> (f64, f64) {
-    let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - 2.0 * CONTENT_PADDING as f64;
+    let min_content_w = WindowConstant::MIN_WIDTH - WindowConstant::SKELETON_W;
     let min_content_h = min_content_w / aspect;
-    let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-    (SCREENSHARING_WINDOW_MIN_WIDTH, min_h)
+    let min_h = min_content_h + WindowConstant::SKELETON_H;
+    (WindowConstant::MIN_WIDTH, min_h)
 }
 
 /// Minimum logical (width, height) for the default 16:9 aspect ratio.
 const fn min_window_size() -> (f64, f64) {
-    let min_content_w = SCREENSHARING_WINDOW_MIN_WIDTH - 2.0 * CONTENT_PADDING as f64;
+    let min_content_w = WindowConstant::MIN_WIDTH - WindowConstant::SKELETON_W;
     let min_content_h = min_content_w / (16.0 / 9.0);
-    let min_h = min_content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-    (SCREENSHARING_WINDOW_MIN_WIDTH, min_h)
+    let min_h = min_content_h + WindowConstant::SKELETON_H;
+    (WindowConstant::MIN_WIDTH, min_h)
 }
 
 /// Available screen area detected at runtime by probing with a temporary window.
@@ -94,6 +111,71 @@ struct ScreenArea {
     position: Position,
     /// Available dimensions in logical pixels.
     extent: Extent,
+}
+
+// TODO(@konsalex): Extract to MacOS specific module for screenshare to avoid
+// so much MacOS specific code in this file.
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = objc2::MainThreadOnly]
+    struct MacosZoomDelegate;
+
+    unsafe impl NSObjectProtocol for MacosZoomDelegate {}
+
+    unsafe impl NSWindowDelegate for MacosZoomDelegate {
+        // Callback for:
+        // https://developer.apple.com/documentation/appkit/nswindowdelegate/windowwillusestandardframe(_:defaultframe:)
+        #[unsafe(method(windowWillUseStandardFrame:defaultFrame:))]
+        fn window_will_use_standard_frame_default_frame(
+            &self,
+            window: &NSWindow,
+            default_frame: objc2_foundation::NSRect,
+        ) -> objc2_foundation::NSRect {
+            use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+            let frame = window.frame();
+            let content_w = (frame.size.width - WindowConstant::SKELETON_W).max(1.0);
+            let content_h = (frame.size.height - WindowConstant::SKELETON_H).max(1.0);
+            let aspect = content_w / content_h;
+
+            let visible_frame = if let Some(screen) = window.screen() {
+                unsafe { objc2::msg_send![&*screen, visibleFrame] }
+            } else {
+                default_frame
+            };
+
+            let available = Extent {
+                width: visible_frame.size.width,
+                height: visible_frame.size.height,
+            };
+
+            let (width, height) =
+                calculate_max_window_size(available, aspect).unwrap_or_else(|| {
+                    let content_w = WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
+                    let content_h = content_w / aspect;
+                    (
+                        WindowConstant::DEFAULT_WIDTH,
+                        content_h + WindowConstant::SKELETON_H,
+                    )
+                });
+
+            NSRect::new(
+                NSPoint::new(visible_frame.origin.x, visible_frame.origin.y),
+                NSSize::new(width, height),
+            )
+        }
+    }
+);
+
+#[cfg(target_os = "macos")]
+impl MacosZoomDelegate {
+    fn new() -> objc2::rc::Retained<Self> {
+        let mtm =
+            objc2::MainThreadMarker::new().expect("macOS zoom delegate must be on main thread");
+        let this = Self::alloc(mtm);
+        unsafe { objc2::msg_send![this, init] }
+    }
 }
 
 /// Probe the available screen area by creating a temporary borderless, maximized,
@@ -238,7 +320,7 @@ fn default_screen_area_from_hardcoded() -> ScreenArea {
             y: os_chrome_height,
         },
         extent: Extent {
-            width: SCREENSHARING_WINDOW_WIDTH,
+            width: WindowConstant::DEFAULT_WIDTH,
             height: 900.0,
         },
     }
@@ -262,6 +344,8 @@ const CURSOR_ICON_POINTER: &[u8] =
     include_bytes!("../../resources/icons/local-participant-cursor.svg");
 const CURSOR_ICON_PENCIL: &[u8] =
     include_bytes!("../../resources/icons/local-participant-pencil.svg");
+const CURSOR_ICON_POINT: &[u8] =
+    include_bytes!("../../resources/icons/local-participant-pointer.svg");
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
@@ -543,13 +627,19 @@ pub struct ScreensharingWindow {
     click_animation_renderer: ClickAnimationRenderer,
     last_redraw: StdInstant,
     #[cfg(target_os = "macos")]
+    _macos_zoom_delegate: objc2::rc::Retained<MacosZoomDelegate>,
+    #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
     ns_cursor_pencil: objc2::rc::Retained<objc2_app_kit::NSCursor>,
+    #[cfg(target_os = "macos")]
+    ns_cursor_point: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(not(target_os = "macos"))]
     custom_cursor_pointer: winit::window::CustomCursor,
     #[cfg(not(target_os = "macos"))]
     custom_cursor_pencil: winit::window::CustomCursor,
+    #[cfg(not(target_os = "macos"))]
+    custom_cursor_point: winit::window::CustomCursor,
 }
 
 impl ScreensharingWindow {
@@ -677,10 +767,11 @@ impl ScreensharingWindow {
         let clipboard = Clipboard::connect(window.clone());
 
         #[cfg(target_os = "macos")]
+        let macos_zoom_delegate = configure_macos_zoom_behavior(&window);
+
+        #[cfg(target_os = "macos")]
         {
             super::vibrancy::apply_macos_vibrancy(&window, 10.0);
-            // Gray out the green fullscreen/zoom traffic-light button.
-            disable_macos_fullscreen_button(&window);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
             set_macos_window_aspect_ratio(&window, 16.0 / 9.0);
@@ -695,10 +786,11 @@ impl ScreensharingWindow {
         // On macOS, rasterize at 4× the logical size for maximum crispness,
         // then create native NSCursors with the point size set to 30×30.
         #[cfg(target_os = "macos")]
-        let (ns_cursor_pointer, ns_cursor_pencil) = {
+        let (ns_cursor_pointer, ns_cursor_pencil, ns_cursor_point) = {
             let px = (CURSOR_LOGICAL_SIZE * 4.0).round() as u32;
             let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
             let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);
+            let (point_rgba, pt_w, pt_h) = rasterize_svg_to_rgba(CURSOR_ICON_POINT, px);
             let pointer = create_macos_cursor(
                 &pointer_rgba,
                 pw,
@@ -717,15 +809,25 @@ impl ScreensharingWindow {
                 2.0,
                 29.0,
             );
-            (pointer, pencil)
+            let point = create_macos_cursor(
+                &point_rgba,
+                pt_w,
+                pt_h,
+                CURSOR_LOGICAL_SIZE,
+                CURSOR_LOGICAL_SIZE,
+                2.0,
+                4.0,
+            );
+            (pointer, pencil, point)
         };
 
         // On non-macOS platforms, fall back to winit CustomCursor at 30px.
         #[cfg(not(target_os = "macos"))]
-        let (custom_cursor_pointer, custom_cursor_pencil) = {
+        let (custom_cursor_pointer, custom_cursor_pencil, custom_cursor_point) = {
             let px = CURSOR_LOGICAL_SIZE as u32;
             let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
             let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);
+            let (point_rgba, pt_w, pt_h) = rasterize_svg_to_rgba(CURSOR_ICON_POINT, px);
             let pointer = event_loop.create_custom_cursor(
                 CustomCursor::from_rgba(pointer_rgba, pw as u16, ph as u16, 3, 2)
                     .expect("create pointer cursor"),
@@ -734,7 +836,17 @@ impl ScreensharingWindow {
                 CustomCursor::from_rgba(pencil_rgba, ew as u16, eh as u16, 2, 29)
                     .expect("create pencil cursor"),
             );
-            (pointer, pencil)
+            let point = event_loop.create_custom_cursor(
+                CustomCursor::from_rgba(
+                    point_rgba,
+                    pt_w as u16,
+                    pt_h as u16,
+                    POINT_CURSOR_HOTSPOT.0 as u16,
+                    POINT_CURSOR_HOTSPOT.1 as u16,
+                )
+                .expect("create point-mode cursor"),
+            );
+            (pointer, pencil, point)
         };
 
         let mut participants_manager = ParticipantsManager::new();
@@ -788,13 +900,19 @@ impl ScreensharingWindow {
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
             last_redraw: StdInstant::now(),
             #[cfg(target_os = "macos")]
+            _macos_zoom_delegate: macos_zoom_delegate,
+            #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
             ns_cursor_pencil,
+            #[cfg(target_os = "macos")]
+            ns_cursor_point,
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pointer,
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pencil,
+            #[cfg(not(target_os = "macos"))]
+            custom_cursor_point,
         };
         s.update_cursor();
         Ok(s)
@@ -919,8 +1037,9 @@ impl ScreensharingWindow {
     ///
     /// - Outside participant area → always the OS default cursor.
     /// - Inside participant area + `draw` tab → pencil cursor.
+    /// - Inside participant area + `point` tab → click-pointer cursor (`local-participant-pointer.svg`).
     /// - Inside participant area + `control` tab + local in control → OS default cursor.
-    /// - Inside participant area + other cases → custom pointer cursor.
+    /// - Inside participant area + other cases → hand cursor (`local-participant-cursor.svg`).
     fn update_cursor(&self) {
         #[cfg(target_os = "macos")]
         {
@@ -929,6 +1048,8 @@ impl ScreensharingWindow {
                 unsafe { NSCursor::arrowCursor().set() };
             } else if self.state.active_tab == "draw" {
                 unsafe { self.ns_cursor_pencil.set() };
+            } else if self.state.active_tab == "point" {
+                unsafe { self.ns_cursor_point.set() };
             } else if self.state.active_tab == "control" && self.local_participant_in_control {
                 unsafe { NSCursor::arrowCursor().set() };
             } else {
@@ -943,6 +1064,10 @@ impl ScreensharingWindow {
             } else if self.state.active_tab == "draw" {
                 self.window.set_cursor(winit::window::Cursor::Custom(
                     self.custom_cursor_pencil.clone(),
+                ));
+            } else if self.state.active_tab == "point" {
+                self.window.set_cursor(winit::window::Cursor::Custom(
+                    self.custom_cursor_point.clone(),
                 ));
             } else if self.state.active_tab == "control" && self.local_participant_in_control {
                 self.window
@@ -959,10 +1084,10 @@ impl ScreensharingWindow {
     fn participant_image_rect(&self) -> Rectangle {
         let logical = self.viewport.logical_size();
         Rectangle {
-            x: CONTENT_PADDING,
-            y: HEADER_CHROME_HEIGHT,
-            width: logical.width - 2.0 * CONTENT_PADDING,
-            height: logical.height - HEADER_CHROME_HEIGHT - CONTENT_PADDING,
+            x: WindowConstant::PADDING,
+            y: WindowConstant::HEADER_HEIGHT,
+            width: logical.width - 2.0 * WindowConstant::PADDING,
+            height: logical.height - WindowConstant::HEADER_HEIGHT - WindowConstant::PADDING,
         }
     }
 
@@ -1463,13 +1588,25 @@ impl ScreensharingWindow {
                             logical.height
                         );
                     } else {
-                        // Stream has been received and no programmatic resize pending — user resize.
-                        self.state.user_has_resized = true;
-                        log::info!(
-                            "ScreensharingWindow: user resize to {:.1}x{:.1} (logical)",
-                            logical.width,
-                            logical.height
-                        );
+                        #[cfg(target_os = "macos")]
+                        let is_zoom = is_macos_window_zoomed(&self.window);
+                        #[cfg(not(target_os = "macos"))]
+                        let is_zoom = false;
+
+                        if is_zoom {
+                            log::info!(
+                                "ScreensharingWindow: zoom resize to {:.1}x{:.1} (logical)",
+                                logical.width,
+                                logical.height
+                            );
+                        } else {
+                            self.state.user_has_resized = true;
+                            log::info!(
+                                "ScreensharingWindow: user resize to {:.1}x{:.1} (logical)",
+                                logical.width,
+                                logical.height
+                            );
+                        }
                     }
 
                     // Always reconfigure surface + viewport.
@@ -1570,9 +1707,9 @@ impl ScreensharingWindow {
             .width(Length::Fill)
             .padding(Padding {
                 top: 4.0,
-                right: HEADER_RIGHT_PADDING,
-                bottom: CONTENT_PADDING,
-                left: CONTENT_PADDING,
+                right: WindowConstant::HEADER_RIGHT_PADDING,
+                bottom: WindowConstant::PADDING,
+                left: WindowConstant::PADDING,
             });
 
         // ── Content area (video stream) ──────────────────────────────────
@@ -1691,9 +1828,9 @@ impl ScreensharingWindow {
         .height(Length::Fill)
         .padding(
             Padding::new(0.0)
-                .left(CONTENT_PADDING)
-                .right(CONTENT_PADDING)
-                .bottom(CONTENT_PADDING),
+                .left(WindowConstant::PADDING)
+                .right(WindowConstant::PADDING)
+                .bottom(WindowConstant::PADDING),
         );
 
         let main_content = column![header, content_area]
@@ -1741,8 +1878,8 @@ impl ScreensharingWindow {
                 base,
                 menu,
                 ScreensharingMessage::DismissDropdown,
-                HEADER_CHROME_HEIGHT,
-                HEADER_RIGHT_PADDING,
+                WindowConstant::HEADER_HEIGHT,
+                WindowConstant::HEADER_RIGHT_PADDING,
             )
         } else {
             base
@@ -1810,11 +1947,11 @@ impl ScreensharingWindow {
                     calculate_max_window_size(self.screen_area.extent, aspect).unwrap_or_else(
                         || {
                             let content_w =
-                                SCREENSHARING_WINDOW_WIDTH - (CONTENT_PADDING as f64 * 2.0);
+                                WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
                             let content_h = content_w / aspect;
                             (
-                                SCREENSHARING_WINDOW_WIDTH,
-                                content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
+                                WindowConstant::DEFAULT_WIDTH,
+                                content_h + WindowConstant::SKELETON_H,
                             )
                         },
                     )
@@ -1824,12 +1961,9 @@ impl ScreensharingWindow {
                         .window
                         .inner_size()
                         .to_logical(self.window.scale_factor());
-                    let content_w = current_size.width - 2.0 * CONTENT_PADDING as f64;
+                    let content_w = current_size.width - WindowConstant::SKELETON_W;
                     let content_h = content_w / aspect;
-                    (
-                        current_size.width,
-                        content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64,
-                    )
+                    (current_size.width, content_h + WindowConstant::SKELETON_H)
                 };
 
                 #[cfg(target_os = "macos")]
@@ -1939,38 +2073,72 @@ impl ScreensharingWindow {
     }
 }
 
-/// Disable (gray out) the green fullscreen/zoom traffic-light button on macOS.
+/// Configure the green traffic-light button to act as "zoom" (maximize in-place)
+/// instead of entering a new macOS fullscreen Space/desktop.
 #[cfg(target_os = "macos")]
-fn disable_macos_fullscreen_button(window: &Window) {
+fn configure_macos_zoom_behavior(window: &Window) -> objc2::rc::Retained<MacosZoomDelegate> {
     use objc2::rc::Retained;
-    use objc2_app_kit::{NSView, NSWindowButton};
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+    let zoom_delegate = MacosZoomDelegate::new();
+
     let Ok(raw_handle) = window.window_handle() else {
-        log::warn!("disable_macos_fullscreen_button: failed to get window handle");
-        return;
+        log::warn!("configure_macos_zoom_behavior: failed to get window handle");
+        return zoom_delegate;
     };
 
     let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
-        log::warn!("disable_macos_fullscreen_button: not an AppKit handle");
-        return;
+        log::warn!("configure_macos_zoom_behavior: not an AppKit handle");
+        return zoom_delegate;
     };
 
     unsafe {
         let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
         let Some(ns_view) = ns_view else {
-            log::warn!("disable_macos_fullscreen_button: failed to retain NSView");
-            return;
+            return zoom_delegate;
         };
         let Some(ns_window) = ns_view.window() else {
-            log::warn!("disable_macos_fullscreen_button: NSView has no window");
-            return;
+            return zoom_delegate;
         };
 
-        if let Some(zoom_btn) = ns_window.standardWindowButton(NSWindowButton::ZoomButton) {
-            zoom_btn.setEnabled(false);
-            log::info!("disable_macos_fullscreen_button: zoom button disabled");
-        }
+        ns_window.setDelegate(Some(ProtocolObject::from_ref(&*zoom_delegate)));
+        // Disabling Tiling as the "maximize" option of it does not preserve the aspect ratio.
+        ns_window.setCollectionBehavior(
+            NSWindowCollectionBehavior::FullScreenNone
+                | NSWindowCollectionBehavior::FullScreenDisallowsTiling,
+        );
+        log::info!("configure_macos_zoom_behavior: installed custom zoom delegate");
+    }
+
+    zoom_delegate
+}
+
+/// Returns `true` when the macOS window is in the "zoomed" (maximized) state.
+#[cfg(target_os = "macos")]
+fn is_macos_window_zoomed(window: &Window) -> bool {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSView;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(raw_handle) = window.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
+        return false;
+    };
+
+    unsafe {
+        let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
+        let Some(ns_view) = ns_view else {
+            return false;
+        };
+        let Some(ns_window) = ns_view.window() else {
+            return false;
+        };
+        let zoomed: bool = objc2::msg_send![&*ns_window, isZoomed];
+        zoomed
     }
 }
 
@@ -1982,20 +2150,19 @@ fn calculate_max_window_size(available: Extent, stream_aspect: f64) -> Option<(f
         return None;
     }
 
-    // Subtract UI chrome to get the maximum available content area.
-    let chrome_h = HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
-    let chrome_w = 2.0 * CONTENT_PADDING as f64;
-    let max_content_h = available.height - chrome_h;
-    let max_content_w = available.width - chrome_w;
+    let max_content_h = available.height - WindowConstant::SKELETON_H;
+    let max_content_w = available.width - WindowConstant::SKELETON_W;
 
-    // Fit content preserving aspect ratio (height- or width-constrained).
     let (content_w, content_h) = if max_content_w / max_content_h > stream_aspect {
         (max_content_h * stream_aspect, max_content_h)
     } else {
         (max_content_w, max_content_w / stream_aspect)
     };
 
-    Some((content_w + chrome_w, content_h + chrome_h))
+    Some((
+        content_w + WindowConstant::SKELETON_W,
+        content_h + WindowConstant::SKELETON_H,
+    ))
 }
 
 /// Set the **frame-level** aspect ratio on the NSWindow so that the
@@ -2035,9 +2202,9 @@ fn set_macos_window_aspect_ratio(window: &Window, content_aspect: f64) {
 
         let frame = ns_window.frame();
         let frame_w = frame.size.width;
-        let content_w = frame_w - 2.0 * CONTENT_PADDING as f64;
+        let content_w = frame_w - WindowConstant::SKELETON_W;
         let content_h = content_w / content_aspect;
-        let frame_h = content_h + HEADER_CHROME_HEIGHT as f64 + CONTENT_PADDING as f64;
+        let frame_h = content_h + WindowConstant::SKELETON_H;
 
         ns_window.setAspectRatio(NSSize::new(frame_w, frame_h));
 
