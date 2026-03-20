@@ -24,6 +24,8 @@ pub struct VideoBuffer {
     pub y: Vec<u8>,
     pub u: Vec<u8>,
     pub v: Vec<u8>,
+    pub frame_id: u64,
+    pub receive_time: Option<std::time::Instant>,
 }
 
 impl Default for VideoBuffer {
@@ -37,6 +39,8 @@ impl Default for VideoBuffer {
             y: Vec::new(),
             u: Vec::new(),
             v: Vec::new(),
+            frame_id: 0,
+            receive_time: None,
         }
     }
 }
@@ -177,12 +181,15 @@ pub async fn process_video_stream(
 
     let mut sink = NativeVideoStream::new(video_track.rtc_track());
     let timeout_duration = std::time::Duration::from_secs(1);
+    let mut frame_counter: u64 = 0;
 
     loop {
         tokio::select! {
             result = tokio::time::timeout(timeout_duration, sink.next()) => {
                 match result {
                     Ok(Some(frame)) => {
+                        let receive_time = std::time::Instant::now();
+
                         let i420 = frame.buffer.to_i420();
                         let width = frame.buffer.width();
                         let height = frame.buffer.height();
@@ -190,7 +197,23 @@ pub async fn process_video_stream(
                         let buf = manager.write_buffer();
                         {
                             let mut guard = buf.lock().unwrap();
+
+                            let copy_start = std::time::Instant::now();
                             guard.copy_from_i420(&i420, width, height);
+                            let copy_delay = copy_start.elapsed();
+
+                            guard.frame_id = frame_counter;
+                            guard.receive_time = Some(receive_time);
+
+                            frame_counter += 1;
+
+                            if frame_counter % 30 == 0 {
+                                log::info!(
+                                    "video_latency [{}] [{}]: copy={:.2}ms",
+                                    stream_key, stream_type,
+                                    copy_delay.as_secs_f64() * 1000.0,
+                                );
+                            }
                         }
                         manager.advance_write();
 

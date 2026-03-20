@@ -488,6 +488,17 @@ impl primitive::Primitive for YuvVideoPrimitive {
             return;
         }
 
+        if buf.frame_id > 0 && buf.frame_id % 30 == 0 {
+            if let Some(receive_time) = buf.receive_time {
+                let present_delay_ms = receive_time.elapsed().as_secs_f64() * 1000.0;
+                log::info!(
+                    "video_latency [present] frame={}: receive_to_present={:.1}ms",
+                    buf.frame_id,
+                    present_delay_ms
+                );
+            }
+        }
+
         pipeline.upload_yuv(
             self.participant_id,
             device,
