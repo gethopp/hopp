@@ -327,7 +327,12 @@ fn default_screen_area_from_hardcoded() -> ScreenArea {
 }
 
 /// Target redraw interval: 60 FPS
-const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
+const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 10);
+
+pub enum RedrawCommand {
+    ForceRedraw,
+    Stop,
+}
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 /// SID used for the local participant's drawing/cursor state.
@@ -629,6 +634,8 @@ pub struct ScreensharingWindow {
     redraw_count: u32,
     redraw_duration_sum_ms: f64,
     fps_window_start: StdInstant,
+    redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
+    redraw_thread: Option<std::thread::JoinHandle<()>>,
     #[cfg(target_os = "macos")]
     _macos_zoom_delegate: objc2::rc::Retained<MacosZoomDelegate>,
     #[cfg(target_os = "macos")]
@@ -653,6 +660,8 @@ impl ScreensharingWindow {
         participant_sid: Option<String>,
         participant_name: Option<String>,
         draw_persist: bool,
+        redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
+        redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
@@ -875,6 +884,18 @@ impl ScreensharingWindow {
             .and_then(|n| n.split_whitespace().next())
             .unwrap_or("Screen")
             .to_string();
+        let window_for_thread = Arc::clone(&window);
+        let redraw_thread = std::thread::spawn(move || loop {
+            match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
+                Ok(RedrawCommand::ForceRedraw) => window_for_thread.request_redraw(),
+                Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    break
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    window_for_thread.request_redraw()
+                }
+            }
+        });
         let s = Self {
             window,
             surface,
@@ -905,6 +926,8 @@ impl ScreensharingWindow {
             redraw_count: 0,
             redraw_duration_sum_ms: 0.0,
             fps_window_start: StdInstant::now(),
+            redraw_tx,
+            redraw_thread: Some(redraw_thread),
             #[cfg(target_os = "macos")]
             _macos_zoom_delegate: macos_zoom_delegate,
             #[cfg(target_os = "macos")]
@@ -934,10 +957,6 @@ impl ScreensharingWindow {
             self.window.set_visible(true);
         }
         self.window.focus_window();
-    }
-
-    pub fn request_redraw(&self) {
-        self.window.request_redraw();
     }
 
     pub fn add_participant(
@@ -993,19 +1012,12 @@ impl ScreensharingWindow {
 
     pub fn set_remote_control_allowed(&mut self, allowed: bool) {
         self.state.remote_control_allowed = allowed;
-        self.window.request_redraw();
     }
 
     /// Update local control ownership and refresh cursor. When true, control tab uses OS cursor.
     pub fn set_local_participant_in_control(&mut self, in_control: bool) {
         self.local_participant_in_control = in_control;
         self.update_cursor();
-        self.window.request_redraw();
-    }
-
-    /// Returns the instant when the next redraw should occur.
-    pub fn next_redraw_at(&self) -> StdInstant {
-        self.last_redraw + REDRAW_INTERVAL
     }
 
     /// Compute multi-click count using the same logic as Chromium.
@@ -1639,12 +1651,10 @@ impl ScreensharingWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if self.last_redraw.elapsed() >= REDRAW_INTERVAL {
-                    let cleared = self.redraw();
-                    self.last_redraw = StdInstant::now();
-                    if !cleared.is_empty() {
-                        input_event = Some(ScreenShareInputEvent::DrawClearPaths(cleared));
-                    }
+                let cleared = self.redraw();
+                self.last_redraw = StdInstant::now();
+                if !cleared.is_empty() {
+                    input_event = Some(ScreenShareInputEvent::DrawClearPaths(cleared));
                 }
             }
             WindowEvent::CloseRequested => {
@@ -2100,6 +2110,15 @@ impl ScreensharingWindow {
         seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
 
         self.participants_manager.update_auto_clear()
+    }
+}
+
+impl Drop for ScreensharingWindow {
+    fn drop(&mut self) {
+        let _ = self.redraw_tx.send(RedrawCommand::Stop);
+        if let Some(handle) = self.redraw_thread.take() {
+            let _ = handle.join();
+        }
     }
 }
 

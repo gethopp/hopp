@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use winit::event_loop::EventLoopProxy;
 
 /// Align a value up to the given alignment.
 fn align_to(value: u32, alignment: u32) -> u32 {
@@ -172,7 +171,7 @@ pub async fn process_video_stream(
     mut stop_rx: mpsc::UnboundedReceiver<()>,
     stream_key: String,
     is_camera: bool,
-    event_loop_proxy: Option<EventLoopProxy<crate::UserEvent>>,
+    redraw_tx: Option<std::sync::mpsc::Sender<crate::window::screensharing_window::RedrawCommand>>,
 ) {
     let stream_type = if is_camera { "camera" } else { "screen share" };
     log::info!(
@@ -220,8 +219,10 @@ pub async fn process_video_stream(
                             fps_last_time = std::time::Instant::now();
                         }
 
-                        if let Some(proxy) = &event_loop_proxy {
-                            let _ = proxy.send_event(crate::UserEvent::ScreenShareFrameReady(std::time::Instant::now()));
+                        if let Some(tx) = &redraw_tx {
+                            if let Err(e) = tx.send(crate::window::screensharing_window::RedrawCommand::ForceRedraw) {
+                                log::error!("process_video_stream: failed to send redraw command: {e:?}");
+                            }
                         }
                     }
                     Ok(None) => {

@@ -508,13 +508,22 @@ impl<'a> Application<'a> {
         buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participant_sid: Option<String>,
         participant_name: Option<String>,
+        redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
+        redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     ) {
+        let (redraw_rx, redraw_tx) = redraw_rx.zip(redraw_tx).unwrap_or_else(|| {
+            let (tx, rx) =
+                std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
+            (rx, tx)
+        });
         match ScreensharingWindow::new(
             event_loop,
             buffer,
             participant_sid,
             participant_name,
             self.controller_draw_persist,
+            redraw_rx,
+            redraw_tx,
         ) {
             Ok(win) => self.screensharing_window = Some(win),
             Err(e) => {
@@ -767,7 +776,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             y: y as f64,
                         }),
                     );
-                    screensharing_window.request_redraw();
                 }
             }
             UserEvent::MouseClick(data, sid) => {
@@ -969,13 +977,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .send(Message::StartScreenShareResult(result_message))
                 {
                     error!("user_event: Error sending start screen share result: {e:?}");
-                }
-            }
-            UserEvent::ScreenShareFrameReady(sent_at) => {
-                let event_delay_ms = sent_at.elapsed().as_millis();
-                log::info!("video_event_delay: {:.1}ms", event_delay_ms);
-                if let Some(screensharing_window) = &self.screensharing_window {
-                    screensharing_window.request_redraw();
                 }
             }
             UserEvent::StopScreenShare => {
@@ -1461,7 +1462,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
-                self.open_screensharing_window(event_loop, buffer, None, None);
+                self.open_screensharing_window(event_loop, buffer, None, None, None, None);
             }
             UserEvent::OpenContentPicker => {
                 log::info!("user_event: OpenContentPicker");
@@ -1472,6 +1473,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::OpenScreenShareWindow {
                 sid: participant_sid,
                 name: participant_name,
+                redraw_rx,
+                redraw_tx,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
                 if let Some(screensharing_window) = &self.screensharing_window {
@@ -1482,11 +1485,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         let snapshot = room_service.participants_snapshot();
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
                         if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                            let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                             self.open_screensharing_window(
                                 event_loop,
                                 screen_share_buffer,
                                 participant_sid,
                                 participant_name,
+                                redraw_rx,
+                                redraw_tx,
                             );
                         } else {
                             log::warn!("user_event: No screen share buffer available");
@@ -1968,18 +1974,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             next_redraw = Some(camera_next);
         }
 
-        // Handle screensharing window
-        if let Some(screensharing) = &self.screensharing_window {
-            let ss_next = screensharing.next_redraw_at();
-            if now >= ss_next {
-                screensharing.request_redraw();
-            }
-            next_redraw = match next_redraw {
-                Some(existing) => Some(existing.min(ss_next)),
-                None => Some(ss_next),
-            };
-        }
-
         // Handle stats window
         if let Some(stats_win) = &mut self.stats_window {
             if let Some(rs) = &self.room_service {
@@ -2049,7 +2043,6 @@ pub enum UserEvent {
     CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
-    ScreenShareFrameReady(std::time::Instant),
     RequestRedraw,
     SharerPosition(f64, f64),
     Tick(u128),
@@ -2087,6 +2080,14 @@ pub enum UserEvent {
     OpenScreenShareWindow {
         sid: Option<String>,
         name: Option<String>,
+        redraw_rx: Option<
+            std::sync::Arc<
+                std::sync::Mutex<
+                    Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
+                >,
+            >,
+        >,
+        redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     },
     CloseScreenShareWindow,
     CloseCameraWindow,
@@ -2224,6 +2225,8 @@ impl RenderEventLoop {
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
                         sid: None,
                         name: None,
+                        redraw_rx: None,
+                        redraw_tx: None,
                     },
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,

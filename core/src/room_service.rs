@@ -2391,13 +2391,19 @@ async fn handle_room_events(
                             let (stop_tx, stop_rx) = mpsc::unbounded_channel();
                             *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
 
+                            let (redraw_tx, redraw_rx) = std::sync::mpsc::channel::<
+                                crate::window::screensharing_window::RedrawCommand,
+                            >();
+                            let redraw_rx =
+                                std::sync::Arc::new(std::sync::Mutex::new(Some(redraw_rx)));
+
                             tokio::spawn(process_video_stream(
                                 video_track,
                                 manager,
                                 stop_rx,
                                 format!("screenshare_{}", participant_sid),
                                 false,
-                                Some(event_loop_proxy.clone()),
+                                Some(redraw_tx.clone()),
                             ));
 
                             // Derive the audio participant identity from the video participant identity
@@ -2437,6 +2443,8 @@ async fn handle_room_events(
                                 event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
                                     sid: Some(sharer_sid),
                                     name: Some(sharer_name),
+                                    redraw_rx: Some(redraw_rx),
+                                    redraw_tx: Some(redraw_tx),
                                 })
                             {
                                 log::error!(
