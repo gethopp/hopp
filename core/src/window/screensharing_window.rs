@@ -631,8 +631,10 @@ pub struct ScreensharingWindow {
     participants_manager: ParticipantsManager,
     click_animation_renderer: ClickAnimationRenderer,
     last_redraw: StdInstant,
+    last_rendered_frame_id: u64,
     redraw_count: u32,
     redraw_duration_sum_ms: f64,
+    redraw_step_sums_ms: [f64; 7],
     fps_window_start: StdInstant,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
@@ -751,7 +753,7 @@ impl ScreensharingWindow {
             present_mode: wgpu::PresentMode::Immediate,
             alpha_mode,
             view_formats: vec![],
-            desired_maximum_frame_latency: 0,
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &surface_config);
 
@@ -887,7 +889,9 @@ impl ScreensharingWindow {
         let window_for_thread = Arc::clone(&window);
         let redraw_thread = std::thread::spawn(move || loop {
             match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
-                Ok(RedrawCommand::ForceRedraw) => window_for_thread.request_redraw(),
+                Ok(RedrawCommand::ForceRedraw) => {
+                    window_for_thread.request_redraw();
+                }
                 Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     break
                 }
@@ -923,8 +927,10 @@ impl ScreensharingWindow {
             participants_manager,
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
             last_redraw: StdInstant::now(),
+            last_rendered_frame_id: 0,
             redraw_count: 0,
             redraw_duration_sum_ms: 0.0,
+            redraw_step_sums_ms: [0.0; 7],
             fps_window_start: StdInstant::now(),
             redraw_tx,
             redraw_thread: Some(redraw_thread),
@@ -1640,7 +1646,7 @@ impl ScreensharingWindow {
                             present_mode: wgpu::PresentMode::Immediate,
                             alpha_mode: self.alpha_mode,
                             view_formats: vec![],
-                            desired_maximum_frame_latency: 0,
+                            desired_maximum_frame_latency: 2,
                         },
                     );
                     self.viewport = Viewport::with_physical_size(
@@ -1942,32 +1948,62 @@ impl ScreensharingWindow {
     /// Returns path IDs cleared by auto-expire during this frame.
     fn redraw(&mut self) -> Vec<u64> {
         let redraw_start = StdInstant::now();
-        let result = self.redraw_inner();
+        let (result, step_ms) = self.redraw_inner();
         let redraw_ms = redraw_start.elapsed().as_secs_f64() * 1000.0;
 
         self.redraw_count += 1;
         self.redraw_duration_sum_ms += redraw_ms;
+        for (i, ms) in step_ms.iter().enumerate() {
+            self.redraw_step_sums_ms[i] += ms;
+        }
         let elapsed = self.fps_window_start.elapsed().as_secs_f64();
         if elapsed >= 1.0 {
-            let fps = self.redraw_count as f64 / elapsed;
-            let avg_ms = self.redraw_duration_sum_ms / self.redraw_count as f64;
+            let n = self.redraw_count as f64;
+            let fps = n / elapsed;
+            let avg_ms = self.redraw_duration_sum_ms / n;
+            let s = &self.redraw_step_sums_ms;
             log::info!(
-                "screensharing redraw: {:.1} fps, avg {:.1}ms/frame",
+                "screensharing redraw: {:.1} fps, avg {:.1}ms/frame \
+                 [dim_check={:.2} get_tex={:.2} view+anim={:.2} ui_build={:.2} \
+                 iced_update={:.2} draw+present={:.2} cleanup={:.2}]",
                 fps,
-                avg_ms
+                avg_ms,
+                s[0] / n,
+                s[1] / n,
+                s[2] / n,
+                s[3] / n,
+                s[4] / n,
+                s[5] / n,
+                s[6] / n,
             );
             self.redraw_count = 0;
             self.redraw_duration_sum_ms = 0.0;
+            self.redraw_step_sums_ms = [0.0; 7];
             self.fps_window_start = StdInstant::now();
         }
         result
     }
 
-    fn redraw_inner(&mut self) -> Vec<u64> {
+    /// Returns (cleared_path_ids, step_durations_ms).
+    /// Steps: [0] dim_check, [1] get_texture, [2] create_view+update, [3] ui_build,
+    ///        [4] iced_update, [5] iced_draw+present, [6] tick, [7] auto_clear
+    fn redraw_inner(&mut self) -> (Vec<u64>, [f64; 7]) {
+        let mut steps = [0.0f64; 7];
+        let mut t = StdInstant::now();
+
         // Check if stream dimensions changed and update window size
+        let current_frame_id;
         {
             let frame_lock = self.screen_share_buffer.latest_frame();
             let buf = frame_lock.lock().unwrap();
+            current_frame_id = buf.frame_id;
+
+            // Skip if we already rendered this frame (stale RedrawRequested)
+            if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
+                log::warn!("redraw_inner: dropping redraw");
+                return (Vec::new(), steps);
+            }
+
             let stream_w = buf.width;
             let stream_h = buf.height;
 
@@ -2036,20 +2072,27 @@ impl ScreensharingWindow {
                 );
             }
         }
+        steps[0] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
 
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
                 log::error!("ScreensharingWindow::redraw: failed to get texture: {e:?}");
-                return vec![];
+                return (vec![], steps);
             }
         };
+        steps[1] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
+
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.click_animation_renderer.update();
         self.participants_manager.hide_inactive_cursors();
+        steps[2] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
 
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
@@ -2064,6 +2107,8 @@ impl ScreensharingWindow {
             cache,
             &mut self.renderer,
         );
+        steps[3] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
 
         // Send a redraw event to iced
         let _ = interface.update(
@@ -2075,6 +2120,8 @@ impl ScreensharingWindow {
             &mut self.clipboard,
             &mut Vec::new(),
         );
+        steps[4] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
 
         // Draw the interface with white text for dark background
         interface.draw(
@@ -2103,13 +2150,19 @@ impl ScreensharingWindow {
 
         self.window.pre_present_notify();
         output.present();
+        steps[5] = t.elapsed().as_secs_f64() * 1000.0;
+        t = StdInstant::now();
 
         // Keep the redraw loop alive while the segmented-control indicator
         // is animating, so the slide plays smoothly even when no user input
         // events are arriving.
         seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
 
-        self.participants_manager.update_auto_clear()
+        let cleared = self.participants_manager.update_auto_clear();
+        steps[6] = t.elapsed().as_secs_f64() * 1000.0;
+
+        self.last_rendered_frame_id = current_frame_id;
+        (cleared, steps)
     }
 }
 
