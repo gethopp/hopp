@@ -195,14 +195,16 @@ pub fn play_remote_audio_track(
                 let elapsed = now.duration_since(start).as_secs_f64();
                 let expected_secs = total_samples as f64 / LIVEKIT_SAMPLE_RATE as f64;
                 let drift_ms = (expected_secs - elapsed) * 1000.0;
-                log::info!(
-                    "Audio receive [{}]: {} frames, drift {:.0}ms (expected {:.1}s, wall {:.1}s)",
-                    stream_key,
-                    frame_count,
-                    drift_ms,
-                    expected_secs,
-                    elapsed,
-                );
+                if drift_ms.abs() > 50.0 {
+                    log::warn!(
+                        "Audio receive [{}]: drift {:.0}ms ({} frames, expected {:.1}s, wall {:.1}s)",
+                        stream_key,
+                        drift_ms,
+                        frame_count,
+                        expected_secs,
+                        elapsed,
+                    );
+                }
                 last_log = now;
             }
         }

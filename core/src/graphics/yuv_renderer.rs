@@ -488,26 +488,6 @@ impl primitive::Primitive for YuvVideoPrimitive {
             return;
         }
 
-        let now = std::time::Instant::now();
-        if let Some(receive_time) = buf.receive_time {
-            let recv_to_ui = buf
-                .ui_tree_read_time
-                .map(|t| t.duration_since(receive_time).as_secs_f64() * 1000.0);
-            let ui_to_gpu = buf
-                .ui_tree_read_time
-                .map(|t| now.duration_since(t).as_secs_f64() * 1000.0);
-            let total = receive_time.elapsed().as_secs_f64() * 1000.0;
-            if buf.frame_id != 0 && buf.frame_id % 5 == 0 {
-                log::info!(
-                    "video_pipeline frame={}: recv->ui={:.1}ms ui->gpu={:.1}ms total={:.1}ms",
-                    buf.frame_id,
-                    recv_to_ui.unwrap_or(-1.0),
-                    ui_to_gpu.unwrap_or(-1.0),
-                    total,
-                );
-            }
-        }
-
         pipeline.upload_yuv(
             self.participant_id,
             device,
