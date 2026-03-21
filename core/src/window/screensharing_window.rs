@@ -10,6 +10,7 @@
 //! - Shadow tokens for consistent depth
 //! - Pill-shaped control buttons with solid/gradient backgrounds
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant as StdInstant};
 
@@ -636,6 +637,7 @@ pub struct ScreensharingWindow {
     redraw_duration_sum_ms: f64,
     redraw_step_sums_ms: [f64; 7],
     fps_window_start: StdInstant,
+    redraw_in_progress: Arc<AtomicBool>,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
     #[cfg(target_os = "macos")]
@@ -886,11 +888,17 @@ impl ScreensharingWindow {
             .and_then(|n| n.split_whitespace().next())
             .unwrap_or("Screen")
             .to_string();
+        let redraw_in_progress = Arc::new(AtomicBool::new(false));
+        let redraw_in_progress_thread = Arc::clone(&redraw_in_progress);
         let window_for_thread = Arc::clone(&window);
         let redraw_thread = std::thread::spawn(move || loop {
             match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
                 Ok(RedrawCommand::ForceRedraw) => {
-                    window_for_thread.request_redraw();
+                    if !redraw_in_progress_thread.load(Ordering::Acquire) {
+                        window_for_thread.request_redraw();
+                    } else {
+                        log::warn!("redraw_request dropped");
+                    }
                 }
                 Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     break
@@ -932,6 +940,7 @@ impl ScreensharingWindow {
             redraw_duration_sum_ms: 0.0,
             redraw_step_sums_ms: [0.0; 7],
             fps_window_start: StdInstant::now(),
+            redraw_in_progress,
             redraw_tx,
             redraw_thread: Some(redraw_thread),
             #[cfg(target_os = "macos")]
@@ -1657,8 +1666,10 @@ impl ScreensharingWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.redraw_in_progress.store(true, Ordering::Release);
                 let cleared = self.redraw();
                 self.last_redraw = StdInstant::now();
+                self.redraw_in_progress.store(false, Ordering::Release);
                 if !cleared.is_empty() {
                     input_event = Some(ScreenShareInputEvent::DrawClearPaths(cleared));
                 }

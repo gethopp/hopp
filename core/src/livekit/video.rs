@@ -193,9 +193,27 @@ pub async fn process_video_stream(
                     Ok(Some(frame)) => {
                         let receive_time = std::time::Instant::now();
 
-                        let i420 = frame.buffer.to_i420();
-                        let width = frame.buffer.width();
-                        let height = frame.buffer.height();
+                        let mut latest_frame = frame;
+                        let mut skipped: u64 = 0;
+
+                        // Drain queued frames, keep only the newest
+                        while let Ok(Some(newer)) = tokio::time::timeout(
+                            std::time::Duration::ZERO,
+                            sink.next(),
+                        ).await {
+                            latest_frame = newer;
+                            skipped += 1;
+                        }
+
+                        if skipped > 0 {
+                            log::warn!(
+                                "process_video_stream: skipped {skipped} stale frames for {stream_key} [{stream_type}]"
+                            );
+                        }
+
+                        let i420 = latest_frame.buffer.to_i420();
+                        let width = latest_frame.buffer.width();
+                        let height = latest_frame.buffer.height();
 
                         let buf = manager.write_buffer();
                         {
@@ -207,11 +225,11 @@ pub async fn process_video_stream(
                             guard.receive_time = Some(receive_time);
                             guard.ui_tree_read_time = None;
 
-                            frame_counter += 1;
+                            frame_counter += 1 + skipped;
                         }
                         manager.advance_write();
 
-                        fps_frame_count += 1;
+                        fps_frame_count += 1 + skipped;
                         let elapsed = fps_last_time.elapsed().as_secs_f64();
                         if elapsed >= 5.0 {
                             log::info!("video_fps [{}] {}: {:.1} fps", stream_type, stream_key, fps_frame_count as f64 / elapsed);
