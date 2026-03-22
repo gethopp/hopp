@@ -16,6 +16,7 @@ pub struct RoomStats {
     pub screenshare_input_bps: f64,
     pub total_input_bps: f64,
     pub total_output_bps: f64,
+    pub avg_roundtrip_ms: f64,
 }
 
 #[derive(Default)]
@@ -83,10 +84,18 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
             }
         }
 
+        let roundtrip_count = inner
+            .roundtrip_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if roundtrip_count > 0 {
+            let sum = *inner.roundtrip_sum_ms.lock().unwrap();
+            snapshot.avg_roundtrip_ms = sum / roundtrip_count as f64;
+        }
+
         prev = counters;
 
         log::debug!(
-            "RoomStats: ss={}x{}@{:.1}fps codec_id={} jitter_buf={:.1}ms ss_in={:.2}Mbps | in={:.2}Mbps out={:.2}Mbps",
+            "RoomStats: ss={}x{}@{:.1}fps codec_id={} jitter_buf={:.1}ms ss_in={:.2}Mbps | in={:.2}Mbps out={:.2}Mbps RTT={:.2}ms",
             snapshot.screenshare_width,
             snapshot.screenshare_height,
             snapshot.screenshare_fps,
@@ -95,6 +104,7 @@ pub(crate) async fn stats_loop(inner: Arc<RoomServiceInner>) {
             snapshot.screenshare_input_bps / 1_000_000.0,
             snapshot.total_input_bps / 1_000_000.0,
             snapshot.total_output_bps / 1_000_000.0,
+            snapshot.avg_roundtrip_ms,
         );
 
         if let Ok(mut w) = inner.stats.write() {

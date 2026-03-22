@@ -24,6 +24,7 @@ use crate::{audio, ParticipantData, UserEvent};
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
 const TOPIC_REMOTE_CONTROL_ENABLED: &str = "remote_control_enabled";
 const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
+const TOPIC_TICK: &str = "tick";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
@@ -70,7 +71,6 @@ enum RoomServiceCommand {
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
-    TickResponse(u128),
     IterateParticipants,
     PublishParticipantInControl(String),
     PublishDrawStart(DrawPathPoint),
@@ -141,6 +141,8 @@ pub(crate) struct RoomServiceInner {
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
+    pub(crate) roundtrip_count: std::sync::atomic::AtomicU64,
+    pub(crate) roundtrip_sum_ms: std::sync::Mutex<f64>,
 }
 
 impl RoomServiceInner {
@@ -269,6 +271,8 @@ impl RoomService {
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
             cancel_connect: std::sync::Mutex::new(Vec::new()),
+            roundtrip_count: std::sync::atomic::AtomicU64::new(0),
+            roundtrip_sum_ms: std::sync::Mutex::new(0.0),
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -440,18 +444,6 @@ impl RoomService {
 
         if let Err(e) = res {
             log::error!("publish_controller_cursor_enabled: Failed to send command: {e:?}");
-        }
-    }
-
-    /// This was used for latency measurement, needs to
-    /// be integrated properly for production usage.
-    pub fn tick_response(&self, time: u128) {
-        log::info!("tick_response: {time:?}");
-        let res = self
-            .service_command_tx
-            .send(RoomServiceCommand::TickResponse(time));
-        if let Err(e) = res {
-            log::error!("tick_response: Failed to send command: {e:?}");
         }
     }
 
@@ -858,6 +850,7 @@ async fn room_service_commands(
     audio_processor: SharedProcessor,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut tick_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
 
     while let Some(command) = service_rx.recv().await {
@@ -1000,7 +993,11 @@ async fn room_service_commands(
                 stats_task = Some(tokio::spawn(crate::livekit::stats::stats_loop(
                     inner.clone(),
                 )));
-                log::info!("room_service_commands: Spawned stats task");
+                if let Some(task) = tick_task.take() {
+                    task.abort();
+                }
+                tick_task = Some(tokio::spawn(tick_loop(inner.clone())));
+                log::info!("room_service_commands: Spawned stats and tick tasks");
                 let user_sid = room.local_participant().sid().as_str().to_string();
                 let user_identity = room.local_participant().identity().as_str().to_string();
                 let user_name = room.local_participant().name();
@@ -1056,14 +1053,7 @@ async fn room_service_commands(
                     event_loop_proxy,
                     user_sid,
                     video_participant_sid,
-                    inner.participants.clone(),
-                    inner.mixer.clone(),
-                    RemoteScreenShare {
-                        buffer: inner.remote_screen_share.buffer.clone(),
-                        stop_tx: inner.remote_screen_share.stop_tx.clone(),
-                        publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
-                    },
-                    inner.connection_quality.clone(),
+                    inner.clone(),
                 ));
                 log::info!("room_service_commands: Spawned handle_room_events");
                 let mut inner_room = inner.room.lock().await;
@@ -1144,6 +1134,9 @@ async fn room_service_commands(
                 if let Some(task) = stats_task.take() {
                     task.abort();
                 }
+                if let Some(task) = tick_task.take() {
+                    task.abort();
+                }
 
                 inner.clear().await;
             }
@@ -1194,27 +1187,6 @@ async fn room_service_commands(
                     log::error!(
                         "room_service_commands: Failed to publish remote control change: {e:?}"
                     );
-                }
-            }
-            RoomServiceCommand::TickResponse(time) => {
-                let inner_room = inner.room.lock().await;
-                if inner_room.is_none() {
-                    log::warn!("room_service_commands: Room doesn't exist");
-                    continue;
-                }
-                let room = inner_room.as_ref().unwrap();
-                let local_participant = room.local_participant();
-                let res = local_participant
-                    .publish_data(DataPacket {
-                        payload: serde_json::to_vec(&ClientEvent::TickResponse(TickData { time }))
-                            .unwrap(),
-                        reliable: true,
-                        topic: Some(TOPIC_TICK_RESPONSE.to_string()),
-                        ..Default::default()
-                    })
-                    .await;
-                if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to publish tick response: {e:?}");
                 }
             }
             RoomServiceCommand::IterateParticipants => {
@@ -1912,6 +1884,12 @@ pub struct TickData {
     pub time: u128,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TickResponseData {
+    pub time: u128,
+    pub sid: String,
+}
+
 /// Contains the remote control enabled/disabled state.
 ///
 /// This structure is used to communicate whether remote control
@@ -1984,7 +1962,7 @@ pub enum ClientEvent {
     /// Timing synchronization request
     Tick(TickData),
     /// Response to a timing synchronization request
-    TickResponse(TickData),
+    TickResponse(TickResponseData),
     /// Remote control enabled/disabled status change
     RemoteControlEnabled(RemoteControlEnabled),
     /// Copy or cut command from a remote controller
@@ -2007,16 +1985,45 @@ pub enum ClientEvent {
     ClickAnimation(ClientPoint),
 }
 
+async fn tick_loop(inner: Arc<RoomServiceInner>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        interval.tick().await;
+        let room_guard = inner.room.lock().await;
+        let Some(room) = room_guard.as_ref() else {
+            continue;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let _ = room
+            .local_participant()
+            .publish_data(DataPacket {
+                payload: serde_json::to_vec(&ClientEvent::Tick(TickData { time: now })).unwrap(),
+                reliable: true,
+                topic: Some(TOPIC_TICK.to_string()),
+                ..Default::default()
+            })
+            .await;
+    }
+}
+
 async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_sid: String,
     video_participant_sid: String,
-    participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::MixerHandle,
-    remote_screen_share: RemoteScreenShare,
-    connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
+    inner: Arc<RoomServiceInner>,
 ) {
+    let participants = inner.participants.clone();
+    let mixer = inner.mixer.clone();
+    let remote_screen_share = RemoteScreenShare {
+        buffer: inner.remote_screen_share.buffer.clone(),
+        stop_tx: inner.remote_screen_share.stop_tx.clone(),
+        publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
+    };
+    let connection_quality = inner.connection_quality.clone();
     while let Some(msg) = receiver.recv().await {
         match msg {
             RoomEvent::DataReceived {
@@ -2113,11 +2120,42 @@ async fn handle_room_events(
                         ))
                     }
                     ClientEvent::Tick(tick_data) => {
-                        if cfg!(debug_assertions) {
-                            event_loop_proxy.send_event(UserEvent::Tick(tick_data.time))
-                        } else {
-                            Ok(())
+                        let room_guard = inner.room.lock().await;
+                        if let Some(room) = room_guard.as_ref() {
+                            let _ = room
+                                .local_participant()
+                                .publish_data(DataPacket {
+                                    payload: serde_json::to_vec(&ClientEvent::TickResponse(
+                                        TickResponseData {
+                                            time: tick_data.time,
+                                            sid: sid.clone(),
+                                        },
+                                    ))
+                                    .unwrap(),
+                                    reliable: true,
+                                    topic: Some(TOPIC_TICK_RESPONSE.to_string()),
+                                    ..Default::default()
+                                })
+                                .await;
                         }
+                        Ok(())
+                    }
+                    ClientEvent::TickResponse(response_data) => {
+                        if response_data.sid == user_sid {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_nanos();
+                            let roundtrip_ms =
+                                now.saturating_sub(response_data.time) as f64 / 1_000_000.0;
+                            inner
+                                .roundtrip_count
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if let Ok(mut sum) = inner.roundtrip_sum_ms.lock() {
+                                *sum += roundtrip_ms;
+                            }
+                        }
+                        Ok(())
                     }
                     ClientEvent::AddToClipboard(add_to_clipboard_data) => event_loop_proxy
                         .send_event(UserEvent::AddToClipboard(add_to_clipboard_data)),

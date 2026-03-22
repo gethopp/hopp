@@ -256,6 +256,7 @@ impl StatsWindow {
                 "Total out",
                 format!("{:.2} Mbps", stats.total_output_bps / 1_000_000.0)
             ),
+            line("RTT", format!("{:.2}ms", stats.avg_roundtrip_ms)),
         ]
         .spacing(2)
         .padding(PADDING);

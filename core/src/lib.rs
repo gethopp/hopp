@@ -1015,14 +1015,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_cursor_position(x, y, true);
             }
-            UserEvent::Tick(time) => {
-                debug!("user_event: Tick");
-                if self.room_service.is_none() {
-                    log::warn!("user_event: room service is none tick");
-                    return;
-                }
-                self.room_service.as_ref().unwrap().tick_response(time);
-            }
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
 
@@ -2062,7 +2054,6 @@ pub enum UserEvent {
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
-    Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
     ParticipantsSnapshot(Vec<socket_lib::CoreParticipantState>),
