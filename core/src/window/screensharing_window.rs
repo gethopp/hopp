@@ -783,7 +783,7 @@ impl ScreensharingWindow {
 
         #[cfg(target_os = "macos")]
         {
-            super::vibrancy::apply_macos_vibrancy(&window, 10.0);
+            super::vibrancy::apply_macos_vibrancy(&window, 8.0);
             // Lock the window frame aspect ratio so macOS enforces it for ALL
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
             set_macos_window_aspect_ratio(&window, 16.0 / 9.0);

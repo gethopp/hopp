@@ -274,7 +274,7 @@ impl CameraWindow {
 
         #[cfg(target_os = "macos")]
         {
-            super::vibrancy::apply_macos_vibrancy(&window, 10.0);
+            super::vibrancy::apply_macos_vibrancy(&window, 8.0);
         }
 
         let logical = viewport.logical_size();
