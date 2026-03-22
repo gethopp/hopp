@@ -2115,11 +2115,27 @@ impl ScreensharingWindow {
     }
 }
 
+impl ScreensharingWindow {
+    /// Sends the Stop command and extracts the redraw thread handle so it can
+    /// be joined later (outside the main thread's event-loop turn) instead of
+    /// in `Drop`, which would deadlock because `request_redraw()` blocks on the
+    /// main thread.
+    pub fn take_redraw_thread(&mut self) -> Option<std::thread::JoinHandle<()>> {
+        if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
+            log::error!("ScreensharingWindow::take_redraw_thread: failed to send Stop: {e:?}");
+        }
+        self.redraw_thread.take()
+    }
+}
+
 impl Drop for ScreensharingWindow {
     fn drop(&mut self) {
-        let _ = self.redraw_tx.send(RedrawCommand::Stop);
-        if let Some(handle) = self.redraw_thread.take() {
-            let _ = handle.join();
+        // If the thread wasn't already taken via take_redraw_thread(), send
+        // Stop and detach — joining here would deadlock.
+        if self.redraw_thread.is_some() {
+            let _ = self.redraw_tx.send(RedrawCommand::Stop);
+            log::warn!("ScreensharingWindow::drop: redraw thread not taken, detaching");
+            drop(self.redraw_thread.take());
         }
     }
 }

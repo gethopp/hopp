@@ -233,6 +233,7 @@ pub struct Application<'a> {
     _camera_capturer_events: Option<JoinHandle<()>>,
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
+    screensharing_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
 }
 
@@ -341,6 +342,7 @@ impl<'a> Application<'a> {
             })),
             camera_window: None,
             screensharing_window: None,
+            screensharing_redraw_thread: None,
             stats_window: None,
         })
     }
@@ -511,6 +513,11 @@ impl<'a> Application<'a> {
         redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
         redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     ) {
+        // Join any previous redraw thread before creating a new window.
+        // By now the old window is gone and request_redraw() has returned,
+        // so join() won't deadlock.
+        self.join_screensharing_redraw_thread();
+
         let (redraw_rx, redraw_tx) = redraw_rx.zip(redraw_tx).unwrap_or_else(|| {
             let (tx, rx) =
                 std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
@@ -533,9 +540,17 @@ impl<'a> Application<'a> {
         }
     }
 
+    fn join_screensharing_redraw_thread(&mut self) {
+        if let Some(handle) = self.screensharing_redraw_thread.take() {
+            let _ = handle.join();
+        }
+    }
+
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
-        self.screensharing_window = None;
+        if let Some(mut window) = self.screensharing_window.take() {
+            self.screensharing_redraw_thread = window.take_redraw_thread();
+        }
     }
 
     fn stop_screenshare(&mut self) {
@@ -934,7 +949,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 self.camera_window = None;
-                self.screensharing_window = None;
+                self.close_screensharing_window();
                 self.stats_window = None;
 
                 if let Err(e) = self.socket.send(Message::CallEnded) {
