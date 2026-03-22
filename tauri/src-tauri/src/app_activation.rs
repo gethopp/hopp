@@ -40,6 +40,23 @@ impl AppActivationObserver {
                     return;
                 }
 
+                // If the user directly clicked the main
+                if app_handle
+                    .get_webview_window("main")
+                    .and_then(|w| w.is_focused().ok())
+                    .unwrap_or(false)
+                {
+                    log::info!("app_activation: main window already focused, skipping");
+                    return;
+                }
+
+                if let Some(window) = app_handle.get_webview_window("contentPicker") {
+                    log::info!("app_activation: contentPicker is open focus there");
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    return;
+                }
+
                 // Regular mode is either when permissions/notification windows are open, or when we are in a call.
                 if app_handle
                     .state::<Mutex<AppData>>()
@@ -95,16 +112,6 @@ impl AppActivationObserver {
                 } else {
                     log::info!("app_activation: reset policy to accessory");
                     app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                }
-
-                // If the user directly clicked the main
-                if app_handle
-                    .get_webview_window("main")
-                    .and_then(|w| w.is_focused().ok())
-                    .unwrap_or(false)
-                {
-                    log::info!("app_activation: main window already focused, skipping");
-                    return;
                 }
 
                 // Guard: location must be set
