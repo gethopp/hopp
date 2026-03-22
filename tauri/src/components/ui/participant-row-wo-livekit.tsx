@@ -58,6 +58,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   const inACall = useStore((state) => state.callTokens !== null);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
+  const callResolvedRef = useRef(false);
 
   const callUser = useCallback(() => {
     posthog.capture("user_call_request", {
@@ -84,6 +85,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       return;
     }
 
+    callResolvedRef.current = false;
     sounds.ringing.play();
     setCalling(props.user.id);
 
@@ -120,6 +122,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
               duration: 2500,
             });
           }
+          callResolvedRef.current = true;
           setCalling(null);
           sounds.ringing.stop();
           sounds.unavailable.play();
@@ -128,6 +131,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.error(`${props.user.first_name} appears to be offline`, {
             duration: 2500,
           });
+          callResolvedRef.current = true;
           setCalling(null);
           sounds.ringing.stop();
           sounds.unavailable.play();
@@ -138,6 +142,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           });
           break;
         case "call_tokens":
+          callResolvedRef.current = true;
           setCalling(null);
           sounds.ringing.stop();
           sounds.callAccepted.play();
@@ -167,9 +172,14 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       if (callbackIdRef.current) {
         socketService.removeHandler(callbackIdRef.current);
       }
-      // Stop any playing sounds when component unmounts
       sounds.ringing.stop();
       setCalling(null);
+      if (!callResolvedRef.current) {
+        socketService.send({
+          type: "call_end",
+          payload: { participant_id: props.user.id },
+        });
+      }
     };
   }, [isCalling]);
 
@@ -193,8 +203,13 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           variant="gradient-white"
           onClick={() => {
             if (isCalling) {
+              callResolvedRef.current = true;
               sounds.ringing.stop();
               setCalling(null);
+              socketService.send({
+                type: "call_end",
+                payload: { participant_id: props.user.id },
+              });
             } else {
               callUser();
             }

@@ -6,6 +6,8 @@ import "@/services/sentry";
  */
 import "core-js/actual/iterator";
 import "../../App.css";
+import { OS } from "@/constants";
+import { disableWebViewAppNap } from "@/lib/utils";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -41,6 +43,10 @@ if (BOTTOM_ARROW) {
   document.body.className = "arrow_bottom";
 } else {
   document.body.className = "arrow";
+}
+
+if (OS === "macos") {
+  disableWebViewAppNap();
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

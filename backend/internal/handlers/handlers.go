@@ -1301,19 +1301,18 @@ func (h *AuthHandler) SubmitFeedback(c echo.Context) error {
 	}
 
 	// Send Telegram notification
-	var message string
 	scoreEmojis := []string{"😡", "😕", "😐", "😊", "🤩"}
 	scoreEmoji := scoreEmojis[feedback.Score-1]
 
+	feedbackSuffix := ""
 	if feedback.Feedback != "" {
-		message = fmt.Sprintf("📝 Call Feedback\nUser: %s\nScore: %d/5 %s\nFeedback: %s",
-			user.ID, feedback.Score, scoreEmoji, feedback.Feedback)
-	} else {
-		message = fmt.Sprintf("📝 Call Feedback\nUser: %s\nScore: %d/5 %s",
-			user.ID, feedback.Score, scoreEmoji)
+		feedbackSuffix = fmt.Sprintf("\nFeedback: %s", feedback.Feedback)
 	}
 
-	_ = notifications.SendTelegramNotification(message, h.Config)
+	_ = notifications.SendTelegramNotification(
+		fmt.Sprintf("📝 Call Feedback\nUser: %s\nScore: %d/5 %s%s",
+			user.ID, feedback.Score, scoreEmoji, feedbackSuffix),
+		h.Config)
 
 	return c.NoContent(http.StatusCreated)
 }

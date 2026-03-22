@@ -255,6 +255,9 @@ function App() {
 
       if (data.type === "call_end") {
         // Get call info before clearing tokens
+        toast.dismiss("call-banner");
+
+        const { callTokens: currentCallTokens, user } = useStore.getState();
         const participantId = currentCallTokens?.participant || "";
         const roomId = currentCallTokens?.room?.id || data.payload.call_id || "";
         const teamId = user?.team_id?.toString() || "";

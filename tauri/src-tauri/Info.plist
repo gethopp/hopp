@@ -12,5 +12,7 @@
 	<string>Hopp</string>
 	<key>CFBundleDisplayName</key>
 	<string>Hopp</string>
+	<key>NSAppSleepDisabled</key>
+    <true/>
 </dict>
 </plist>
