@@ -140,8 +140,6 @@ impl CameraStream {
             let mut cached_source: Option<NativeVideoSource> = None;
 
             let capture_start = Instant::now();
-            let mut fps_frame_count: u32 = 0;
-            let mut fps_window_start = Instant::now();
 
             loop {
                 let frame_start = Instant::now();
@@ -157,15 +155,6 @@ impl CameraStream {
                         {
                             let mut fc = failures_count.lock().unwrap();
                             *fc = 0;
-                        }
-
-                        fps_frame_count += 1;
-                        let fps_elapsed = fps_window_start.elapsed();
-                        if fps_elapsed >= Duration::from_secs(5) {
-                            let fps = fps_frame_count as f64 / fps_elapsed.as_secs_f64();
-                            log::info!("CameraStream: capture FPS: {:.1}", fps);
-                            fps_frame_count = 0;
-                            fps_window_start = Instant::now();
                         }
 
                         // Refresh cached source only when not yet set
