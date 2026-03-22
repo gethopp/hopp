@@ -267,6 +267,6 @@ impl KeyboardEventTrait for KeyboardEvent {
     }
 
     fn send(&self) {
-        self.event.post(CGEventTapLocation::AnnotatedSession);
+        self.event.post(CGEventTapLocation::HID);
     }
 }

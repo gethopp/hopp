@@ -112,6 +112,8 @@ enum KeyboardTest {
     Chars,
     /// Test function keys (PageUp, PageDown, Home, End)
     FnKeys,
+    /// Test Cmd+Shift+3 (screenshot shortcut)
+    CmdShift3,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -302,6 +304,10 @@ async fn main() -> io::Result<()> {
                 KeyboardTest::FnKeys => {
                     println!("Running keyboard fn keys test...");
                     remote_keyboard::test_keyboard_fn_keys().await?;
+                }
+                KeyboardTest::CmdShift3 => {
+                    println!("Running Cmd+Shift+3 test...");
+                    remote_keyboard::test_keyboard_cmd_shift_3().await?;
                 }
             }
             println!("Keyboard test finished.");

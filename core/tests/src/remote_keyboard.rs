@@ -124,6 +124,88 @@ pub async fn test_keyboard_fn_keys() -> io::Result<()> {
     Ok(())
 }
 
+/// Sends a keystroke event with full modifier support via the LiveKit data channel.
+async fn send_keystroke_with_modifiers(
+    room: &Room,
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    down: bool,
+) -> io::Result<()> {
+    let keystroke_data = KeystrokeData {
+        key: vec![key.to_string()],
+        meta,
+        ctrl,
+        shift,
+        alt,
+        down,
+    };
+    let event = ClientEvent::Keystroke(keystroke_data);
+    let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
+    room.local_participant()
+        .publish_data(DataPacket {
+            payload,
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// Simulates pressing and releasing a key with full modifier support.
+async fn simulate_key_press_with_modifiers(
+    room: &Room,
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+) -> io::Result<()> {
+    println!(
+        "Sending KeyDown: '{key}', Ctrl: {ctrl}, Alt/Option: {alt}, Shift: {shift}, Meta: {meta}"
+    );
+    send_keystroke_with_modifiers(room, key, ctrl, alt, shift, meta, true).await?;
+    sleep(Duration::from_millis(50)).await;
+    println!(
+        "Sending KeyUp: '{key}', Ctrl: {ctrl}, Alt/Option: {alt}, Shift: {shift}, Meta: {meta}"
+    );
+    send_keystroke_with_modifiers(room, key, ctrl, alt, shift, meta, false).await?;
+    sleep(Duration::from_millis(100)).await;
+    Ok(())
+}
+
+/// Connects screenshare, sends Cmd+Shift+3 (screenshot) after user focuses a window.
+pub async fn test_keyboard_cmd_shift_3() -> io::Result<()> {
+    println!("Starting Cmd+Shift+3 test...");
+    let (sender, _event_socket, _content) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test CmdShift3");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    println!(">>> Focus a window now. Sending Cmd+Shift+3 in 5 seconds...");
+    sleep(Duration::from_secs(5)).await;
+
+    simulate_key_press_with_modifiers(&room, "3", false, false, true, true).await?;
+    println!("Cmd+Shift+3 sent.");
+
+    sleep(Duration::from_secs(2)).await;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&sender)?;
+    println!("Cmd+Shift+3 test complete.");
+    Ok(())
+}
+
 /// Connects screenshare, runs the keyboard character test, and stops screenshare.
 pub async fn test_keyboard_chars() -> io::Result<()> {
     println!("Starting keyboard test...");
