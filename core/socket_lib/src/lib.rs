@@ -203,6 +203,7 @@ pub enum Message {
     ToggleMic,
     OpenScreenShareWindow,
     CloseScreenShareWindow,
+    OpenStatsWindow,
     BringWindowsToFront,
     BringWindowsToFrontResult(bool),
     // Core → Tauri event forwarding

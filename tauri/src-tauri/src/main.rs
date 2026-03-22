@@ -85,6 +85,16 @@ async fn screenshare(
 }
 
 #[tauri::command(async)]
+async fn open_stats_window(app: tauri::AppHandle) {
+    log::info!("open_stats_window");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::OpenStatsWindow) {
+        log::error!("open_stats_window: failed to send message: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 async fn stop_sharing(app: tauri::AppHandle) {
     log::info!("stop_sharing");
     let data = app.state::<Mutex<AppData>>();
@@ -1432,6 +1442,7 @@ fn main() {
             close_screenshare_viewer,
             end_call,
             bring_windows_to_front,
+            open_stats_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

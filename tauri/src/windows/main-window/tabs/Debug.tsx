@@ -147,6 +147,9 @@ export const Debug = () => {
           {isLoading || isFetching ? "Loading..." : "List cameras"}
         </Button>
         {data && data.map((camera) => <div key={camera.id}>{camera.name}</div>)}
+        <Button onClick={() => typedInvoke("open_stats_window")} size="sm">
+          Open Stats Window
+        </Button>
       </div>
 
       <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">

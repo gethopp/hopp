@@ -227,6 +227,7 @@ export interface CommandMap {
 
   // Core socket messages — window management
   bring_windows_to_front: { args: void; return: boolean };
+  open_stats_window: { args: void; return: void };
 }
 
 type InvokeArgs<K extends keyof CommandMap> = CommandMap[K]["args"] extends void ? [] : [CommandMap[K]["args"]];

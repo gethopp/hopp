@@ -531,18 +531,11 @@ impl<'a> Application<'a> {
                 return;
             }
         }
-        if self.stats_window.is_none() {
-            match StatsWindow::new(event_loop) {
-                Ok(w) => self.stats_window = Some(w),
-                Err(e) => log::error!("Failed to open stats window: {e:?}"),
-            }
-        }
     }
 
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
         self.screensharing_window = None;
-        self.stats_window = None;
     }
 
     fn stop_screenshare(&mut self) {
@@ -1506,6 +1499,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: CloseScreenShareWindow");
                 self.close_screensharing_window();
             }
+            UserEvent::OpenStatsWindow => {
+                log::debug!("user_event: OpenStatsWindow");
+                if self.stats_window.is_none() {
+                    match StatsWindow::new(event_loop) {
+                        Ok(w) => self.stats_window = Some(w),
+                        Err(e) => log::error!("Failed to open stats window: {e:?}"),
+                    }
+                }
+            }
             UserEvent::CloseCameraWindow => {
                 log::info!("user_event: CloseCameraWindow");
                 self.camera_window = None;
@@ -2091,6 +2093,7 @@ pub enum UserEvent {
     },
     CloseScreenShareWindow,
     CloseCameraWindow,
+    OpenStatsWindow,
     BringWindowsToFront,
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
@@ -2229,6 +2232,7 @@ impl RenderEventLoop {
                         redraw_tx: None,
                     },
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
+                    Message::OpenStatsWindow => UserEvent::OpenStatsWindow,
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
