@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant as StdInstant};
 
-use iced::widget::{button, column, container, row, shader, stack, text, Space};
+use iced::widget::{
+    button, column, container, mouse_area, row, shader, stack, svg, text, tooltip, Space,
+};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
     Size as IcedSize,
@@ -77,6 +79,9 @@ const ICON_SCREEN_SHARE: char = '\u{F102}';
 const ICON_VIDEO: char = '\u{F101}';
 const ICON_PHONE_OFF: char = '\u{F103}';
 
+const ICON_EYE_ON_SVG: &[u8] = include_bytes!("../../resources/icons/EyeOn.svg");
+const ICON_EYE_OFF_SVG: &[u8] = include_bytes!("../../resources/icons/EyeOff.svg");
+
 const AVATAR_SIZE: f32 = 130.0;
 const AVATAR_RADIUS: f32 = 20.0;
 const AVATAR_FONT_SIZE: f32 = 42.0;
@@ -100,12 +105,19 @@ pub enum CameraMessage {
     ScreenShare,
     VideoToggle,
     EndCall,
+    ToggleSelfVisibility,
+    /// Mouse entered or left the local participant tile (for hover-only chrome).
+    LocalTileHover(bool),
 }
 
 struct CameraState {
     viewport_size: IcedSize,
     /// Local camera on/off state, updated from StartCamera/StopCamera handlers.
     camera_active: bool,
+    /// When true, the local participant tile is hidden (floating control restores it).
+    self_hidden: bool,
+    /// True while the pointer is over the local tile (show hide-self control).
+    local_tile_hovered: bool,
     toast: Option<ToastState>,
 }
 
@@ -114,6 +126,8 @@ impl Default for CameraState {
         Self {
             viewport_size: IcedSize::new(CAMERA_WINDOW_WIDTH as f32, CAMERA_WINDOW_HEIGHT as f32),
             camera_active: false,
+            self_hidden: false,
+            local_tile_hovered: false,
             toast: None,
         }
     }
@@ -498,7 +512,12 @@ impl CameraWindow {
         .align_y(Alignment::Center);
 
         // ── Participant grid ─────────────────────────────────────────────
-        let video_grid = create_participant_grid(state.viewport_size, participants);
+        let video_grid = create_participant_grid(
+            state.viewport_size,
+            participants,
+            state.self_hidden,
+            state.local_tile_hovered,
+        );
 
         // ── Main layout ─────────────────────────────────────────────────
         let content = column![header, video_grid]
@@ -525,6 +544,20 @@ impl CameraWindow {
             })
             .clip(true);
 
+        let floating_show_btn = if state.self_hidden {
+            Some(
+                container(self_visibility_button(true))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(4.0)
+                    .into(),
+            )
+        } else {
+            None
+        };
+
         let toast_position: ToastPosition = if state.viewport_size.width < 500.0 {
             ToastPosition {
                 top: None,
@@ -541,11 +574,16 @@ impl CameraWindow {
             }
         };
 
-        if let Some(toast_el) = toast::toast_view(&state.toast, Some(&toast_position)) {
-            stack![base, toast_el].into()
-        } else {
-            base.into()
+        let mut layers: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
+            vec![base.into()];
+        if let Some(floating) = floating_show_btn {
+            layers.push(floating);
         }
+        if let Some(toast_el) = toast::toast_view(&state.toast, Some(&toast_position)) {
+            layers.push(toast_el);
+        }
+
+        stack(layers).into()
     }
 
     pub fn show_error_toast(&mut self, message: &str) {
@@ -607,6 +645,15 @@ impl CameraWindow {
                 if let Err(e) = self.event_loop_proxy.send_event(UserEvent::CallEnd) {
                     log::error!("CameraWindow: failed to send CallEnd event: {e:?}");
                 }
+            }
+            CameraMessage::ToggleSelfVisibility => {
+                self.state.self_hidden = !self.state.self_hidden;
+                if self.state.self_hidden {
+                    self.state.local_tile_hovered = false;
+                }
+            }
+            CameraMessage::LocalTileHover(hovered) => {
+                self.state.local_tile_hovered = hovered;
             }
         }
     }
@@ -991,6 +1038,84 @@ fn initials_avatar<'a>(
 /// Tile corner radius for participant cards (Figma: 6px).
 const TILE_RADIUS: f32 = 6.0;
 
+fn self_visibility_button<'a>(
+    is_hidden: bool,
+) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    let icon_data = if is_hidden {
+        ICON_EYE_ON_SVG
+    } else {
+        ICON_EYE_OFF_SVG
+    };
+    let tooltip_text = if is_hidden {
+        "Show your camera"
+    } else {
+        "Hide yourself"
+    };
+
+    let icon_handle = svg::Handle::from_memory(icon_data);
+    let slate300 = ColorToken::Slate300.to_color();
+    let icon = svg(icon_handle)
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme: &Theme, _status| svg::Style {
+            color: Some(slate300),
+        });
+
+    let btn = button(
+        container(icon)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fixed(38.0))
+    .height(Length::Fixed(26.0))
+    .on_press(CameraMessage::ToggleSelfVisibility)
+    .padding(Padding::from([6.0, 12.0]))
+    .style(move |_theme: &Theme, status| {
+        let bg_color = match status {
+            button::Status::Hovered => ColorToken::Slate600.to_color(),
+            button::Status::Pressed => ColorToken::Slate800.to_color(),
+            _ => ColorToken::Slate700.to_color(),
+        };
+        button::Style {
+            background: Some(Background::Color(bg_color)),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+                width: 1.0,
+                radius: 19.0.into(),
+            },
+            text_color: Color::WHITE,
+            shadow: Shadow::default(),
+            snap: false,
+        }
+    });
+
+    let tooltip_content = container(text(tooltip_text).size(12).color(Color::WHITE))
+        .padding(Padding::from([4.0, 8.0]))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(ColorToken::Gray600.to_color())),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            shadow: ShadowToken::Xs.to_shadow(),
+            ..Default::default()
+        });
+
+    let tip_pos = if is_hidden {
+        tooltip::Position::Left
+    } else {
+        tooltip::Position::Top
+    };
+
+    tooltip(btn, tooltip_content, tip_pos)
+        .gap(1)
+        .snap_within_viewport(true)
+        .into()
+}
+
 /// Create a participant card tile.
 ///
 /// If the participant has camera buffers, renders GPU-accelerated video via the
@@ -1006,6 +1131,8 @@ fn participant_card<'a>(
     buffers: Arc<VideoBufferManager>,
     tile_size: f32,
     is_small_window: bool,
+    is_local: bool,
+    local_tile_hovered: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     // Adjust padding based on window size
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
@@ -1054,8 +1181,29 @@ fn participant_card<'a>(
     .height(Length::Fill)
     .padding(overlay_padding);
 
-    // Clipped content: video + name label, masked to rounded corners.
-    let clipped_content = container(iced::widget::stack![bg_element, overlay])
+    let eye_button_overlay: Option<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
+        if is_local && local_tile_hovered {
+            Some(
+                container(self_visibility_button(false))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(4.0)
+                    .into(),
+            )
+        } else {
+            None
+        };
+
+    let mut tile_layers: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
+        vec![bg_element, overlay.into()];
+    if let Some(eye_btn) = eye_button_overlay {
+        tile_layers.push(eye_btn);
+    }
+
+    // Clipped content: video + name label (+ local hide control), masked to rounded corners.
+    let clipped_content = container(stack(tile_layers))
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
@@ -1097,7 +1245,14 @@ fn participant_card<'a>(
             ..Default::default()
         });
 
-    tile.into()
+    if is_local {
+        mouse_area(tile)
+            .on_enter(CameraMessage::LocalTileHover(true))
+            .on_exit(CameraMessage::LocalTileHover(false))
+            .into()
+    } else {
+        tile.into()
+    }
 }
 
 /// Hash a SID string to a u64 for GPU texture keying.
@@ -1116,12 +1271,23 @@ fn sid_to_id(sid: &str) -> u64 {
 fn create_participant_grid<'a>(
     available_size: IcedSize,
     participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    self_hidden: bool,
+    local_tile_hovered: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
     // Sort participants by name for stable ordering
     let mut sorted: Vec<(&String, &ParticipantInfo)> = participants_guard.iter().collect();
     sorted.sort_by(|a, b| a.1.name().cmp(b.1.name()));
+
+    let sorted: Vec<(&String, &ParticipantInfo)> = if self_hidden {
+        sorted
+            .into_iter()
+            .filter(|(sid, _)| sid.as_str() != "local")
+            .collect()
+    } else {
+        sorted
+    };
 
     // Uncomment to test with multiple participants
     // #[cfg(debug_assertions)]
@@ -1198,6 +1364,7 @@ fn create_participant_grid<'a>(
             if let Some((sid, info)) = participants_iter.next() {
                 let id = sid_to_id(sid);
                 let camera_buffers = info.camera_buffers();
+                let is_local = sid.as_str() == "local";
                 row_tiles.push(participant_card(
                     id,
                     info.name(),
@@ -1206,6 +1373,8 @@ fn create_participant_grid<'a>(
                     camera_buffers,
                     tile_size,
                     is_small_window,
+                    is_local,
+                    local_tile_hovered,
                 ));
             }
         }
