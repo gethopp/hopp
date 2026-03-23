@@ -177,6 +177,48 @@ async fn simulate_key_press_with_modifiers(
     Ok(())
 }
 
+/// Connects screenshare, sends Ctrl+Option+Left Arrow after user focuses a window.
+pub async fn test_keyboard_ctrl_option_arrow() -> io::Result<()> {
+    println!("Starting Ctrl+Option+Left Arrow test...");
+    let (sender, _event_socket, _content) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test CtrlOptionArrow");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    println!(">>> Focus a text editor window now. Sending Ctrl+Option+Left Arrow in 5 seconds...");
+    sleep(Duration::from_secs(5)).await;
+
+    let pause = Duration::from_millis(20);
+
+    // Press modifiers individually, then key, then release
+    send_keystroke_with_modifiers(&room, "Alt", false, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Control", true, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "ArrowLeft", true, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "ArrowLeft", true, true, false, false, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Control", true, false, false, false, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Alt", false, false, false, false, false).await?;
+    println!("Ctrl+Option+Left Arrow sent.");
+
+    sleep(Duration::from_secs(2)).await;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&sender)?;
+    println!("Ctrl+Option+Left Arrow test complete.");
+    Ok(())
+}
+
 /// Connects screenshare, sends Cmd+Shift+3 (screenshot) after user focuses a window.
 pub async fn test_keyboard_cmd_shift_3() -> io::Result<()> {
     println!("Starting Cmd+Shift+3 test...");
@@ -195,7 +237,20 @@ pub async fn test_keyboard_cmd_shift_3() -> io::Result<()> {
     println!(">>> Focus a window now. Sending Cmd+Shift+3 in 5 seconds...");
     sleep(Duration::from_secs(5)).await;
 
-    simulate_key_press_with_modifiers(&room, "3", false, false, true, true).await?;
+    let pause = Duration::from_millis(20);
+
+    // Press modifiers individually, then key, then release
+    send_keystroke_with_modifiers(&room, "Meta", false, false, false, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Shift", false, false, true, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "3", false, false, true, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "3", false, false, true, true, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Shift", false, false, false, true, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Meta", false, false, false, false, false).await?;
     println!("Cmd+Shift+3 sent.");
 
     sleep(Duration::from_secs(2)).await;

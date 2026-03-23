@@ -253,6 +253,18 @@ impl KeyboardEvent {
                 _ => {}
             }
         }
+        // Add keycode-specific flags (arrow keys, function keys, etc.)
+        match keycode {
+            0x7B..=0x7E => {
+                event_flags.insert(CGEventFlags::CGEventFlagSecondaryFn);
+                event_flags.insert(CGEventFlags::CGEventFlagNumericPad);
+            }
+            0x73 | 0x74 | 0x75 | 0x77 | 0x79 => {
+                event_flags.insert(CGEventFlags::CGEventFlagSecondaryFn);
+            }
+            _ => {}
+        }
+
         event.set_flags(event_flags);
 
         Some(Self { event })

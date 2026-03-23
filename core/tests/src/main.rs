@@ -112,6 +112,8 @@ enum KeyboardTest {
     Chars,
     /// Test function keys (PageUp, PageDown, Home, End)
     FnKeys,
+    /// Test Ctrl+Option+Left Arrow (word-back navigation)
+    CtrlOptionArrow,
     /// Test Cmd+Shift+3 (screenshot shortcut)
     CmdShift3,
 }
@@ -304,6 +306,10 @@ async fn main() -> io::Result<()> {
                 KeyboardTest::FnKeys => {
                     println!("Running keyboard fn keys test...");
                     remote_keyboard::test_keyboard_fn_keys().await?;
+                }
+                KeyboardTest::CtrlOptionArrow => {
+                    println!("Running Ctrl+Option+Left Arrow test...");
+                    remote_keyboard::test_keyboard_ctrl_option_arrow().await?;
                 }
                 KeyboardTest::CmdShift3 => {
                     println!("Running Cmd+Shift+3 test...");
