@@ -1,4 +1,4 @@
-use livekit::options::TrackPublishOptions;
+use livekit::options::{AudioEncoding, TrackPublishOptions};
 use livekit::track::{LocalAudioTrack, LocalTrack, RemoteAudioTrack, TrackSource};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
@@ -48,6 +48,10 @@ impl AudioPublisher {
                 LocalTrack::Audio(track.clone()),
                 TrackPublishOptions {
                     source: TrackSource::Microphone,
+                    audio_encoding: Some(AudioEncoding {
+                        max_bitrate: 24_000,
+                    }),
+                    dtx: false,
                     ..Default::default()
                 },
             )
@@ -99,7 +103,7 @@ async fn process_audio_samples(
         "Mic capture sample rate must match APM rate"
     );
     let samples_per_unit = (MIXER_SAMPLE_RATE / 100) as usize;
-    let max_buffer_frames = 5; // 50ms max latency
+    let max_buffer_frames = 10;
     let max_buffer_samples = max_buffer_frames * samples_per_unit;
 
     log::info!(
