@@ -368,7 +368,7 @@ pub fn connect(socket_path: &str) -> Result<(SocketSender, EventSocket), std::io
 
     #[cfg(windows)]
     let stream = {
-        let port = socket_path_to_port(socket_path);
+        let port = socket_path_to_port(socket_path)?;
         let addr = format!("127.0.0.1:{port}");
         let stream = TcpStream::connect(addr)?;
         stream.set_read_timeout(None)?;
@@ -419,7 +419,7 @@ pub fn listen(socket_path: &str) -> Result<(SocketSender, EventSocket), std::io:
         }
 
         // Get initial port to try
-        let mut port = socket_path_to_port(socket_path);
+        let mut port = calculate_port_from_hash(socket_path);
         let mut listener = None;
 
         // Try to bind, incrementing port if necessary
@@ -454,8 +454,8 @@ pub fn listen(socket_path: &str) -> Result<(SocketSender, EventSocket), std::io:
         log::info!("Listening on port {port}, waiting for client");
         listener.set_nonblocking(true)?;
         let mut stream = None;
-        for i in 0..10 {
-            log::info!("Waiting for client {i}/10");
+        for i in 0..50 {
+            log::info!("Waiting for client {i}/50");
             match listener.accept() {
                 Ok((s, _)) => {
                     stream = Some(s);
@@ -479,20 +479,18 @@ pub fn listen(socket_path: &str) -> Result<(SocketSender, EventSocket), std::io:
 }
 
 #[cfg(windows)]
-fn socket_path_to_port(socket_path: &str) -> u16 {
-    // First try to read the port from the file
-    if let Ok(content) = fs::read_to_string(socket_path) {
-        if let Ok(port) = content.trim().parse::<u16>() {
-            log::info!("Found port {port} in file {socket_path}");
-            port
-        } else {
-            log::warn!("Could not parse port from file {socket_path}: '{content}'");
-            calculate_port_from_hash(socket_path)
-        }
-    } else {
-        log::debug!("Could not read port from file {socket_path}, calculating from hash");
-        calculate_port_from_hash(socket_path)
-    }
+fn socket_path_to_port(socket_path: &str) -> Result<u16, std::io::Error> {
+    // Read the port from the file written by the server.
+    // If the file doesn't exist yet, the server hasn't started listening,
+    // so we return an error to let the caller retry.
+    let content = fs::read_to_string(socket_path).map_err(|e| {
+        log::debug!("Could not read port from file {socket_path}: {e}");
+        e
+    })?;
+    content.trim().parse::<u16>().map_err(|e| {
+        log::warn!("Could not parse port from file {socket_path}: '{content}'");
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    })
 }
 
 #[cfg(windows)]

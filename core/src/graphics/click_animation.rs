@@ -73,6 +73,11 @@ impl ClickAnimationRenderer {
         }
     }
 
+    /// Returns `true` when at least one click-pulse animation is still playing.
+    pub fn is_animating(&self) -> bool {
+        !self.used_slots.is_empty()
+    }
+
     pub fn enable_click_animation(&mut self, position: Position) {
         if let Err(e) = self.click_animation_position_sender.send(position) {
             log::error!("enable_click_animation: error sending position: {e:?}");

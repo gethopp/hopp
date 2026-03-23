@@ -23,8 +23,8 @@ use hopp::{
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
     recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
 };
-use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
 #[cfg(target_os = "macos")]
+use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::{env, sync::Arc};

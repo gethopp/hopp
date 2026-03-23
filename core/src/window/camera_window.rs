@@ -43,6 +43,7 @@ use crate::components::toast::{self, ToastPosition, ToastState};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
+use crate::window::gpu_context::GpuContext;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 use crate::UserEvent;
@@ -163,11 +164,15 @@ pub struct CameraWindow {
 
 impl CameraWindow {
     /// Create a new camera window with wgpu surface and iced renderer.
+    ///
+    /// If a `GpuContext` is provided, its shared Instance/Adapter/Device/Queue
+    /// are reused, avoiding expensive DX12 re-initialisation on Windows.
     pub fn new(
         event_loop: &ActiveEventLoop,
         participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-    ) -> Result<Self, CameraWindowError> {
+        gpu_ctx: Option<&GpuContext>,
+    ) -> Result<(Self, GpuContext), CameraWindowError> {
         log::info!("CameraWindow::new");
 
         // ── Create winit window ──────────────────────────────────────────
@@ -207,40 +212,66 @@ impl CameraWindow {
         let window = Arc::new(window);
 
         // ── wgpu setup ───────────────────────────────────────────────────
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+        // Reuse the shared GpuContext when available to avoid repeated DX12
+        // initialisation overhead on Windows.
+        let instance = match gpu_ctx {
+            Some(ctx) => ctx.instance.clone(),
+            None => std::sync::Arc::new(GpuContext::create_instance()),
+        };
 
         let surface = instance.create_surface(window.clone()).map_err(|e| {
             log::error!("CameraWindow: failed to create surface: {e:?}");
             CameraWindowError::SurfaceCreation
         })?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| {
-            log::error!("CameraWindow: failed to request adapter: {e:?}");
-            CameraWindowError::AdapterRequest
-        })?;
+        let create_gpu_context = || -> Result<(Arc<wgpu::Adapter>, wgpu::Device, wgpu::Queue), CameraWindowError> {
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                },
+            ))
+            .map_err(|e| {
+                log::error!("CameraWindow: failed to request adapter: {e:?}");
+                CameraWindowError::AdapterRequest
+            })?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: Some("CameraWindow device"),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| {
-            log::error!("CameraWindow: failed to request device: {e:?}");
-            CameraWindowError::DeviceRequest
-        })?;
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    label: Some("CameraWindow device"),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                }))
+                .map_err(|e| {
+                    log::error!("CameraWindow: failed to request device: {e:?}");
+                    CameraWindowError::DeviceRequest
+                })?;
+            Ok((Arc::new(adapter), device, queue))
+        };
+
+        let (adapter, device, queue) = if let Some(ctx) = gpu_ctx {
+            let caps = surface.get_capabilities(&ctx.adapter);
+            if caps.formats.is_empty() {
+                log::warn!(
+                    "CameraWindow::new: shared GPU context incompatible with surface, creating a new surface-compatible context"
+                );
+                create_gpu_context()?
+            } else {
+                (ctx.adapter.clone(), ctx.device.clone(), ctx.queue.clone())
+            }
+        } else {
+            create_gpu_context()?
+        };
 
         let caps = surface.get_capabilities(&adapter);
+        if caps.formats.is_empty() {
+            log::error!("CameraWindow::new: surface reported no compatible formats");
+            return Err(CameraWindowError::AdapterRequest);
+        }
         let format = caps
             .formats
             .iter()
@@ -285,7 +316,6 @@ impl CameraWindow {
             window.scale_factor() as f32,
         );
         let clipboard = Clipboard::connect(window.clone());
-
         #[cfg(target_os = "macos")]
         {
             super::vibrancy::apply_macos_vibrancy(&window, 8.0);
@@ -301,7 +331,14 @@ impl CameraWindow {
         state.viewport_size = IcedSize::new(logical.width as f32, logical.height as f32);
         state.camera_active = camera_active;
 
-        Ok(Self {
+        let gpu_ctx_out = GpuContext {
+            instance,
+            adapter,
+            device: device.clone(),
+            queue: queue.clone(),
+        };
+
+        Ok((Self {
             window,
             surface,
             device,
@@ -320,7 +357,7 @@ impl CameraWindow {
             last_redraw: StdInstant::now(),
             participants,
             event_loop_proxy,
-        })
+        }, gpu_ctx_out))
     }
 
     /// The winit `WindowId` for event routing.

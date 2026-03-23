@@ -6,6 +6,7 @@
 //! global font system.
 
 use std::borrow::Cow;
+use std::sync::Once;
 
 use iced::Font;
 
@@ -29,14 +30,18 @@ pub const GEIST_MEDIUM_BYTES: &[u8] =
     include_bytes!("../../resources/fonts/geist/Geist-Medium.otf");
 pub const ICONS_FONT_BYTES: &[u8] = include_bytes!("../../resources/icons-font-ttf/icons.ttf");
 
+static LOAD_FONTS_ONCE: Once = Once::new();
+
 /// Register Geist font data with the global iced font system.
 ///
-/// Call this once per renderer (idempotent — loading the same bytes twice is harmless).
+/// This is process-wide and idempotent, so every window may call it safely.
 pub fn load_fonts() {
-    let mut font_system = iced_wgpu::graphics::text::font_system()
-        .write()
-        .expect("Failed to lock font system");
-    font_system.load_font(Cow::Borrowed(GEIST_REGULAR_BYTES));
-    font_system.load_font(Cow::Borrowed(GEIST_MEDIUM_BYTES));
-    font_system.load_font(Cow::Borrowed(ICONS_FONT_BYTES));
+    LOAD_FONTS_ONCE.call_once(|| {
+        let mut font_system = iced_wgpu::graphics::text::font_system()
+            .write()
+            .expect("Failed to lock font system");
+        font_system.load_font(Cow::Borrowed(GEIST_REGULAR_BYTES));
+        font_system.load_font(Cow::Borrowed(GEIST_MEDIUM_BYTES));
+        font_system.load_font(Cow::Borrowed(ICONS_FONT_BYTES));
+    });
 }

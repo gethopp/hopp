@@ -327,8 +327,11 @@ fn default_screen_area_from_hardcoded() -> ScreenArea {
     }
 }
 
-/// Target redraw interval: 60 FPS
+/// Target redraw interval: 10 FPS (for steady-state video; animations bypass this).
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 10);
+/// Redraw interval used while an animation (segmented control, click pulse) is
+/// running — 60 FPS for smooth motion.
+const ANIMATION_REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 60);
 
 pub enum RedrawCommand {
     ForceRedraw,
@@ -370,6 +373,8 @@ const CURSOR_ICON_PENCIL: &[u8] =
     include_bytes!("../../resources/icons/local-participant-pencil.svg");
 const CURSOR_ICON_POINT: &[u8] =
     include_bytes!("../../resources/icons/local-participant-pointer.svg");
+/// Hotspot for the point-mode cursor (x, y) in pixel coordinates.
+const POINT_CURSOR_HOTSPOT: (u32, u32) = (2, 4);
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
@@ -672,6 +677,9 @@ pub struct ScreensharingWindow {
 
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
+    ///
+    /// If a `GpuContext` is provided, its shared Instance/Adapter/Device/Queue
+    /// are reused, avoiding expensive DX12 re-initialisation on Windows.
     pub fn new(
         event_loop: &ActiveEventLoop,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
@@ -679,7 +687,8 @@ impl ScreensharingWindow {
         draw_persist: bool,
         redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
         redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
-    ) -> Result<Self, ScreensharingWindowError> {
+        gpu_ctx: Option<&super::gpu_context::GpuContext>,
+    ) -> Result<(Self, super::gpu_context::GpuContext), ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
 
         let screen_area = probe_available_screen_area(event_loop);
@@ -712,40 +721,66 @@ impl ScreensharingWindow {
         window.focus_window();
 
         // ── wgpu setup ───────────────────────────────────────────────────
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+        // Reuse the shared GpuContext when available to avoid repeated DX12
+        // initialisation overhead on Windows.
+        let instance = match gpu_ctx {
+            Some(ctx) => ctx.instance.clone(),
+            None => std::sync::Arc::new(super::gpu_context::GpuContext::create_instance()),
+        };
 
         let surface = instance.create_surface(window.clone()).map_err(|e| {
             log::error!("ScreensharingWindow: failed to create surface: {e:?}");
             ScreensharingWindowError::SurfaceCreation
         })?;
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| {
-            log::error!("ScreensharingWindow: failed to request adapter: {e:?}");
-            ScreensharingWindowError::AdapterRequest
-        })?;
+        let create_gpu_context = || -> Result<(Arc<wgpu::Adapter>, wgpu::Device, wgpu::Queue), ScreensharingWindowError> {
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::None,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                },
+            ))
+            .map_err(|e| {
+                log::error!("ScreensharingWindow: failed to request adapter: {e:?}");
+                ScreensharingWindowError::AdapterRequest
+            })?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: Some("ScreensharingWindow device"),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| {
-            log::error!("ScreensharingWindow: failed to request device: {e:?}");
-            ScreensharingWindowError::DeviceRequest
-        })?;
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    label: Some("ScreensharingWindow device"),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                }))
+                .map_err(|e| {
+                    log::error!("ScreensharingWindow: failed to request device: {e:?}");
+                    ScreensharingWindowError::DeviceRequest
+                })?;
+            Ok((Arc::new(adapter), device, queue))
+        };
+
+        let (adapter, device, queue) = if let Some(ctx) = gpu_ctx {
+            let caps = surface.get_capabilities(&ctx.adapter);
+            if caps.formats.is_empty() {
+                log::warn!(
+                    "ScreensharingWindow::new: shared GPU context incompatible with surface, creating a new surface-compatible context"
+                );
+                create_gpu_context()?
+            } else {
+                (ctx.adapter.clone(), ctx.device.clone(), ctx.queue.clone())
+            }
+        } else {
+            create_gpu_context()?
+        };
 
         let caps = surface.get_capabilities(&adapter);
+        if caps.formats.is_empty() {
+            log::error!("ScreensharingWindow::new: surface reported no compatible formats");
+            return Err(ScreensharingWindowError::AdapterRequest);
+        }
         // iced 0.14 enables `web-colors` by default → GAMMA_CORRECTION = false.
         // Match iced's compositor: prefer a non-sRGB surface so raw sRGB colour
         // values pass through without an extra gamma encode.
@@ -805,7 +840,6 @@ impl ScreensharingWindow {
             // resize methods (drag, keyboard shortcuts, tiling, accessibility).
             set_macos_window_aspect_ratio(&window, 16.0 / 9.0);
         }
-
         // Create custom cursors for the participant area.
         // Logical size: 30×30 points (matching the SVG viewBox).
         const CURSOR_LOGICAL_SIZE: f64 = 30.0;
@@ -877,7 +911,6 @@ impl ScreensharingWindow {
             );
             (pointer, pencil, point)
         };
-
         let mut participants_manager = ParticipantsManager::new();
         for (sid, name, _) in &participants {
             if let Err(e) = participants_manager.add_participant(
@@ -914,8 +947,8 @@ impl ScreensharingWindow {
         let s = Self {
             window,
             surface,
-            device,
-            _queue: queue,
+            device: device.clone(),
+            _queue: queue.clone(),
             format,
             alpha_mode,
             _engine: engine,
@@ -958,7 +991,14 @@ impl ScreensharingWindow {
             custom_cursor_point,
         };
         s.update_cursor();
-        Ok(s)
+
+        let gpu_ctx_out = super::gpu_context::GpuContext {
+            instance,
+            adapter,
+            device,
+            queue,
+        };
+        Ok((s, gpu_ctx_out))
     }
 
     /// The winit `WindowId` for event routing.
@@ -2152,6 +2192,23 @@ impl ScreensharingWindow {
         // is animating, so the slide plays smoothly even when no user input
         // events are arriving.
         seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
+
+        // If any animation is still in progress (segmented control slide or
+        // click pulse), schedule the next frame at 60 FPS so the motion is
+        // smooth.  On macOS the compositor drives redraws more aggressively,
+        // but on Windows/Linux the event loop only wakes when we explicitly
+        // ask for it.
+        if seg_ctrl_mod::animation_running(&self.state.tab_anim)
+            || self.click_animation_renderer.is_animating()
+        {
+            // Use a short sleep-then-request so the event loop wakes at ~60 FPS
+            // instead of waiting for the next REDRAW_INTERVAL timeout (100ms).
+            let window_handle = self.window.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(ANIMATION_REDRAW_INTERVAL);
+                window_handle.request_redraw();
+            });
+        }
 
         let cleared = self.participants_manager.update_auto_clear();
 

@@ -47,6 +47,7 @@ pub mod utils {
 
 pub(crate) mod window {
     pub(crate) mod camera_window;
+    pub(crate) mod gpu_context;
     pub(crate) mod screensharing_window;
     pub(crate) mod stats_window;
     pub(crate) mod vibrancy;
@@ -76,6 +77,7 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use window::camera_window::CameraWindow;
+use window::gpu_context::GpuContext;
 use window::screensharing_window::ScreensharingWindow;
 use window::stats_window::StatsWindow;
 use winit::application::ApplicationHandler;
@@ -235,6 +237,13 @@ pub struct Application<'a> {
     screensharing_window: Option<ScreensharingWindow>,
     screensharing_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
+    /// Shared wgpu GPU context (Instance + Adapter + Device + Queue).
+    /// Lazily created on the first window that needs it, then reused for
+    /// subsequent windows to avoid repeated DX12 initialisation overhead on
+    /// Windows.
+    gpu_context: Option<GpuContext>,
+    /// Background prewarm result for the shared GPU context.
+    gpu_context_init_rx: Option<std::sync::mpsc::Receiver<Option<GpuContext>>>,
 }
 
 // window: winit window
@@ -315,7 +324,7 @@ impl<'a> Application<'a> {
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();
 
-        Ok(Self {
+        let mut application = Self {
             remote_control: None,
             textures_path: input.textures_path,
             screen_capturer: screencapturer.clone(),
@@ -344,7 +353,81 @@ impl<'a> Application<'a> {
             screensharing_window: None,
             screensharing_redraw_thread: None,
             stats_window: None,
-        })
+            gpu_context: None,
+            gpu_context_init_rx: None,
+        };
+        application.start_gpu_context_prewarm();
+        Ok(application)
+    }
+
+    fn start_gpu_context_prewarm(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        {
+            return;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if self.gpu_context.is_some() || self.gpu_context_init_rx.is_some() {
+                return;
+            }
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.gpu_context_init_rx = Some(rx);
+            std::thread::spawn(move || {
+                let start = std::time::Instant::now();
+                let gpu_context = match GpuContext::new(None) {
+                    Ok(ctx) => {
+                        log::info!(
+                            "Application: prewarmed shared GPU context in {:?}",
+                            start.elapsed()
+                        );
+                        Some(ctx)
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Application: failed to prewarm shared GPU context after {:?}: {e}",
+                            start.elapsed()
+                        );
+                        None
+                    }
+                };
+                let _ = tx.send(gpu_context);
+            });
+        }
+    }
+
+    fn take_prewarmed_gpu_context(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        {
+            return;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if self.gpu_context.is_some() {
+                self.gpu_context_init_rx = None;
+                return;
+            }
+
+            let Some(rx) = self.gpu_context_init_rx.take() else {
+                return;
+            };
+
+            match rx.try_recv() {
+                Ok(Some(ctx)) => {
+                    log::info!("Application: using prewarmed shared GPU context");
+                    self.gpu_context = Some(ctx);
+                }
+                Ok(None) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.gpu_context_init_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::warn!("Application: shared GPU prewarm thread disconnected");
+                }
+            }
+        }
     }
 
     fn get_available_content(&mut self, event_loop: &ActiveEventLoop) -> Vec<CaptureContent> {
@@ -496,7 +579,6 @@ impl<'a> Application<'a> {
 
         Ok(())
     }
-
     fn stop_camera(&mut self) {
         log::info!("stop_camera");
         {
@@ -539,6 +621,7 @@ impl<'a> Application<'a> {
                 std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
             (rx, tx)
         });
+        self.take_prewarmed_gpu_context();
         match ScreensharingWindow::new(
             event_loop,
             buffer,
@@ -546,15 +629,19 @@ impl<'a> Application<'a> {
             self.controller_draw_persist,
             redraw_rx,
             redraw_tx,
+            self.gpu_context.as_ref(),
         ) {
-            Ok(win) => self.screensharing_window = Some(win),
+            Ok((win, gpu_ctx)) => {
+                self.gpu_context = Some(gpu_ctx);
+                self.gpu_context_init_rx = None;
+                self.screensharing_window = Some(win);
+            }
             Err(e) => {
                 log::error!("Failed to open screensharing window: {e:?}");
                 return;
             }
         }
     }
-
     fn join_screensharing_redraw_thread(&mut self) {
         if let Some(handle) = self.screensharing_redraw_thread.take() {
             let _ = handle.join();
@@ -1415,15 +1502,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 // Open camera window if camera started successfully and window is enabled
                 if result.is_ok() && self.camera_window.is_none() {
+                    self.take_prewarmed_gpu_context();
                     if let Some(room_service) = self.room_service.as_ref() {
                         let participants = room_service.participants();
                         match CameraWindow::new(
                             event_loop,
                             participants,
                             self.event_loop_proxy.clone(),
+                            self.gpu_context.as_ref(),
                         ) {
-                            Ok(cam) => {
+                            Ok((cam, gpu_ctx)) => {
                                 log::info!("user_event: Camera window opened for local camera");
+                                self.gpu_context = Some(gpu_ctx);
+                                self.gpu_context_init_rx = None;
                                 self.camera_window = Some(cam);
                             }
                             Err(e) => log::error!("Failed to open camera window: {e:?}"),
@@ -1470,11 +1561,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::info!("user_event: Camera window already exists, skipping");
                     return;
                 }
+                self.take_prewarmed_gpu_context();
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone())
-                    {
-                        Ok(cam) => self.camera_window = Some(cam),
+                    match CameraWindow::new(
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                        self.gpu_context.as_ref(),
+                    ) {
+                        Ok((cam, gpu_ctx)) => {
+                            self.gpu_context = Some(gpu_ctx);
+                            self.gpu_context_init_rx = None;
+                            self.camera_window = Some(cam);
+                        }
                         Err(e) => log::error!("Failed to open camera window: {e:?}"),
                     }
                 } else {
