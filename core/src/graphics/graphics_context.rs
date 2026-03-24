@@ -470,8 +470,12 @@ impl<'a> GraphicsContext<'a> {
         name: &str,
         auto_clear: bool,
     ) -> Result<(), ParticipantError> {
-        self.participants_manager
-            .add_participant(sid, name, auto_clear)
+        self.participants_manager.add_participant(
+            sid,
+            name,
+            auto_clear,
+            crate::room_service::DrawingMode::Disabled,
+        )
     }
 
     /// Removes a participant.

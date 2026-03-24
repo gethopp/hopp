@@ -465,9 +465,26 @@ impl<'a> Application<'a> {
             return Err(e);
         }
 
-        /* We want to add the participants that already exist in the cursor controller list. */
         let room_service = self.room_service.as_ref().unwrap();
-        room_service.iterate_participants();
+        if let Some(remote_control) = &mut self.remote_control {
+            let existing_participants = room_service.get_participants();
+            for participant in &existing_participants {
+                if let Err(e) = remote_control.gfx.add_participant(
+                    participant.sid.clone(),
+                    &participant.name,
+                    false,
+                ) {
+                    log::error!(
+                        "Failed to create cursor for participant {}: {e}",
+                        participant.sid
+                    );
+                } else {
+                    remote_control
+                        .cursor_controller
+                        .add_controller(participant.sid.clone());
+                }
+            }
+        }
 
         {
             let participants = room_service.participants();
@@ -508,8 +525,7 @@ impl<'a> Application<'a> {
         &mut self,
         event_loop: &ActiveEventLoop,
         buffer: Arc<crate::livekit::video::VideoBufferManager>,
-        participant_sid: Option<String>,
-        participant_name: Option<String>,
+        participants: Vec<(String, String, bool)>,
         redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
         redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     ) {
@@ -526,8 +542,7 @@ impl<'a> Application<'a> {
         match ScreensharingWindow::new(
             event_loop,
             buffer,
-            participant_sid,
-            participant_name,
+            participants,
             self.controller_draw_persist,
             redraw_rx,
             redraw_tx,
@@ -905,10 +920,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CreateRoomResult(result) => {
                 log::info!("user_event: CreateRoomResult: {result:?}");
                 match result {
-                    Ok(()) => {
-                        if let Some(room_service) = self.room_service.as_ref() {
-                            room_service.iterate_participants();
-                        }
+                    Ok(snapshot) => {
+                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
                     }
                     Err(ref reason) => {
                         log::error!("user_event: Room creation failed: {reason}");
@@ -1470,7 +1483,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
-                self.open_screensharing_window(event_loop, buffer, None, None, None, None);
+                self.open_screensharing_window(event_loop, buffer, Vec::new(), None, None);
             }
             UserEvent::OpenContentPicker => {
                 log::info!("user_event: OpenContentPicker");
@@ -1479,8 +1492,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::OpenScreenShareWindow {
-                sid: participant_sid,
-                name: participant_name,
+                participants,
                 redraw_rx,
                 redraw_tx,
             } => {
@@ -1497,8 +1509,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             self.open_screensharing_window(
                                 event_loop,
                                 screen_share_buffer,
-                                participant_sid,
-                                participant_name,
+                                participants,
                                 redraw_rx,
                                 redraw_tx,
                             );
@@ -2095,8 +2106,7 @@ pub enum UserEvent {
     OpenScreensharing,
     OpenContentPicker,
     OpenScreenShareWindow {
-        sid: Option<String>,
-        name: Option<String>,
+        participants: Vec<(String, String, bool)>,
         redraw_rx: Option<
             std::sync::Arc<
                 std::sync::Mutex<
@@ -2113,7 +2123,7 @@ pub enum UserEvent {
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
-    CreateRoomResult(Result<(), String>),
+    CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
 }
 
 pub struct RenderEventLoop {
@@ -2241,8 +2251,7 @@ impl RenderEventLoop {
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
-                        sid: None,
-                        name: None,
+                        participants: Vec::new(),
                         redraw_rx: None,
                         redraw_tx: None,
                     },

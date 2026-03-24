@@ -99,9 +99,14 @@ impl Participant {
     /// * `color` - Hex color string for the participant's drawings and cursor
     /// * `name` - Display name for the participant's cursor
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds
-    pub fn new(color: &'static str, name: &str, auto_clear: bool) -> Result<Self, SvgRenderError> {
+    pub fn new(
+        color: &'static str,
+        name: &str,
+        auto_clear: bool,
+        initial_drawing_mode: DrawingMode,
+    ) -> Result<Self, SvgRenderError> {
         Ok(Self {
-            draw: Draw::new(color, auto_clear),
+            draw: Draw::new(color, auto_clear, initial_drawing_mode),
             cursor: Cursor::new(color, name)?,
             color,
         })
@@ -175,6 +180,7 @@ impl ParticipantsManager {
         sid: String,
         name: &str,
         auto_clear: bool,
+        initial_drawing_mode: DrawingMode,
     ) -> Result<(), ParticipantError> {
         // Check if participant already exists
         if self.participants.contains_key(&sid) {
@@ -207,8 +213,10 @@ impl ParticipantsManager {
             auto_clear
         );
 
-        self.participants
-            .insert(sid, Participant::new(color, &visible_name, auto_clear)?);
+        self.participants.insert(
+            sid,
+            Participant::new(color, &visible_name, auto_clear, initial_drawing_mode)?,
+        );
         Ok(())
     }
 

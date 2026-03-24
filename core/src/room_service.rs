@@ -71,7 +71,6 @@ enum RoomServiceCommand {
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
     TickResponse(u128),
-    IterateParticipants,
     PublishParticipantInControl(String),
     PublishDrawStart(DrawPathPoint),
     PublishDrawAddPoint(ClientPoint),
@@ -206,6 +205,23 @@ fn insert_participant_if_absent(
         ParticipantInfo::from_remote_participant(remote_participant),
     );
     true
+}
+
+/// Iterates over the remote participants in the room and inserts them into the
+/// participants hashmap if not already present.
+fn populate_participants_from_room(
+    room: &Room,
+    participants: &std::sync::RwLock<HashMap<String, ParticipantInfo>>,
+) {
+    for (_, remote_participant) in room.remote_participants() {
+        let sid = remote_participant.sid().as_str().to_string();
+        if insert_participant_if_absent(participants, &sid, &remote_participant) {
+            log::info!(
+                "populate_participants_from_room: participant added: {}",
+                sid
+            );
+        }
+    }
 }
 
 /// RoomService is a wrapper around the LiveKit room, on creation it
@@ -455,16 +471,18 @@ impl RoomService {
         }
     }
 
-    /// Iterates over the participants in the room and sends an event to the event loop
-    /// for each participant that is not an audio participant.
-    pub fn iterate_participants(&self) {
-        log::info!("iterate_participants");
-        let res = self
-            .service_command_tx
-            .send(RoomServiceCommand::IterateParticipants);
-        if let Err(e) = res {
-            log::error!("iterate_participants: Failed to send command: {e:?}");
-        }
+    /// Returns a list of all non-local participants from the participants map.
+    pub fn get_participants(&self) -> Vec<ParticipantData> {
+        let guard = self.inner.participants.read().unwrap();
+        guard
+            .iter()
+            .filter(|(key, _)| *key != "local")
+            .map(|(sid, info)| ParticipantData {
+                sid: sid.clone(),
+                name: info.name().to_string(),
+                identity: info.identity().to_string(),
+            })
+            .collect()
     }
 
     /// Publishes controller controls to the room.
@@ -768,6 +786,18 @@ impl RoomService {
     }
 }
 
+fn collect_remote_participants(
+    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+    sharer_sid: &str,
+) -> Vec<(String, String, bool)> {
+    let guard = participants.read().unwrap();
+    guard
+        .iter()
+        .filter(|(key, _)| *key != "local")
+        .map(|(sid, info)| (sid.clone(), info.name().to_string(), sid == sharer_sid))
+        .collect()
+}
+
 /// Builds a deduplicated snapshot of participant states from the internal HashMap.
 /// Each user may have multiple LiveKit participants (audio, video, camera);
 /// this groups them by user ID and uses the audio participant's mute status.
@@ -839,9 +869,6 @@ fn build_participants_snapshot(
 ///   status to the room with topic "remote_control_enabled".
 ///
 /// * `TickResponse` - Publishes timing data to the room with topic "tick_response".
-///
-/// * `IterateParticipants` - Iterates over the participants in the room and sends an event
-///   to the event loop for each participant that is not an audio participant.
 ///
 /// # Error Handling
 ///
@@ -1016,6 +1043,8 @@ async fn room_service_commands(
                     "room_service_commands: Inserted local participant into participants map"
                 );
 
+                populate_participants_from_room(&room, &inner.participants);
+
                 // Handle video room result — optional, failure is non-fatal.
                 let video_participant_sid = match video_result {
                     Ok(Ok((video_room, _video_rx))) => {
@@ -1050,7 +1079,8 @@ async fn room_service_commands(
                     "room_service_commands: Finished room setup in {}ms",
                     total_connect_start.elapsed().as_millis()
                 );
-                let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(())));
+                let snapshot = build_participants_snapshot(&inner.participants);
+                let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(snapshot)));
                 tokio::spawn(handle_room_events(
                     rx,
                     event_loop_proxy,
@@ -1215,52 +1245,6 @@ async fn room_service_commands(
                     .await;
                 if let Err(e) = res {
                     log::error!("room_service_commands: Failed to publish tick response: {e:?}");
-                }
-            }
-            RoomServiceCommand::IterateParticipants => {
-                let room = inner.room.lock().await;
-                if room.is_none() {
-                    log::warn!("room_service_commands: Room doesn't exist");
-                    continue;
-                }
-                let room = room.as_ref().unwrap();
-                for participant in room.remote_participants() {
-                    let remote_participant = participant.1;
-                    let sid = remote_participant.sid().as_str().to_string();
-                    let identity = remote_participant.identity().as_str().to_string();
-                    let name = remote_participant.name();
-
-                    log::info!(
-                        "room_service_commands: Participant: {} {:?}",
-                        sid,
-                        remote_participant
-                    );
-
-                    if insert_participant_if_absent(&inner.participants, &sid, &remote_participant)
-                    {
-                        log::info!("room_service_commands: participant added: {}", sid);
-                    }
-
-                    if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantConnected(
-                        ParticipantData {
-                            name,
-                            identity,
-                            sid,
-                        },
-                    )) {
-                        log::error!(
-                            "room_service_commands: Failed to send participant connected event: {e:?}"
-                        );
-                    }
-                }
-
-                let snapshot = build_participants_snapshot(&inner.participants);
-                if let Err(e) =
-                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                {
-                    log::error!(
-                        "room_service_commands: Failed to send participants snapshot: {e:?}"
-                    );
                 }
             }
             RoomServiceCommand::PublishParticipantInControl(participant) => {
@@ -1960,6 +1944,8 @@ pub enum DrawingMode {
     Draw(DrawSettings),
     /// Click animation mode
     ClickAnimation,
+    /// Unknown state — used when a participant's drawing mode is not yet known
+    Any,
 }
 
 /// Represents all possible client events that can be sent between room participants.
@@ -2408,7 +2394,6 @@ async fn handle_room_events(
 
                             // Derive the audio participant identity from the video participant identity
                             // e.g. "room:...:video" → "room:...:audio"
-                            let sharer_name = participant.name().to_string();
                             let sharer_sid = {
                                 let video_identity = participant.identity().as_str().to_string();
                                 let audio_identity = video_identity
@@ -2439,10 +2424,11 @@ async fn handle_room_events(
                                 log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
                             }
 
+                            let remote_participants =
+                                collect_remote_participants(&participants, &sharer_sid);
                             if let Err(e) =
                                 event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
-                                    sid: Some(sharer_sid),
-                                    name: Some(sharer_name),
+                                    participants: remote_participants,
                                     redraw_rx: Some(redraw_rx),
                                     redraw_tx: Some(redraw_tx),
                                 })

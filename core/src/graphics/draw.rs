@@ -63,12 +63,12 @@ impl std::fmt::Debug for Draw {
 }
 
 impl Draw {
-    pub fn new(color: &str, auto_clear: bool) -> Self {
+    pub fn new(color: &str, auto_clear: bool, initial_drawing_mode: DrawingMode) -> Self {
         Self {
             in_progress_path: None,
             completed_paths: Vec::new(),
             completed_cache: Cache::new(),
-            mode: DrawingMode::Disabled,
+            mode: initial_drawing_mode,
             color: color_from_hex(color),
             auto_clear,
         }

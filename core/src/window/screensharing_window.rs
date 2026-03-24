@@ -657,8 +657,7 @@ impl ScreensharingWindow {
     pub fn new(
         event_loop: &ActiveEventLoop,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
-        participant_sid: Option<String>,
-        participant_name: Option<String>,
+        participants: Vec<(String, String, bool)>,
         draw_persist: bool,
         redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
         redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
@@ -862,13 +861,14 @@ impl ScreensharingWindow {
         };
 
         let mut participants_manager = ParticipantsManager::new();
-        // Add the sharer as a participant (no connected event will fire for them).
-        if let Some(sid) = &participant_sid {
-            let name = participant_name.as_deref().unwrap_or(sid.as_str());
-            if let Err(e) = participants_manager.add_participant(sid.clone(), name, false) {
-                log::warn!(
-                    "ScreensharingWindow::new: failed to add sharer participant {sid}: {e:?}"
-                );
+        for (sid, name, _) in &participants {
+            if let Err(e) = participants_manager.add_participant(
+                sid.clone(),
+                name,
+                false,
+                crate::room_service::DrawingMode::Any,
+            ) {
+                log::warn!("ScreensharingWindow::new: failed to add participant {sid}: {e:?}");
             }
         }
         // Always add a local participant for the controller's own drawing/cursor state.
@@ -876,11 +876,14 @@ impl ScreensharingWindow {
             LOCAL_PARTICIPANT_SID.to_string(),
             LOCAL_PARTICIPANT_SID,
             true,
+            crate::room_service::DrawingMode::Disabled,
         ) {
             log::warn!("ScreensharingWindow::new: failed to add local participant: {e:?}");
         }
-        let sharer_first_name = participant_name
-            .as_deref()
+        let sharer_first_name = participants
+            .iter()
+            .find(|(_, _, is_screensharing)| *is_screensharing)
+            .map(|(_, name, _)| name.as_str())
             .and_then(|n| n.split_whitespace().next())
             .unwrap_or("Screen")
             .to_string();
@@ -972,8 +975,12 @@ impl ScreensharingWindow {
         name: &str,
         auto_clear: bool,
     ) -> Result<(), ParticipantError> {
-        self.participants_manager
-            .add_participant(sid, name, auto_clear)
+        self.participants_manager.add_participant(
+            sid,
+            name,
+            auto_clear,
+            crate::room_service::DrawingMode::Disabled,
+        )
     }
 
     pub fn remove_participant(&mut self, sid: &str) {
