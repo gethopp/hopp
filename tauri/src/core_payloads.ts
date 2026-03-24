@@ -198,6 +198,7 @@ export interface CommandMap {
   // Call
   call_started: { args: { audioToken: string; videoToken: string }; return: void };
   end_call: { args: void; return: void };
+  toggle_call_sleep_prevention: { args: { enabled: boolean }; return: void };
 
   // Server
   get_hopp_server_url: { args: void; return: string | null };

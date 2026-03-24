@@ -2,6 +2,8 @@
 pub mod app_activation;
 pub mod app_state;
 pub mod permissions;
+#[cfg(target_os = "macos")]
+pub mod sleep_prevention;
 pub mod sounds;
 pub mod tray;
 
@@ -76,6 +78,9 @@ pub struct AppData {
     /// Tray icon state. On macOS, contains the actual tray state.
     pub tray_state: Option<tray::TrayState>,
 
+    /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
+    pub suppress_hide_on_call_end: Arc<AtomicBool>,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -84,8 +89,9 @@ pub struct AppData {
     #[cfg(target_os = "macos")]
     pub activation_policy_regular: bool,
 
-    /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
-    pub suppress_hide_on_call_end: Arc<AtomicBool>,
+    /// macOS sleep prevention state — holds an activity assertion while a call is active.
+    #[cfg(target_os = "macos")]
+    pub sleep_prevention: sleep_prevention::SleepPrevention,
 }
 
 impl AppData {
@@ -109,6 +115,8 @@ impl AppData {
             #[cfg(target_os = "macos")]
             activation_policy_regular: false,
             suppress_hide_on_call_end,
+            #[cfg(target_os = "macos")]
+            sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }
     }
 }

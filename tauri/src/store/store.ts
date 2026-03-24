@@ -174,7 +174,7 @@ useStore.subscribe((state, prevState) => {
     emit("store-update", state);
   }
 
-  // Update tray icon based on call state (only from main window to avoid duplicates)
+  // Update tray icon and sleep prevention based on call state (only from main window to avoid duplicates)
   if (windowName === "main") {
     const wasInCall = prevState.callTokens !== null;
     const isInCall = state.callTokens !== null;
@@ -184,10 +184,16 @@ useStore.subscribe((state, prevState) => {
       invoke("set_tray_notification", { enabled: true }).catch((e) => {
         console.error("Failed to set tray notification:", e);
       });
+      invoke("toggle_call_sleep_prevention", { enabled: true }).catch((e) => {
+        console.error("Failed to enable sleep prevention:", e);
+      });
     } else if (wasInCall && !isInCall) {
       // Leaving a call - hide notification dot
       invoke("set_tray_notification", { enabled: false }).catch((e) => {
         console.error("Failed to set tray notification:", e);
+      });
+      invoke("toggle_call_sleep_prevention", { enabled: false }).catch((e) => {
+        console.error("Failed to disable sleep prevention:", e);
       });
     }
   }

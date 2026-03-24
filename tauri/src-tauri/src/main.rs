@@ -921,6 +921,7 @@ fn end_call(app: tauri::AppHandle) {
     }
     #[cfg(target_os = "macos")]
     {
+        data.sleep_prevention.disable();
         let suppress = data.suppress_hide_on_call_end.clone();
         suppress.store(true, Ordering::Relaxed);
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -929,6 +930,24 @@ fn end_call(app: tauri::AppHandle) {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             suppress.store(false, Ordering::Relaxed);
         });
+    }
+}
+
+#[tauri::command(async)]
+fn toggle_call_sleep_prevention(app: tauri::AppHandle, enabled: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let data = app.state::<Mutex<AppData>>();
+        let mut data = data.lock().unwrap();
+        if enabled {
+            data.sleep_prevention.enable();
+        } else {
+            data.sleep_prevention.disable();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, enabled);
     }
 }
 
@@ -967,6 +986,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                     let data = app.state::<Mutex<AppData>>();
                     let mut data = data.lock().unwrap();
+                    data.sleep_prevention.disable();
                     data.activation_policy_regular = false;
                     let suppress = data.suppress_hide_on_call_end.clone();
                     drop(data);
@@ -1441,6 +1461,7 @@ fn main() {
             open_screenshare_viewer,
             close_screenshare_viewer,
             end_call,
+            toggle_call_sleep_prevention,
             bring_windows_to_front,
             open_stats_window,
         ])
