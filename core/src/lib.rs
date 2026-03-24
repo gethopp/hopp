@@ -564,6 +564,7 @@ impl<'a> Application<'a> {
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
         if let Some(mut window) = self.screensharing_window.take() {
+            window.hide();
             self.screensharing_redraw_thread = window.take_redraw_thread();
         }
     }
@@ -1497,7 +1498,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 redraw_tx,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
-                if let Some(screensharing_window) = &self.screensharing_window {
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                    if let Some((rx, tx)) = redraw_rx.zip(redraw_tx) {
+                        self.screensharing_redraw_thread = screensharing_window
+                            .update_window_with_new_sharer(&participants, rx, tx);
+                    }
                     screensharing_window.focus_window();
                 } else {
                     self.stop_screenshare();

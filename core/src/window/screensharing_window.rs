@@ -334,6 +334,24 @@ pub enum RedrawCommand {
     ForceRedraw,
     Stop,
 }
+
+fn spawn_redraw_thread(
+    redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
+    redraw_in_progress: Arc<AtomicBool>,
+    window: Arc<Window>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
+            Ok(RedrawCommand::ForceRedraw) => {
+                if !redraw_in_progress.load(Ordering::Acquire) {
+                    window.request_redraw();
+                }
+            }
+            Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+        }
+    })
+}
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
 /// SID used for the local participant's drawing/cursor state.
@@ -888,25 +906,11 @@ impl ScreensharingWindow {
             .unwrap_or("Screen")
             .to_string();
         let redraw_in_progress = Arc::new(AtomicBool::new(false));
-        let redraw_in_progress_thread = Arc::clone(&redraw_in_progress);
-        let window_for_thread = Arc::clone(&window);
-        let redraw_thread = std::thread::spawn(move || loop {
-            match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
-                Ok(RedrawCommand::ForceRedraw) => {
-                    if !redraw_in_progress_thread.load(Ordering::Acquire) {
-                        window_for_thread.request_redraw();
-                    } else {
-                        log::warn!("redraw_request dropped");
-                    }
-                }
-                Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    break
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    window_for_thread.request_redraw()
-                }
-            }
-        });
+        let redraw_thread = spawn_redraw_thread(
+            redraw_rx,
+            Arc::clone(&redraw_in_progress),
+            Arc::clone(&window),
+        );
         let s = Self {
             window,
             surface,
@@ -969,6 +973,10 @@ impl ScreensharingWindow {
         self.window.focus_window();
     }
 
+    pub fn hide(&self) {
+        self.window.set_visible(false);
+    }
+
     pub fn add_participant(
         &mut self,
         sid: String,
@@ -1026,6 +1034,36 @@ impl ScreensharingWindow {
 
     pub fn set_remote_control_allowed(&mut self, allowed: bool) {
         self.state.remote_control_allowed = allowed;
+    }
+
+    /// Update the window for a new sharer: refresh the display name and swap
+    /// the redraw channel so the newly spawned `process_video_stream` can
+    /// drive redraws. Returns the old redraw thread handle for deferred join.
+    pub fn update_window_with_new_sharer(
+        &mut self,
+        participants: &[(String, String, bool)],
+        new_rx: std::sync::mpsc::Receiver<RedrawCommand>,
+        new_tx: std::sync::mpsc::Sender<RedrawCommand>,
+    ) -> Option<std::thread::JoinHandle<()>> {
+        let sharer_first_name = participants
+            .iter()
+            .find(|(_, _, is_screensharing)| *is_screensharing)
+            .map(|(_, name, _)| name.as_str())
+            .and_then(|n| n.split_whitespace().next())
+            .unwrap_or("Screen")
+            .to_string();
+        self.state.sharer_name = sharer_first_name;
+
+        let old_handle = self.take_redraw_thread();
+
+        self.redraw_thread = Some(spawn_redraw_thread(
+            new_rx,
+            Arc::clone(&self.redraw_in_progress),
+            Arc::clone(&self.window),
+        ));
+        self.redraw_tx = new_tx;
+
+        old_handle
     }
 
     /// Update local control ownership and refresh cursor. When true, control tab uses OS cursor.

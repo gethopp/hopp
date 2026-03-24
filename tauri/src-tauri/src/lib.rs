@@ -120,7 +120,8 @@ pub fn recv_expected_response<T>(
     event_socket: &EventSocket,
     extract: impl Fn(Message) -> Result<T, Message>,
 ) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // TODO: 10 seconds is too much. We should make our calls to be as fast as possible
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
