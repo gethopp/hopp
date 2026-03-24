@@ -53,10 +53,10 @@ const CAMERA_WINDOW_WIDTH: f64 = 1035.0;
 const CAMERA_WINDOW_HEIGHT: f64 = 555.0;
 
 /// Minimum camera window dimensions.
-const CAMERA_WINDOW_MIN_WIDTH: f64 = 300.0;
-const CAMERA_WINDOW_MIN_HEIGHT: f64 = 300.0;
+const CAMERA_WINDOW_MIN_WIDTH: f64 = 100.0;
+const CAMERA_WINDOW_MIN_HEIGHT: f64 = 100.0;
 
-/// Target redraw interval: 60 FPS
+/// Target redraw interval: 30 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 30);
 
 const CONTENT_PADDING: f32 = 12.0;
@@ -72,6 +72,7 @@ const HEADER_HEIGHT: f32 = (44.0 / 1.5) + (CONTENT_PADDING * 2.0);
 // Window size thresholds for small window styling
 const SMALL_WIDTH_THRESHOLD: f32 = 450.0;
 const SMALL_HEIGHT_THRESHOLD: f32 = 600.0;
+const COMPACT_WIDTH_THRESHOLD: f32 = 300.0;
 
 const ICON_MICROPHONE_ON: char = '\u{F105}';
 const ICON_MICROPHONE_OFF: char = '\u{F106}';
@@ -118,6 +119,10 @@ struct CameraState {
     self_hidden: bool,
     /// True while the pointer is over the local tile (show hide-self control).
     local_tile_hovered: bool,
+    /// Window narrower than `COMPACT_WIDTH_THRESHOLD` hides header, name labels, etc.
+    is_compact: bool,
+    /// Last min-height applied via `set_min_inner_size` (used to avoid redundant calls).
+    compact_min_height: f64,
     toast: Option<ToastState>,
 }
 
@@ -128,6 +133,8 @@ impl Default for CameraState {
             camera_active: false,
             self_hidden: false,
             local_tile_hovered: false,
+            is_compact: false,
+            compact_min_height: CAMERA_WINDOW_MIN_HEIGHT,
             toast: None,
         }
     }
@@ -424,6 +431,8 @@ impl CameraWindow {
                     let logical = self.viewport.logical_size();
                     self.state.viewport_size =
                         IcedSize::new(logical.width as f32, logical.height as f32);
+
+                    self.sync_compact_constraints();
                     self.resized = true;
                     self.window.request_redraw();
                 }
@@ -517,12 +526,17 @@ impl CameraWindow {
             participants,
             state.self_hidden,
             state.local_tile_hovered,
+            state.is_compact,
         );
 
         // ── Main layout ─────────────────────────────────────────────────
-        let content = column![header, video_grid]
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let content = if state.is_compact {
+            column![video_grid].width(Length::Fill).height(Length::Fill)
+        } else {
+            column![header, video_grid]
+                .width(Length::Fill)
+                .height(Length::Fill)
+        };
 
         let base = container(content)
             .width(Length::Fill)
@@ -658,6 +672,37 @@ impl CameraWindow {
         }
     }
 
+    /// Recompute `is_compact` from the current viewport width and update the
+    /// window's minimum inner size accordingly. Safe to call on every frame —
+    /// the windowing-system call is skipped when nothing changed.
+    fn sync_compact_constraints(&mut self) {
+        let is_compact = self.state.viewport_size.width < COMPACT_WIDTH_THRESHOLD;
+        let count = self
+            .participants
+            .read()
+            .map(|p| p.len())
+            .unwrap_or(1)
+            .max(1);
+
+        let min_h = if is_compact {
+            (count as f64) * (MIN_TILE_SIZE as f64)
+                + ((count - 1) as f64) * (TILE_SPACING as f64)
+                + (MIN_GRID_PADDING as f64 * 2.0)
+        } else {
+            CAMERA_WINDOW_MIN_HEIGHT
+        };
+
+        if is_compact != self.state.is_compact || self.state.compact_min_height != min_h {
+            self.state.is_compact = is_compact;
+            self.state.compact_min_height = min_h;
+            self.window
+                .set_min_inner_size(Some(winit::dpi::LogicalSize::new(
+                    CAMERA_WINDOW_MIN_WIDTH,
+                    min_h,
+                )));
+        }
+    }
+
     /// Perform a full redraw: build UI, draw, present.
     fn redraw(&mut self) {
         if self.resized {
@@ -680,6 +725,7 @@ impl CameraWindow {
             self.resized = false;
         }
 
+        self.sync_compact_constraints();
         toast::tick_toast(&mut self.state.toast);
 
         let output = match self.surface.get_current_texture() {
@@ -1133,6 +1179,7 @@ fn participant_card<'a>(
     is_small_window: bool,
     is_local: bool,
     local_tile_hovered: bool,
+    hide_name: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     // Adjust padding based on window size
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
@@ -1197,7 +1244,10 @@ fn participant_card<'a>(
         };
 
     let mut tile_layers: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
-        vec![bg_element, overlay.into()];
+        vec![bg_element];
+    if !hide_name {
+        tile_layers.push(overlay.into());
+    }
     if let Some(eye_btn) = eye_button_overlay {
         tile_layers.push(eye_btn);
     }
@@ -1219,13 +1269,20 @@ fn participant_card<'a>(
     let border_frame = container(Space::new())
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            border: Border {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
-                width: 1.0,
-                radius: TILE_RADIUS.into(),
-            },
-            ..Default::default()
+        .style(move |_theme: &Theme| {
+            let border_color = if hide_name && is_speaking {
+                ColorToken::Green400.to_color()
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.45)
+            };
+            container::Style {
+                border: Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: TILE_RADIUS.into(),
+                },
+                ..Default::default()
+            }
         });
 
     // Stack: clipped video below, border on top.
@@ -1273,6 +1330,7 @@ fn create_participant_grid<'a>(
     participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     self_hidden: bool,
     local_tile_hovered: bool,
+    is_compact: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
@@ -1303,8 +1361,9 @@ fn create_participant_grid<'a>(
     }
 
     // Subtract header height from vertical space, then apply grid padding
+    let header_offset = if is_compact { 0.0 } else { HEADER_HEIGHT };
     let available_width = available_size.width - (MIN_GRID_PADDING * 2.0);
-    let available_height = (available_size.height - HEADER_HEIGHT) - (MIN_GRID_PADDING * 2.0);
+    let available_height = (available_size.height - header_offset) - (MIN_GRID_PADDING * 2.0);
 
     // Determine if this is a small window for styling purposes
     let is_small_window = available_size.width < SMALL_WIDTH_THRESHOLD
@@ -1348,7 +1407,7 @@ fn create_participant_grid<'a>(
         (tile_size * num_rows as f32) + (TILE_SPACING * (num_rows - 1).max(0) as f32);
 
     // Calculate dynamic padding to center the grid within the grid area (below header)
-    let grid_area_height = available_size.height - HEADER_HEIGHT;
+    let grid_area_height = available_size.height - header_offset;
     let h_padding = ((available_size.width - grid_content_width) / 2.0).max(MIN_GRID_PADDING);
     let v_padding = ((grid_area_height - grid_content_height) / 2.0).max(MIN_GRID_PADDING);
 
@@ -1375,6 +1434,7 @@ fn create_participant_grid<'a>(
                     is_small_window,
                     is_local,
                     local_tile_hovered,
+                    is_compact,
                 ));
             }
         }
