@@ -1,41 +1,69 @@
 use super::mixer::{MixerHandle, SharedProcessor};
+use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
 
-pub struct Player {
+#[derive(Error, Debug)]
+pub enum PlayerError {
+    #[error("Failed to create mixer: {0}")]
+    Mixer(String),
+    #[error("Failed to start device monitor: {0}")]
+    DeviceMonitor(String),
+}
+
+struct PlayerInner {
     mixer: MixerHandle,
     processor: SharedProcessor,
     #[cfg(target_os = "macos")]
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
+pub struct Player {
+    inner: Option<PlayerInner>,
+    event_loop_proxy: EventLoopProxy<UserEvent>,
+}
+
 impl Player {
+    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+        Self {
+            inner: None,
+            event_loop_proxy: proxy,
+        }
+    }
+
     #[allow(unused_variables)]
-    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
-        let (mixer, processor) = MixerHandle::new()?;
+    pub fn start(&mut self) -> Result<(), PlayerError> {
+        log::info!("Player::start");
+        let (mixer, processor) = MixerHandle::new().map_err(PlayerError::Mixer)?;
 
         #[cfg(target_os = "macos")]
         let device_monitor = super::device_monitor::DeviceMonitor::new(
             super::device_monitor::DeviceKind::Output,
-            proxy,
+            self.event_loop_proxy.clone(),
         )
-        .map_err(|e| format!("Failed to start device monitor: {e}"))?;
+        .map_err(|e| PlayerError::DeviceMonitor(format!("{e}")))?;
 
-        Ok(Self {
+        self.inner = Some(PlayerInner {
             mixer,
             processor,
             #[cfg(target_os = "macos")]
             _device_monitor: device_monitor,
-        })
+        });
+        Ok(())
     }
 
-    pub fn mixer(&self) -> &MixerHandle {
-        &self.mixer
+    pub fn stop(&mut self) {
+        log::info!("Player::stop");
+        self.inner = None;
     }
 
-    pub fn processor(&self) -> SharedProcessor {
-        self.processor.clone()
+    pub fn mixer(&self) -> Option<&MixerHandle> {
+        self.inner.as_ref().map(|i| &i.mixer)
+    }
+
+    pub fn processor(&self) -> Option<SharedProcessor> {
+        self.inner.as_ref().map(|i| i.processor.clone())
     }
 }
 
@@ -59,8 +87,12 @@ mod tests {
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
 
-        let player = Player::new().expect("Failed to create player");
-        let mixer = player.mixer();
+        let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
+            .build()
+            .unwrap();
+        let mut player = Player::new(event_loop.create_proxy());
+        player.start().expect("Failed to start player");
+        let mixer = player.mixer().unwrap();
 
         let s1 = mixer.add_source(16000, 1);
         let s2 = mixer.add_source(16000, 1);

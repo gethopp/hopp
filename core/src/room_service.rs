@@ -55,12 +55,12 @@ const WIDTH_THRESHOLD_2560: u32 = 2560;
 
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
 
-#[derive(Debug)]
 enum RoomServiceCommand {
     CreateRoom {
         token: String,
         video_token: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        mixer: audio::mixer::MixerHandle,
     },
     PublishTrack {
         width: u32,
@@ -81,6 +81,7 @@ enum RoomServiceCommand {
     PublishAudioTrack {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+        audio_processor: SharedProcessor,
     },
     UnpublishAudioTrack,
     MuteAudioTrack,
@@ -98,6 +99,50 @@ enum RoomServiceCommand {
     PublishAddToClipboard(AddToClipboardData),
     PublishPasteFromClipboard(PasteFromClipboardData),
     PublishClickAnimation(ClientPoint),
+}
+
+impl std::fmt::Debug for RoomServiceCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateRoom { .. } => write!(f, "CreateRoom"),
+            Self::PublishTrack { width, height, .. } => {
+                write!(f, "PublishTrack({width}x{height})")
+            }
+            Self::PublishCursorPosition(..) => write!(f, "PublishCursorPosition"),
+            Self::PublishControllerCursorEnabled(v) => {
+                write!(f, "PublishControllerCursorEnabled({v})")
+            }
+            Self::DestroyRoom => write!(f, "DestroyRoom"),
+            Self::TickResponse(v) => write!(f, "TickResponse({v})"),
+            Self::PublishParticipantInControl(v) => {
+                write!(f, "PublishParticipantInControl({v})")
+            }
+            Self::PublishDrawStart(..) => write!(f, "PublishDrawStart"),
+            Self::PublishDrawAddPoint(..) => write!(f, "PublishDrawAddPoint"),
+            Self::PublishDrawEnd(..) => write!(f, "PublishDrawEnd"),
+            Self::PublishDrawClearPaths(..) => write!(f, "PublishDrawClearPaths"),
+            Self::PublishDrawClearAllPaths => write!(f, "PublishDrawClearAllPaths"),
+            Self::PublishDrawingMode(..) => write!(f, "PublishDrawingMode"),
+            Self::PublishAudioTrack { sample_rate, .. } => {
+                write!(f, "PublishAudioTrack({sample_rate}Hz)")
+            }
+            Self::UnpublishAudioTrack => write!(f, "UnpublishAudioTrack"),
+            Self::MuteAudioTrack => write!(f, "MuteAudioTrack"),
+            Self::UnmuteAudioTrack => write!(f, "UnmuteAudioTrack"),
+            Self::PublishCameraTrack { width, height } => {
+                write!(f, "PublishCameraTrack({width}x{height})")
+            }
+            Self::UnpublishCameraTrack => write!(f, "UnpublishCameraTrack"),
+            Self::UnpublishScreenShareTrack => write!(f, "UnpublishScreenShareTrack"),
+            Self::PublishMouseClick(..) => write!(f, "PublishMouseClick"),
+            Self::PublishMouseVisible(..) => write!(f, "PublishMouseVisible"),
+            Self::PublishKeystroke(..) => write!(f, "PublishKeystroke"),
+            Self::PublishWheelEvent(..) => write!(f, "PublishWheelEvent"),
+            Self::PublishAddToClipboard(..) => write!(f, "PublishAddToClipboard"),
+            Self::PublishPasteFromClipboard(..) => write!(f, "PublishPasteFromClipboard"),
+            Self::PublishClickAnimation(..) => write!(f, "PublishClickAnimation"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -135,7 +180,6 @@ pub(crate) struct RoomServiceInner {
     buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
@@ -263,8 +307,6 @@ impl RoomService {
     pub fn new(
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-        mixer: audio::mixer::MixerHandle,
-        audio_processor: SharedProcessor,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -276,7 +318,6 @@ impl RoomService {
             buffer_source: std::sync::Mutex::new(None),
             camera_buffer_source: std::sync::Mutex::new(None),
             participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            mixer,
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
@@ -294,7 +335,6 @@ impl RoomService {
             inner.clone(),
             livekit_server_url,
             event_loop_proxy,
-            audio_processor,
         ));
 
         Ok(Self {
@@ -332,6 +372,7 @@ impl RoomService {
         token: String,
         video_token: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        mixer: audio::mixer::MixerHandle,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room");
         self.service_command_tx
@@ -339,6 +380,7 @@ impl RoomService {
                 token,
                 video_token,
                 event_loop_proxy,
+                mixer,
             })
             .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
         log::info!("create_room: command dispatched (non-blocking)");
@@ -561,6 +603,7 @@ impl RoomService {
         &self,
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+        audio_processor: SharedProcessor,
     ) -> Result<(), RoomServiceError> {
         log::info!("publish_audio_track with sample_rate: {}", sample_rate);
         let res = self
@@ -568,6 +611,7 @@ impl RoomService {
             .send(RoomServiceCommand::PublishAudioTrack {
                 sample_rate,
                 sample_rx,
+                audio_processor,
             });
         if let Err(e) = res {
             return Err(RoomServiceError::PublishTrack(format!(
@@ -882,7 +926,6 @@ async fn room_service_commands(
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    audio_processor: SharedProcessor,
 ) {
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
@@ -894,6 +937,7 @@ async fn room_service_commands(
                 token,
                 video_token,
                 event_loop_proxy,
+                mixer,
             } => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
@@ -1087,7 +1131,7 @@ async fn room_service_commands(
                     user_sid,
                     video_participant_sid,
                     inner.participants.clone(),
-                    inner.mixer.clone(),
+                    mixer,
                     RemoteScreenShare {
                         buffer: inner.remote_screen_share.buffer.clone(),
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
@@ -1419,6 +1463,7 @@ async fn room_service_commands(
             RoomServiceCommand::PublishAudioTrack {
                 sample_rate,
                 sample_rx,
+                audio_processor,
             } => {
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
@@ -1428,9 +1473,7 @@ async fn room_service_commands(
                 }
                 let room = inner_room.as_ref().unwrap();
 
-                match AudioPublisher::publish(room, sample_rate, sample_rx, audio_processor.clone())
-                    .await
-                {
+                match AudioPublisher::publish(room, sample_rate, sample_rx, audio_processor).await {
                     Ok(publisher) => {
                         audio_publisher = Some(publisher);
                         log::info!("room_service_commands: Audio track published");

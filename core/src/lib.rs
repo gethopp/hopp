@@ -244,8 +244,6 @@ pub struct Application<'a> {
 pub enum ApplicationError {
     #[error("Failed to create room service: {0}")]
     RoomServiceError(#[from] std::io::Error),
-    #[error("Failed to create audio player: {0}")]
-    AudioPlayerError(String),
 }
 
 #[derive(Debug)]
@@ -307,8 +305,7 @@ impl<'a> Application<'a> {
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
-        let audio_player = audio::player::Player::new(event_loop_proxy.clone())
-            .map_err(ApplicationError::AudioPlayerError)?;
+        let audio_player = audio::player::Player::new(event_loop_proxy.clone());
 
         let audio_capturer = audio::capturer::Capturer::new(event_loop_proxy.clone());
 
@@ -888,11 +885,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallStart(call_start) => {
                 log::info!("user_event: CallStart");
+                if let Err(e) = self.audio_player.start() {
+                    log::error!("Failed to start audio player: {e}");
+                    sentry_utils::upload_logs_event(format!("Failed to start audio player: {e}"));
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::CallStartResult(Err(e.to_string())))
+                    {
+                        error!("user_event: Error sending CallStartResult: {e:?}");
+                    }
+                    return;
+                }
                 if let Some(room_service) = self.room_service.as_ref() {
                     match room_service.create_room(
                         call_start.audio_token,
                         call_start.video_token,
                         self.event_loop_proxy.clone(),
+                        self.audio_player.mixer().unwrap().clone(),
                     ) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
@@ -938,6 +947,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::CallEnd => {
                 log::info!("user_event: CallEnd");
                 self.stop_mic();
+                self.audio_player.stop();
                 self.stop_camera();
 
                 let capturer_valid = {
@@ -1091,12 +1101,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
 
-                let room_service = RoomService::new(
-                    url,
-                    self.event_loop_proxy.clone(),
-                    self.audio_player.mixer().clone(),
-                    self.audio_player.processor(),
-                );
+                let room_service = RoomService::new(url, self.event_loop_proxy.clone());
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",
@@ -1328,8 +1333,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .as_ref()
                             .ok_or_else(|| "Room service not found".to_string())?;
 
+                        let processor = self.audio_player.processor().ok_or_else(|| {
+                            let msg = "Audio player not started for publish_audio_track";
+                            log::error!("{msg}");
+                            sentry_utils::upload_logs_event(msg.to_string());
+                            msg.to_string()
+                        })?;
+
                         room_service
-                            .publish_audio_track(sample_rate, sample_rx)
+                            .publish_audio_track(sample_rate, sample_rx, processor)
                             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
 
                         Ok(())
@@ -1570,9 +1582,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::DefaultOutputDeviceChanged => {
-                log::info!("Default audio output device changed, reconnecting...");
-                if let Err(e) = self.audio_player.mixer().reconnect() {
-                    log::error!("Failed to reconnect audio output: {e}");
+                if let Some(mixer) = self.audio_player.mixer() {
+                    log::info!("Default audio output device changed, reconnecting...");
+                    if let Err(e) = mixer.reconnect() {
+                        log::error!("Failed to reconnect audio output: {e}");
+                    }
                 }
             }
             UserEvent::DefaultInputDeviceChanged => {
