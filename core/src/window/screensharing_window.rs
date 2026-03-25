@@ -2094,6 +2094,10 @@ impl ScreensharingWindow {
                     width,
                     height
                 );
+
+                // Don't render at the old size — wait for the Resized event to
+                // reconfigure the surface and trigger a redraw at the correct size.
+                return Vec::new();
             }
         }
 
