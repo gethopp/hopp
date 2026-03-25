@@ -386,7 +386,7 @@ impl CameraWindow {
 
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
-                    Self::view(&self.state, &self.participants),
+                    Self::view(&self.state, &self.participants, true),
                     self.viewport.logical_size(),
                     cache,
                     &mut self.renderer,
@@ -464,6 +464,7 @@ impl CameraWindow {
     fn view<'a>(
         state: &CameraState,
         participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+        skip_buffer: bool,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
         // ── Control buttons ────────────────────────────────────────────────
         let is_muted = participants
@@ -527,6 +528,7 @@ impl CameraWindow {
             state.self_hidden,
             state.local_tile_hovered,
             state.is_compact,
+            skip_buffer,
         );
 
         // ── Main layout ─────────────────────────────────────────────────
@@ -742,7 +744,7 @@ impl CameraWindow {
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.state, &self.participants),
+            Self::view(&self.state, &self.participants, false),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,
@@ -1180,6 +1182,7 @@ fn participant_card<'a>(
     is_local: bool,
     local_tile_hovered: bool,
     hide_name: bool,
+    skip_buffer: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     // Adjust padding based on window size
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
@@ -1210,6 +1213,7 @@ fn participant_card<'a>(
                 buffer: buffers,
                 corner_radius: TILE_RADIUS,
                 stretch_to_fill: false,
+                skip_upload: skip_buffer,
             };
             let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
                 .width(Length::Fill)
@@ -1331,6 +1335,7 @@ fn create_participant_grid<'a>(
     self_hidden: bool,
     local_tile_hovered: bool,
     is_compact: bool,
+    skip_buffer: bool,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
@@ -1435,6 +1440,7 @@ fn create_participant_grid<'a>(
                     is_local,
                     local_tile_hovered,
                     is_compact,
+                    skip_buffer,
                 ));
             }
         }

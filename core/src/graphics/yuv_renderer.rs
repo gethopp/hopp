@@ -453,14 +453,15 @@ pub struct YuvVideoPrimitive {
     corner_radius: f32,
     /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
     stretch_to_fill: bool,
-    has_data: bool,
+    /// When true, skip GPU texture upload (frame hasn't changed).
+    skip_upload: bool,
 }
 
 impl std::fmt::Debug for YuvVideoPrimitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("YuvVideoPrimitive")
             .field("participant_id", &self.participant_id)
-            .field("has_data", &self.has_data)
+            .field("skip_upload", &self.skip_upload)
             .finish()
     }
 }
@@ -476,7 +477,7 @@ impl primitive::Primitive for YuvVideoPrimitive {
         _bounds: &Rectangle,
         _viewport: &iced_wgpu::graphics::Viewport,
     ) {
-        if !self.has_data && pipeline.participants.contains_key(&self.participant_id) {
+        if self.skip_upload && pipeline.participants.contains_key(&self.participant_id) {
             return;
         }
 
@@ -530,6 +531,8 @@ pub struct YuvVideoProgram {
     pub corner_radius: f32,
     /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
     pub stretch_to_fill: bool,
+    /// When true, skip GPU texture upload (frame hasn't changed).
+    pub skip_upload: bool,
 }
 
 impl std::fmt::Debug for YuvVideoProgram {
@@ -550,12 +553,6 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
         _cursor: mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        let has_data = {
-            let frame_lock = self.buffer.latest_frame();
-            let buf = frame_lock.lock().unwrap();
-            buf.width > 0 && buf.height > 0
-        };
-
         YuvVideoPrimitive {
             participant_id: self.participant_id,
             buffer: self.buffer.clone(),
@@ -563,7 +560,7 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
             tile_height: bounds.height.max(1.0) as u32,
             corner_radius: self.corner_radius,
             stretch_to_fill: self.stretch_to_fill,
-            has_data,
+            skip_upload: self.skip_upload,
         }
     }
 }

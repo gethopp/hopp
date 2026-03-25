@@ -327,7 +327,6 @@ fn default_screen_area_from_hardcoded() -> ScreenArea {
     }
 }
 
-/// Target redraw interval: 60 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 10);
 
 pub enum RedrawCommand {
@@ -1532,6 +1531,7 @@ impl ScreensharingWindow {
         }
 
         // Convert winit event to iced event
+        // TODO check if we have to throttle this, we might get too many mouse events
         if let Some(iced_event) = conversion::window_event(
             event.clone(),
             self.window.scale_factor() as f32,
@@ -1560,6 +1560,7 @@ impl ScreensharingWindow {
                     &self.screen_share_buffer,
                     &self.participants_manager,
                     &self.click_animation_renderer,
+                    true,
                 ),
                 self.viewport.logical_size(),
                 cache,
@@ -1735,6 +1736,7 @@ impl ScreensharingWindow {
         screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
+        skip_buffer: bool,
     ) -> iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> {
         // ── Name label (left of header, after traffic lights) ───────────
         let name_label = container(
@@ -1807,6 +1809,7 @@ impl ScreensharingWindow {
                     buffer: screen_share_buffer.clone(),
                     corner_radius: 12.0,
                     stretch_to_fill: true,
+                    skip_upload: skip_buffer,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -2010,6 +2013,7 @@ impl ScreensharingWindow {
     fn redraw_inner(&mut self) -> Vec<u64> {
         // Check if stream dimensions changed and update window size
         let current_frame_id;
+        let mut skip_buffer = false;
         {
             let frame_lock = self.screen_share_buffer.latest_frame();
             let buf = frame_lock.lock().unwrap();
@@ -2021,7 +2025,7 @@ impl ScreensharingWindow {
                     "redraw_inner: dropping redraw {current_frame_id} {}",
                     self.last_rendered_frame_id
                 );
-                return Vec::new();
+                skip_buffer = true;
             }
 
             let stream_w = buf.width;
@@ -2116,6 +2120,7 @@ impl ScreensharingWindow {
                 &self.screen_share_buffer,
                 &self.participants_manager,
                 &self.click_animation_renderer,
+                skip_buffer,
             ),
             self.viewport.logical_size(),
             cache,
@@ -2168,7 +2173,9 @@ impl ScreensharingWindow {
 
         let cleared = self.participants_manager.update_auto_clear();
 
-        self.last_rendered_frame_id = current_frame_id;
+        if !skip_buffer {
+            self.last_rendered_frame_id = current_frame_id;
+        }
         cleared
     }
 }
