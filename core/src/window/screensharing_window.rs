@@ -463,7 +463,7 @@ struct ScreensharingState {
     remote_control_allowed: bool,
     /// True after the user manually resizes the window; suppresses auto-maximize.
     user_has_resized: bool,
-    /// Multi-click detection state (à la Chromium).
+    /// Multi-click detection state.
     last_click_count: u32,
     last_click_button: u32,
     last_click_time: StdInstant,
@@ -649,7 +649,6 @@ pub struct ScreensharingWindow {
     screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     participants_manager: ParticipantsManager,
     click_animation_renderer: ClickAnimationRenderer,
-    last_redraw: StdInstant,
     last_rendered_frame_id: u64,
     redraw_in_progress: Arc<AtomicBool>,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
@@ -937,7 +936,6 @@ impl ScreensharingWindow {
             screen_share_buffer,
             participants_manager,
             click_animation_renderer: ClickAnimationRenderer::new(clock::default_clock()),
-            last_redraw: StdInstant::now(),
             last_rendered_frame_id: 0,
             redraw_in_progress,
             redraw_tx,
@@ -1052,16 +1050,29 @@ impl ScreensharingWindow {
             .and_then(|n| n.split_whitespace().next())
             .unwrap_or("Screen")
             .to_string();
+        // Reset ScreensharingState fields
         self.state.sharer_name = sharer_first_name;
+        self.state.current_path_id = 0;
+        self.state.remote_control_allowed = true;
+        self.state.left_mouse_pressed = false;
+        self.state.last_click_count = 0;
+        self.state.last_click_button = 0;
+        self.state.last_click_time = StdInstant::now();
+        self.state.last_click_x = 0.0;
+        self.state.last_click_y = 0.0;
 
+        // Reset window-level state
+        self.local_participant_in_control = false;
+
+        // Reset redraw thread
         let old_handle = self.take_redraw_thread();
-
         self.redraw_thread = Some(spawn_redraw_thread(
             new_rx,
             Arc::clone(&self.redraw_in_progress),
             Arc::clone(&self.window),
         ));
         self.redraw_tx = new_tx;
+        self.last_rendered_frame_id = 0;
 
         old_handle
     }
@@ -1705,7 +1716,6 @@ impl ScreensharingWindow {
             WindowEvent::RedrawRequested => {
                 self.redraw_in_progress.store(true, Ordering::Release);
                 let cleared = self.redraw();
-                self.last_redraw = StdInstant::now();
                 self.redraw_in_progress.store(false, Ordering::Release);
                 if !cleared.is_empty() {
                     input_event = Some(ScreenShareInputEvent::DrawClearPaths(cleared));
@@ -2007,7 +2017,10 @@ impl ScreensharingWindow {
 
             // Skip if we already rendered this frame (stale RedrawRequested)
             if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
-                log::warn!("redraw_inner: dropping redraw");
+                log::warn!(
+                    "redraw_inner: dropping redraw {current_frame_id} {}",
+                    self.last_rendered_frame_id
+                );
                 return Vec::new();
             }
 

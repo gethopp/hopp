@@ -222,6 +222,7 @@ pub async fn process_video_stream(
                         if let Some(tx) = &redraw_tx {
                             if let Err(e) = tx.send(crate::window::screensharing_window::RedrawCommand::ForceRedraw) {
                                 log::error!("process_video_stream: failed to send redraw command: {e:?}");
+                                break;
                             }
                         }
                     }
