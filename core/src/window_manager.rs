@@ -191,7 +191,13 @@ impl WindowManager {
             {
                 #[cfg(target_os = "macos")]
                 {
+                    // this is needed for the screensharing probing logic to work
+                    // if we don't do it the probing window is placed above the menubar
                     entry.window.set_simple_fullscreen(false);
+                    // set_simple_fullscreen(false) restores the saved style mask which
+                    // includes Miniaturizable, causing the window to appear in the dock's
+                    // minimized list. Strip that flag immediately to prevent this.
+                    remove_miniaturizable_style(&entry.window);
                 }
                 entry.window.set_visible(false);
             }
@@ -327,6 +333,25 @@ enum FullscreenError {
     FailedToGetRawWindowHandle,
     #[error("Failed to match fullscreen size within timeout")]
     FailedToMatchFullscreenSize,
+}
+
+#[cfg(target_os = "macos")]
+fn remove_miniaturizable_style(window: &winit::window::Window) {
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindowStyleMask};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(raw_handle) = window.window_handle() else {
+        return;
+    };
+    if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
+        let view = handle.ns_view.as_ptr();
+        let ns_view: Option<Retained<NSView>> = unsafe { Retained::retain(view.cast()) };
+        if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+            let mask = ns_window.styleMask();
+            ns_window.setStyleMask(mask & !NSWindowStyleMask::Miniaturizable);
+        }
+    }
 }
 
 fn set_fullscreen(
