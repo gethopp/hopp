@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use winit::event_loop::EventLoopProxy;
 
+use crate::snapshot_sender::SnapshotSender;
 use crate::{audio, ParticipantData, UserEvent};
 
 // Constants for magic values
@@ -184,6 +185,7 @@ pub(crate) struct RoomServiceInner {
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
+    snapshot_sender: SnapshotSender,
 }
 
 impl RoomServiceInner {
@@ -307,17 +309,21 @@ impl RoomService {
     pub fn new(
         livekit_server_url: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        socket: socket_lib::SocketSender,
     ) -> Result<Self, std::io::Error> {
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
+
+        let participants = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let snapshot_sender = SnapshotSender::new(socket, participants.clone());
 
         let inner = Arc::new(RoomServiceInner {
             room: Mutex::new(None),
             video_room: Mutex::new(None),
             buffer_source: std::sync::Mutex::new(None),
             camera_buffer_source: std::sync::Mutex::new(None),
-            participants: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            participants,
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
@@ -326,6 +332,7 @@ impl RoomService {
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
             cancel_connect: std::sync::Mutex::new(Vec::new()),
+            snapshot_sender,
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
@@ -813,9 +820,9 @@ impl RoomService {
         true
     }
 
-    /// Builds a snapshot of all participants for forwarding to Tauri.
-    pub fn participants_snapshot(&self) -> Vec<socket_lib::CoreParticipantState> {
-        build_participants_snapshot(&self.inner.participants)
+    /// Builds a participants snapshot and sends it directly over the socket.
+    pub fn send_participants_snapshot(&self) {
+        self.inner.snapshot_sender.send_participants_snapshot();
     }
 
     /// Unmutes the audio track.
@@ -840,47 +847,6 @@ fn collect_remote_participants(
         .filter(|(key, _)| *key != "local")
         .map(|(sid, info)| (sid.clone(), info.name().to_string(), sid == sharer_sid))
         .collect()
-}
-
-/// Builds a deduplicated snapshot of participant states from the internal HashMap.
-/// Each user may have multiple LiveKit participants (audio, video, camera);
-/// this groups them by user ID and uses the audio participant's mute status.
-fn build_participants_snapshot(
-    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-) -> Vec<socket_lib::CoreParticipantState> {
-    let guard = participants.read().unwrap();
-    let mut seen: HashMap<String, socket_lib::CoreParticipantState> = HashMap::new();
-
-    for info in guard.values() {
-        let identity = info.identity();
-        // Identity format: "room:<roomId>:<userId>:<trackType>"
-        let parts: Vec<&str> = identity.split(':').collect();
-        if parts.len() < 4 {
-            continue;
-        }
-        let user_id = parts[2];
-        let track_type = parts[3];
-
-        let entry =
-            seen.entry(user_id.to_string())
-                .or_insert_with(|| socket_lib::CoreParticipantState {
-                    identity: identity.to_string(),
-                    name: info.name().to_string(),
-                    connected: true,
-                    muted: false,
-                    has_camera: false,
-                    is_screensharing: false,
-                });
-
-        if track_type == "audio" {
-            entry.muted = info.muted();
-        }
-
-        entry.has_camera = entry.has_camera || info.camera_active();
-        entry.is_screensharing = entry.is_screensharing || info.is_screensharing();
-    }
-
-    seen.into_values().collect()
 }
 
 /// Handles room service commands in an async loop.
@@ -1123,7 +1089,7 @@ async fn room_service_commands(
                     "room_service_commands: Finished room setup in {}ms",
                     total_connect_start.elapsed().as_millis()
                 );
-                let snapshot = build_participants_snapshot(&inner.participants);
+                let snapshot = inner.snapshot_sender.build_snapshot();
                 let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(snapshot)));
                 tokio::spawn(handle_room_events(
                     rx,
@@ -1131,6 +1097,7 @@ async fn room_service_commands(
                     user_sid,
                     video_participant_sid,
                     inner.participants.clone(),
+                    inner.snapshot_sender.clone(),
                     mixer,
                     RemoteScreenShare {
                         buffer: inner.remote_screen_share.buffer.clone(),
@@ -1503,14 +1470,7 @@ async fn room_service_commands(
                         }
                     }
 
-                    let snapshot = build_participants_snapshot(&inner.participants);
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                    {
-                        log::error!(
-                            "room_service_commands: Failed to send participants snapshot: {e:?}"
-                        );
-                    }
+                    inner.snapshot_sender.send_participants_snapshot();
 
                     log::info!("room_service_commands: Audio track muted");
                 } else {
@@ -1526,14 +1486,7 @@ async fn room_service_commands(
                         }
                     }
 
-                    let snapshot = build_participants_snapshot(&inner.participants);
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                    {
-                        log::error!(
-                            "room_service_commands: Failed to send participants snapshot: {e:?}"
-                        );
-                    }
+                    inner.snapshot_sender.send_participants_snapshot();
 
                     log::info!("room_service_commands: Audio track unmuted");
                 } else {
@@ -2042,6 +1995,7 @@ async fn handle_room_events(
     user_sid: String,
     video_participant_sid: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+    snapshot_sender: SnapshotSender,
     mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
@@ -2204,12 +2158,7 @@ async fn handle_room_events(
                     );
                 }
 
-                let snapshot = build_participants_snapshot(&participants);
-                if let Err(e) =
-                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                {
-                    log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
-                }
+                snapshot_sender.send_participants_snapshot();
             }
             RoomEvent::ParticipantDisconnected(participant) => {
                 let sid = participant.sid().as_str().to_string();
@@ -2249,12 +2198,7 @@ async fn handle_room_events(
                     );
                 }
 
-                let snapshot = build_participants_snapshot(&participants);
-                if let Err(e) =
-                    event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                {
-                    log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
-                }
+                snapshot_sender.send_participants_snapshot();
             }
             RoomEvent::TrackPublished {
                 publication,
@@ -2303,14 +2247,7 @@ async fn handle_room_events(
                         }
                     }
 
-                    let snapshot = build_participants_snapshot(&participants);
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                    {
-                        log::error!(
-                            "handle_room_events: Failed to send participants snapshot: {e:?}"
-                        );
-                    }
+                    snapshot_sender.send_participants_snapshot();
                 }
             }
             RoomEvent::TrackUnmuted {
@@ -2328,14 +2265,7 @@ async fn handle_room_events(
                         }
                     }
 
-                    let snapshot = build_participants_snapshot(&participants);
-                    if let Err(e) =
-                        event_loop_proxy.send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                    {
-                        log::error!(
-                            "handle_room_events: Failed to send participants snapshot: {e:?}"
-                        );
-                    }
+                    snapshot_sender.send_participants_snapshot();
                 }
             }
             RoomEvent::TrackSubscribed {
@@ -2460,12 +2390,7 @@ async fn handle_room_events(
                                 }
                             }
 
-                            let snapshot = build_participants_snapshot(&participants);
-                            if let Err(e) = event_loop_proxy
-                                .send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                            {
-                                log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
-                            }
+                            snapshot_sender.send_participants_snapshot();
 
                             let remote_participants =
                                 collect_remote_participants(&participants, &sharer_sid);
@@ -2622,12 +2547,7 @@ async fn handle_room_events(
                                 }
                             }
 
-                            let snapshot = build_participants_snapshot(&participants);
-                            if let Err(e) = event_loop_proxy
-                                .send_event(UserEvent::ParticipantsSnapshot(snapshot))
-                            {
-                                log::error!("handle_room_events: Failed to send participants snapshot: {e:?}");
-                            }
+                            snapshot_sender.send_participants_snapshot();
 
                             // Close the screen share window
                             if let Err(e) =

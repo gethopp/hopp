@@ -14,6 +14,7 @@ pub mod livekit {
 }
 
 pub mod room_service;
+mod snapshot_sender;
 
 pub mod input {
     pub mod clipboard;
@@ -998,9 +999,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 };
 
                 if result_message.is_ok() {
+                    log::info!("participants snapshot after screenshare succeeds");
                     if let Some(room_service) = self.room_service.as_ref() {
-                        let snapshot = room_service.participants_snapshot();
-                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        room_service.send_participants_snapshot();
                     }
                 }
 
@@ -1014,8 +1015,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::StopScreenShare => {
                 self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_ref() {
-                    let snapshot = room_service.participants_snapshot();
-                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    room_service.send_participants_snapshot();
                 }
             }
             UserEvent::RequestRedraw => {
@@ -1094,14 +1094,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     screensharing_window.remove_participant(participant.sid.as_str());
                 }
             }
-            UserEvent::ParticipantsSnapshot(snapshot) => {
-                log::debug!("user_event: Participants snapshot: {snapshot:?}");
-                let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
-            }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
 
-                let room_service = RoomService::new(url, self.event_loop_proxy.clone());
+                let room_service =
+                    RoomService::new(url, self.event_loop_proxy.clone(), self.socket.clone());
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",
@@ -1116,8 +1113,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: Controller takes screen share");
                 self.stop_screenshare();
                 if let Some(room_service) = self.room_service.as_ref() {
-                    let snapshot = room_service.participants_snapshot();
-                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    room_service.send_participants_snapshot();
                 }
             }
             UserEvent::ParticipantInControl(participant) => {
@@ -1448,8 +1444,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         cam.set_camera_active(true);
                     }
                     if let Some(room_service) = self.room_service.as_ref() {
-                        let snapshot = room_service.participants_snapshot();
-                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        room_service.send_participants_snapshot();
                     }
                 }
 
@@ -1464,8 +1459,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     cam.set_camera_active(false);
                 }
                 if let Some(room_service) = self.room_service.as_ref() {
-                    let snapshot = room_service.participants_snapshot();
-                    let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    room_service.send_participants_snapshot();
                     let participants = room_service.participants();
                     let any_active = {
                         let guard = participants.read().unwrap();
@@ -1520,8 +1514,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 } else {
                     self.stop_screenshare();
                     if let Some(room_service) = self.room_service.as_ref() {
-                        let snapshot = room_service.participants_snapshot();
-                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        room_service.send_participants_snapshot();
                         if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
                             let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                             self.open_screensharing_window(
@@ -2096,7 +2089,6 @@ pub enum UserEvent {
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
-    ParticipantsSnapshot(Vec<socket_lib::CoreParticipantState>),
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
