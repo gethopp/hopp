@@ -112,6 +112,7 @@ pub enum CameraMessage {
 }
 
 struct CameraState {
+    // TODO: why do we keep state for this instead of reusing the viewport_size from the CameraWindow?
     viewport_size: IcedSize,
     /// Local camera on/off state, updated from StartCamera/StopCamera handlers.
     camera_active: bool,
@@ -162,7 +163,6 @@ pub struct CameraWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: CameraState,
-    resized: bool,
     last_redraw: StdInstant,
     participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -323,7 +323,6 @@ impl CameraWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state,
-            resized: false,
             last_redraw: StdInstant::now(),
             participants,
             event_loop_proxy,
@@ -433,7 +432,22 @@ impl CameraWindow {
                         IcedSize::new(logical.width as f32, logical.height as f32);
 
                     self.sync_compact_constraints();
-                    self.resized = true;
+
+                    // Configure surface inline instead of deferring
+                    self.surface.configure(
+                        &self.device,
+                        &wgpu::SurfaceConfiguration {
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            format: self.format,
+                            width: new_size.width,
+                            height: new_size.height,
+                            present_mode: wgpu::PresentMode::AutoVsync,
+                            alpha_mode: self.alpha_mode,
+                            view_formats: vec![],
+                            desired_maximum_frame_latency: 2,
+                        },
+                    );
+
                     self.window.request_redraw();
                 }
             }
@@ -707,26 +721,6 @@ impl CameraWindow {
 
     /// Perform a full redraw: build UI, draw, present.
     fn redraw(&mut self) {
-        if self.resized {
-            let size = self.window.inner_size();
-            if size.width > 0 && size.height > 0 {
-                self.surface.configure(
-                    &self.device,
-                    &wgpu::SurfaceConfiguration {
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        format: self.format,
-                        width: size.width,
-                        height: size.height,
-                        present_mode: wgpu::PresentMode::AutoVsync,
-                        alpha_mode: self.alpha_mode,
-                        view_formats: vec![],
-                        desired_maximum_frame_latency: 2,
-                    },
-                );
-            }
-            self.resized = false;
-        }
-
         self.sync_compact_constraints();
         toast::tick_toast(&mut self.state.toast);
 
