@@ -1057,7 +1057,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 remote_control.gfx.trigger_click_animation(position);
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
-                log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
+                log::info!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none local drawing enabled");
                     return;
