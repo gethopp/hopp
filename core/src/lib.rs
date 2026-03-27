@@ -227,6 +227,7 @@ pub struct Application<'a> {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
     controller_draw_persist: bool,
+    last_mode: Option<socket_lib::StoredMode>,
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
@@ -331,6 +332,7 @@ impl<'a> Application<'a> {
                 cursor_set_times: 0,
             },
             controller_draw_persist: false,
+            last_mode: None,
             window_manager: None,
             audio_capturer,
             audio_player,
@@ -542,6 +544,7 @@ impl<'a> Application<'a> {
             buffer,
             participants,
             self.controller_draw_persist,
+            self.last_mode.clone(),
             redraw_rx,
             redraw_tx,
         ) {
@@ -1588,6 +1591,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ControllerDrawPersistChanged(persist) => {
                 self.controller_draw_persist = persist;
             }
+            UserEvent::LastModeChanged(mode) => {
+                self.last_mode = Some(mode);
+            }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::debug!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
                 if self.remote_control.is_none() {
@@ -1819,6 +1825,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                         {
                                             log::error!("Failed to send ControllerDrawPersistChanged: {e:?}");
                                         }
+                                    }
+                                }
+                                let stored = match &mode {
+                                    crate::room_service::DrawingMode::Draw(settings) => {
+                                        socket_lib::StoredMode::Draw {
+                                            permanent: settings.permanent,
+                                        }
+                                    }
+                                    crate::room_service::DrawingMode::ClickAnimation => {
+                                        socket_lib::StoredMode::ClickAnimation
+                                    }
+                                    _ => socket_lib::StoredMode::RemoteControl,
+                                };
+                                if self.last_mode.as_ref() != Some(&stored) {
+                                    self.last_mode = Some(stored.clone());
+                                    if let Err(e) =
+                                        self.socket.send(Message::LastModeChanged(stored))
+                                    {
+                                        log::error!("Failed to send LastModeChanged: {e:?}");
                                     }
                                 }
                                 rs.publish_drawing_mode(mode);
@@ -2105,6 +2130,7 @@ pub enum UserEvent {
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
     ControllerDrawPersistChanged(bool),
+    LastModeChanged(socket_lib::StoredMode),
     ListAudioDevices,
     StartAudioCapture(socket_lib::AudioCaptureMessage),
     StopAudioCapture,
@@ -2251,6 +2277,7 @@ impl RenderEventLoop {
                     Message::ControllerDrawPersistChanged(persist) => {
                         UserEvent::ControllerDrawPersistChanged(persist)
                     }
+                    Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,

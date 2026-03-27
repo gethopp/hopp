@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use socket_lib::StoredMode;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,22 +7,6 @@ use std::{
 };
 
 const OLD_USER_TOKEN_FILE: &str = "user_token.txt";
-
-/// Represents the user's preferred interaction mode for screen sharing sessions.
-/// This is stored persistently and restored when the user joins a new session.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
-pub enum StoredMode {
-    /// Remote control mode - mouse and keyboard events are forwarded to the sharer
-    RemoteControl,
-    /// Click animation mode - clicks are visualized on the shared screen
-    ClickAnimation,
-    /// Drawing mode - freehand drawing on the shared screen
-    Draw {
-        /// If true, drawings persist until manually cleared; if false, they auto-expire
-        permanent: bool,
-    },
-}
 
 /// Returns the name for file that stores the app state.
 fn get_app_state_filename() -> String {

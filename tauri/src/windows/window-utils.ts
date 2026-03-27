@@ -1,8 +1,6 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { TStoredMode } from "@/payloads";
-
 const isTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
 export let appVersion: null | string = null;
@@ -221,14 +219,6 @@ const setLastUsedMic = async (micId: string) => {
   return await invoke("set_last_used_mic", { mic: micId });
 };
 
-const getLastMode = async (): Promise<TStoredMode | null> => {
-  return await invoke<TStoredMode | null>("get_last_mode");
-};
-
-const setLastMode = async (mode: TStoredMode): Promise<void> => {
-  return await invoke("set_last_mode", { mode });
-};
-
 const getSharerDrawPersist = async (): Promise<boolean> => {
   return await invoke<boolean>("get_sharer_draw_persist");
 };
@@ -354,8 +344,6 @@ export const tauriUtils = {
   getCameraPermission,
   getLastUsedMic,
   setLastUsedMic,
-  getLastMode,
-  setLastMode,
   getSharerDrawPersist,
   setSharerDrawPersist,
   enableDrawing,

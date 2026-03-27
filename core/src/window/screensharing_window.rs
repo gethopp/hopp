@@ -675,6 +675,7 @@ impl ScreensharingWindow {
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participants: Vec<(String, String, bool)>,
         draw_persist: bool,
+        last_mode: Option<socket_lib::StoredMode>,
         redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
         redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     ) -> Result<Self, ScreensharingWindowError> {
@@ -923,10 +924,29 @@ impl ScreensharingWindow {
             clipboard,
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
-            state: ScreensharingState {
-                sharer_name: sharer_first_name,
-                draw_persist,
-                ..Default::default()
+            state: {
+                let (initial_tab, initial_mode) = match &last_mode {
+                    Some(socket_lib::StoredMode::Draw { .. }) => (
+                        "draw",
+                        crate::room_service::DrawingMode::Draw(crate::room_service::DrawSettings {
+                            permanent: draw_persist,
+                        }),
+                    ),
+                    Some(socket_lib::StoredMode::ClickAnimation) => {
+                        ("point", crate::room_service::DrawingMode::ClickAnimation)
+                    }
+                    _ => (
+                        SEGMENTED_BUTTONS[0].id,
+                        crate::room_service::DrawingMode::Disabled,
+                    ),
+                };
+                participants_manager.set_drawing_mode(LOCAL_PARTICIPANT_SID, initial_mode);
+                ScreensharingState {
+                    sharer_name: sharer_first_name,
+                    draw_persist,
+                    active_tab: initial_tab,
+                    ..Default::default()
+                }
             },
             screen_area,
             programmatic_resize_target: None,
