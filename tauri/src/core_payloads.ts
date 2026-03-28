@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { TStoredMode } from "@/payloads";
 
 /**
  * Socket lib types are defined in (core/socket_lib/src/lib.rs).
@@ -174,8 +173,6 @@ export interface CommandMap {
   // Preferences
   get_last_used_mic: { args: void; return: string | null };
   set_last_used_mic: { args: { mic: string }; return: void };
-  get_last_mode: { args: void; return: TStoredMode | null };
-  set_last_mode: { args: { mode: TStoredMode }; return: void };
   get_sharer_draw_persist: { args: void; return: boolean };
   set_sharer_draw_persist: { args: { persist: boolean }; return: void };
   get_controller_draw_persist: { args: void; return: boolean };
@@ -212,7 +209,6 @@ export interface CommandMap {
   mute_mic: { args: void; return: void };
   unmute_mic: { args: void; return: void };
   toggle_mic: { args: void; return: void };
-  stop_audio_capture: { args: void; return: void };
   list_microphones: { args: void; return: AudioDevice[] };
   select_microphone: { args: { deviceName: string }; return: void };
 

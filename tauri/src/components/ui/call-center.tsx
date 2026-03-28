@@ -354,17 +354,6 @@ function MicrophoneIcon() {
     resolve();
   }, [microphoneDevices]);
 
-  useEffect(() => {
-    // Do not select microphone if we are still initialising the call
-    // Else AudioCapture will block other events from being processed.
-    if (callTokens?.isInitialisingCall) return;
-    if (!activeMicId || !microphoneDevices.length) return;
-    const found = microphoneDevices.find((d) => d.name === activeMicId);
-    if (found) {
-      typedInvoke("select_microphone", { deviceName: found.name });
-    }
-  }, [activeMicId, callTokens?.isInitialisingCall]);
-
   const handleMicToggle = useCallback(() => {
     const newState = !hasAudioEnabled;
     updateCallTokens({ hasAudioEnabled: newState });

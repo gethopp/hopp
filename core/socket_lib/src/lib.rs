@@ -106,6 +106,7 @@ pub struct ScreenShareMessage {
 pub struct CallStartMessage {
     pub audio_token: String,
     pub video_token: String,
+    pub audio_device_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -168,6 +169,22 @@ pub struct CoreRoleEvent {
     pub role: CoreRoleChange,
 }
 
+/// Represents the user's preferred interaction mode for screen sharing sessions.
+/// This is stored persistently and restored when the user joins a new session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum StoredMode {
+    /// Remote control mode - mouse and keyboard events are forwarded to the sharer
+    RemoteControl,
+    /// Click animation mode - clicks are visualized on the shared screen
+    ClickAnimation,
+    /// Drawing mode - freehand drawing on the shared screen
+    Draw {
+        /// If true, drawings persist until manually cleared; if false, they auto-expire
+        permanent: bool,
+    },
+}
+
 /// When you add a new message that will be used in Tauri,
 /// be sure to update tauri/src/core_payloads.ts with the appropriate payload to have type-safety inside Tauri Javascript code.
 #[derive(Debug, Serialize, Deserialize)]
@@ -189,7 +206,6 @@ pub enum Message {
     AudioDeviceList(Vec<AudioDevice>),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
-    StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ListCameras,
@@ -213,6 +229,7 @@ pub enum Message {
     RoomConnectionFailed(String),
     OpenContentPicker,
     ControllerDrawPersistChanged(bool),
+    LastModeChanged(StoredMode),
 }
 
 impl Message {

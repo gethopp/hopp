@@ -19,9 +19,9 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::{AppState, StoredMode},
-    create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
-    recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
+    app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
+    permissions, ping_frontend, recv_expected_response, setup_start_on_launch, setup_tray_icon,
+    AppData,
 };
 use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
 #[cfg(target_os = "macos")]
@@ -422,24 +422,6 @@ fn set_last_used_mic(app: tauri::AppHandle, mic: String) {
 }
 
 #[tauri::command(async)]
-fn get_last_mode(app: tauri::AppHandle) -> Option<StoredMode> {
-    log::info!("get_last_mode");
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let value = data.app_state.last_mode();
-    log::info!("get_last_mode: {value:?}");
-    value
-}
-
-#[tauri::command(async)]
-fn set_last_mode(app: tauri::AppHandle, mode: StoredMode) {
-    log::info!("set_last_mode: {mode:?}");
-    let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    data.app_state.set_last_mode(mode);
-}
-
-#[tauri::command(async)]
 fn get_sharer_draw_persist(app: tauri::AppHandle) -> bool {
     log::info!("get_sharer_draw_persist");
     let data = app.state::<Mutex<AppData>>();
@@ -455,24 +437,6 @@ fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_sharer_draw_persist(persist);
-}
-
-#[tauri::command(async)]
-fn get_controller_draw_persist(app: tauri::AppHandle) -> bool {
-    log::info!("get_controller_draw_persist");
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let value = data.app_state.controller_draw_persist();
-    log::info!("get_controller_draw_persist: {value}");
-    value
-}
-
-#[tauri::command(async)]
-fn set_controller_draw_persist(app: tauri::AppHandle, persist: bool) {
-    log::info!("set_controller_draw_persist: {persist}");
-    let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    data.app_state.set_controller_draw_persist(persist);
 }
 
 #[tauri::command(async)]
@@ -630,11 +594,52 @@ fn call_started(
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         data.activation_policy_regular = true;
     }
+    // Resolve the audio device name: last used → default → first → ""
+    let audio_device_name = {
+        let last_used = data.app_state.last_used_mic();
+        let devices: Vec<AudioDevice> = if let Err(e) = data.sender.send(Message::ListAudioDevices)
+        {
+            log::error!("call_started: failed to list audio devices: {e:?}");
+            vec![]
+        } else {
+            match recv_expected_response(&data.event_socket, |msg| match msg {
+                Message::AudioDeviceList(d) => Ok(d),
+                other => Err(other),
+            }) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::error!("call_started: failed to receive audio device list: {e:?}");
+                    vec![]
+                }
+            }
+        };
+        if let Some(last) = last_used {
+            if devices.iter().any(|d| d.name == last) {
+                last
+            } else {
+                devices
+                    .iter()
+                    .find(|d| d.default)
+                    .or_else(|| devices.first())
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default()
+            }
+        } else {
+            devices
+                .iter()
+                .find(|d| d.default)
+                .or_else(|| devices.first())
+                .map(|d| d.name.clone())
+                .unwrap_or_default()
+        }
+    };
+    log::info!("call_started: resolved audio_device_name={audio_device_name:?}");
     if let Err(e) = data
         .sender
         .send(Message::CallStart(socket_lib::CallStartMessage {
             audio_token: audio_token.clone(),
             video_token: video_token.clone(),
+            audio_device_name,
         }))
     {
         log::error!("call_started: failed to send: {e:?}");
@@ -755,15 +760,6 @@ fn toggle_mic(app: tauri::AppHandle) {
     let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::ToggleMic) {
         log::error!("toggle_mic: failed to send: {e:?}");
-    }
-}
-
-#[tauri::command(async)]
-fn stop_audio_capture(app: tauri::AppHandle) {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::StopAudioCapture) {
-        log::error!("stop_audio_capture: failed to send: {e:?}");
     }
 }
 
@@ -1003,6 +999,12 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 let mut data = data.lock().unwrap();
                 data.app_state.set_controller_draw_persist(persist);
             }
+            Message::LastModeChanged(mode) => {
+                log::info!("forward_core_events: last mode changed: {mode:?}");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.app_state.set_last_mode(mode);
+            }
             Message::OpenContentPicker => {
                 log::info!("forward_core_events: open content picker");
                 if let Err(e) = hopp::create_media_window(
@@ -1159,6 +1161,11 @@ fn main() {
             let app_state = AppState::new(&app_data_dir);
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
+            }
+            if let Some(mode) = app_state.last_mode() {
+                if let Err(e) = sender.send(Message::LastModeChanged(mode)) {
+                    log::error!("Failed to send initial last_mode: {e:?}");
+                }
             }
             let data = Mutex::new(AppData::new(
                 sender,
@@ -1425,12 +1432,8 @@ fn main() {
             skip_tray_notification_selection_window,
             set_last_used_mic,
             get_last_used_mic,
-            set_last_mode,
-            get_last_mode,
             get_sharer_draw_persist,
             set_sharer_draw_persist,
-            get_controller_draw_persist,
-            set_controller_draw_persist,
             enable_drawing,
             minimize_main_window,
             set_livekit_url,
@@ -1451,7 +1454,6 @@ fn main() {
             mute_mic,
             unmute_mic,
             toggle_mic,
-            stop_audio_capture,
             list_microphones,
             select_microphone,
             list_webcams,

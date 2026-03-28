@@ -43,6 +43,7 @@ impl AudioPublisher {
             RtcAudioSource::Native(native_source.clone()),
         );
 
+        let now = std::time::Instant::now();
         room.local_participant()
             .publish_track(
                 LocalTrack::Audio(track.clone()),
@@ -57,6 +58,7 @@ impl AudioPublisher {
             )
             .await
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
+        log::info!("audio_publish: too {}", now.elapsed().as_millis());
 
         let processing_task = tokio::spawn(process_audio_samples(
             sample_rx,
