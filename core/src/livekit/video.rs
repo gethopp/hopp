@@ -239,7 +239,7 @@ pub async fn process_video_stream(
                         break;
                     }
                     Err(e) => {
-                        log::info!(
+                        log::trace!(
                             "process_video_stream: No frames received for 1 seconds from {} [{}], marking as inactive {:?}",
                             stream_key,
                             stream_type,

@@ -405,14 +405,23 @@ impl<'a> Application<'a> {
         self.close_screensharing_window();
 
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
-        /*
-         * In order to not rely on the buffer source to exist before starting the room
-         * we start the stream first and we lazy initialize the stream buffer and the
-         * capture buffer.
-         *
-         * Then using the stream extent we can create the room and create the buffer source,
-         * which we set in the Stream.
-         */
+
+        let room_service = match self.room_service.as_ref() {
+            Some(rs) => rs,
+            None => {
+                drop(screen_capturer);
+                return Err(ServerError::RoomServiceNotFound);
+            }
+        };
+        let buffer_source = match room_service.get_buffer_source() {
+            Some(s) => s,
+            None => {
+                log::error!("screenshare: no buffer source available");
+                drop(screen_capturer);
+                return Err(ServerError::PublishTrackError);
+            }
+        };
+
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -420,6 +429,7 @@ impl<'a> Application<'a> {
                 height: screenshare_input.resolution.height,
             },
             !screenshare_input.accessibility_permission,
+            buffer_source,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -433,23 +443,8 @@ impl<'a> Application<'a> {
             return Err(ServerError::StreamExtentError);
         }
 
-        if self.room_service.is_none() {
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::RoomServiceNotFound);
-        }
-
-        let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.publish_track(extent.width as u32, extent.height as u32);
-        if let Err(error) = res {
-            log::error!("screenshare: error publishing track: {error:?}");
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::PublishTrackError);
-        }
-        log::info!("screenshare: track published");
-        let buffer_source = room_service.get_buffer_source();
-        screen_capturer.set_buffer_source(buffer_source);
+        room_service.unmute_screen_share_track();
+        log::info!("screenshare: screen share track unmuted");
 
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
@@ -483,14 +478,6 @@ impl<'a> Application<'a> {
                         .cursor_controller
                         .add_controller(participant.sid.clone());
                 }
-            }
-        }
-
-        {
-            let participants = room_service.participants();
-            let mut guard = participants.write().unwrap();
-            if let Some(local) = guard.get_mut("local") {
-                local.set_is_screensharing(true);
             }
         }
 
@@ -576,12 +563,7 @@ impl<'a> Application<'a> {
         screen_capturer.stop_capture();
         drop(screen_capturer);
         if let Some(room_service) = self.room_service.as_ref() {
-            room_service.unpublish_screen_share_track();
-            let participants = room_service.participants();
-            let mut guard = participants.write().unwrap();
-            if let Some(local) = guard.get_mut("local") {
-                local.set_is_screensharing(false);
-            }
+            room_service.mute_screen_share_track();
         }
         self.destroy_overlay_window();
     }

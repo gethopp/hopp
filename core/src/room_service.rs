@@ -54,8 +54,6 @@ const WIDTH_THRESHOLD_1920: u32 = 1920;
 const WIDTH_THRESHOLD_2048: u32 = 2048;
 const WIDTH_THRESHOLD_2560: u32 = 2560;
 
-const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
-
 enum RoomServiceCommand {
     CreateRoom {
         token: String,
@@ -65,11 +63,6 @@ enum RoomServiceCommand {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         audio_processor: SharedProcessor,
-    },
-    PublishTrack {
-        width: u32,
-        height: u32,
-        use_av1: bool,
     },
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -87,7 +80,8 @@ enum RoomServiceCommand {
     UnmuteAudioTrack,
     MuteCameraTrack,
     UnmuteCameraTrack,
-    UnpublishScreenShareTrack,
+    MuteScreenShareTrack,
+    UnmuteScreenShareTrack,
     PublishMouseClick(MouseClickData),
     PublishMouseVisible(MouseVisibleData),
     PublishKeystroke(KeystrokeData),
@@ -101,9 +95,6 @@ impl std::fmt::Debug for RoomServiceCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CreateRoom { .. } => write!(f, "CreateRoom"),
-            Self::PublishTrack { width, height, .. } => {
-                write!(f, "PublishTrack({width}x{height})")
-            }
             Self::PublishCursorPosition(..) => write!(f, "PublishCursorPosition"),
             Self::PublishControllerCursorEnabled(v) => {
                 write!(f, "PublishControllerCursorEnabled({v})")
@@ -124,7 +115,8 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::UnmuteAudioTrack => write!(f, "UnmuteAudioTrack"),
             Self::MuteCameraTrack => write!(f, "MuteCameraTrack"),
             Self::UnmuteCameraTrack => write!(f, "UnmuteCameraTrack"),
-            Self::UnpublishScreenShareTrack => write!(f, "UnpublishScreenShareTrack"),
+            Self::MuteScreenShareTrack => write!(f, "MuteScreenShareTrack"),
+            Self::UnmuteScreenShareTrack => write!(f, "UnmuteScreenShareTrack"),
             Self::PublishMouseClick(..) => write!(f, "PublishMouseClick"),
             Self::PublishMouseVisible(..) => write!(f, "PublishMouseVisible"),
             Self::PublishKeystroke(..) => write!(f, "PublishKeystroke"),
@@ -136,20 +128,10 @@ impl std::fmt::Debug for RoomServiceCommand {
     }
 }
 
-#[derive(Debug)]
-enum RoomServiceCommandResult {
-    Success,
-    Failure,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum RoomServiceError {
     #[error("Failed to create room: {0}")]
     CreateRoom(String),
-    #[error("Failed to publish track: {0}")]
-    PublishTrack(String),
-    #[error("Command timed out")]
-    Timeout,
 }
 
 #[derive(Debug)]
@@ -171,6 +153,7 @@ pub(crate) struct RoomServiceInner {
     buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_track: std::sync::Mutex<Option<LocalVideoTrack>>,
+    screen_share_track: std::sync::Mutex<Option<LocalVideoTrack>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
@@ -205,6 +188,9 @@ impl RoomServiceInner {
         }
         {
             self.camera_track.lock().unwrap().take();
+        }
+        {
+            self.screen_share_track.lock().unwrap().take();
         }
         {
             let mut stop_tx_guard = self.remote_screen_share.stop_tx.lock().unwrap();
@@ -279,8 +265,6 @@ pub struct RoomService {
     /* The runtime is used to spawn a thread for handling room events. */
     _async_runtime: tokio::runtime::Runtime,
     service_command_tx: mpsc::UnboundedSender<RoomServiceCommand>,
-    /* This is used to receive the result of the command, now only for create room. */
-    service_command_res_rx: std::sync::mpsc::Receiver<RoomServiceCommandResult>,
     inner: Arc<RoomServiceInner>,
 }
 
@@ -316,6 +300,7 @@ impl RoomService {
             buffer_source: std::sync::Mutex::new(None),
             camera_buffer_source: std::sync::Mutex::new(None),
             camera_track: std::sync::Mutex::new(None),
+            screen_share_track: std::sync::Mutex::new(None),
             participants,
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
@@ -328,10 +313,8 @@ impl RoomService {
             snapshot_sender,
         });
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
-        let (service_command_res_tx, service_command_res_rx) = std::sync::mpsc::channel();
         async_runtime.spawn(room_service_commands(
             service_command_rx,
-            service_command_res_tx,
             inner.clone(),
             livekit_server_url,
         ));
@@ -339,7 +322,6 @@ impl RoomService {
         Ok(Self {
             _async_runtime: async_runtime,
             service_command_tx,
-            service_command_res_rx,
             inner,
         })
     }
@@ -392,45 +374,6 @@ impl RoomService {
         Ok(())
     }
 
-    /// Publishes a video track, this will block until the room is created.
-    ///
-    /// # Arguments
-    ///
-    /// * `width` - The width of the video track
-    /// * `height` - The height of the video track
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - The track was published successfully
-    /// * `Err(())` - The track was not published successfully
-    pub fn publish_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
-        log::info!("publish_track: {width:?}, {height:?}");
-        let use_av1 = false;
-        let res = self
-            .service_command_tx
-            .send(RoomServiceCommand::PublishTrack {
-                width,
-                height,
-                use_av1,
-            });
-        if let Err(e) = res {
-            return Err(RoomServiceError::PublishTrack(format!(
-                "Failed to send command: {e:?}"
-            )));
-        }
-        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
-        match res {
-            Ok(RoomServiceCommandResult::Success) => Ok(()),
-            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
-                "Failed to publish track".to_string(),
-            )),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
-            Err(e) => Err(RoomServiceError::PublishTrack(format!(
-                "Failed to receive result: {e:?}"
-            ))),
-        }
-    }
-
     /// Destroys the current room connection.
     pub fn destroy_room(&self) {
         log::info!("destroy_room");
@@ -452,22 +395,11 @@ impl RoomService {
 
     /// Retrieves the native video source buffer for screen sharing.
     ///
-    /// This function returns a clone of the `NativeVideoSource` that was created
-    /// when the room was established. The buffer source is used to send video
-    /// frames to the LiveKit room for screen sharing.
-    ///
-    /// This is only called after the room has been created otherwise it will panic.
-    ///
-    /// # Returns
-    ///
-    /// * `NativeVideoSource` - The video source buffer for sending frames
-    pub fn get_buffer_source(&self) -> NativeVideoSource {
+    /// Returns `None` if the screen share track has not been published yet.
+    pub fn get_buffer_source(&self) -> Option<NativeVideoSource> {
         log::info!("get_buffer_source");
-        let buffer_source = {
-            let inner = self.inner.buffer_source.lock().unwrap();
-            inner.clone()
-        };
-        buffer_source.expect("get_buffer_source: Buffer source not found (this shouldn't happen)")
+        let inner = self.inner.buffer_source.lock().unwrap();
+        inner.clone()
     }
 
     /// Publishes the sharer's cursor position to the room.
@@ -657,14 +589,35 @@ impl RoomService {
         }
     }
 
-    /// Unpublishes the screen share track from the room.
-    pub fn unpublish_screen_share_track(&self) {
-        log::info!("unpublish_screen_share_track");
-        let res = self
+    pub fn mute_screen_share_track(&self) {
+        log::info!("mute_screen_share_track");
+        {
+            let mut participants = self.inner.participants.write().unwrap();
+            if let Some(info) = participants.get_mut("local") {
+                info.set_is_screensharing(false);
+            }
+        }
+        if let Err(e) = self
             .service_command_tx
-            .send(RoomServiceCommand::UnpublishScreenShareTrack);
-        if let Err(e) = res {
-            log::error!("unpublish_screen_share_track: Failed to send command: {e:?}");
+            .send(RoomServiceCommand::MuteScreenShareTrack)
+        {
+            log::error!("mute_screen_share_track: Failed to send command: {e:?}");
+        }
+    }
+
+    pub fn unmute_screen_share_track(&self) {
+        log::info!("unmute_screen_share_track");
+        {
+            let mut participants = self.inner.participants.write().unwrap();
+            if let Some(info) = participants.get_mut("local") {
+                info.set_is_screensharing(true);
+            }
+        }
+        if let Err(e) = self
+            .service_command_tx
+            .send(RoomServiceCommand::UnmuteScreenShareTrack)
+        {
+            log::error!("unmute_screen_share_track: Failed to send command: {e:?}");
         }
     }
 
@@ -850,7 +803,6 @@ fn collect_remote_participants(
 /// active room connection.
 async fn room_service_commands(
     mut service_rx: mpsc::UnboundedReceiver<RoomServiceCommand>,
-    tx: std::sync::mpsc::Sender<RoomServiceCommandResult>,
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
 ) {
@@ -945,10 +897,64 @@ async fn room_service_commands(
                 //     })
                 //     .await
                 // };
-                let video_connect_fut = tokio::time::timeout(
-                    Duration::from_secs(30),
-                    Room::connect(&url, &video_token, RoomOptions::default()),
-                );
+                let inner_clone_video = inner.clone();
+                let video_connect_fut = tokio::time::timeout(Duration::from_secs(30), async {
+                    let (video_room, video_rx) =
+                        Room::connect(&url, &video_token, RoomOptions::default())
+                            .await
+                            .map_err(|e| format!("{e:?}"))?;
+
+                    // Publish screen share track (muted) — non-fatal
+                    let screen_source = NativeVideoSource::new(
+                        VideoResolution {
+                            width: 1920,
+                            height: 1080,
+                        },
+                        true,
+                    );
+                    let screen_track = LocalVideoTrack::create_video_track(
+                        VIDEO_TRACK_NAME,
+                        RtcVideoSource::Native(screen_source.clone()),
+                    );
+                    screen_track.mute();
+                    let use_av1 = false;
+                    let max_bitrate = if use_av1 {
+                        AV1_BITRATE_DEFAULT
+                    } else {
+                        H264_BITRATE_DEFAULT
+                    };
+                    let video_codec = if use_av1 {
+                        VideoCodec::AV1
+                    } else {
+                        VideoCodec::H264
+                    };
+                    let screen_result = video_room
+                        .local_participant()
+                        .publish_track(
+                            LocalTrack::Video(screen_track.clone()),
+                            TrackPublishOptions {
+                                source: TrackSource::Screenshare,
+                                video_codec,
+                                video_encoding: Some(VideoEncoding {
+                                    max_bitrate,
+                                    max_framerate: MAX_FRAMERATE,
+                                }),
+                                simulcast: false,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    if let Err(e) = screen_result {
+                        log::error!(
+                            "room_service_commands: Failed to publish screen share track: {e:?}"
+                        );
+                    } else {
+                        *inner_clone_video.buffer_source.lock().unwrap() = Some(screen_source);
+                        *inner_clone_video.screen_share_track.lock().unwrap() = Some(screen_track);
+                    }
+
+                    Ok::<_, String>((video_room, video_rx))
+                });
 
                 // Run both connects concurrently. Each branch is independently
                 // cancellable: dropping the corresponding sender in
@@ -1121,82 +1127,6 @@ async fn room_service_commands(
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
             }
-            RoomServiceCommand::PublishTrack {
-                width,
-                height,
-                use_av1,
-            } => {
-                let inner_video_room = inner.video_room.lock().await;
-                if inner_video_room.is_none() {
-                    log::error!("room_service_commands: Video room doesn't exist.");
-                    let res = tx.send(RoomServiceCommandResult::Failure);
-                    if let Err(e) = res {
-                        log::error!("room_service_commands: Failed to send result: {e:?}");
-                    }
-                    continue;
-                }
-                let room = inner_video_room.as_ref().unwrap();
-
-                let buffer_source = NativeVideoSource::new(VideoResolution { width, height }, true);
-                let track = LocalVideoTrack::create_video_track(
-                    VIDEO_TRACK_NAME,
-                    RtcVideoSource::Native(buffer_source.clone()),
-                );
-
-                /* Have different max_bitrate based on width. */
-                let (h264_bitrate, av1_bitrate, vp9_bitrate) = match width {
-                    WIDTH_THRESHOLD_1920 => (H264_BITRATE_1920, AV1_BITRATE_1920, BITRATE_1920),
-                    WIDTH_THRESHOLD_2048 => (H264_BITRATE_2048, AV1_BITRATE_2048, BITRATE_2048),
-                    WIDTH_THRESHOLD_2560 => (H264_BITRATE_2560, AV1_BITRATE_2560, BITRATE_2560),
-                    _ => (H264_BITRATE_DEFAULT, AV1_BITRATE_DEFAULT, BITRATE_DEFAULT),
-                };
-
-                let max_bitrate = if use_av1 { av1_bitrate } else { h264_bitrate };
-                let video_codec = if use_av1 {
-                    VideoCodec::AV1
-                } else {
-                    VideoCodec::H264
-                };
-
-                let publish_start = std::time::Instant::now();
-                let res = room
-                    .local_participant()
-                    .publish_track(
-                        LocalTrack::Video(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Screenshare,
-                            video_codec,
-                            video_encoding: Some(VideoEncoding {
-                                max_bitrate,
-                                max_framerate: MAX_FRAMERATE,
-                            }),
-                            simulcast: false,
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                log::info!(
-                    "room_service_commands: Screen share track publish took {:?}",
-                    publish_start.elapsed()
-                );
-
-                if let Err(e) = res {
-                    log::error!("room_service_command: Failed to publish track: {e:?}");
-                    let res = tx.send(RoomServiceCommandResult::Failure);
-                    if let Err(e) = res {
-                        log::error!("room_service_commands: Failed to send result: {e:?}");
-                    }
-                    continue;
-                }
-
-                let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                *inner_buffer_source = Some(buffer_source);
-
-                let res = tx.send(RoomServiceCommandResult::Success);
-                if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to send result: {e:?}");
-                }
-            }
             RoomServiceCommand::DestroyRoom => {
                 if let Some(task) = stats_task.take() {
                     task.abort();
@@ -1214,6 +1144,14 @@ async fn room_service_commands(
                 if let Some(track) = camera_track {
                     let inner_room = inner.room.lock().await;
                     if let Some(room) = inner_room.as_ref() {
+                        let _ = room.local_participant().unpublish_track(&track.sid()).await;
+                    }
+                }
+                // Unpublish screen share
+                let screen_share_track = inner.screen_share_track.lock().unwrap().take();
+                if let Some(track) = screen_share_track {
+                    let inner_video_room = inner.video_room.lock().await;
+                    if let Some(room) = inner_video_room.as_ref() {
                         let _ = room.local_participant().unpublish_track(&track.sid()).await;
                     }
                 }
@@ -1512,32 +1450,17 @@ async fn room_service_commands(
                 }
                 log::info!("room_service_commands: Camera track unmuted");
             }
-            RoomServiceCommand::UnpublishScreenShareTrack => {
-                let inner_video_room = inner.video_room.lock().await;
-                if let Some(room) = inner_video_room.as_ref() {
-                    // Find and unpublish screen share track
-                    let local_participant = room.local_participant();
-                    for (sid, publication) in local_participant.track_publications() {
-                        if publication.name() == VIDEO_TRACK_NAME {
-                            log::info!(
-                                "room_service_commands: Unpublishing screen share track: {}",
-                                sid
-                            );
-                            let res = local_participant.unpublish_track(&sid).await;
-                            if let Err(e) = res {
-                                log::error!(
-                                    "room_service_commands: Failed to unpublish screen share track: {e:?}"
-                                );
-                            }
-                            break;
-                        }
-                    }
+            RoomServiceCommand::MuteScreenShareTrack => {
+                if let Some(track) = inner.screen_share_track.lock().unwrap().as_ref() {
+                    track.mute();
                 }
-
-                let mut inner_buffer_source = inner.buffer_source.lock().unwrap();
-                *inner_buffer_source = None;
-
-                log::info!("room_service_commands: Screen share track unpublished");
+                log::info!("room_service_commands: Screen share track muted");
+            }
+            RoomServiceCommand::UnmuteScreenShareTrack => {
+                if let Some(track) = inner.screen_share_track.lock().unwrap().as_ref() {
+                    track.unmute();
+                }
+                log::info!("room_service_commands: Screen share track unmuted");
             }
             RoomServiceCommand::PublishMouseClick(data) => {
                 let inner_room = inner.room.lock().await;
@@ -1945,6 +1868,84 @@ fn start_remote_camera_stream(
     ));
 }
 
+fn start_remote_screen_share_stream(
+    video_track: livekit::track::RemoteVideoTrack,
+    remote_screen_share: &RemoteScreenShare,
+    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+    participant_sid: &str,
+    participant_identity: &str,
+    event_loop_proxy: &EventLoopProxy<UserEvent>,
+    snapshot_sender: &SnapshotSender,
+) {
+    {
+        let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+        if let Some(tx) = stop_tx_guard.take() {
+            log::info!("handle_room_events: Stopping existing screen share task");
+            let _ = tx.send(());
+        }
+    }
+
+    let manager = {
+        let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
+        if let Some(existing) = buffer_guard.as_ref() {
+            existing.clone()
+        } else {
+            let new = Arc::new(VideoBufferManager::new());
+            *buffer_guard = Some(new.clone());
+            new
+        }
+    };
+
+    *remote_screen_share.publisher_sid.lock().unwrap() = Some(participant_sid.to_string());
+
+    let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+    *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
+
+    let (redraw_tx, redraw_rx) =
+        std::sync::mpsc::channel::<crate::window::screensharing_window::RedrawCommand>();
+    let redraw_rx = std::sync::Arc::new(std::sync::Mutex::new(Some(redraw_rx)));
+
+    tokio::spawn(process_video_stream(
+        video_track,
+        manager,
+        stop_rx,
+        format!("screenshare_{participant_sid}"),
+        false,
+        Some(redraw_tx.clone()),
+    ));
+
+    let sharer_sid = {
+        let audio_identity = participant_identity
+            .strip_suffix(":video")
+            .map(|prefix| format!("{prefix}:audio"));
+        if let Some(audio_id) = audio_identity {
+            let guard = participants.read().unwrap();
+            crate::livekit::participant::find_sid_by_identity(&guard, &audio_id)
+                .unwrap_or_else(|| participant_sid.to_string())
+        } else {
+            participant_sid.to_string()
+        }
+    };
+
+    {
+        let mut participants_guard = participants.write().unwrap();
+        if let Some(info) = participants_guard.get_mut(&sharer_sid) {
+            info.set_is_screensharing(true);
+        }
+    }
+
+    snapshot_sender.send_participants_snapshot();
+
+    let remote_participants = collect_remote_participants(participants, &sharer_sid);
+    if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
+        participants: remote_participants,
+        redraw_rx: Some(redraw_rx),
+        redraw_tx: Some(redraw_tx),
+    }) {
+        log::error!("handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}");
+    }
+}
+
 async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -2238,7 +2239,7 @@ async fn handle_room_events(
                 publication,
             } => {
                 let sid = participant.sid().as_str().to_string();
-                if sid == user_sid {
+                if sid == user_sid || sid == video_participant_sid {
                     continue;
                 }
 
@@ -2269,6 +2270,27 @@ async fn handle_room_events(
                             &participants,
                             &sid,
                             &event_loop_proxy,
+                        );
+                    }
+                    (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
+                        log::info!("handle_room_events: Screen share track unmuted for {}", sid);
+                        let video_track = match publication.track() {
+                            Some(livekit::track::Track::RemoteVideo(vt)) => vt,
+                            _ => {
+                                log::warn!(
+                                    "handle_room_events: No remote video track in publication"
+                                );
+                                continue;
+                            }
+                        };
+                        start_remote_screen_share_stream(
+                            video_track,
+                            &remote_screen_share,
+                            &participants,
+                            &sid,
+                            participant.identity().as_str(),
+                            &event_loop_proxy,
+                            &snapshot_sender,
                         );
                     }
                     _ => {}
@@ -2323,93 +2345,25 @@ async fn handle_room_events(
                     }
                     livekit::track::RemoteTrack::Video(video_track) => match publication.source() {
                         TrackSource::Screenshare => {
-                            log::info!(
-                                "handle_room_events: Setting up screen share stream: {} from {}",
-                                video_track.name(),
-                                participant_sid,
-                            );
-
-                            {
-                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
-                                if let Some(tx) = stop_tx_guard.take() {
-                                    log::info!(
-                                        "handle_room_events: Stopping existing screen share task"
-                                    );
-                                    let _ = tx.send(());
-                                }
-                            }
-
-                            let manager = {
-                                let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
-                                if let Some(existing) = buffer_guard.as_ref() {
-                                    existing.clone()
-                                } else {
-                                    let new = Arc::new(VideoBufferManager::new());
-                                    *buffer_guard = Some(new.clone());
-                                    new
-                                }
-                            };
-
-                            *remote_screen_share.publisher_sid.lock().unwrap() =
-                                Some(participant_sid.clone());
-
-                            let (stop_tx, stop_rx) = mpsc::unbounded_channel();
-                            *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
-
-                            let (redraw_tx, redraw_rx) = std::sync::mpsc::channel::<
-                                crate::window::screensharing_window::RedrawCommand,
-                            >();
-                            let redraw_rx =
-                                std::sync::Arc::new(std::sync::Mutex::new(Some(redraw_rx)));
-
-                            tokio::spawn(process_video_stream(
-                                video_track,
-                                manager,
-                                stop_rx,
-                                format!("screenshare_{}", participant_sid),
-                                false,
-                                Some(redraw_tx.clone()),
-                            ));
-
-                            // Derive the audio participant identity from the video participant identity
-                            // e.g. "room:...:video" → "room:...:audio"
-                            let sharer_sid = {
-                                let video_identity = participant.identity().as_str().to_string();
-                                let audio_identity = video_identity
-                                    .strip_suffix(":video")
-                                    .map(|prefix| format!("{prefix}:audio"));
-                                if let Some(audio_id) = audio_identity {
-                                    let guard = participants.read().unwrap();
-                                    crate::livekit::participant::find_sid_by_identity(
-                                        &guard, &audio_id,
-                                    )
-                                    .unwrap_or_else(|| participant_sid.clone())
-                                } else {
-                                    participant_sid.clone()
-                                }
-                            };
-
-                            {
-                                let mut participants_guard = participants.write().unwrap();
-                                if let Some(info) = participants_guard.get_mut(&sharer_sid) {
-                                    info.set_is_screensharing(true);
-                                }
-                            }
-
-                            snapshot_sender.send_participants_snapshot();
-
-                            let remote_participants =
-                                collect_remote_participants(&participants, &sharer_sid);
-                            if let Err(e) =
-                                event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
-                                    participants: remote_participants,
-                                    redraw_rx: Some(redraw_rx),
-                                    redraw_tx: Some(redraw_tx),
-                                })
-                            {
-                                log::error!(
-                                        "handle_room_events: Failed to send OpenScreenShareWindow event: {e:?}"
-                                    );
+                            if !publication.is_muted() {
+                                log::info!(
+                                    "handle_room_events: Screen share track subscribed and already unmuted for {}",
+                                    participant_sid
+                                );
+                                start_remote_screen_share_stream(
+                                    video_track,
+                                    &remote_screen_share,
+                                    &participants,
+                                    &participant_sid,
+                                    participant.identity().as_str(),
+                                    &event_loop_proxy,
+                                    &snapshot_sender,
+                                );
+                            } else {
+                                log::info!(
+                                    "handle_room_events: Screen share track subscribed (muted) for {}",
+                                    participant_sid
+                                );
                             }
                         }
                         TrackSource::Camera => {
