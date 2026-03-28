@@ -129,7 +129,7 @@ impl CameraStream {
         let failures_count = self.failures_count.clone();
         let width = self.width;
         let height = self.height;
-        log::info!("CameraStream: starting capture thread at {width}x{height}");
+        let buffer_source = self.buffer_source.clone();
 
         let handle = std::thread::spawn(move || {
             let frame_duration = Duration::from_micros(1_000_000 / CAMERA_FPS as u64);
