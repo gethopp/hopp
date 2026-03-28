@@ -53,6 +53,8 @@ const fuseSearch = (rooms: Room[], searchQuery: string) => {
 // Maximum number of avatars to display before showing +N overflow
 const MAX_VISIBLE_AVATARS = 5;
 
+const CONNECTING_TOAST_ID = "connecting-to-room";
+
 type BaseUser = components["schemas"]["BaseUser"];
 
 // Component to render room presence avatars with tooltips
@@ -144,12 +146,18 @@ export const Rooms = () => {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [isJoiningRoom, setIsJoiningRoom] = useState(false);
+  const joiningToastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endCall = useEndCall();
 
   const { useQuery } = useAPI();
 
   // Get current user's rooms
-  const { data: rooms, refetch } = useQuery("get", "/api/auth/rooms", undefined, {
+  const {
+    data: rooms,
+    refetch,
+    isLoading: isLoadingRooms,
+  } = useQuery("get", "/api/auth/rooms", undefined, {
     enabled: !!authToken,
     refetchInterval: 30_000,
     retry: true,
@@ -259,10 +267,17 @@ export const Rooms = () => {
 
   const handleJoinRoom = useCallback(
     async (room: Room) => {
+      if (isJoiningRoom) return;
+
       // End existing call if there is one
       if (callTokens) {
         endCall();
       }
+
+      setIsJoiningRoom(true);
+      joiningToastTimeout.current = setTimeout(() => {
+        toast.loading("Connecting to room", { id: CONNECTING_TOAST_ID });
+      }, 300);
 
       try {
         const tokens = await getRoomTokens({
@@ -272,6 +287,7 @@ export const Rooms = () => {
             },
           },
         });
+
         if (!tokens) {
           toast.error("Error joining room");
           return;
@@ -290,6 +306,7 @@ export const Rooms = () => {
           participants: [],
           isInitialisingCall: true,
         });
+
         try {
           await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
         } catch {
@@ -303,9 +320,13 @@ export const Rooms = () => {
         } else {
           toast.error("Error joining room");
         }
+      } finally {
+        if (joiningToastTimeout.current) clearTimeout(joiningToastTimeout.current);
+        toast.dismiss(CONNECTING_TOAST_ID);
+        setIsJoiningRoom(false);
       }
     },
-    [getRoomTokens, callTokens, setCallTokens, endCall],
+    [getRoomTokens, callTokens, setCallTokens, endCall, isJoiningRoom],
   );
 
   useEffect(() => {
@@ -382,7 +403,7 @@ export const Rooms = () => {
                   <RoomButton
                     key={room.id}
                     onClick={() => handleJoinRoom(room)}
-                    disabled={!!callTokens?.isInitialisingCall}
+                    disabled={!!callTokens?.isInitialisingCall || isJoiningRoom}
                     size="unsized"
                     title={room.name}
                     className="flex-1 min-w-0 text-slate-600"
@@ -424,7 +445,7 @@ export const Rooms = () => {
                 );
               })}
             </div>
-          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} />}
+          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
             <DialogContent container={document.getElementById("app-body")}>
               <DialogHeader>
@@ -483,7 +504,13 @@ export const Rooms = () => {
   );
 };
 
-const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void }) => {
+const EmptyRoomsState = ({
+  onCreateRoomClick,
+  isLoadingRooms,
+}: {
+  onCreateRoomClick: () => void;
+  isLoadingRooms: boolean;
+}) => {
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
       <img src={doorImage} alt="No rooms" className="size-38 mb-6" />
@@ -492,8 +519,8 @@ const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void 
         stand-ups or mob programming sessions.
       </p>
       <div className="flex flex-col gap-2 items-center">
-        <Button onClick={onCreateRoomClick} className="text-sm">
-          Create room
+        <Button onClick={onCreateRoomClick} className="text-sm" isLoading={isLoadingRooms} disabled={isLoadingRooms}>
+          {isLoadingRooms ? "Loading rooms" : "Create room"}
         </Button>
         <a href="https://docs.hopp.so/rooms" target="_blank" className="text-xs text-slate-600">
           Read docs

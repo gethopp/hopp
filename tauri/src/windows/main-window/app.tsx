@@ -249,10 +249,6 @@ function App() {
     });
 
     socketService.on("call_end", (data: TWebSocketMessage) => {
-      // Guard if call is already finished
-      const { callTokens: currentCallTokens, user } = useStore.getState();
-      if (!currentCallTokens) return;
-
       if (data.type === "call_end") {
         // Get call info before clearing tokens
         toast.dismiss("call-banner");
