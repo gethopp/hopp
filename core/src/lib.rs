@@ -900,12 +900,35 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     return;
                 }
+                let audio_capture_result = (|| -> Result<(u32, tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>, crate::audio::mixer::SharedProcessor), String> {
+                    let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
+                    let sample_rate = self.audio_capturer.start_capture(Some(&call_start.audio_device_name), sample_tx)?;
+                    let processor = self.audio_player.processor().ok_or_else(|| {
+                        let msg = "Audio processor not available";
+                        log::error!("{msg}");
+                        msg.to_string()
+                    })?;
+                    Ok((sample_rate, sample_rx, processor))
+                })();
+                let (sample_rate, sample_rx, processor) = match audio_capture_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("user_event: CallStart audio capture failed: {e}");
+                        if let Err(send_err) = self.socket.send(Message::CallStartResult(Err(e))) {
+                            error!("user_event: Error sending CallStartResult: {send_err:?}");
+                        }
+                        return;
+                    }
+                };
                 if let Some(room_service) = self.room_service.as_ref() {
                     match room_service.create_room(
                         call_start.audio_token,
                         call_start.video_token,
                         self.event_loop_proxy.clone(),
                         self.audio_player.mixer().unwrap().clone(),
+                        sample_rate,
+                        sample_rx,
+                        processor,
                     ) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
@@ -939,6 +962,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     Err(ref reason) => {
                         log::error!("user_event: Room creation failed: {reason}");
+                        self.stop_mic();
                         if let Err(e) = self
                             .socket
                             .send(Message::RoomConnectionFailed(reason.clone()))
@@ -1100,8 +1124,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
 
-                let room_service =
-                    RoomService::new(url, self.event_loop_proxy.clone(), self.socket.clone());
+                let room_service = RoomService::new(url, self.socket.clone());
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",
@@ -1310,42 +1333,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending audio device list: {e:?}");
                 }
             }
+            // TODO: rename this
             UserEvent::StartAudioCapture(msg) => {
                 log::info!(
                     "user_event: StartAudioCapture device_name={}",
                     msg.device_name
                 );
-                let result = if self.audio_capturer.is_capturing() {
-                    self.audio_capturer
-                        .switch_device(Some(&msg.device_name))
-                        .map(|_| ())
-                } else {
-                    (|| -> Result<(), String> {
-                        let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
-
-                        let sample_rate = self
-                            .audio_capturer
-                            .start_capture(Some(&msg.device_name), sample_tx)?;
-
-                        let room_service = self
-                            .room_service
-                            .as_ref()
-                            .ok_or_else(|| "Room service not found".to_string())?;
-
-                        let processor = self.audio_player.processor().ok_or_else(|| {
-                            let msg = "Audio player not started for publish_audio_track";
-                            log::error!("{msg}");
-                            sentry_utils::upload_logs_event(msg.to_string());
-                            msg.to_string()
-                        })?;
-
-                        room_service
-                            .publish_audio_track(sample_rate, sample_rx, processor)
-                            .map_err(|e| format!("Failed to publish audio track: {e}"))?;
-
-                        Ok(())
-                    })()
-                };
+                let result = self
+                    .audio_capturer
+                    .switch_device(Some(&msg.device_name))
+                    .map(|_| ());
 
                 if let Err(ref e) = result {
                     log::error!("user_event: StartAudioCapture failed: {e}");
@@ -1355,10 +1352,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
                 }
             }
-            UserEvent::StopAudioCapture => {
-                log::info!("user_event: StopAudioCapture");
-                self.stop_mic();
-            }
+
             UserEvent::MuteAudio => {
                 log::info!("user_event: MuteAudio");
                 if let Some(room_service) = self.room_service.as_ref() {
@@ -2133,7 +2127,6 @@ pub enum UserEvent {
     LastModeChanged(socket_lib::StoredMode),
     ListAudioDevices,
     StartAudioCapture(socket_lib::AudioCaptureMessage),
-    StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ToggleMic,
@@ -2280,7 +2273,6 @@ impl RenderEventLoop {
                     Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
-                    Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     Message::ToggleMic => UserEvent::ToggleMic,

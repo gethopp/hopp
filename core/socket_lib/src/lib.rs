@@ -106,6 +106,7 @@ pub struct ScreenShareMessage {
 pub struct CallStartMessage {
     pub audio_token: String,
     pub video_token: String,
+    pub audio_device_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -205,7 +206,6 @@ pub enum Message {
     AudioDeviceList(Vec<AudioDevice>),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
-    StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ListCameras,

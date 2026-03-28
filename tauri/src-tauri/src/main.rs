@@ -594,11 +594,52 @@ fn call_started(
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         data.activation_policy_regular = true;
     }
+    // Resolve the audio device name: last used → default → first → ""
+    let audio_device_name = {
+        let last_used = data.app_state.last_used_mic();
+        let devices: Vec<AudioDevice> = if let Err(e) = data.sender.send(Message::ListAudioDevices)
+        {
+            log::error!("call_started: failed to list audio devices: {e:?}");
+            vec![]
+        } else {
+            match recv_expected_response(&data.event_socket, |msg| match msg {
+                Message::AudioDeviceList(d) => Ok(d),
+                other => Err(other),
+            }) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::error!("call_started: failed to receive audio device list: {e:?}");
+                    vec![]
+                }
+            }
+        };
+        if let Some(last) = last_used {
+            if devices.iter().any(|d| d.name == last) {
+                last
+            } else {
+                devices
+                    .iter()
+                    .find(|d| d.default)
+                    .or_else(|| devices.first())
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default()
+            }
+        } else {
+            devices
+                .iter()
+                .find(|d| d.default)
+                .or_else(|| devices.first())
+                .map(|d| d.name.clone())
+                .unwrap_or_default()
+        }
+    };
+    log::info!("call_started: resolved audio_device_name={audio_device_name:?}");
     if let Err(e) = data
         .sender
         .send(Message::CallStart(socket_lib::CallStartMessage {
             audio_token: audio_token.clone(),
             video_token: video_token.clone(),
+            audio_device_name,
         }))
     {
         log::error!("call_started: failed to send: {e:?}");
@@ -719,15 +760,6 @@ fn toggle_mic(app: tauri::AppHandle) {
     let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::ToggleMic) {
         log::error!("toggle_mic: failed to send: {e:?}");
-    }
-}
-
-#[tauri::command(async)]
-fn stop_audio_capture(app: tauri::AppHandle) {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::StopAudioCapture) {
-        log::error!("stop_audio_capture: failed to send: {e:?}");
     }
 }
 
@@ -1422,7 +1454,6 @@ fn main() {
             mute_mic,
             unmute_mic,
             toggle_mic,
-            stop_audio_capture,
             list_microphones,
             select_microphone,
             list_webcams,
