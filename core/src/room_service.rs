@@ -85,11 +85,8 @@ enum RoomServiceCommand {
     UnpublishAudioTrack,
     MuteAudioTrack,
     UnmuteAudioTrack,
-    PublishCameraTrack {
-        width: u32,
-        height: u32,
-    },
-    UnpublishCameraTrack,
+    MuteCameraTrack,
+    UnmuteCameraTrack,
     UnpublishScreenShareTrack,
     PublishMouseClick(MouseClickData),
     PublishMouseVisible(MouseVisibleData),
@@ -125,10 +122,8 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::UnpublishAudioTrack => write!(f, "UnpublishAudioTrack"),
             Self::MuteAudioTrack => write!(f, "MuteAudioTrack"),
             Self::UnmuteAudioTrack => write!(f, "UnmuteAudioTrack"),
-            Self::PublishCameraTrack { width, height } => {
-                write!(f, "PublishCameraTrack({width}x{height})")
-            }
-            Self::UnpublishCameraTrack => write!(f, "UnpublishCameraTrack"),
+            Self::MuteCameraTrack => write!(f, "MuteCameraTrack"),
+            Self::UnmuteCameraTrack => write!(f, "UnmuteCameraTrack"),
             Self::UnpublishScreenShareTrack => write!(f, "UnpublishScreenShareTrack"),
             Self::PublishMouseClick(..) => write!(f, "PublishMouseClick"),
             Self::PublishMouseVisible(..) => write!(f, "PublishMouseVisible"),
@@ -175,6 +170,7 @@ pub(crate) struct RoomServiceInner {
     pub(crate) video_room: Mutex<Option<Room>>,
     buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
     camera_buffer_source: std::sync::Mutex<Option<NativeVideoSource>>,
+    camera_track: std::sync::Mutex<Option<LocalVideoTrack>>,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
@@ -206,6 +202,9 @@ impl RoomServiceInner {
         }
         {
             self.camera_buffer_source.lock().unwrap().take();
+        }
+        {
+            self.camera_track.lock().unwrap().take();
         }
         {
             let mut stop_tx_guard = self.remote_screen_share.stop_tx.lock().unwrap();
@@ -316,6 +315,7 @@ impl RoomService {
             video_room: Mutex::new(None),
             buffer_source: std::sync::Mutex::new(None),
             camera_buffer_source: std::sync::Mutex::new(None),
+            camera_track: std::sync::Mutex::new(None),
             participants,
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
@@ -625,38 +625,35 @@ impl RoomService {
         }
     }
 
-    /// Publishes a camera video track. Blocks until complete.
-    pub fn publish_camera_track(&self, width: u32, height: u32) -> Result<(), RoomServiceError> {
-        log::info!("publish_camera_track: {width}x{height}");
-        let res = self
-            .service_command_tx
-            .send(RoomServiceCommand::PublishCameraTrack { width, height });
-        if let Err(e) = res {
-            return Err(RoomServiceError::PublishTrack(format!(
-                "Failed to send command: {e:?}"
-            )));
+    pub fn mute_camera_track(&self) {
+        log::info!("mute_camera_track");
+        {
+            let mut participants = self.inner.participants.write().unwrap();
+            if let Some(info) = participants.get_mut("local") {
+                info.camera_buffers().set_inactive(true);
+            }
         }
-        let res = self.service_command_res_rx.recv_timeout(COMMAND_TIMEOUT);
-        match res {
-            Ok(RoomServiceCommandResult::Success) => Ok(()),
-            Ok(RoomServiceCommandResult::Failure) => Err(RoomServiceError::PublishTrack(
-                "Failed to publish camera track".to_string(),
-            )),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(RoomServiceError::Timeout),
-            Err(e) => Err(RoomServiceError::PublishTrack(format!(
-                "Failed to receive result: {e:?}"
-            ))),
+        if let Err(e) = self
+            .service_command_tx
+            .send(RoomServiceCommand::MuteCameraTrack)
+        {
+            log::error!("mute_camera_track: Failed to send command: {e:?}");
         }
     }
 
-    /// Unpublishes the camera track from the room.
-    pub fn unpublish_camera_track(&self) {
-        log::info!("unpublish_camera_track");
-        let res = self
+    pub fn unmute_camera_track(&self) {
+        log::info!("unmute_camera_track");
+        {
+            let mut participants = self.inner.participants.write().unwrap();
+            if let Some(info) = participants.get_mut("local") {
+                info.camera_buffers().set_inactive(false);
+            }
+        }
+        if let Err(e) = self
             .service_command_tx
-            .send(RoomServiceCommand::UnpublishCameraTrack);
-        if let Err(e) = res {
-            log::error!("unpublish_camera_track: Failed to send command: {e:?}");
+            .send(RoomServiceCommand::UnmuteCameraTrack)
+        {
+            log::error!("unmute_camera_track: Failed to send command: {e:?}");
         }
     }
 
@@ -890,6 +887,7 @@ async fn room_service_commands(
                 log::info!("room_service_commands: Connecting to room and video room in parallel");
                 let url = livekit_server_url.clone();
                 let connect_start = Instant::now();
+                let inner_clone = inner.clone();
 
                 let connect_fut = tokio::time::timeout(Duration::from_secs(30), async {
                     let (room, rx) = Room::connect(&url, &token, RoomOptions::default())
@@ -899,6 +897,43 @@ async fn room_service_commands(
                         AudioPublisher::publish(&room, sample_rate, sample_rx, audio_processor)
                             .await
                             .map_err(|e| format!("{e}"))?;
+
+                    // Publish camera track (muted) — non-fatal
+                    let camera_source = NativeVideoSource::new(
+                        VideoResolution {
+                            width: 1280,
+                            height: 720,
+                        },
+                        false,
+                    );
+                    let camera_track = LocalVideoTrack::create_video_track(
+                        CAMERA_TRACK_NAME,
+                        RtcVideoSource::Native(camera_source.clone()),
+                    );
+                    camera_track.mute();
+                    let camera_result = room
+                        .local_participant()
+                        .publish_track(
+                            LocalTrack::Video(camera_track.clone()),
+                            TrackPublishOptions {
+                                source: TrackSource::Camera,
+                                video_codec: VideoCodec::H264,
+                                simulcast: true,
+                                video_encoding: Some(VideoEncoding {
+                                    max_bitrate: CAMERA_MAX_BITRATE,
+                                    max_framerate: CAMERA_MAX_FRAMERATE,
+                                }),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    if let Err(e) = camera_result {
+                        log::error!("room_service_commands: Failed to publish camera track: {e:?}");
+                    } else {
+                        *inner_clone.camera_buffer_source.lock().unwrap() = Some(camera_source);
+                        *inner_clone.camera_track.lock().unwrap() = Some(camera_track);
+                    }
+
                     Ok::<_, String>((room, rx, publisher))
                 });
                 // Uncomment below to test artificial delay for testing racing conditions.
@@ -1165,6 +1200,22 @@ async fn room_service_commands(
             RoomServiceCommand::DestroyRoom => {
                 if let Some(task) = stats_task.take() {
                     task.abort();
+                }
+
+                // Unpublish audio
+                if let Some(publisher) = audio_publisher.take() {
+                    let inner_room = inner.room.lock().await;
+                    if let Some(room) = inner_room.as_ref() {
+                        publisher.unpublish(room).await;
+                    }
+                }
+                // Unpublish camera
+                let camera_track = inner.camera_track.lock().unwrap().take();
+                if let Some(track) = camera_track {
+                    let inner_room = inner.room.lock().await;
+                    if let Some(room) = inner_room.as_ref() {
+                        let _ = room.local_participant().unpublish_track(&track.sid()).await;
+                    }
                 }
 
                 inner.clear().await;
@@ -1449,99 +1500,17 @@ async fn room_service_commands(
                     log::warn!("room_service_commands: No audio track to unmute");
                 }
             }
-            RoomServiceCommand::PublishCameraTrack { width, height } => {
-                let inner_room = inner.room.lock().await;
-                if inner_room.is_none() {
-                    log::error!("room_service_commands: Room doesn't exist for PublishCameraTrack");
-                    let _ = tx.send(RoomServiceCommandResult::Failure);
-                    continue;
+            RoomServiceCommand::MuteCameraTrack => {
+                if let Some(track) = inner.camera_track.lock().unwrap().as_ref() {
+                    track.mute();
                 }
-                let room = inner_room.as_ref().unwrap();
-
-                let buffer_source =
-                    NativeVideoSource::new(VideoResolution { width, height }, false);
-                let track = LocalVideoTrack::create_video_track(
-                    CAMERA_TRACK_NAME,
-                    RtcVideoSource::Native(buffer_source.clone()),
-                );
-
-                let publish_start = std::time::Instant::now();
-                let res = room
-                    .local_participant()
-                    .publish_track(
-                        LocalTrack::Video(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Camera,
-                            video_codec: VideoCodec::H264,
-                            simulcast: true,
-                            video_encoding: Some(VideoEncoding {
-                                max_bitrate: CAMERA_MAX_BITRATE,
-                                max_framerate: CAMERA_MAX_FRAMERATE,
-                            }),
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                log::info!(
-                    "room_service_commands: Camera track publish took {:?}",
-                    publish_start.elapsed()
-                );
-
-                if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to publish camera track: {e:?}");
-                    let _ = tx.send(RoomServiceCommandResult::Failure);
-                    continue;
-                }
-
-                let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
-                *inner_buffer_source = Some(buffer_source);
-
-                // Mark local camera as active before building snapshot
-                // to avoid the race where the capture thread hasn't written
-                // its first frame yet.
-                {
-                    let mut participants = inner.participants.write().unwrap();
-                    let info = participants
-                        .get_mut("local")
-                        .expect("local participant info not found");
-                    info.camera_buffers().set_inactive(false);
-                }
-
-                log::info!("room_service_commands: Camera track published");
-                let _ = tx.send(RoomServiceCommandResult::Success);
+                log::info!("room_service_commands: Camera track muted");
             }
-            RoomServiceCommand::UnpublishCameraTrack => {
-                let inner_room = inner.room.lock().await;
-                if let Some(room) = inner_room.as_ref() {
-                    // Find and unpublish camera track
-                    let local_participant = room.local_participant();
-                    for (sid, publication) in local_participant.track_publications() {
-                        if publication.name() == CAMERA_TRACK_NAME {
-                            log::info!("room_service_commands: Unpublishing camera track: {}", sid);
-                            let res = local_participant.unpublish_track(&sid).await;
-                            if let Err(e) = res {
-                                log::error!(
-                                    "room_service_commands: Failed to unpublish camera track: {e:?}"
-                                );
-                            }
-                            break;
-                        }
-                    }
+            RoomServiceCommand::UnmuteCameraTrack => {
+                if let Some(track) = inner.camera_track.lock().unwrap().as_ref() {
+                    track.unmute();
                 }
-
-                let mut inner_buffer_source = inner.camera_buffer_source.lock().unwrap();
-                *inner_buffer_source = None;
-
-                // Mark local camera as inactive before building snapshot
-                // to avoid sending active camera when we disable it.
-                {
-                    let mut participants = inner.participants.write().unwrap();
-                    if let Some(info) = participants.get_mut("local") {
-                        info.camera_buffers().set_inactive(true);
-                    }
-                }
-
-                log::info!("room_service_commands: Camera track unpublished");
+                log::info!("room_service_commands: Camera track unmuted");
             }
             RoomServiceCommand::UnpublishScreenShareTrack => {
                 let inner_video_room = inner.video_room.lock().await;
@@ -1950,6 +1919,32 @@ pub enum ClientEvent {
     ClickAnimation(ClientPoint),
 }
 
+fn start_remote_camera_stream(
+    video_track: livekit::track::RemoteVideoTrack,
+    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
+    sid: &str,
+    event_loop_proxy: &EventLoopProxy<UserEvent>,
+) {
+    if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
+        log::error!("handle_room_events: Failed to send OpenCamera event: {e:?}");
+    }
+    let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+    let manager = {
+        let mut guard = participants.write().unwrap();
+        let info = guard.get_mut(sid).expect("Participant should exist");
+        info.set_camera_stop_tx(stop_tx);
+        info.camera_buffers()
+    };
+    tokio::spawn(process_video_stream(
+        video_track,
+        manager,
+        stop_rx,
+        sid.to_string(),
+        true,
+        None,
+    ));
+}
+
 async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -2140,6 +2135,7 @@ async fn handle_room_events(
                 };
 
                 if !any_camera_active_after {
+                    log::info!("camera_debug: participant disconnected close");
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::CloseCameraWindow) {
                         log::error!(
                             "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
@@ -2197,36 +2193,85 @@ async fn handle_room_events(
                 participant,
                 publication,
             } => {
-                if publication.kind() == livekit::track::TrackKind::Audio {
-                    let sid = participant.sid().as_str().to_string();
-                    log::info!("handle_room_events: Audio track muted for {}", sid);
+                let sid = participant.sid().as_str().to_string();
+                if sid == user_sid {
+                    log::info!("camera_debug: skip users mute event.");
+                    continue;
+                }
 
-                    {
-                        let mut participants_guard = participants.write().unwrap();
-                        if let Some(info) = participants_guard.get_mut(&sid) {
-                            info.set_muted(true);
+                match (publication.kind(), publication.source()) {
+                    (livekit::track::TrackKind::Audio, _) => {
+                        log::info!("handle_room_events: Audio track muted for {}", sid);
+                        {
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&sid) {
+                                info.set_muted(true);
+                            }
+                        }
+                        snapshot_sender.send_participants_snapshot();
+                    }
+                    (livekit::track::TrackKind::Video, TrackSource::Camera) => {
+                        log::info!("handle_room_events: Camera track muted for {}", sid);
+                        let any_camera_active = {
+                            let mut guard = participants.write().unwrap();
+                            if let Some(info) = guard.get_mut(&sid) {
+                                info.stop_camera_stream();
+                            }
+                            guard.values().any(|info| info.camera_active())
+                        };
+                        if !any_camera_active {
+                            log::info!("camera_debug: muted close windows");
+                            if let Err(e) =
+                                event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
+                            {
+                                log::error!(
+                                    "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                                );
+                            }
                         }
                     }
-
-                    snapshot_sender.send_participants_snapshot();
+                    _ => {}
                 }
             }
             RoomEvent::TrackUnmuted {
                 participant,
                 publication,
             } => {
-                if publication.kind() == livekit::track::TrackKind::Audio {
-                    let sid = participant.sid().as_str().to_string();
-                    log::info!("handle_room_events: Audio track unmuted for {}", sid);
+                let sid = participant.sid().as_str().to_string();
+                if sid == user_sid {
+                    continue;
+                }
 
-                    {
-                        let mut participants_guard = participants.write().unwrap();
-                        if let Some(info) = participants_guard.get_mut(&sid) {
-                            info.set_muted(false);
+                match (publication.kind(), publication.source()) {
+                    (livekit::track::TrackKind::Audio, _) => {
+                        log::info!("handle_room_events: Audio track unmuted for {}", sid);
+                        {
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&sid) {
+                                info.set_muted(false);
+                            }
                         }
+                        snapshot_sender.send_participants_snapshot();
                     }
-
-                    snapshot_sender.send_participants_snapshot();
+                    (livekit::track::TrackKind::Video, TrackSource::Camera) => {
+                        log::info!("handle_room_events: Camera track unmuted for {}", sid);
+                        let video_track = match publication.track() {
+                            Some(livekit::track::Track::RemoteVideo(vt)) => vt,
+                            _ => {
+                                log::warn!(
+                                    "handle_room_events: No remote video track in publication"
+                                );
+                                continue;
+                            }
+                        };
+                        start_remote_camera_stream(
+                            video_track,
+                            &participants,
+                            &sid,
+                            &event_loop_proxy,
+                        );
+                    }
+                    _ => {}
                 }
             }
             RoomEvent::TrackSubscribed {
@@ -2368,36 +2413,23 @@ async fn handle_room_events(
                             }
                         }
                         TrackSource::Camera => {
-                            log::info!(
-                                "handle_room_events: Setting up camera stream for participant: {}",
-                                participant_sid
-                            );
-
-                            if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
-                                log::error!(
-                                    "handle_room_events: Failed to send OpenCamera event: {e:?}"
+                            if !publication.is_muted() {
+                                log::info!(
+                                    "handle_room_events: Camera track subscribed and already unmuted for {}",
+                                    participant_sid
+                                );
+                                start_remote_camera_stream(
+                                    video_track,
+                                    &participants,
+                                    &participant_sid,
+                                    &event_loop_proxy,
+                                );
+                            } else {
+                                log::info!(
+                                    "handle_room_events: Camera track subscribed (muted) for {}",
+                                    participant_sid
                                 );
                             }
-
-                            let (stop_tx, stop_rx) = mpsc::unbounded_channel();
-
-                            let manager = {
-                                let mut participants_guard = participants.write().unwrap();
-                                let info = participants_guard
-                                    .get_mut(&participant_sid)
-                                    .expect("Participant should exist");
-                                info.set_camera_stop_tx(stop_tx);
-                                info.camera_buffers()
-                            };
-
-                            tokio::spawn(process_video_stream(
-                                video_track,
-                                manager,
-                                stop_rx,
-                                participant_sid.clone(),
-                                true,
-                                None,
-                            ));
                         }
                         source => {
                             log::info!(
@@ -2430,29 +2462,7 @@ async fn handle_room_events(
 
                 match track {
                     livekit::track::RemoteTrack::Video(_) => {
-                        if publication.source() == TrackSource::Camera {
-                            log::info!(
-                                "handle_room_events: Stopping camera stream for participant: {}",
-                                participant_sid
-                            );
-
-                            let any_camera_active = {
-                                let mut participants_guard = participants.write().unwrap();
-                                if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                                    info.stop_camera_stream();
-                                }
-                                participants_guard.values().any(|info| info.camera_active())
-                            };
-                            if !any_camera_active {
-                                if let Err(e) =
-                                    event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
-                                {
-                                    log::error!(
-                                        "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
-                                    );
-                                }
-                            }
-                        } else if publication.source() == TrackSource::Screenshare {
+                        if publication.source() == TrackSource::Screenshare {
                             let unsub_sid = participant.sid().as_str().to_string();
                             log::info!(
                                 "handle_room_events: Screen share unsubscribed from {}",

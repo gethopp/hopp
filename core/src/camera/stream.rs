@@ -28,7 +28,7 @@ pub struct CameraStream {
     capture_thread: Option<JoinHandle<()>>,
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
-    buffer_source: Arc<Mutex<Option<NativeVideoSource>>>,
+    buffer_source: NativeVideoSource,
     video_buffer_manager: Arc<VideoBufferManager>,
     width: u32,
     height: u32,
@@ -41,6 +41,7 @@ impl CameraStream {
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
         video_buffer_manager: Arc<VideoBufferManager>,
+        buffer_source: NativeVideoSource,
     ) -> Result<Self, String> {
         let cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -85,7 +86,7 @@ impl CameraStream {
             capture_thread: None,
             tx: None,
             error_tx,
-            buffer_source: Arc::new(Mutex::new(None)),
+            buffer_source: buffer_source.clone(),
             video_buffer_manager,
             width,
             height,
@@ -93,7 +94,7 @@ impl CameraStream {
             failures_count: Arc::new(Mutex::new(0)),
         };
 
-        stream.start_capture_with_camera(camera)?;
+        stream.start_capture_with_camera(camera, buffer_source)?;
         Ok(stream)
     }
 
@@ -108,7 +109,11 @@ impl CameraStream {
             .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
     }
 
-    fn start_capture_with_camera(&mut self, mut camera: Camera) -> Result<(), String> {
+    fn start_capture_with_camera(
+        &mut self,
+        mut camera: Camera,
+        buffer_source: NativeVideoSource,
+    ) -> Result<(), String> {
         camera
             .open_stream()
             .map_err(|e| format!("Failed to open camera stream: {e}"))?;
@@ -119,12 +124,12 @@ impl CameraStream {
         let (tx, rx) = mpsc::channel();
         self.tx = Some(tx);
 
-        let buffer_source = self.buffer_source.clone();
         let video_buffer_manager = self.video_buffer_manager.clone();
         let error_tx = self.error_tx.clone();
         let failures_count = self.failures_count.clone();
         let width = self.width;
         let height = self.height;
+        log::info!("CameraStream: starting capture thread at {width}x{height}");
 
         let handle = std::thread::spawn(move || {
             let frame_duration = Duration::from_micros(1_000_000 / CAMERA_FPS as u64);
@@ -132,12 +137,13 @@ impl CameraStream {
             // Pre-allocate buffers once and reuse every frame
             let mut rgb_buf =
                 if frame_format != FrameFormat::YUYV && frame_format != FrameFormat::NV12 {
+                    log::info!("CameraStream: allocating RGB buffer at {width}x{height}");
                     vec![0u8; (width * height * 3) as usize]
                 } else {
                     vec![]
                 };
+            log::info!("CameraStream: allocating I420 buffer at {width}x{height}");
             let mut i420 = I420Buffer::new(width, height);
-            let mut cached_source: Option<NativeVideoSource> = None;
 
             let capture_start = Instant::now();
 
@@ -157,13 +163,7 @@ impl CameraStream {
                             *fc = 0;
                         }
 
-                        // Refresh cached source only when not yet set
-                        if cached_source.is_none() {
-                            let lock = buffer_source.lock().unwrap();
-                            cached_source = lock.clone();
-                        }
-
-                        if let Some(ref source) = cached_source {
+                        {
                             let converted = match frame_format {
                                 FrameFormat::YUYV => {
                                     yuyv_write_i420(buf.buffer(), width, height, &mut i420);
@@ -191,7 +191,7 @@ impl CameraStream {
                                     buffer: i420,
                                     timestamp_us: capture_start.elapsed().as_micros() as i64,
                                 };
-                                source.capture_frame(&frame);
+                                buffer_source.capture_frame(&frame);
 
                                 let mut write_buf =
                                     video_buffer_manager.write_buffer().lock().unwrap();
@@ -234,11 +234,6 @@ impl CameraStream {
         if let Some(handle) = self.capture_thread.take() {
             let _ = handle.join();
         }
-    }
-
-    pub fn set_buffer_source(&self, source: NativeVideoSource) {
-        let mut bs = self.buffer_source.lock().unwrap();
-        *bs = Some(source);
     }
 
     pub fn extent(&self) -> (u32, u32) {
@@ -284,7 +279,7 @@ impl CameraStream {
             failures_count: self.failures_count.clone(),
         };
 
-        new_stream.start_capture_with_camera(camera)?;
+        new_stream.start_capture_with_camera(camera, self.buffer_source.clone())?;
         Ok(new_stream)
     }
 }

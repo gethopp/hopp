@@ -43,27 +43,26 @@ impl CameraCapturer {
         device_name: Option<&str>,
         socket: SocketSender,
         video_buffer_manager: Arc<VideoBufferManager>,
-    ) -> Result<(u32, u32), String> {
+        buffer_source: NativeVideoSource,
+    ) -> Result<(), String> {
         self.stop_capture();
         self.socket = Some(socket);
         let name = device_name.unwrap_or("");
         log::info!("CameraCapturer::start_capture: device='{name}'");
-        let stream = CameraStream::new(name, self.tx.clone(), video_buffer_manager.clone())?;
-        let extent = stream.extent();
+        let stream = CameraStream::new(
+            name,
+            self.tx.clone(),
+            video_buffer_manager.clone(),
+            buffer_source,
+        )?;
         self.stream = Some(stream);
-        Ok(extent)
+        Ok(())
     }
 
     pub fn stop_capture(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             log::info!("CameraCapturer::stop_capture");
             stream.stop_capture();
-        }
-    }
-
-    pub fn set_buffer_source(&self, source: NativeVideoSource) {
-        if let Some(stream) = self.stream.as_ref() {
-            stream.set_buffer_source(source);
         }
     }
 

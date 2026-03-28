@@ -504,12 +504,7 @@ impl<'a> Application<'a> {
             capturer.stop_capture();
         }
         if let Some(room_service) = self.room_service.as_ref() {
-            room_service.unpublish_camera_track();
-            let participants = room_service.participants();
-            let guard = participants.read().unwrap();
-            if let Some(info) = guard.get("local") {
-                info.camera_buffers().set_inactive(true);
-            }
+            room_service.mute_camera_track();
         }
     }
 
@@ -902,7 +897,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 let audio_capture_result = (|| -> Result<(u32, tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>, crate::audio::mixer::SharedProcessor), String> {
                     let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
-                    let sample_rate = self.audio_capturer.start_capture(Some(&call_start.audio_device_name), sample_tx)?;
+                    let audio_device_name = &call_start.audio_device_name;
+                    let audio_device = if audio_device_name.is_empty() { None } else { Some(audio_device_name.as_str()) };
+                    let sample_rate = self.audio_capturer.start_capture(audio_device, sample_tx)?;
                     let processor = self.audio_player.processor().ok_or_else(|| {
                         let msg = "Audio processor not available";
                         log::error!("{msg}");
@@ -1353,6 +1350,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
 
+            UserEvent::StopAudioCapture => {
+                log::info!("user_event: StopAudioCapture");
+                self.stop_mic();
+            }
+
             UserEvent::MuteAudio => {
                 log::info!("user_event: MuteAudio");
                 if let Some(room_service) = self.room_service.as_ref() {
@@ -1384,70 +1386,74 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::StartCamera(msg) => {
                 log::info!("user_event: StartCamera device='{:?}'", msg.device_name);
-                let result = (|| -> Result<(), String> {
-                    let room_service = self
-                        .room_service
-                        .as_ref()
-                        .ok_or_else(|| "Room service not found".to_string())?;
 
-                    let (width, height) = {
-                        let mut capturer = self.camera_capturer.lock().unwrap();
-                        capturer.start_capture(
-                            msg.device_name.as_deref(),
-                            self.socket.clone(),
-                            room_service.local_camera_buffer_manager(),
-                        )?
-                    };
-
-                    room_service
-                        .publish_camera_track(width, height)
-                        .map_err(|e| format!("Failed to publish camera track: {e}"))?;
-
-                    if let Some(source) = room_service.get_camera_buffer_source() {
-                        let capturer = self.camera_capturer.lock().unwrap();
-                        capturer.set_buffer_source(source);
+                let room_service = match self.room_service.as_ref() {
+                    Some(rs) => rs,
+                    None => {
+                        let _ = self.socket.send(Message::StartCameraResult(Err(
+                            "Room service not found".to_string(),
+                        )));
+                        return;
                     }
+                };
 
-                    Ok(())
-                })();
+                let buffer_source = match room_service.get_camera_buffer_source() {
+                    Some(s) => s,
+                    None => {
+                        log::error!("user_event: StartCamera: no camera buffer source available");
+                        let _ = self.socket.send(Message::StartCameraResult(Err(
+                            "Camera not ready".to_string(),
+                        )));
+                        return;
+                    }
+                };
 
-                if let Err(ref e) = result {
+                let capture_result = {
+                    let mut capturer = self.camera_capturer.lock().unwrap();
+                    capturer.start_capture(
+                        msg.device_name.as_deref(),
+                        self.socket.clone(),
+                        room_service.local_camera_buffer_manager(),
+                        buffer_source,
+                    )
+                };
+
+                if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
                     if let Some(cam) = &mut self.camera_window {
                         cam.show_error_toast("Failed to start camera");
                     }
+                    if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone()))) {
+                        error!("user_event: Error sending StartCameraResult: {e:?}");
+                    }
+                    return;
                 }
 
-                // Open camera window if camera started successfully and window is enabled
-                if result.is_ok() && self.camera_window.is_none() {
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        let participants = room_service.participants();
-                        match CameraWindow::new(
-                            event_loop,
-                            participants,
-                            self.event_loop_proxy.clone(),
-                        ) {
-                            Ok(cam) => {
-                                log::info!("user_event: Camera window opened for local camera");
-                                self.camera_window = Some(cam);
-                            }
-                            Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                        }
-                    }
-                }
-
-                if result.is_ok() {
-                    if let Some(cam) = &mut self.camera_window {
-                        cam.set_camera_active(true);
-                    }
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.send_participants_snapshot();
-                    }
-                }
-
-                if let Err(e) = self.socket.send(Message::StartCameraResult(result)) {
+                // Send success result via socket
+                if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
                     error!("user_event: Error sending StartCameraResult: {e:?}");
                 }
+
+                // Unmute camera track (fire-and-forget)
+                room_service.unmute_camera_track();
+
+                // Open camera window if needed
+                if self.camera_window.is_none() {
+                    let participants = room_service.participants();
+                    match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone())
+                    {
+                        Ok(cam) => {
+                            log::info!("user_event: Camera window opened for local camera");
+                            self.camera_window = Some(cam);
+                        }
+                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                    }
+                }
+
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_camera_active(true);
+                }
+                room_service.send_participants_snapshot();
             }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
@@ -2127,6 +2133,7 @@ pub enum UserEvent {
     LastModeChanged(socket_lib::StoredMode),
     ListAudioDevices,
     StartAudioCapture(socket_lib::AudioCaptureMessage),
+    StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ToggleMic,
@@ -2273,6 +2280,7 @@ impl RenderEventLoop {
                     Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
+                    Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     Message::ToggleMic => UserEvent::ToggleMic,

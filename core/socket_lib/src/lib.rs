@@ -206,6 +206,7 @@ pub enum Message {
     AudioDeviceList(Vec<AudioDevice>),
     StartAudioCapture(AudioCaptureMessage),
     StartAudioCaptureResult(Result<(), String>),
+    StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ListCameras,
@@ -595,7 +596,9 @@ mod tests {
             .unwrap();
         client_sender
             .send(Message::CallStart(CallStartMessage {
-                token: "test-token".to_string(),
+                audio_token: "test-audio-token".to_string(),
+                video_token: "test-video-token".to_string(),
+                audio_device_name: String::new(),
             }))
             .unwrap();
         client_sender.send(Message::CallEnd).unwrap();

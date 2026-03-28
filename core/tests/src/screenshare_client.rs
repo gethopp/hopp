@@ -45,6 +45,7 @@ pub fn call_start_with_name(
     sender.send(Message::CallStart(CallStartMessage {
         audio_token,
         video_token,
+        audio_device_name: String::new(),
     }))?;
     match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Message::CallStartResult(Ok(()))) => Ok(()),

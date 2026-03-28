@@ -197,6 +197,10 @@ pub async fn process_video_stream(
                             skipped += 1;
                         }
 
+                        if frame_counter % 100 == 0 {
+                            log::info!("camera_debug: we got frame");
+                        }
+
                         if skipped > 0 {
                             log::warn!(
                                 "process_video_stream: skipped {skipped} stale frames for {stream_key} [{stream_type}]"
@@ -235,7 +239,7 @@ pub async fn process_video_stream(
                         break;
                     }
                     Err(e) => {
-                        log::trace!(
+                        log::info!(
                             "process_video_stream: No frames received for 1 seconds from {} [{}], marking as inactive {:?}",
                             stream_key,
                             stream_type,
