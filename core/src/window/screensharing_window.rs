@@ -2041,6 +2041,18 @@ impl ScreensharingWindow {
             let buf = frame_lock.lock().unwrap();
             current_frame_id = buf.frame_id;
 
+            // Reset the last_rendered_frame_id on the first frame, we do this because we might get
+            // stale frame ids in the initial renders from the video buffer manager.
+            if current_frame_id > 0
+                && self.last_rendered_frame_id > 40
+                && current_frame_id < self.last_rendered_frame_id - 40
+            {
+                log::info!(
+                    "redraw_inner: stream restart detected (frame_id={current_frame_id}, last_rendered={}), resetting",
+                    self.last_rendered_frame_id
+                );
+                self.last_rendered_frame_id = 0;
+            }
             // Skip if we already rendered this frame (stale RedrawRequested)
             if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
                 log::warn!(
