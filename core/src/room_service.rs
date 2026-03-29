@@ -2231,6 +2231,65 @@ async fn handle_room_events(
                             }
                         }
                     }
+                    (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
+                        log::info!("handle_room_events: Screen share muted from {}", sid,);
+
+                        // Only clean up if this is the current publisher
+                        let is_current = {
+                            let sid_guard = remote_screen_share.publisher_sid.lock().unwrap();
+                            sid_guard.as_deref() == Some(sid.as_str())
+                        };
+
+                        if !is_current {
+                            log::info!(
+                                "handle_room_events: Ignoring mute from non-current publisher {}",
+                                sid,
+                            );
+                            continue;
+                        }
+
+                        // Send stop signal
+                        {
+                            let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
+                            if let Some(tx) = stop_tx_guard.take() {
+                                let _ = tx.send(());
+                            }
+                        }
+
+                        // Clear publisher SID (keep the buffer for reuse)
+                        {
+                            remote_screen_share.publisher_sid.lock().unwrap().take();
+                        }
+
+                        // Derive the audio participant SID to clear is_screensharing
+                        let audio_sid = {
+                            let video_identity = participant.identity().as_str().to_string();
+                            let audio_identity = video_identity
+                                .strip_suffix(":video")
+                                .map(|prefix| format!("{prefix}:audio"));
+                            if let Some(audio_id) = audio_identity {
+                                let guard = participants.read().unwrap();
+                                crate::livekit::participant::find_sid_by_identity(&guard, &audio_id)
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(audio_sid) = audio_sid {
+                            let mut participants_guard = participants.write().unwrap();
+                            if let Some(info) = participants_guard.get_mut(&audio_sid) {
+                                info.set_is_screensharing(false);
+                            }
+                        }
+
+                        snapshot_sender.send_participants_snapshot();
+
+                        // Close the screen share window
+                        if let Err(e) =
+                            event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                        {
+                            log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -2416,71 +2475,10 @@ async fn handle_room_events(
 
                 match track {
                     livekit::track::RemoteTrack::Video(_) => {
-                        if publication.source() == TrackSource::Screenshare {
-                            let unsub_sid = participant.sid().as_str().to_string();
-                            log::info!(
-                                "handle_room_events: Screen share unsubscribed from {}",
-                                unsub_sid,
-                            );
-
-                            // Only clean up if this is the current publisher
-                            let is_current = {
-                                let sid_guard = remote_screen_share.publisher_sid.lock().unwrap();
-                                sid_guard.as_deref() == Some(unsub_sid.as_str())
-                            };
-
-                            if !is_current {
-                                log::info!(
-                                    "handle_room_events: Ignoring unsub from non-current publisher {}",
-                                    unsub_sid,
-                                );
-                                continue;
-                            }
-
-                            // Send stop signal
-                            {
-                                let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
-                                if let Some(tx) = stop_tx_guard.take() {
-                                    let _ = tx.send(());
-                                }
-                            }
-
-                            // Clear publisher SID (keep the buffer for reuse)
-                            {
-                                remote_screen_share.publisher_sid.lock().unwrap().take();
-                            }
-
-                            // Derive the audio participant SID to clear is_screensharing
-                            let audio_sid = {
-                                let video_identity = participant.identity().as_str().to_string();
-                                let audio_identity = video_identity
-                                    .strip_suffix(":video")
-                                    .map(|prefix| format!("{prefix}:audio"));
-                                if let Some(audio_id) = audio_identity {
-                                    let guard = participants.read().unwrap();
-                                    crate::livekit::participant::find_sid_by_identity(
-                                        &guard, &audio_id,
-                                    )
-                                } else {
-                                    None
-                                }
-                            };
-                            if let Some(audio_sid) = audio_sid {
-                                let mut participants_guard = participants.write().unwrap();
-                                if let Some(info) = participants_guard.get_mut(&audio_sid) {
-                                    info.set_is_screensharing(false);
-                                }
-                            }
-
-                            snapshot_sender.send_participants_snapshot();
-
-                            // Close the screen share window
-                            if let Err(e) =
-                                event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
-                            {
-                                log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
-                            }
-                        }
+                        log::info!(
+                            "handle_room_events: Video track unsubscribed from {}",
+                            participant_sid
+                        );
                     }
                     livekit::track::RemoteTrack::Audio(_) => {
                         log::info!(
