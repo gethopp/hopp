@@ -2150,7 +2150,6 @@ async fn handle_room_events(
                 };
 
                 if !any_camera_active_after {
-                    log::info!("camera_debug: participant disconnected close");
                     if let Err(e) = event_loop_proxy.send_event(UserEvent::CloseCameraWindow) {
                         log::error!(
                             "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
@@ -2205,8 +2204,11 @@ async fn handle_room_events(
                 publication,
             } => {
                 let identity = participant.identity().as_str().to_string();
-                if identity == user_identity {
-                    log::info!("camera_debug: skip users mute event.");
+                if identity == user_identity || identity == video_participant_identity {
+                    log::info!(
+                        "handle_room_event: skip same user's muted event, type {:?}",
+                        publication.source()
+                    );
                     continue;
                 }
 
@@ -2231,7 +2233,6 @@ async fn handle_room_events(
                             guard.values().any(|info| info.camera_active())
                         };
                         if !any_camera_active {
-                            log::info!("camera_debug: muted close windows");
                             if let Err(e) =
                                 event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
                             {
@@ -2308,6 +2309,10 @@ async fn handle_room_events(
             } => {
                 let identity = participant.identity().as_str().to_string();
                 if identity == user_identity || identity == video_participant_identity {
+                    log::info!(
+                        "handle_room_event: skip same user's unmuted event, type {:?}",
+                        publication.source()
+                    );
                     continue;
                 }
 

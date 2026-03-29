@@ -197,9 +197,6 @@ pub async fn process_video_stream(
                             skipped += 1;
                         }
 
-                        if frame_counter % 100 == 0 {
-                            log::info!("camera_debug: we got frame");
-                        }
 
                         if skipped > 0 {
                             log::warn!(
