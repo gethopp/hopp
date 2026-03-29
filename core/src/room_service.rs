@@ -138,7 +138,7 @@ pub enum RoomServiceError {
 struct RemoteScreenShare {
     buffer: Arc<std::sync::Mutex<Option<Arc<VideoBufferManager>>>>,
     stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
-    publisher_sid: Arc<std::sync::Mutex<Option<String>>>,
+    publisher_identity: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 /*
@@ -204,7 +204,7 @@ impl RoomServiceInner {
         {
             self.remote_screen_share.buffer.lock().unwrap().take();
             self.remote_screen_share
-                .publisher_sid
+                .publisher_identity
                 .lock()
                 .unwrap()
                 .take();
@@ -216,18 +216,18 @@ impl RoomServiceInner {
 /// Returns `true` if the participant was newly inserted.
 fn insert_participant_if_absent(
     participants: &std::sync::RwLock<HashMap<String, ParticipantInfo>>,
-    sid: &str,
+    identity: &str,
     remote_participant: &livekit::participant::RemoteParticipant,
 ) -> bool {
     if remote_participant.identity().as_str().contains("video") {
         return false;
     }
     let mut guard = participants.write().unwrap();
-    if guard.contains_key(sid) {
+    if guard.contains_key(identity) {
         return false;
     }
     guard.insert(
-        sid.to_string(),
+        identity.to_string(),
         ParticipantInfo::from_remote_participant(remote_participant),
     );
     true
@@ -240,11 +240,11 @@ fn populate_participants_from_room(
     participants: &std::sync::RwLock<HashMap<String, ParticipantInfo>>,
 ) {
     for (_, remote_participant) in room.remote_participants() {
-        let sid = remote_participant.sid().as_str().to_string();
-        if insert_participant_if_absent(participants, &sid, &remote_participant) {
+        let identity = remote_participant.identity().as_str().to_string();
+        if insert_participant_if_absent(participants, &identity, &remote_participant) {
             log::info!(
                 "populate_participants_from_room: participant added: {}",
-                sid
+                identity
             );
         }
     }
@@ -305,7 +305,7 @@ impl RoomService {
             remote_screen_share: RemoteScreenShare {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
-                publisher_sid: Arc::new(std::sync::Mutex::new(None)),
+                publisher_identity: Arc::new(std::sync::Mutex::new(None)),
             },
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
@@ -456,10 +456,9 @@ impl RoomService {
         guard
             .iter()
             .filter(|(key, _)| *key != "local")
-            .map(|(sid, info)| ParticipantData {
-                sid: sid.clone(),
+            .map(|(identity, info)| ParticipantData {
                 name: info.name().to_string(),
-                identity: info.identity().to_string(),
+                identity: identity.clone(),
             })
             .collect()
     }
@@ -610,6 +609,7 @@ impl RoomService {
         {
             let mut participants = self.inner.participants.write().unwrap();
             if let Some(info) = participants.get_mut("local") {
+                log::info!("local_participant: {:?}", info);
                 info.set_is_screensharing(true);
             }
         }
@@ -754,13 +754,19 @@ impl RoomService {
 
 fn collect_remote_participants(
     participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    sharer_sid: &str,
+    sharer_identity: &str,
 ) -> Vec<(String, String, bool)> {
     let guard = participants.read().unwrap();
     guard
         .iter()
         .filter(|(key, _)| *key != "local")
-        .map(|(sid, info)| (sid.clone(), info.name().to_string(), sid == sharer_sid))
+        .map(|(identity, info)| {
+            (
+                identity.clone(),
+                info.name().to_string(),
+                identity == sharer_identity,
+            )
+        })
         .collect()
 }
 
@@ -1055,15 +1061,14 @@ async fn room_service_commands(
                     inner.clone(),
                 )));
                 log::info!("room_service_commands: Spawned stats task");
-                let user_sid = room.local_participant().sid().as_str().to_string();
                 let user_identity = room.local_participant().identity().as_str().to_string();
                 let user_name = room.local_participant().name();
-                log::info!("room_service_commands: Got user sid and name");
+                log::info!("room_service_commands: Got user identity and name");
                 {
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_identity, user_name, false, false),
+                        ParticipantInfo::new(user_name, false, false),
                     );
                 }
                 log::info!(
@@ -1073,17 +1078,21 @@ async fn room_service_commands(
                 populate_participants_from_room(&room, &inner.participants);
 
                 // Handle video room result — optional, failure is non-fatal.
-                let video_participant_sid = match video_result {
+                let video_participant_identity = match video_result {
                     Ok(Ok((video_room, _video_rx))) => {
                         log::info!(
                             "room_service_commands: Video room connected in {}ms (total {}ms)",
                             connect_start.elapsed().as_millis(),
                             total_connect_start.elapsed().as_millis()
                         );
-                        let sid = video_room.local_participant().sid().as_str().to_string();
+                        let identity = video_room
+                            .local_participant()
+                            .identity()
+                            .as_str()
+                            .to_string();
                         let mut inner_video_room = inner.video_room.lock().await;
                         *inner_video_room = Some(video_room);
-                        sid
+                        identity
                     }
                     Ok(Err(e)) => {
                         log::error!(
@@ -1111,15 +1120,15 @@ async fn room_service_commands(
                 tokio::spawn(handle_room_events(
                     rx,
                     event_loop_proxy,
-                    user_sid,
-                    video_participant_sid,
+                    user_identity,
+                    video_participant_identity,
                     inner.participants.clone(),
                     inner.snapshot_sender.clone(),
                     mixer,
                     RemoteScreenShare {
                         buffer: inner.remote_screen_share.buffer.clone(),
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
-                        publisher_sid: inner.remote_screen_share.publisher_sid.clone(),
+                        publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
                     },
                     inner.connection_quality.clone(),
                 ));
@@ -1845,7 +1854,7 @@ pub enum ClientEvent {
 fn start_remote_camera_stream(
     video_track: livekit::track::RemoteVideoTrack,
     participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    sid: &str,
+    identity: &str,
     event_loop_proxy: &EventLoopProxy<UserEvent>,
 ) {
     if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenCamera) {
@@ -1854,7 +1863,7 @@ fn start_remote_camera_stream(
     let (stop_tx, stop_rx) = mpsc::unbounded_channel();
     let manager = {
         let mut guard = participants.write().unwrap();
-        let info = guard.get_mut(sid).expect("Participant should exist");
+        let info = guard.get_mut(identity).expect("Participant should exist");
         info.set_camera_stop_tx(stop_tx);
         info.camera_buffers()
     };
@@ -1862,7 +1871,7 @@ fn start_remote_camera_stream(
         video_track,
         manager,
         stop_rx,
-        sid.to_string(),
+        identity.to_string(),
         true,
         None,
     ));
@@ -1872,7 +1881,6 @@ fn start_remote_screen_share_stream(
     video_track: livekit::track::RemoteVideoTrack,
     remote_screen_share: &RemoteScreenShare,
     participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    participant_sid: &str,
     participant_identity: &str,
     event_loop_proxy: &EventLoopProxy<UserEvent>,
     snapshot_sender: &SnapshotSender,
@@ -1896,7 +1904,8 @@ fn start_remote_screen_share_stream(
         }
     };
 
-    *remote_screen_share.publisher_sid.lock().unwrap() = Some(participant_sid.to_string());
+    *remote_screen_share.publisher_identity.lock().unwrap() =
+        Some(participant_identity.to_string());
 
     let (stop_tx, stop_rx) = mpsc::unbounded_channel();
     *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
@@ -1909,34 +1918,37 @@ fn start_remote_screen_share_stream(
         video_track,
         manager,
         stop_rx,
-        format!("screenshare_{participant_sid}"),
+        format!("screenshare_{participant_identity}"),
         false,
         Some(redraw_tx.clone()),
     ));
 
-    let sharer_sid = {
+    let sharer_identity = {
         let audio_identity = participant_identity
             .strip_suffix(":video")
             .map(|prefix| format!("{prefix}:audio"));
         if let Some(audio_id) = audio_identity {
             let guard = participants.read().unwrap();
-            crate::livekit::participant::find_sid_by_identity(&guard, &audio_id)
-                .unwrap_or_else(|| participant_sid.to_string())
+            if guard.contains_key(&audio_id) {
+                audio_id
+            } else {
+                participant_identity.to_string()
+            }
         } else {
-            participant_sid.to_string()
+            participant_identity.to_string()
         }
     };
 
     {
         let mut participants_guard = participants.write().unwrap();
-        if let Some(info) = participants_guard.get_mut(&sharer_sid) {
+        if let Some(info) = participants_guard.get_mut(&sharer_identity) {
             info.set_is_screensharing(true);
         }
     }
 
     snapshot_sender.send_participants_snapshot();
 
-    let remote_participants = collect_remote_participants(participants, &sharer_sid);
+    let remote_participants = collect_remote_participants(participants, &sharer_identity);
     if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
         participants: remote_participants,
         redraw_rx: Some(redraw_rx),
@@ -1949,8 +1961,8 @@ fn start_remote_screen_share_stream(
 async fn handle_room_events(
     mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    user_sid: String,
-    video_participant_sid: String,
+    user_identity: String,
+    video_participant_identity: String,
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     snapshot_sender: SnapshotSender,
     mixer: audio::mixer::MixerHandle,
@@ -1965,12 +1977,12 @@ async fn handle_room_events(
                 kind: _,
                 participant,
             } => {
-                // participant_in_control uses raw UTF-8 SID, not JSON. Handle before deserialize.
+                // participant_in_control uses raw UTF-8 identity, not JSON. Handle before deserialize.
                 // TODO(@konsalex): Maybe follow a JSON  type
                 // type, payload approach to be easier to work with?
                 if topic.as_deref() == Some(TOPIC_PARTICIPANT_IN_CONTROL) {
-                    if let Ok(sid_str) = std::str::from_utf8(&payload) {
-                        let in_control = sid_str == user_sid;
+                    if let Ok(identity_str) = std::str::from_utf8(&payload) {
+                        let in_control = identity_str == user_identity;
                         if let Err(e) = event_loop_proxy
                             .send_event(UserEvent::LocalParticipantInControl(in_control))
                         {
@@ -1981,6 +1993,7 @@ async fn handle_room_events(
                             "handle_room_events: participant_in_control payload is not valid UTF-8"
                         );
                     }
+
                     continue;
                 }
 
@@ -1992,15 +2005,15 @@ async fn handle_room_events(
                     }
                 };
                 log::debug!("handle_room_events: Data received: {client_event:?}");
-                let sid = if let Some(participant) = participant {
-                    participant.sid().as_str().to_string()
+                let identity = if let Some(participant) = participant {
+                    participant.identity().as_str().to_string()
                 } else {
                     log::warn!("handle_room_events: Participant is none");
                     "".to_string()
                 };
 
                 /* Skip our own events. */
-                if sid == user_sid {
+                if identity == user_identity {
                     log::debug!("handle_room_events: Skipping own event");
                     continue;
                 }
@@ -2011,7 +2024,7 @@ async fn handle_room_events(
                         event_loop_proxy.send_event(UserEvent::CursorPosition(
                             point.x as f32,
                             point.y as f32,
-                            sid,
+                            identity,
                         ))
                     }
                     ClientEvent::MouseClick(click) => {
@@ -2027,11 +2040,11 @@ async fn handle_room_events(
                                 ctrl: click.ctrl,
                                 alt: click.alt,
                             },
-                            sid,
+                            identity,
                         ))
                     }
                     ClientEvent::MouseVisible(visible_data) => event_loop_proxy.send_event(
-                        UserEvent::ControllerCursorVisible(visible_data.visible, sid),
+                        UserEvent::ControllerCursorVisible(visible_data.visible, identity),
                     ),
                     ClientEvent::Keystroke(key) => {
                         event_loop_proxy.send_event(UserEvent::Keystroke(crate::KeystrokeData {
@@ -2049,7 +2062,7 @@ async fn handle_room_events(
                                 x: wheel_data.deltaX,
                                 y: wheel_data.deltaY,
                             },
-                            sid,
+                            identity,
                         ))
                     }
                     ClientEvent::Tick(tick_data) => {
@@ -2064,25 +2077,29 @@ async fn handle_room_events(
                     ClientEvent::PasteFromClipboard(paste_from_clipboard_data) => event_loop_proxy
                         .send_event(UserEvent::PasteFromClipboard(paste_from_clipboard_data)),
                     ClientEvent::DrawingMode(drawing_mode) => {
-                        event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode, sid))
+                        event_loop_proxy.send_event(UserEvent::DrawingMode(drawing_mode, identity))
                     }
-                    ClientEvent::DrawStart(draw_path_point) => event_loop_proxy.send_event(
-                        UserEvent::DrawStart(draw_path_point.point, draw_path_point.path_id, sid),
-                    ),
+                    ClientEvent::DrawStart(draw_path_point) => {
+                        event_loop_proxy.send_event(UserEvent::DrawStart(
+                            draw_path_point.point,
+                            draw_path_point.path_id,
+                            identity,
+                        ))
+                    }
                     ClientEvent::DrawAddPoint(point) => {
-                        event_loop_proxy.send_event(UserEvent::DrawAddPoint(point, sid))
+                        event_loop_proxy.send_event(UserEvent::DrawAddPoint(point, identity))
                     }
                     ClientEvent::DrawEnd(point) => {
-                        event_loop_proxy.send_event(UserEvent::DrawEnd(point, sid))
+                        event_loop_proxy.send_event(UserEvent::DrawEnd(point, identity))
                     }
                     ClientEvent::DrawClearPath { path_id } => {
-                        event_loop_proxy.send_event(UserEvent::DrawClearPath(path_id, sid))
+                        event_loop_proxy.send_event(UserEvent::DrawClearPath(path_id, identity))
                     }
                     ClientEvent::DrawClearAllPaths => {
-                        event_loop_proxy.send_event(UserEvent::DrawClearAllPaths(sid))
+                        event_loop_proxy.send_event(UserEvent::DrawClearAllPaths(identity))
                     }
                     ClientEvent::ClickAnimation(point) => event_loop_proxy
-                        .send_event(UserEvent::ClickAnimationFromParticipant(point, sid)),
+                        .send_event(UserEvent::ClickAnimationFromParticipant(point, identity)),
                     ClientEvent::RemoteControlEnabled(data) => {
                         event_loop_proxy.send_event(UserEvent::SharerControlEnabled(data.enabled))
                     }
@@ -2093,13 +2110,12 @@ async fn handle_room_events(
                 }
             }
             RoomEvent::ParticipantConnected(participant) => {
-                let sid = participant.sid().as_str().to_string();
                 let identity = participant.identity().as_str().to_string();
                 let name = participant.name();
 
-                log::info!("handle_room_events: Participant connected: {}", sid);
+                log::info!("handle_room_events: Participant connected: {}", identity);
 
-                if !insert_participant_if_absent(&participants, &sid, &participant) {
+                if !insert_participant_if_absent(&participants, &identity, &participant) {
                     continue;
                 }
 
@@ -2107,7 +2123,6 @@ async fn handle_room_events(
                     event_loop_proxy.send_event(UserEvent::ParticipantConnected(ParticipantData {
                         name,
                         identity: identity.clone(),
-                        sid,
                     }))
                 {
                     log::error!(
@@ -2118,20 +2133,19 @@ async fn handle_room_events(
                 snapshot_sender.send_participants_snapshot();
             }
             RoomEvent::ParticipantDisconnected(participant) => {
-                let sid = participant.sid().as_str().to_string();
                 let identity = participant.identity().as_str().to_string();
                 let name = participant.name();
 
-                log::info!("handle_room_events: Participant disconnected: {}", sid);
+                log::info!("handle_room_events: Participant disconnected: {}", identity);
 
                 // Stop streams and remove from HashMap
                 let any_camera_active_after = {
                     let mut participants_guard = participants.write().unwrap();
-                    if let Some(info) = participants_guard.get_mut(&sid) {
+                    if let Some(info) = participants_guard.get_mut(&identity) {
                         info.stop_audio_stream();
                         info.stop_camera_stream();
                     }
-                    participants_guard.remove(&sid);
+                    participants_guard.remove(&identity);
                     participants_guard.values().any(|info| info.camera_active())
                 };
 
@@ -2145,11 +2159,7 @@ async fn handle_room_events(
                 }
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
-                    ParticipantData {
-                        name,
-                        identity,
-                        sid,
-                    },
+                    ParticipantData { name, identity },
                 )) {
                     log::error!(
                         "handle_room_events: Failed to send participant disconnected event: {e:?}"
@@ -2166,7 +2176,7 @@ async fn handle_room_events(
                     "handle_room_events: Track published: {} ({:?}) from {}",
                     publication.name(),
                     publication.source(),
-                    participant.sid()
+                    participant.identity()
                 );
             }
             RoomEvent::ActiveSpeakersChanged { speakers } => {
@@ -2180,12 +2190,12 @@ async fn handle_room_events(
 
                 // Then set active speakers to speaking
                 for speaker in speakers {
-                    let sid = speaker.sid().as_str().to_string();
-                    if sid == user_sid {
+                    let identity = speaker.identity().as_str().to_string();
+                    if identity == user_identity {
                         if let Some(info) = participants_guard.get_mut("local") {
                             info.set_is_speaking(true);
                         }
-                    } else if let Some(info) = participants_guard.get_mut(&sid) {
+                    } else if let Some(info) = participants_guard.get_mut(&identity) {
                         info.set_is_speaking(true);
                     }
                 }
@@ -2194,28 +2204,28 @@ async fn handle_room_events(
                 participant,
                 publication,
             } => {
-                let sid = participant.sid().as_str().to_string();
-                if sid == user_sid {
+                let identity = participant.identity().as_str().to_string();
+                if identity == user_identity {
                     log::info!("camera_debug: skip users mute event.");
                     continue;
                 }
 
                 match (publication.kind(), publication.source()) {
                     (livekit::track::TrackKind::Audio, _) => {
-                        log::info!("handle_room_events: Audio track muted for {}", sid);
+                        log::info!("handle_room_events: Audio track muted for {}", identity);
                         {
                             let mut participants_guard = participants.write().unwrap();
-                            if let Some(info) = participants_guard.get_mut(&sid) {
+                            if let Some(info) = participants_guard.get_mut(&identity) {
                                 info.set_muted(true);
                             }
                         }
                         snapshot_sender.send_participants_snapshot();
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Camera) => {
-                        log::info!("handle_room_events: Camera track muted for {}", sid);
+                        log::info!("handle_room_events: Camera track muted for {}", identity);
                         let any_camera_active = {
                             let mut guard = participants.write().unwrap();
-                            if let Some(info) = guard.get_mut(&sid) {
+                            if let Some(info) = guard.get_mut(&identity) {
                                 info.stop_camera_stream();
                             }
                             guard.values().any(|info| info.camera_active())
@@ -2232,18 +2242,19 @@ async fn handle_room_events(
                         }
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
-                        log::info!("handle_room_events: Screen share muted from {}", sid,);
+                        log::info!("handle_room_events: Screen share muted from {}", identity);
 
                         // Only clean up if this is the current publisher
                         let is_current = {
-                            let sid_guard = remote_screen_share.publisher_sid.lock().unwrap();
-                            sid_guard.as_deref() == Some(sid.as_str())
+                            let publisher_guard =
+                                remote_screen_share.publisher_identity.lock().unwrap();
+                            publisher_guard.as_deref() == Some(identity.as_str())
                         };
 
                         if !is_current {
                             log::info!(
                                 "handle_room_events: Ignoring mute from non-current publisher {}",
-                                sid,
+                                identity,
                             );
                             continue;
                         }
@@ -2256,27 +2267,25 @@ async fn handle_room_events(
                             }
                         }
 
-                        // Clear publisher SID (keep the buffer for reuse)
+                        // Clear publisher identity (keep the buffer for reuse)
                         {
-                            remote_screen_share.publisher_sid.lock().unwrap().take();
+                            remote_screen_share
+                                .publisher_identity
+                                .lock()
+                                .unwrap()
+                                .take();
                         }
 
-                        // Derive the audio participant SID to clear is_screensharing
-                        let audio_sid = {
+                        // Derive the audio participant identity to clear is_screensharing
+                        let audio_identity = {
                             let video_identity = participant.identity().as_str().to_string();
-                            let audio_identity = video_identity
+                            video_identity
                                 .strip_suffix(":video")
-                                .map(|prefix| format!("{prefix}:audio"));
-                            if let Some(audio_id) = audio_identity {
-                                let guard = participants.read().unwrap();
-                                crate::livekit::participant::find_sid_by_identity(&guard, &audio_id)
-                            } else {
-                                None
-                            }
+                                .map(|prefix| format!("{prefix}:audio"))
                         };
-                        if let Some(audio_sid) = audio_sid {
+                        if let Some(audio_id) = audio_identity {
                             let mut participants_guard = participants.write().unwrap();
-                            if let Some(info) = participants_guard.get_mut(&audio_sid) {
+                            if let Some(info) = participants_guard.get_mut(&audio_id) {
                                 info.set_is_screensharing(false);
                             }
                         }
@@ -2297,24 +2306,24 @@ async fn handle_room_events(
                 participant,
                 publication,
             } => {
-                let sid = participant.sid().as_str().to_string();
-                if sid == user_sid || sid == video_participant_sid {
+                let identity = participant.identity().as_str().to_string();
+                if identity == user_identity || identity == video_participant_identity {
                     continue;
                 }
 
                 match (publication.kind(), publication.source()) {
                     (livekit::track::TrackKind::Audio, _) => {
-                        log::info!("handle_room_events: Audio track unmuted for {}", sid);
+                        log::info!("handle_room_events: Audio track unmuted for {}", identity);
                         {
                             let mut participants_guard = participants.write().unwrap();
-                            if let Some(info) = participants_guard.get_mut(&sid) {
+                            if let Some(info) = participants_guard.get_mut(&identity) {
                                 info.set_muted(false);
                             }
                         }
                         snapshot_sender.send_participants_snapshot();
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Camera) => {
-                        log::info!("handle_room_events: Camera track unmuted for {}", sid);
+                        log::info!("handle_room_events: Camera track unmuted for {}", identity);
                         let video_track = match publication.track() {
                             Some(livekit::track::Track::RemoteVideo(vt)) => vt,
                             _ => {
@@ -2327,12 +2336,15 @@ async fn handle_room_events(
                         start_remote_camera_stream(
                             video_track,
                             &participants,
-                            &sid,
+                            &identity,
                             &event_loop_proxy,
                         );
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
-                        log::info!("handle_room_events: Screen share track unmuted for {}", sid);
+                        log::info!(
+                            "handle_room_events: Screen share track unmuted for {}",
+                            identity
+                        );
                         let video_track = match publication.track() {
                             Some(livekit::track::Track::RemoteVideo(vt)) => vt,
                             _ => {
@@ -2346,8 +2358,7 @@ async fn handle_room_events(
                             video_track,
                             &remote_screen_share,
                             &participants,
-                            &sid,
-                            participant.identity().as_str(),
+                            &identity,
                             &event_loop_proxy,
                             &snapshot_sender,
                         );
@@ -2369,23 +2380,23 @@ async fn handle_room_events(
                     publication,
                 );
 
-                let participant_sid = participant.sid().as_str().to_string();
+                let participant_identity = participant.identity().as_str().to_string();
 
-                if participant_sid == video_participant_sid {
+                if participant_identity == video_participant_identity {
                     log::debug!("handle_room_events: Skipping track subscribed event from video participant");
                     continue;
                 }
 
-                if insert_participant_if_absent(&participants, &participant_sid, &participant) {
+                if insert_participant_if_absent(&participants, &participant_identity, &participant)
+                {
                     log::info!(
                         "handle_room_events: Creating participant {} from track subscription",
-                        participant_sid
+                        participant_identity
                     );
                 }
 
                 match track {
                     livekit::track::RemoteTrack::Audio(audio_track) => {
-                        let participant_identity = participant.identity().to_string();
                         log::info!(
                             "handle_room_events: Setting up audio stream for participant: {}",
                             participant_identity
@@ -2398,7 +2409,7 @@ async fn handle_room_events(
                         );
 
                         let mut participants_guard = participants.write().unwrap();
-                        if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                        if let Some(info) = participants_guard.get_mut(&participant_identity) {
                             info.set_audio_handle(handle);
                         }
                     }
@@ -2407,21 +2418,20 @@ async fn handle_room_events(
                             if !publication.is_muted() {
                                 log::info!(
                                     "handle_room_events: Screen share track subscribed and already unmuted for {}",
-                                    participant_sid
+                                    participant_identity
                                 );
                                 start_remote_screen_share_stream(
                                     video_track,
                                     &remote_screen_share,
                                     &participants,
-                                    &participant_sid,
-                                    participant.identity().as_str(),
+                                    &participant_identity,
                                     &event_loop_proxy,
                                     &snapshot_sender,
                                 );
                             } else {
                                 log::info!(
                                     "handle_room_events: Screen share track subscribed (muted) for {}",
-                                    participant_sid
+                                    participant_identity
                                 );
                             }
                         }
@@ -2429,18 +2439,18 @@ async fn handle_room_events(
                             if !publication.is_muted() {
                                 log::info!(
                                     "handle_room_events: Camera track subscribed and already unmuted for {}",
-                                    participant_sid
+                                    participant_identity
                                 );
                                 start_remote_camera_stream(
                                     video_track,
                                     &participants,
-                                    &participant_sid,
+                                    &participant_identity,
                                     &event_loop_proxy,
                                 );
                             } else {
                                 log::info!(
                                     "handle_room_events: Camera track subscribed (muted) for {}",
-                                    participant_sid
+                                    participant_identity
                                 );
                             }
                         }
@@ -2466,9 +2476,9 @@ async fn handle_room_events(
                     track.kind()
                 );
 
-                let participant_sid = participant.sid().as_str().to_string();
+                let participant_identity = participant.identity().as_str().to_string();
 
-                if participant_sid == video_participant_sid {
+                if participant_identity == video_participant_identity {
                     log::debug!("handle_room_events: Skipping track unsubscribed event from video participant");
                     continue;
                 }
@@ -2477,17 +2487,17 @@ async fn handle_room_events(
                     livekit::track::RemoteTrack::Video(_) => {
                         log::info!(
                             "handle_room_events: Video track unsubscribed from {}",
-                            participant_sid
+                            participant_identity
                         );
                     }
                     livekit::track::RemoteTrack::Audio(_) => {
                         log::info!(
                             "handle_room_events: Stopping audio stream for participant: {}",
-                            participant_sid
+                            participant_identity
                         );
 
                         let mut participants_guard = participants.write().unwrap();
-                        if let Some(info) = participants_guard.get_mut(&participant_sid) {
+                        if let Some(info) = participants_guard.get_mut(&participant_identity) {
                             info.stop_audio_stream();
                         }
                     }
@@ -2523,7 +2533,7 @@ async fn handle_room_events(
                 quality,
                 participant,
             } => {
-                if participant.sid().as_str() == user_sid {
+                if participant.identity().as_str() == user_identity {
                     log::info!("Connection quality changed: {:?}", quality);
                     *connection_quality.lock().unwrap() = Some(quality);
                 }

@@ -138,7 +138,7 @@ impl Participant {
     }
 }
 
-/// Manager that owns Participant objects mapped by participant sid.
+/// Manager that owns Participant objects mapped by participant identity.
 ///
 /// Each participant gets their own Participant instance with their assigned color,
 /// drawing state, and cursor.
@@ -169,7 +169,7 @@ impl ParticipantsManager {
     /// Adds a new participant with automatic color assignment.
     ///
     /// # Arguments
-    /// * `sid` - Session ID for the participant
+    /// * `identity` - Identity for the participant
     /// * `name` - Full name of the participant (will be made unique)
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds
     ///
@@ -177,23 +177,23 @@ impl ParticipantsManager {
     /// The assigned color, or None if no colors are available
     pub fn add_participant(
         &mut self,
-        sid: String,
+        identity: String,
         name: &str,
         auto_clear: bool,
         initial_drawing_mode: DrawingMode,
     ) -> Result<(), ParticipantError> {
         // Check if participant already exists
-        if self.participants.contains_key(&sid) {
-            return Err(ParticipantError::AlreadyExists(sid));
+        if self.participants.contains_key(&identity) {
+            return Err(ParticipantError::AlreadyExists(identity));
         }
 
-        let color = if sid == "local" {
+        let color = if identity == "local" {
             SHARER_COLOR
         } else {
             self.available_colors.pop_front().unwrap_or_else(|| {
                 log::warn!(
                     "ParticipantsManager::add_participant: no colors available for participant {}",
-                    sid
+                    identity
                 );
                 DEFAULT_COLOR
             })
@@ -207,132 +207,138 @@ impl ParticipantsManager {
         let visible_name = generate_unique_visible_name(name, &used_names);
 
         log::info!(
-            "ParticipantsManager::add_participant: sid={} color={} auto_clear={}",
-            sid,
+            "ParticipantsManager::add_participant: identity={} color={} auto_clear={}",
+            identity,
             color,
             auto_clear
         );
 
         self.participants.insert(
-            sid,
+            identity,
             Participant::new(color, &visible_name, auto_clear, initial_drawing_mode)?,
         );
         Ok(())
     }
 
     /// Removes a participant and their data.
-    pub fn remove_participant(&mut self, sid: &str) {
-        log::info!("ParticipantsManager::remove_participant: sid={}", sid);
-        let participant = self.participants.remove(sid);
+    pub fn remove_participant(&mut self, identity: &str) {
+        log::info!(
+            "ParticipantsManager::remove_participant: identity={}",
+            identity
+        );
+        let participant = self.participants.remove(identity);
         if participant.is_none() {
             log::warn!(
                 "ParticipantsManager::remove_participant: participant {} not found",
-                sid
+                identity
             );
             return;
         };
         let participant = participant.unwrap();
-        if sid != "local" {
+        if identity != "local" {
             self.available_colors.push_back(participant.color);
         }
     }
 
     /// Sets the drawing mode for a specific participant.
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: DrawingMode) {
+    pub fn set_drawing_mode(&mut self, identity: &str, mode: DrawingMode) {
         log::debug!(
-            "ParticipantsManager::set_drawing_mode: sid={} mode={:?}",
-            sid,
+            "ParticipantsManager::set_drawing_mode: identity={} mode={:?}",
+            identity,
             mode
         );
-        if let Some(participant) = self.participants.get_mut(sid) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().set_mode(mode);
         } else {
             log::warn!(
                 "ParticipantsManager::set_drawing_mode: participant {} not found",
-                sid
+                identity
             );
         }
     }
 
     /// Starts a new drawing path for a participant.
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
+    pub fn draw_start(&mut self, identity: &str, point: Position, path_id: u64) {
         log::debug!(
-            "ParticipantsManager::draw_start: sid={} point={:?} path_id={}",
-            sid,
+            "ParticipantsManager::draw_start: identity={} point={:?} path_id={}",
+            identity,
             point,
             path_id
         );
-        if let Some(participant) = self.participants.get_mut(sid) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().start_path(path_id, point);
         } else {
             log::warn!(
                 "ParticipantsManager::draw_start: participant {} not found",
-                sid
+                identity
             );
         }
     }
 
     /// Adds a point to the current drawing path for a participant.
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
+    pub fn draw_add_point(&mut self, identity: &str, point: Position) {
         log::debug!(
-            "ParticipantsManager::draw_add_point: sid={} point={:?}",
-            sid,
+            "ParticipantsManager::draw_add_point: identity={} point={:?}",
+            identity,
             point
         );
-        if let Some(participant) = self.participants.get_mut(sid) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().add_point(point);
         } else {
             log::warn!(
                 "ParticipantsManager::draw_add_point: participant {} not found",
-                sid
+                identity
             );
         }
     }
 
     /// Ends the current drawing path for a participant.
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
+    pub fn draw_end(&mut self, identity: &str, point: Position) {
         log::debug!(
-            "ParticipantsManager::draw_end: sid={} point={:?}",
-            sid,
+            "ParticipantsManager::draw_end: identity={} point={:?}",
+            identity,
             point
         );
-        if let Some(participant) = self.participants.get_mut(sid) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().add_point(point);
             participant.draw_mut().finish_path();
         } else {
             log::warn!(
                 "ParticipantsManager::draw_end: participant {} not found",
-                sid
+                identity
             );
         }
     }
 
     /// Clears a specific drawing path for a participant.
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
+    pub fn draw_clear_path(&mut self, identity: &str, path_id: u64) {
         log::debug!(
-            "ParticipantsManager::draw_clear_path: sid={} path_id={}",
-            sid,
+            "ParticipantsManager::draw_clear_path: identity={} path_id={}",
+            identity,
             path_id
         );
-        if let Some(participant) = self.participants.get_mut(sid) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().clear_path(path_id);
         } else {
             log::warn!(
                 "ParticipantsManager::draw_clear_path: participant {} not found",
-                sid
+                identity
             );
         }
     }
 
     /// Clears all drawing paths for a participant.
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        log::info!("ParticipantsManager::draw_clear_all_paths: sid={}", sid);
-        if let Some(participant) = self.participants.get_mut(sid) {
+    pub fn draw_clear_all_paths(&mut self, identity: &str) {
+        log::info!(
+            "ParticipantsManager::draw_clear_all_paths: identity={}",
+            identity
+        );
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.draw_mut().clear();
         } else {
             log::warn!(
                 "ParticipantsManager::draw_clear_all_paths: participant {} not found",
-                sid
+                identity
             );
         }
     }
@@ -353,15 +359,15 @@ impl ParticipantsManager {
     }
 
     /// Sets the cursor position for a specific participant.
-    pub fn set_cursor_position(&mut self, sid: &str, position: Option<Position>) {
-        if let Some(participant) = self.participants.get_mut(sid) {
+    pub fn set_cursor_position(&mut self, identity: &str, position: Option<Position>) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.cursor_mut().set_position(position);
         }
     }
 
     /// Sets the cursor mode for a participant.
-    pub fn set_cursor_mode(&mut self, sid: &str, mode: CursorMode) {
-        if let Some(participant) = self.participants.get_mut(sid) {
+    pub fn set_cursor_mode(&mut self, identity: &str, mode: CursorMode) {
+        if let Some(participant) = self.participants.get_mut(identity) {
             participant.cursor_mut().set_mode(mode);
         }
     }

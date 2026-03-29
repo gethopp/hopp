@@ -457,7 +457,7 @@ impl<'a> GraphicsContext<'a> {
     /// Adds a new participant with automatic color assignment.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `name` - Full name of the participant (will be made unique)
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
     ///
@@ -466,12 +466,12 @@ impl<'a> GraphicsContext<'a> {
     /// * `Err(ParticipantError)` - Failed to add participant (e.g., participant already exists)
     pub fn add_participant(
         &mut self,
-        sid: String,
+        identity: String,
         name: &str,
         auto_clear: bool,
     ) -> Result<(), ParticipantError> {
         self.participants_manager.add_participant(
-            sid,
+            identity,
             name,
             auto_clear,
             crate::room_service::DrawingMode::Disabled,
@@ -481,63 +481,64 @@ impl<'a> GraphicsContext<'a> {
     /// Removes a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant to remove
-    pub fn remove_participant(&mut self, sid: &str) {
-        self.participants_manager.remove_participant(sid);
+    /// * `identity` - Identity identifying the participant to remove
+    pub fn remove_participant(&mut self, identity: &str) {
+        self.participants_manager.remove_participant(identity);
     }
 
     /// Sets the drawing mode for a specific participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `mode` - The drawing mode to set
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.participants_manager.set_drawing_mode(sid, mode);
+    pub fn set_drawing_mode(&mut self, identity: &str, mode: crate::room_service::DrawingMode) {
+        self.participants_manager.set_drawing_mode(identity, mode);
     }
 
     /// Starts a new drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Starting point of the path
     /// * `path_id` - Unique identifier for the drawing path
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.participants_manager.draw_start(sid, point, path_id);
+    pub fn draw_start(&mut self, identity: &str, point: Position, path_id: u64) {
+        self.participants_manager
+            .draw_start(identity, point, path_id);
     }
 
     /// Adds a point to the current drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Point to add to the current path
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.participants_manager.draw_add_point(sid, point);
+    pub fn draw_add_point(&mut self, identity: &str, point: Position) {
+        self.participants_manager.draw_add_point(identity, point);
     }
 
     /// Ends the current drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Final point of the path
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.participants_manager.draw_end(sid, point);
+    pub fn draw_end(&mut self, identity: &str, point: Position) {
+        self.participants_manager.draw_end(identity, point);
     }
 
     /// Clears a specific drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `path_id` - Unique identifier for the drawing path to clear
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.participants_manager.draw_clear_path(sid, path_id);
+    pub fn draw_clear_path(&mut self, identity: &str, path_id: u64) {
+        self.participants_manager.draw_clear_path(identity, path_id);
     }
 
     /// Clears all drawing paths for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.participants_manager.draw_clear_all_paths(sid);
+    /// * `identity` - Identity identifying the participant
+    pub fn draw_clear_all_paths(&mut self, identity: &str) {
+        self.participants_manager.draw_clear_all_paths(identity);
     }
 
     /// Updates auto-clear for all participants and returns removed path IDs.

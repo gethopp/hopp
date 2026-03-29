@@ -41,8 +41,24 @@ impl SnapshotSender {
         let guard = self.participants.read().unwrap();
         let mut seen: HashMap<String, socket_lib::CoreParticipantState> = HashMap::new();
 
-        for info in guard.values() {
-            let identity = info.identity();
+        for (identity, info) in guard.iter() {
+            let identity = identity.as_str();
+
+            if identity == "local" {
+                seen.insert(
+                    identity.to_string(),
+                    socket_lib::CoreParticipantState {
+                        identity: identity.to_string(),
+                        name: info.name().to_string(),
+                        connected: true,
+                        muted: info.muted(),
+                        has_camera: info.camera_active(),
+                        is_screensharing: info.is_screensharing(),
+                    },
+                );
+                continue;
+            }
+
             let parts: Vec<&str> = identity.split(':').collect();
             if parts.len() < 4 {
                 continue;

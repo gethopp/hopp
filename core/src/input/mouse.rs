@@ -39,7 +39,7 @@ use winit::event_loop::EventLoopProxy;
 ///
 /// # Multi-Controller Support
 ///
-/// The system supports multiple simultaneous remote controllers, each identified by a unique SID:
+/// The system supports multiple simultaneous remote controllers, each identified by a unique identity:
 /// * Each controller has its own visual cursor representation
 /// * Controllers can be individually enabled/disabled for input processing
 /// * Controller visibility can be individually controlled (full cursor vs pointer icon)
@@ -242,18 +242,18 @@ struct ControllerCursor {
     mode: CursorMode,
     pointer_mode: bool,
     has_control: bool,
-    sid: String,
+    identity: String,
 }
 
 impl ControllerCursor {
-    fn new(cursor_state: CursorState, sid: String, mode: CursorMode) -> Self {
+    fn new(cursor_state: CursorState, identity: String, mode: CursorMode) -> Self {
         Self {
             cursor_state,
             clicked: false,
             mode,
             pointer_mode: mode == CursorMode::Pointer,
             has_control: false,
-            sid,
+            identity,
         }
     }
 
@@ -530,7 +530,7 @@ struct RemoteControl {
 /// - **Multi-Controller Support**: Manages up to MAX_CURSORS simultaneous controllers
 ///
 /// ## Controller Management:
-/// - Controllers are identified by unique session IDs (SIDs)
+/// - Controllers are identified by unique identities
 /// - Each controller has independent enable/disable and visibility states
 /// - Controllers can be dynamically added and removed during sessions
 /// - Visual cursor representation includes user badges with distinct colors
@@ -630,23 +630,23 @@ impl CursorController {
     ///
     /// # Parameters
     ///
-    /// * `sid` - Unique session ID for the controller (must not already exist)
+    /// * `identity` - Unique session ID for the controller (must not already exist)
     ///
     /// # Returns
     ///
     /// * `Ok(())` - Controller successfully added
-    pub fn add_controller(&mut self, sid: String) {
+    pub fn add_controller(&mut self, identity: String) {
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         log::info!(
-            "add_controller: sid: {} controllers_cursors: {}",
-            sid,
+            "add_controller: identity: {} controllers_cursors: {}",
+            identity,
             controllers_cursors.len()
         );
 
         // Check if controller already exists
         for controller in controllers_cursors.iter() {
-            if controller.sid == sid {
-                log::warn!("add_controller: controller {} already exists", sid);
+            if controller.identity == identity {
+                log::warn!("add_controller: controller {} already exists", identity);
                 return;
             }
         }
@@ -658,7 +658,7 @@ impl CursorController {
         };
         controllers_cursors.push(ControllerCursor::new(
             CursorState::new(self.redraw_thread_sender.clone(), self.clock.clone()),
-            sid,
+            identity,
             mode,
         ));
     }
@@ -671,7 +671,7 @@ impl CursorController {
     ///
     /// # Parameters
     ///
-    /// * `sid` - Session ID of the controller to remove
+    /// * `identity` - Session ID of the controller to remove
     ///
     /// # Behavior
     ///
@@ -679,13 +679,13 @@ impl CursorController {
     /// * If the controller doesn't exist, the operation is silently ignored
     /// * Visual cursor resources are automatically cleaned up
     /// * Control state is preserved until next input event
-    pub fn remove_controller(&mut self, sid: &str) {
-        log::info!("remove_controller: {sid}");
+    pub fn remove_controller(&mut self, identity: &str) {
+        log::info!("remove_controller: {identity}");
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
 
         if let Some(pos) = controllers_cursors
             .iter()
-            .position(|controller| controller.sid == sid)
+            .position(|controller| controller.identity == identity)
         {
             controllers_cursors.remove(pos);
             if let Err(e) = self
@@ -696,7 +696,10 @@ impl CursorController {
             }
         } else {
             // no-op if not present
-            log::info!("remove_controller: controller with sid {} not found", sid);
+            log::info!(
+                "remove_controller: controller with identity {} not found",
+                identity
+            );
         }
     }
 
@@ -710,13 +713,13 @@ impl CursorController {
     ///
     /// * `x` - Local window coordinates as percentage (0.0-1.0 range) for horizontal position
     /// * `y` - Local window coordinates as percentage (0.0-1.0 range) for vertical position
-    /// * `sid` - Session ID identifying which controller is moving
-    pub fn cursor_move_controller(&mut self, x: f64, y: f64, sid: &str) {
+    /// * `identity` - Session ID identifying which controller is moving
+    pub fn cursor_move_controller(&mut self, x: f64, y: f64, identity: &str) {
         debug!("cursor_move_controller: x: {x} y: {y}");
 
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
+            if controller.identity != identity {
                 continue;
             }
 
@@ -747,8 +750,8 @@ impl CursorController {
     /// # Parameters
     ///
     /// * `click_data` - Complete mouse click information including:
-    /// * `sid` - Session ID identifying which controller is clicking
-    pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, sid: &str) {
+    /// * `identity` - Session ID identifying which controller is clicking
+    pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, identity: &str) {
         debug!("mouse_click_controller: {click_data:?}");
         if self.remote_control.is_none() {
             log::warn!("mouse_click_controller: remote control is none");
@@ -758,7 +761,7 @@ impl CursorController {
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
+            if controller.identity != identity {
                 continue;
             }
 
@@ -775,7 +778,7 @@ impl CursorController {
 
             /* Take control. */
             if click_data.down && !controller.has_control() {
-                debug!("mouse_click_controller: controller {sid} takes control.");
+                debug!("mouse_click_controller: controller {identity} takes control.");
                 controller.hide();
                 control_changed = true;
             }
@@ -801,7 +804,7 @@ impl CursorController {
         /* Remove control from the previous controller. */
         if control_changed {
             for controller in controllers_cursors.iter_mut() {
-                if controller.has_control() && controller.sid != sid {
+                if controller.has_control() && controller.identity != identity {
                     controller.show();
                 }
             }
@@ -823,7 +826,7 @@ impl CursorController {
         if control_changed {
             let res = self
                 .event_loop_proxy
-                .send_event(UserEvent::ParticipantInControl(sid.to_string()));
+                .send_event(UserEvent::ParticipantInControl(identity.to_string()));
             if let Err(e) = res {
                 error!("mouse_click_controller: error sending participant in control: {e:?}");
             }
@@ -839,8 +842,8 @@ impl CursorController {
     /// # Parameters
     ///
     /// * `delta` - Scroll wheel movement with:
-    /// * `sid` - Session ID identifying which controller is scrolling
-    pub fn scroll_controller(&mut self, delta: ScrollDelta, sid: &str) {
+    /// * `identity` - Session ID identifying which controller is scrolling
+    pub fn scroll_controller(&mut self, delta: ScrollDelta, identity: &str) {
         debug!("scroll_controller: {delta:?}");
 
         if self.remote_control.is_none() {
@@ -851,7 +854,7 @@ impl CursorController {
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
+            if controller.identity != identity {
                 continue;
             }
 
@@ -881,7 +884,7 @@ impl CursorController {
         /* Remove control from the previous controller. */
         if control_changed {
             for controller in controllers_cursors.iter_mut() {
-                if controller.has_control() && controller.sid != sid {
+                if controller.has_control() && controller.identity != identity {
                     controller.show();
                 }
             }
@@ -903,7 +906,7 @@ impl CursorController {
         if control_changed {
             let res = self
                 .event_loop_proxy
-                .send_event(UserEvent::ParticipantInControl(sid.to_string()));
+                .send_event(UserEvent::ParticipantInControl(identity.to_string()));
             if let Err(e) = res {
                 error!("scroll_controller: error sending participant in control: {e:?}");
             }
@@ -959,19 +962,19 @@ impl CursorController {
     /// Switch pointer mode made by the controller.
     /// # Parameters
     ///
-    /// * `sid` - Session ID identifying which controller to modify
+    /// * `identity` - Session ID identifying which controller to modify
     /// * `enabled` - Whether to enable (true) or disable (false) pointer mode for the specified controller
-    pub fn set_controller_pointer(&mut self, enabled: bool, sid: &str) {
-        log::info!("set_controller_pointer: {sid} {enabled}");
+    pub fn set_controller_pointer(&mut self, enabled: bool, identity: &str) {
+        log::info!("set_controller_pointer: {identity} {enabled}");
 
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
-            if controller.sid != sid {
+            if controller.identity != identity {
                 continue;
             }
 
             if controller.has_control() {
-                log::info!("set_controller_pointer: controller {sid} has control, give control back to sharer.");
+                log::info!("set_controller_pointer: controller {identity} has control, give control back to sharer.");
                 controller.show();
                 let mut sharer_cursor = self
                     .remote_control
@@ -1019,10 +1022,10 @@ impl CursorController {
         for controller in controllers_cursors.iter() {
             if controller.visible() {
                 participants_manager
-                    .set_cursor_position(&controller.sid, Some(controller.local_position()));
-                participants_manager.set_cursor_mode(&controller.sid, controller.mode());
+                    .set_cursor_position(&controller.identity, Some(controller.local_position()));
+                participants_manager.set_cursor_mode(&controller.identity, controller.mode());
             } else {
-                participants_manager.set_cursor_position(&controller.sid, None);
+                participants_manager.set_cursor_position(&controller.identity, None);
             }
         }
     }
@@ -1040,7 +1043,7 @@ impl CursorController {
     /// # Parameters
     ///
     /// * `position` - The position where the click animation should be displayed
-    /// * `sid` - Session ID of the controller triggering the animation
+    /// * `identity` - Session ID of the controller triggering the animation
     pub fn is_controllers_enabled(&self) -> bool {
         self.controllers_cursors_enabled
     }

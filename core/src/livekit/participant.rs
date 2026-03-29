@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -6,7 +5,6 @@ use crate::livekit::audio::AudioTrackHandle;
 use crate::livekit::video::VideoBufferManager;
 
 pub struct ParticipantInfo {
-    identity: String,
     name: String,
     muted: bool,
     is_speaking: bool,
@@ -19,7 +17,6 @@ pub struct ParticipantInfo {
 impl std::fmt::Debug for ParticipantInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParticipantInfo")
-            .field("identity", &self.identity)
             .field("name", &self.name)
             .field("muted", &self.muted)
             .field("is_speaking", &self.is_speaking)
@@ -28,9 +25,8 @@ impl std::fmt::Debug for ParticipantInfo {
 }
 
 impl ParticipantInfo {
-    pub fn new(identity: String, name: String, muted: bool, is_speaking: bool) -> Self {
+    pub fn new(name: String, muted: bool, is_speaking: bool) -> Self {
         Self {
-            identity,
             name,
             muted,
             is_speaking,
@@ -44,7 +40,6 @@ impl ParticipantInfo {
     /// Creates a ParticipantInfo from a LiveKit remote participant.
     /// Extracts name, muted state (from audio tracks), and speaking state.
     pub fn from_remote_participant(participant: &livekit::participant::RemoteParticipant) -> Self {
-        let identity = participant.identity().as_str().to_string();
         let name = participant.name();
         let is_speaking = participant.is_speaking();
 
@@ -56,11 +51,7 @@ impl ParticipantInfo {
             }
         }
 
-        Self::new(identity, name.clone(), muted, is_speaking)
-    }
-
-    pub fn identity(&self) -> &str {
-        &self.identity
+        Self::new(name.clone(), muted, is_speaking)
     }
 
     pub fn name(&self) -> &str {
@@ -118,16 +109,4 @@ impl ParticipantInfo {
             let _ = tx.send(());
         }
     }
-}
-
-/// Given a participants map (sid → ParticipantInfo) and an identity string,
-/// returns the sid of the participant with that identity, if found.
-pub fn find_sid_by_identity(
-    participants: &HashMap<String, ParticipantInfo>,
-    identity: &str,
-) -> Option<String> {
-    participants
-        .iter()
-        .find(|(_, info)| info.identity() == identity)
-        .map(|(sid, _)| sid.clone())
 }

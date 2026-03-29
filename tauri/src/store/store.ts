@@ -247,7 +247,7 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
   const updates: Partial<CallState> = { participants: event.payload, isInitialisingCall: false };
 
   if (user) {
-    const localParticipant = event.payload.find((p) => p.identity.includes(user.id));
+    const localParticipant = event.payload.find((p) => p.identity.includes("local"));
     if (localParticipant) {
       updates.hasCameraEnabled = localParticipant.has_camera;
       updates.hasAudioEnabled = !localParticipant.muted;

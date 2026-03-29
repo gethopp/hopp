@@ -465,18 +465,18 @@ impl<'a> Application<'a> {
             let existing_participants = room_service.get_participants();
             for participant in &existing_participants {
                 if let Err(e) = remote_control.gfx.add_participant(
-                    participant.sid.clone(),
+                    participant.identity.clone(),
                     &participant.name,
                     false,
                 ) {
                     log::error!(
                         "Failed to create cursor for participant {}: {e}",
-                        participant.sid
+                        participant.identity
                     );
                 } else {
                     remote_control
                         .cursor_controller
-                        .add_controller(participant.sid.clone());
+                        .add_controller(participant.identity.clone());
                 }
             }
         }
@@ -1057,24 +1057,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::debug!("user_event: Participant connected: {participant:?}");
 
                 if let Some(remote_control) = &mut self.remote_control {
-                    let sid = participant.sid.clone();
+                    let identity = participant.identity.clone();
                     let name = participant.name.clone();
 
                     // Add participant to draw manager first (assigns color)
-                    if let Err(e) = remote_control
-                        .gfx
-                        .add_participant(sid.clone(), &name, false)
+                    if let Err(e) =
+                        remote_control
+                            .gfx
+                            .add_participant(identity.clone(), &name, false)
                     {
-                        log::error!("Failed to create cursor for participant {sid}: {e}");
+                        log::error!("Failed to create cursor for participant {identity}: {e}");
                     } else {
                         // Then add to cursor controller for state tracking
-                        remote_control.cursor_controller.add_controller(sid);
+                        remote_control.cursor_controller.add_controller(identity);
                     }
                 }
 
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     if let Err(e) = screensharing_window.add_participant(
-                        participant.sid.clone(),
+                        participant.identity.clone(),
                         &participant.name,
                         false,
                     ) {
@@ -1090,14 +1091,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(remote_control) = &mut self.remote_control {
                     remote_control
                         .cursor_controller
-                        .remove_controller(participant.sid.as_str());
+                        .remove_controller(participant.identity.as_str());
                     // Remove participant from draw manager
                     remote_control
                         .gfx
-                        .remove_participant(participant.sid.as_str());
+                        .remove_participant(participant.identity.as_str());
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.remove_participant(participant.sid.as_str());
+                    screensharing_window.remove_participant(participant.identity.as_str());
                 }
             }
             UserEvent::LivekitServerUrl(url) => {
@@ -2074,7 +2075,6 @@ pub struct MouseClickData {
 pub struct ParticipantData {
     pub name: String,
     pub identity: String,
-    pub sid: String,
 }
 
 #[derive(Debug, Clone)]

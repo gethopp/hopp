@@ -1310,12 +1310,12 @@ fn participant_card<'a>(
     }
 }
 
-/// Hash a SID string to a u64 for GPU texture keying.
-fn sid_to_id(sid: &str) -> u64 {
+/// Hash an identity string to a u64 for GPU texture keying.
+fn identity_to_id(identity: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
-    sid.hash(&mut hasher);
+    identity.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1340,7 +1340,7 @@ fn create_participant_grid<'a>(
     let sorted: Vec<(&String, &ParticipantInfo)> = if self_hidden {
         sorted
             .into_iter()
-            .filter(|(sid, _)| sid.as_str() != "local")
+            .filter(|(identity, _)| identity.as_str() != "local")
             .collect()
     } else {
         sorted
@@ -1419,10 +1419,10 @@ fn create_participant_grid<'a>(
             Vec::new();
 
         for _ in 0..tiles_per_row {
-            if let Some((sid, info)) = participants_iter.next() {
-                let id = sid_to_id(sid);
+            if let Some((identity, info)) = participants_iter.next() {
+                let id = identity_to_id(identity);
                 let camera_buffers = info.camera_buffers();
-                let is_local = sid.as_str() == "local";
+                let is_local = identity.as_str() == "local";
                 row_tiles.push(participant_card(
                     id,
                     info.name(),
