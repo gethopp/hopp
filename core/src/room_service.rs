@@ -875,7 +875,7 @@ async fn room_service_commands(
                             LocalTrack::Video(camera_track.clone()),
                             TrackPublishOptions {
                                 source: TrackSource::Camera,
-                                video_codec: VideoCodec::H264,
+                                video_codec: VideoCodec::VP9,
                                 simulcast: true,
                                 video_encoding: Some(VideoEncoding {
                                     max_bitrate: CAMERA_MAX_BITRATE,
