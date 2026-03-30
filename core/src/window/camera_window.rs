@@ -43,6 +43,7 @@ use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
+use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
@@ -184,9 +185,40 @@ pub struct CameraWindow {
     event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
+pub fn camera_window_attributes() -> WindowAttributes {
+    let attrs = WindowAttributes::default()
+        .with_title("Hopp Camera")
+        .with_inner_size(winit::dpi::LogicalSize::new(
+            CAMERA_WINDOW_WIDTH,
+            CAMERA_WINDOW_HEIGHT,
+        ))
+        .with_min_inner_size(winit::dpi::LogicalSize::new(
+            CAMERA_WINDOW_MIN_WIDTH,
+            CAMERA_WINDOW_MIN_HEIGHT,
+        ))
+        .with_resizable(true);
+
+    #[cfg(target_os = "macos")]
+    let attrs = {
+        use winit::{
+            platform::macos::WindowAttributesExtMacOS,
+            window::{WindowButtons, WindowLevel},
+        };
+        attrs
+            .with_title_hidden(true)
+            .with_titlebar_transparent(true)
+            .with_fullsize_content_view(true)
+            .with_transparent(true)
+            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_enabled_buttons(WindowButtons::MINIMIZE)
+    };
+    attrs
+}
+
 impl CameraWindow {
     /// Create a new camera window with wgpu surface and iced renderer.
     pub fn new(
+        context_manager: &ContextManager,
         event_loop: &ActiveEventLoop,
         participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -194,101 +226,34 @@ impl CameraWindow {
         log::info!("CameraWindow::new");
 
         // ── Create winit window ──────────────────────────────────────────
-        let attrs = WindowAttributes::default()
-            .with_title("Hopp Camera")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                CAMERA_WINDOW_WIDTH,
-                CAMERA_WINDOW_HEIGHT,
-            ))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(
-                CAMERA_WINDOW_MIN_WIDTH,
-                CAMERA_WINDOW_MIN_HEIGHT,
-            ))
-            .with_resizable(true);
-
-        #[cfg(target_os = "macos")]
-        let attrs = {
-            use winit::{
-                platform::macos::WindowAttributesExtMacOS,
-                window::{WindowButtons, WindowLevel},
-            };
-            attrs
-                .with_title_hidden(true)
-                .with_titlebar_transparent(true)
-                .with_fullsize_content_view(true)
-                .with_transparent(true)
-                .with_window_level(WindowLevel::AlwaysOnTop)
-                .with_enabled_buttons(WindowButtons::MINIMIZE)
-        };
-
-        let window = event_loop.create_window(attrs).map_err(|e| {
-            log::error!("CameraWindow: failed to create window: {e:?}");
-            CameraWindowError::WindowCreation
-        })?;
+        let window = event_loop
+            .create_window(camera_window_attributes())
+            .map_err(|e| {
+                log::error!("CameraWindow: failed to create window: {e:?}");
+                CameraWindowError::WindowCreation
+            })?;
         // Bring to front when window is created
         window.focus_window();
         let window = Arc::new(window);
 
         // ── wgpu setup ───────────────────────────────────────────────────
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).map_err(|e| {
-            log::error!("CameraWindow: failed to create surface: {e:?}");
-            CameraWindowError::SurfaceCreation
-        })?;
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| {
-            log::error!("CameraWindow: failed to request adapter: {e:?}");
-            CameraWindowError::AdapterRequest
-        })?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: Some("CameraWindow device"),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| {
-            log::error!("CameraWindow: failed to request device: {e:?}");
-            CameraWindowError::DeviceRequest
-        })?;
-
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-
-        let alpha_mode = super::vibrancy::pick_transparent_alpha_mode(&caps);
-
+        let surface_info = context_manager
+            .create_camera_surface(&window)
+            .map_err(|e| match e {
+                GraphicsWindowContextError::SurfaceCreation => CameraWindowError::SurfaceCreation,
+                GraphicsWindowContextError::AdapterRequest => CameraWindowError::AdapterRequest,
+                GraphicsWindowContextError::DeviceRequest => CameraWindowError::DeviceRequest,
+            })?;
+        let device = context_manager.camera_context.device.clone();
+        let queue = context_manager.camera_context.queue.clone();
+        let format = surface_info.format;
+        let alpha_mode = surface_info.alpha_mode;
+        let surface = surface_info.surface;
         let physical_size = window.inner_size();
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: physical_size.width.max(1),
-            height: physical_size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &surface_config);
 
         // ── Iced renderer with Geist fonts ───────────────────────────────
         let engine = Engine::new(
-            &adapter,
+            &context_manager.camera_context.adapter,
             device.clone(),
             queue.clone(),
             format,

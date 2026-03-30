@@ -55,6 +55,7 @@ use crate::components::segmented_control::{
 };
 use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
 use crate::graphics::graphics_context::participant::{ParticipantError, ParticipantsManager};
+use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::utils::clock;
 use crate::utils::geometry::{Extent, Position};
@@ -101,6 +102,27 @@ const fn min_window_size() -> (f64, f64) {
     let min_content_h = min_content_w / (16.0 / 9.0);
     let min_h = min_content_h + WindowConstant::SKELETON_H;
     (WindowConstant::MIN_WIDTH, min_h)
+}
+
+pub fn screensharing_window_attributes() -> WindowAttributes {
+    let (init_w, init_h) = default_window_size();
+    let (min_w, min_h) = min_window_size();
+    let attrs = WindowAttributes::default()
+        .with_title("Hopp Screensharing")
+        .with_inner_size(winit::dpi::LogicalSize::new(init_w, init_h))
+        .with_resizable(true)
+        .with_min_inner_size(winit::dpi::LogicalSize::new(min_w, min_h));
+
+    #[cfg(target_os = "macos")]
+    let attrs = {
+        use winit::platform::macos::WindowAttributesExtMacOS;
+        attrs
+            .with_title_hidden(true)
+            .with_titlebar_transparent(true)
+            .with_fullsize_content_view(true)
+            .with_transparent(true)
+    };
+    attrs
 }
 
 /// Available screen area detected at runtime by probing with a temporary window.
@@ -671,6 +693,7 @@ pub struct ScreensharingWindow {
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
     pub fn new(
+        context_manager: &ContextManager,
         event_loop: &ActiveEventLoop,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
         participants: Vec<(String, String, bool)>,
@@ -683,97 +706,41 @@ impl ScreensharingWindow {
 
         let screen_area = probe_available_screen_area(event_loop);
 
-        let (init_w, init_h) = default_window_size();
-        let (min_w, min_h) = min_window_size();
-
-        let attrs = WindowAttributes::default()
-            .with_title("Hopp Screensharing")
-            .with_inner_size(winit::dpi::LogicalSize::new(init_w, init_h))
-            .with_resizable(true)
-            .with_min_inner_size(winit::dpi::LogicalSize::new(min_w, min_h));
-
-        #[cfg(target_os = "macos")]
-        let attrs = {
-            use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs
-                .with_title_hidden(true)
-                .with_titlebar_transparent(true)
-                .with_fullsize_content_view(true)
-                .with_transparent(true) // Enable transparency at creation for vibrancy
-        };
-
-        let window = event_loop.create_window(attrs).map_err(|e| {
-            log::error!("ScreensharingWindow: failed to create window: {e:?}");
-            ScreensharingWindowError::WindowCreation
-        })?;
+        let window = event_loop
+            .create_window(screensharing_window_attributes())
+            .map_err(|e| {
+                log::error!("ScreensharingWindow: failed to create window: {e:?}");
+                ScreensharingWindowError::WindowCreation
+            })?;
         let window = Arc::new(window);
         // Bring to front when window is created
         window.focus_window();
 
         // ── wgpu setup ───────────────────────────────────────────────────
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).map_err(|e| {
-            log::error!("ScreensharingWindow: failed to create surface: {e:?}");
-            ScreensharingWindowError::SurfaceCreation
-        })?;
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| {
-            log::error!("ScreensharingWindow: failed to request adapter: {e:?}");
-            ScreensharingWindowError::AdapterRequest
-        })?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: Some("ScreensharingWindow device"),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|e| {
-            log::error!("ScreensharingWindow: failed to request device: {e:?}");
-            ScreensharingWindowError::DeviceRequest
-        })?;
-
-        let caps = surface.get_capabilities(&adapter);
-        // iced 0.14 enables `web-colors` by default → GAMMA_CORRECTION = false.
-        // Match iced's compositor: prefer a non-sRGB surface so raw sRGB colour
-        // values pass through without an extra gamma encode.
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-
-        let alpha_mode = super::vibrancy::pick_transparent_alpha_mode(&caps);
+        let surface_info = context_manager
+            .create_screensharing_surface(&window)
+            .map_err(|e| match e {
+                GraphicsWindowContextError::SurfaceCreation => {
+                    ScreensharingWindowError::SurfaceCreation
+                }
+                GraphicsWindowContextError::AdapterRequest => {
+                    ScreensharingWindowError::AdapterRequest
+                }
+                GraphicsWindowContextError::DeviceRequest => {
+                    ScreensharingWindowError::DeviceRequest
+                }
+            })?;
+        let device = context_manager.screensharing_context.device.clone();
+        let queue = context_manager.screensharing_context.queue.clone();
+        let format = surface_info.format;
+        let alpha_mode = surface_info.alpha_mode;
         log::info!("ScreensharingWindow: selected alpha_mode: {:?}", alpha_mode);
-
+        let surface = surface_info.surface;
         let physical_size = window.inner_size();
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: physical_size.width.max(1),
-            height: physical_size.height.max(1),
-            present_mode: wgpu::PresentMode::Immediate,
-            alpha_mode,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &surface_config);
 
         // ── Iced renderer with Geist fonts ───────────────────────────────
         let engine = Engine::new(
-            &adapter,
+            &context_manager.screensharing_context.adapter,
             device.clone(),
             queue.clone(),
             format,

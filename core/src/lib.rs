@@ -33,6 +33,7 @@ pub mod capture {
 
 pub mod graphics {
     pub mod graphics_context;
+    pub mod graphics_window_context;
     pub mod yuv_buffer;
     pub mod yuv_renderer;
 
@@ -60,6 +61,7 @@ pub(crate) mod windows;
 use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
+use graphics::graphics_window_context::ContextManager;
 use image::GenericImageView;
 use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
@@ -234,6 +236,7 @@ pub struct Application<'a> {
     audio_player: audio::player::Player,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
+    context_manager: Option<ContextManager>,
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
     screensharing_redraw_thread: Option<JoinHandle<()>>,
@@ -343,6 +346,7 @@ impl<'a> Application<'a> {
             _camera_capturer_events: Some(std::thread::spawn(move || {
                 poll_camera_stream(camera_capturer_clone)
             })),
+            context_manager: None,
             camera_window: None,
             screensharing_window: None,
             screensharing_redraw_thread: None,
@@ -525,6 +529,7 @@ impl<'a> Application<'a> {
             (rx, tx)
         });
         match ScreensharingWindow::new(
+            self.context_manager.as_ref().unwrap(),
             event_loop,
             buffer,
             participants,
@@ -1452,8 +1457,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 // Open camera window if needed
                 if self.camera_window.is_none() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone())
-                    {
+                    match CameraWindow::new(
+                        self.context_manager.as_ref().unwrap(),
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                    ) {
                         Ok(cam) => {
                             log::info!("user_event: Camera window opened for local camera");
                             self.camera_window = Some(cam);
@@ -1493,8 +1502,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(event_loop, participants, self.event_loop_proxy.clone())
-                    {
+                    match CameraWindow::new(
+                        self.context_manager.as_ref().unwrap(),
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                    ) {
                         Ok(cam) => self.camera_window = Some(cam),
                         Err(e) => log::error!("Failed to open camera window: {e:?}"),
                     }
@@ -1707,6 +1720,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.context_manager.is_none() {
+            match ContextManager::new(event_loop) {
+                Ok(cm) => self.context_manager = Some(cm),
+                Err(e) => log::error!("Application::resumed: failed to init GPU contexts: {e:?}"),
+            }
+        }
         if self.window_manager.is_none() {
             log::info!("Application::resumed: initializing WindowManager");
             match window_manager::WindowManager::new(event_loop) {
