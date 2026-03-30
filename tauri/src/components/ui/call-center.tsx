@@ -521,6 +521,7 @@ function CameraIcon() {
   const handleCameraChange = useCallback(
     async (deviceName: string) => {
       setActiveCamera(deviceName);
+      tauriUtils.setLastUsedCamera(deviceName);
       if (cameraEnabled) {
         try {
           await typedInvoke("start_camera", { deviceName });

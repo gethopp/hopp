@@ -371,17 +371,26 @@ fn rgb_write_i420(rgb: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     }
 }
 
+/// List available cameras. We also sort them by name
+/// so we can avoid listing them on consumers like dropdowns
+/// and ensure consistent ordering between runs.
 pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     match nokhwa::query(ApiBackend::Auto) {
-        Ok(cameras) => cameras
-            .iter()
-            .enumerate()
-            .map(|(i, c)| socket_lib::CameraDevice {
-                name: c.human_name(),
-                id: c.index().to_string(),
-                default: i == 0,
-            })
-            .collect(),
+        Ok(cameras) => {
+            let mut devices: Vec<_> = cameras
+                .iter()
+                .map(|c| socket_lib::CameraDevice {
+                    name: c.human_name(),
+                    id: c.index().to_string(),
+                    default: false,
+                })
+                .collect();
+            devices.sort_by(|a, b| a.name.cmp(&b.name));
+            if let Some(first) = devices.first_mut() {
+                first.default = true;
+            }
+            devices
+        }
         Err(e) => {
             log::error!("Failed to query cameras: {e}");
             vec![]

@@ -8,7 +8,7 @@
 //! - Geist font family (Regular + Medium)
 //! - Tailwind color tokens (Slate, Gray, Green, Orange, Red, Lime)
 //! - Shadow tokens for consistent depth
-//! - Pill-shaped control buttons with solid/gradient backgrounds
+//! - Header control buttons via `split_button` (solid colors + optional dropdowns)
 //! - Responsive participant grid with name labels and speaking indicators
 
 use std::collections::HashMap;
@@ -38,7 +38,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use thiserror::Error;
 
+use crate::audio::capturer::list_audio_inputs;
+use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
+use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
@@ -64,10 +67,10 @@ const CONTENT_PADDING: f32 = 12.0;
 // Grid layout constants
 const MIN_TILE_SIZE: f32 = 80.0;
 const TILE_SPACING: f32 = 16.0;
-const MIN_GRID_PADDING: f32 = 16.0;
+const MIN_GRID_PADDING: f32 = 8.0;
 
-// Header height: button (44/1.5) + padding top/bottom (12*2)
-const HEADER_HEIGHT: f32 = (44.0 / 1.5) + (CONTENT_PADDING * 2.0);
+// Header height: split_button (20px) + padding top (12)
+const HEADER_HEIGHT: f32 = 20.0 + CONTENT_PADDING;
 
 // Window size thresholds for small window styling
 const SMALL_WIDTH_THRESHOLD: f32 = 450.0;
@@ -109,6 +112,12 @@ pub enum CameraMessage {
     ToggleSelfVisibility,
     /// Mouse entered or left the local participant tile (for hover-only chrome).
     LocalTileHover(bool),
+    CameraDropdownToggle,
+    CameraDropdownDismiss,
+    SelectCamera(String),
+    MicDropdownToggle,
+    MicDropdownDismiss,
+    SelectMic(String),
 }
 
 struct CameraState {
@@ -125,6 +134,12 @@ struct CameraState {
     /// Last min-height applied via `set_min_inner_size` (used to avoid redundant calls).
     compact_min_height: f64,
     toast: Option<ToastState>,
+    camera_dropdown_open: bool,
+    available_cameras: Vec<socket_lib::CameraDevice>,
+    selected_camera_name: Option<String>,
+    mic_dropdown_open: bool,
+    available_mics: Vec<(String, bool)>,
+    selected_mic_name: Option<String>,
 }
 
 impl Default for CameraState {
@@ -137,13 +152,14 @@ impl Default for CameraState {
             is_compact: false,
             compact_min_height: CAMERA_WINDOW_MIN_HEIGHT,
             toast: None,
+            camera_dropdown_open: false,
+            available_cameras: Vec::new(),
+            selected_camera_name: None,
+            mic_dropdown_open: false,
+            available_mics: Vec::new(),
+            selected_mic_name: None,
         }
     }
-}
-
-enum ButtonBackground {
-    Solid(ColorToken),
-    Gradient { top: Color, bottom: Color },
 }
 
 // ── CameraWindow ────────────────────────────────────────────────────────────
@@ -350,8 +366,11 @@ impl CameraWindow {
     }
 
     /// Update the local camera active state. Call from StartCamera/StopCamera handlers.
-    pub fn set_camera_active(&mut self, active: bool) {
+    pub fn set_camera_active(&mut self, active: bool, device_name: Option<String>) {
         self.state.camera_active = active;
+        if active {
+            self.state.selected_camera_name = device_name;
+        }
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
@@ -476,7 +495,7 @@ impl CameraWindow {
     /// - Header row: traffic-light space + centered controls + balance space
     /// - Responsive participant grid with name labels
     fn view<'a>(
-        state: &CameraState,
+        state: &'a CameraState,
         participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         skip_buffer: bool,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
@@ -488,41 +507,53 @@ impl CameraWindow {
             .unwrap_or(false);
 
         let mic_bg = if is_muted {
-            ButtonBackground::Solid(ColorToken::Gray400)
+            ColorToken::Gray400.to_color()
         } else {
-            ButtonBackground::Solid(ColorToken::Orange500)
+            ColorToken::Orange400.to_color()
         };
         let mic_icon = if is_muted {
             ICON_MICROPHONE_OFF
         } else {
             ICON_MICROPHONE_ON
         };
-        let mic_button = control_button(mic_icon, mic_bg, CameraMessage::MicToggle);
-
-        let screen_button = control_button(
-            ICON_SCREEN_SHARE,
-            ButtonBackground::Solid(ColorToken::Gray400),
-            CameraMessage::ScreenShare,
+        let mic_button = split_button(
+            mic_icon,
+            mic_bg,
+            CameraMessage::MicToggle,
+            Some(CameraMessage::MicDropdownToggle),
+            state.mic_dropdown_open,
         );
 
-        let video_bg = if state.camera_active {
-            ButtonBackground::Solid(ColorToken::Green400)
+        let video_bg_color = if state.camera_active {
+            ColorToken::Green400.to_color()
         } else {
-            ButtonBackground::Solid(ColorToken::Gray400)
+            ColorToken::Gray400.to_color()
         };
-        let video_button = control_button(ICON_VIDEO, video_bg, CameraMessage::VideoToggle);
-
-        // Red gradient from Figma: #FB2C36 (top) -> #C10007 (bottom)
-        let end_call_button = control_button(
-            ICON_PHONE_OFF,
-            ButtonBackground::Gradient {
-                top: Color::from_rgb(251.0 / 255.0, 44.0 / 255.0, 54.0 / 255.0), // #FB2C36
-                bottom: Color::from_rgb(193.0 / 255.0, 0.0 / 255.0, 7.0 / 255.0), // #C10007
-            },
-            CameraMessage::EndCall,
+        let video_button = split_button(
+            ICON_VIDEO,
+            video_bg_color,
+            CameraMessage::VideoToggle,
+            Some(CameraMessage::CameraDropdownToggle),
+            state.camera_dropdown_open,
         );
 
-        let controls = row![mic_button, screen_button, video_button, end_call_button].spacing(8);
+        let screen_button = split_button(
+            ICON_SCREEN_SHARE,
+            ColorToken::Gray400.to_color(),
+            CameraMessage::ScreenShare,
+            None,
+            false,
+        );
+
+        let end_call_button = split_button(
+            ICON_PHONE_OFF,
+            ColorToken::Red500.to_color(),
+            CameraMessage::EndCall,
+            None,
+            false,
+        );
+
+        let controls = row![mic_button, video_button, screen_button, end_call_button].spacing(8);
 
         // ── Header with centered controls (space for native traffic lights)
         let header = row![
@@ -532,7 +563,12 @@ impl CameraWindow {
             Space::new().width(Length::Fill),
             Space::new().width(Length::Fixed(80.0)), // Balance spacing
         ]
-        .padding(Padding::new(CONTENT_PADDING))
+        .padding(Padding {
+            top: CONTENT_PADDING,
+            right: CONTENT_PADDING,
+            bottom: 0.0,
+            left: CONTENT_PADDING,
+        })
         .align_y(Alignment::Center);
 
         // ── Participant grid ─────────────────────────────────────────────
@@ -554,7 +590,7 @@ impl CameraWindow {
                 .height(Length::Fill)
         };
 
-        let base = container(content)
+        let base_inner = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme: &Theme| {
@@ -573,6 +609,59 @@ impl CameraWindow {
                 }
             })
             .clip(true);
+
+        let base: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
+            if state.camera_dropdown_open {
+                let items: Vec<SplitButtonItem> = state
+                    .available_cameras
+                    .iter()
+                    .map(|cam| {
+                        let is_selected = match &state.selected_camera_name {
+                            Some(name) => name == &cam.name,
+                            None => cam.default,
+                        };
+                        SplitButtonItem {
+                            label: cam.name.clone(),
+                            selected: is_selected,
+                        }
+                    })
+                    .collect();
+
+                split_button_dropdown_wrap(
+                    base_inner.into(),
+                    &items,
+                    CameraMessage::CameraDropdownDismiss,
+                    |i| CameraMessage::SelectCamera(state.available_cameras[i].name.clone()),
+                    HEADER_HEIGHT + 2.0,
+                    state.viewport_size.width / 2.0 - 13.0,
+                )
+            } else if state.mic_dropdown_open {
+                let items: Vec<SplitButtonItem> = state
+                    .available_mics
+                    .iter()
+                    .map(|(name, is_default)| {
+                        let is_selected = match &state.selected_mic_name {
+                            Some(sel) => sel == name,
+                            None => *is_default,
+                        };
+                        SplitButtonItem {
+                            label: name.clone(),
+                            selected: is_selected,
+                        }
+                    })
+                    .collect();
+
+                split_button_dropdown_wrap(
+                    base_inner.into(),
+                    &items,
+                    CameraMessage::MicDropdownDismiss,
+                    |i| CameraMessage::SelectMic(state.available_mics[i].0.clone()),
+                    HEADER_HEIGHT + 2.0,
+                    state.viewport_size.width / 2.0 + 44.0,
+                )
+            } else {
+                base_inner.into()
+            };
 
         let floating_show_btn = if state.self_hidden {
             Some(
@@ -685,6 +774,50 @@ impl CameraWindow {
             CameraMessage::LocalTileHover(hovered) => {
                 self.state.local_tile_hovered = hovered;
             }
+            CameraMessage::CameraDropdownToggle => {
+                self.state.mic_dropdown_open = false;
+                if !self.state.camera_dropdown_open {
+                    self.state.available_cameras = CameraCapturer::list_devices();
+                }
+                self.state.camera_dropdown_open = !self.state.camera_dropdown_open;
+            }
+            CameraMessage::CameraDropdownDismiss => {
+                self.state.camera_dropdown_open = false;
+            }
+            CameraMessage::SelectCamera(name) => {
+                self.state.camera_dropdown_open = false;
+                self.state.selected_camera_name = Some(name.clone());
+                let msg = CameraStartMessage {
+                    device_name: Some(name),
+                };
+                if let Err(e) = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::StartCamera(msg))
+                {
+                    log::error!("Failed to send StartCamera: {e:?}");
+                }
+            }
+            CameraMessage::MicDropdownToggle => {
+                self.state.camera_dropdown_open = false;
+                if !self.state.mic_dropdown_open {
+                    self.state.available_mics = list_audio_inputs();
+                }
+                self.state.mic_dropdown_open = !self.state.mic_dropdown_open;
+            }
+            CameraMessage::MicDropdownDismiss => {
+                self.state.mic_dropdown_open = false;
+            }
+            CameraMessage::SelectMic(name) => {
+                self.state.mic_dropdown_open = false;
+                self.state.selected_mic_name = Some(name.clone());
+                let msg = socket_lib::AudioCaptureMessage { device_name: name };
+                if let Err(e) = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::StartAudioCapture(msg))
+                {
+                    log::error!("Failed to send StartAudioCapture: {e:?}");
+                }
+            }
         }
     }
 
@@ -785,111 +918,6 @@ impl CameraWindow {
 }
 
 // ── Styling helper functions (ported from iced-poc main.rs) ─────────────────
-
-/// Create a pill-shaped control button with an icon-font glyph.
-///
-/// Renders the icon via `text()` using the icons font (ICONS_FONT).
-/// - Icon at 16px logical
-/// - Button width 60/1.5 = 40px, height 44/1.5 ≈ 29.3px
-/// - Pill-shaped with 10px radius
-/// - Solid or gradient background with hover/press states
-fn control_button(
-    icon_char: char,
-    bg: ButtonBackground,
-    message: CameraMessage,
-) -> iced::Element<'static, CameraMessage, Theme, iced::Renderer> {
-    let icon_text = text(icon_char.to_string())
-        .font(ICONS_FONT)
-        .size(16.0)
-        .color(Color::WHITE)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center);
-
-    button(
-        container(icon_text)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fixed(60.0 / 1.5))
-    .height(Length::Fixed(44.0 / 1.5))
-    .on_press(message)
-    .padding(0)
-    .style(move |_theme: &Theme, status| {
-        let background = match &bg {
-            ButtonBackground::Solid(color_token) => {
-                let base_color = color_token.to_color();
-                let adjusted_color = match status {
-                    button::Status::Hovered => Color::from_rgba(
-                        (base_color.r + 0.1).min(1.0),
-                        (base_color.g + 0.1).min(1.0),
-                        (base_color.b + 0.1).min(1.0),
-                        base_color.a,
-                    ),
-                    button::Status::Pressed => Color::from_rgba(
-                        (base_color.r - 0.1).max(0.0),
-                        (base_color.g - 0.1).max(0.0),
-                        (base_color.b - 0.1).max(0.0),
-                        base_color.a,
-                    ),
-                    _ => base_color,
-                };
-                Background::Color(adjusted_color)
-            }
-            ButtonBackground::Gradient { top, bottom } => {
-                let (adjusted_top, adjusted_bottom) = match status {
-                    button::Status::Hovered => (
-                        Color::from_rgba(
-                            (top.r + 0.1).min(1.0),
-                            (top.g + 0.1).min(1.0),
-                            (top.b + 0.1).min(1.0),
-                            top.a,
-                        ),
-                        Color::from_rgba(
-                            (bottom.r + 0.1).min(1.0),
-                            (bottom.g + 0.1).min(1.0),
-                            (bottom.b + 0.1).min(1.0),
-                            bottom.a,
-                        ),
-                    ),
-                    button::Status::Pressed => (
-                        Color::from_rgba(
-                            (top.r - 0.1).max(0.0),
-                            (top.g - 0.1).max(0.0),
-                            (top.b - 0.1).max(0.0),
-                            top.a,
-                        ),
-                        Color::from_rgba(
-                            (bottom.r - 0.1).max(0.0),
-                            (bottom.g - 0.1).max(0.0),
-                            (bottom.b - 0.1).max(0.0),
-                            bottom.a,
-                        ),
-                    ),
-                    _ => (*top, *bottom),
-                };
-                let grad = gradient::Linear::new(Radians(std::f32::consts::PI))
-                    .add_stop(0.0, adjusted_top)
-                    .add_stop(1.0, adjusted_bottom);
-                Background::Gradient(grad.into())
-            }
-        };
-
-        button::Style {
-            background: Some(background),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 10.0.into(),
-            },
-            text_color: Color::WHITE,
-            shadow: Shadow::default(),
-            snap: false,
-        }
-    })
-    .into()
-}
 
 /// Truncate a name to a maximum of 16 characters, adding "..." if truncated.
 fn truncate_name(name: &str) -> String {

@@ -36,6 +36,9 @@ struct AppStateInternal {
     /// The device ID of the last used microphone.
     pub last_used_mic: Option<String>,
 
+    /// The device name of the last used camera.
+    pub last_used_camera: Option<String>,
+
     /// Flag indicating if this is the user's first time running the application.
     pub first_run: bool,
 
@@ -74,6 +77,7 @@ impl Default for AppStateInternal {
     /// Default settings:
     /// - Tray notification: enabled
     /// - Last used microphone: none
+    /// - Last used camera: none
     /// - First run: true
     /// - User JWT: none
     /// - Hopp server URL: none
@@ -85,6 +89,7 @@ impl Default for AppStateInternal {
         AppStateInternal {
             tray_notification: true,
             last_used_mic: None,
+            last_used_camera: None,
             first_run: true,
             user_jwt: None,
             hopp_server_url: None,
@@ -268,6 +273,22 @@ impl AppState {
         self.state.last_used_mic = Some(mic);
         if !self.save() {
             log::error!("set_last_used_mic: Failed to save app state");
+        }
+    }
+
+    /// Gets the last used camera device name.
+    pub fn last_used_camera(&self) -> Option<String> {
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_used_camera.clone()
+    }
+
+    /// Updates the last used camera setting and saves to disk.
+    pub fn set_last_used_camera(&mut self, camera: String) {
+        log::info!("set_last_used_camera: {camera}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_used_camera = Some(camera);
+        if !self.save() {
+            log::error!("set_last_used_camera: Failed to save app state");
         }
     }
 

@@ -422,6 +422,24 @@ fn set_last_used_mic(app: tauri::AppHandle, mic: String) {
 }
 
 #[tauri::command(async)]
+fn get_last_used_camera(app: tauri::AppHandle) -> Option<String> {
+    log::info!("get_last_used_camera");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.last_used_camera();
+    log::info!("get_last_used_camera: {value:?}");
+    value
+}
+
+#[tauri::command(async)]
+fn set_last_used_camera(app: tauri::AppHandle, camera: String) {
+    log::info!("set_last_used_camera: {camera}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_last_used_camera(camera);
+}
+
+#[tauri::command(async)]
 fn get_sharer_draw_persist(app: tauri::AppHandle) -> bool {
     log::info!("get_sharer_draw_persist");
     let data = app.state::<Mutex<AppData>>();
@@ -1036,6 +1054,15 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::QueryPreferredCamera => {
+                log::info!("forward_core_events: query preferred camera");
+                let data = app.state::<Mutex<AppData>>();
+                let data = data.lock().unwrap();
+                let preferred = data.app_state.last_used_camera();
+                if let Err(e) = data.sender.send(Message::PreferredCamera(preferred)) {
+                    log::error!("forward_core_events: failed to send preferred camera: {e:?}");
+                }
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }
@@ -1359,13 +1386,15 @@ fn main() {
                     if show_dock {
                         data.activation_policy_regular = true;
                     }
-                    data.activation_observer =
-                        Some(hopp::app_activation::AppActivationObserver::new(
-                            app.handle().clone(),
-                            location_set_setup.clone(),
-                            reopen_requested_clone.clone(),
-                            tray_clicked.clone(),
-                        ));
+                    if !cfg!(debug_assertions) {
+                        data.activation_observer =
+                            Some(hopp::app_activation::AppActivationObserver::new(
+                                app.handle().clone(),
+                                location_set_setup.clone(),
+                                reopen_requested_clone.clone(),
+                                tray_clicked.clone(),
+                            ));
+                    }
                 }
             }
 
@@ -1432,6 +1461,8 @@ fn main() {
             skip_tray_notification_selection_window,
             set_last_used_mic,
             get_last_used_mic,
+            set_last_used_camera,
+            get_last_used_camera,
             get_sharer_draw_persist,
             set_sharer_draw_persist,
             enable_drawing,

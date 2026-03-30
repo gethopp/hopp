@@ -173,6 +173,8 @@ export interface CommandMap {
   // Preferences
   get_last_used_mic: { args: void; return: string | null };
   set_last_used_mic: { args: { mic: string }; return: void };
+  get_last_used_camera: { args: void; return: string | null };
+  set_last_used_camera: { args: { camera: string }; return: void };
   get_sharer_draw_persist: { args: void; return: boolean };
   set_sharer_draw_persist: { args: { persist: boolean }; return: void };
   get_controller_draw_persist: { args: void; return: boolean };

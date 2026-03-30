@@ -11,6 +11,26 @@ const TARGET_SAMPLE_RATE: u32 = 48000;
 const TARGET_CHANNELS: u16 = 1;
 pub const SAMPLES_DIVIDER: u32 = 100;
 
+/// List audio input devices (sorted by name). First entry is marked default for UI selection.
+/// Does not require a [`Capturer`] instance — mirrors [`crate::camera::capturer::CameraCapturer::list_devices`].
+pub fn list_audio_inputs() -> Vec<(String, bool)> {
+    match microphone::available_inputs() {
+        Ok(mics) => {
+            let mut devices: Vec<_> = mics.iter().map(|input| input.to_string()).collect();
+            devices.sort();
+            devices
+                .into_iter()
+                .enumerate()
+                .map(|(i, name)| (name, i == 0))
+                .collect()
+        }
+        Err(e) => {
+            log::error!("Failed to list audio inputs: {e}");
+            vec![]
+        }
+    }
+}
+
 // Create an enum to handle both resampled and non-resampled cases
 enum MicSource {
     Direct(rodio::microphone::Microphone),
@@ -230,6 +250,7 @@ impl Capturer {
             .sample_tx
             .clone()
             .ok_or_else(|| "No active capture to switch".to_string())?;
+        self.list_sources();
         self.stop_thread();
         self.start_capture(device_name, sample_tx)
     }

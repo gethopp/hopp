@@ -223,6 +223,7 @@ pub struct Application<'a> {
     screen_capturer: Arc<Mutex<Capturer>>,
     _screen_capturer_events: Option<JoinHandle<()>>,
     socket: SocketSender,
+    socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
@@ -303,6 +304,7 @@ impl<'a> Application<'a> {
     pub fn new(
         input: RenderLoopRunArgs,
         socket: SocketSender,
+        socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
@@ -320,6 +322,7 @@ impl<'a> Application<'a> {
             screen_capturer: screencapturer.clone(),
             _screen_capturer_events: Some(std::thread::spawn(move || poll_stream(screencapturer))),
             socket,
+            socket_responses,
             room_service: None,
             event_loop_proxy,
             local_drawing: LocalDrawing {
@@ -1368,7 +1371,33 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::StartCamera(msg) => {
-                log::info!("user_event: StartCamera device='{:?}'", msg.device_name);
+                let device_name = if msg.device_name.is_some() {
+                    msg.device_name
+                } else {
+                    if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
+                        log::error!(
+                            "user_event: StartCamera: failed to query preferred camera: {e:?}"
+                        );
+                        None
+                    } else {
+                        match self
+                            .socket_responses
+                            .recv_timeout(std::time::Duration::from_millis(500))
+                        {
+                            Ok(Message::PreferredCamera(name)) => name,
+                            Ok(other) => {
+                                log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
+                                None
+                            }
+                            Err(_) => {
+                                log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
+                                None
+                            }
+                        }
+                    }
+                };
+
+                log::info!("user_event: StartCamera device='{device_name:?}'");
 
                 let room_service = match self.room_service.as_ref() {
                     Some(rs) => rs,
@@ -1394,7 +1423,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let capture_result = {
                     let mut capturer = self.camera_capturer.lock().unwrap();
                     capturer.start_capture(
-                        msg.device_name.as_deref(),
+                        device_name.as_deref(),
                         self.socket.clone(),
                         room_service.local_camera_buffer_manager(),
                         buffer_source,
@@ -1434,7 +1463,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if let Some(cam) = &mut self.camera_window {
-                    cam.set_camera_active(true);
+                    cam.set_camera_active(true, device_name.clone());
                 }
                 room_service.send_participants_snapshot();
             }
@@ -1442,7 +1471,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
                 if let Some(cam) = &mut self.camera_window {
-                    cam.set_camera_active(false);
+                    cam.set_camera_active(false, None);
                 }
                 if let Some(room_service) = self.room_service.as_ref() {
                     room_service.send_participants_snapshot();
@@ -2195,10 +2224,11 @@ impl RenderEventLoop {
         log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
-        let (sender, event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
+        let (sender, mut event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
             log::error!("Error creating socket: {e:?}");
             RenderLoopError::SocketError(e)
         })?;
+        let socket_responses = event_socket.take_responses();
 
         let event_loop_proxy = self.event_loop.create_proxy();
         /*
@@ -2303,7 +2333,7 @@ impl RenderEventLoop {
         });
 
         let proxy = self.event_loop.create_proxy();
-        let mut application = Application::new(input, sender, proxy)?;
+        let mut application = Application::new(input, sender, socket_responses, proxy)?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

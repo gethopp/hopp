@@ -219,6 +219,14 @@ const setLastUsedMic = async (micId: string) => {
   return await invoke("set_last_used_mic", { mic: micId });
 };
 
+const getLastUsedCamera = async () => {
+  return await invoke<string | null>("get_last_used_camera");
+};
+
+const setLastUsedCamera = async (camera: string) => {
+  return await invoke("set_last_used_camera", { camera });
+};
+
 const getSharerDrawPersist = async (): Promise<boolean> => {
   return await invoke<boolean>("get_sharer_draw_persist");
 };
@@ -344,6 +352,8 @@ export const tauriUtils = {
   getCameraPermission,
   getLastUsedMic,
   setLastUsedMic,
+  getLastUsedCamera,
+  setLastUsedCamera,
   getSharerDrawPersist,
   setSharerDrawPersist,
   enableDrawing,

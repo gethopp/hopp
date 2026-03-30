@@ -1,6 +1,6 @@
 @font-face {
   font-family: "icons";
-  src: url("./icons.ttf?0671a1f7b169b2a3d69755f3027e6319") format("truetype");
+  src: url("./icons.ttf?d4cd89bd48bfcebbab353378d461832a") format("truetype");
 }
 
 i[class^="icon-"]:before,
@@ -38,4 +38,7 @@ i[class*=" icon-"]:before {
 }
 .icon-pen:before {
   content: "\f109";
+}
+.icon-chevron-down:before {
+  content: "\f10a";
 }

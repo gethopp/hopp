@@ -13,6 +13,7 @@ module.exports = {
     "remote-control": 0xf107,
     "click-pointer": 0xf108,
     pen: 0xf109,
+    "chevron-down": 0xf10a,
   },
   formatOptions: {
     json: {

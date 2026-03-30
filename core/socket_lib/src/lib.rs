@@ -223,6 +223,9 @@ pub enum Message {
     OpenStatsWindow,
     BringWindowsToFront,
     BringWindowsToFrontResult(bool),
+    // Core → Tauri query, Tauri → Core response
+    QueryPreferredCamera,
+    PreferredCamera(Option<String>),
     // Core → Tauri event forwarding
     ParticipantsSnapshot(Vec<CoreParticipantState>),
     RoleChange(CoreRoleEvent),
@@ -245,6 +248,7 @@ impl Message {
                 | Message::CameraList(_)
                 | Message::StartCameraResult(_)
                 | Message::BringWindowsToFrontResult(_)
+                | Message::PreferredCamera(_)
         )
     }
 }
@@ -345,6 +349,11 @@ impl EventSocket {
     pub fn take_events(&mut self) -> mpsc::Receiver<Message> {
         let (_tx, dummy_rx) = mpsc::channel();
         std::mem::replace(&mut self.events, dummy_rx)
+    }
+
+    pub fn take_responses(&mut self) -> mpsc::Receiver<Message> {
+        let (_tx, dummy_rx) = mpsc::channel();
+        std::mem::replace(&mut self.responses, dummy_rx)
     }
 }
 
