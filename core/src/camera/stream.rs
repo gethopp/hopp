@@ -33,8 +33,6 @@ pub struct CameraStream {
     video_buffer_manager: Arc<VideoBufferManager>,
     width: u32,
     height: u32,
-    stream_width: u32,
-    stream_height: u32,
     device_name: String,
     failures_count: Arc<Mutex<u32>>,
 }
@@ -78,7 +76,6 @@ impl CameraStream {
         let resolution = camera.resolution();
         let width = resolution.width_x;
         let height = resolution.height_y;
-        let (stream_width, stream_height) = aspect_fit(width, height, CAMERA_WIDTH, CAMERA_HEIGHT);
         log::info!(
             "CameraStream::new: opened camera '{}' at {}x{}",
             device_name,
@@ -94,8 +91,6 @@ impl CameraStream {
             video_buffer_manager,
             width,
             height,
-            stream_width,
-            stream_height,
             device_name: device_name.to_string(),
             failures_count: Arc::new(Mutex::new(0)),
         };
@@ -153,6 +148,11 @@ impl CameraStream {
                 };
             log::info!("CameraStream: allocating I420 buffer at {width}x{height}");
             let mut i420 = I420Buffer::new(width, height);
+            let mut stream_frame = VideoFrame {
+                rotation: VideoRotation::VideoRotation0,
+                buffer: I420Buffer::new(stream_width, stream_height),
+                timestamp_us: 0,
+            };
 
             let capture_start = Instant::now();
 
@@ -195,24 +195,26 @@ impl CameraStream {
                             };
 
                             if converted {
-                                let write_frame = |buffer: &I420Buffer, fw: u32, fh: u32| {
+                                let write_frame = |buffer: &I420Buffer| {
                                     let mut write_buf =
                                         video_buffer_manager.write_buffer().lock().unwrap();
-                                    write_buf.copy_from_i420(buffer, fw, fh);
+                                    write_buf.copy_from_i420(buffer, stream_width, stream_height);
                                     drop(write_buf);
                                     video_buffer_manager.advance_write();
                                 };
-
                                 if needs_scaling {
-                                    let scaled =
+                                    let mut scaled =
                                         i420.scale(stream_width as i32, stream_height as i32);
-                                    let frame = VideoFrame {
-                                        rotation: VideoRotation::VideoRotation0,
-                                        buffer: scaled,
-                                        timestamp_us: capture_start.elapsed().as_micros() as i64,
-                                    };
-                                    buffer_source.capture_frame(&frame);
-                                    write_frame(&frame.buffer, stream_width, stream_height);
+                                    let (source_y, source_u, source_v) = scaled.data_mut();
+                                    // TODO: check if this copy is needed
+                                    let (data_y, data_u, data_v) = stream_frame.buffer.data_mut();
+                                    data_y.copy_from_slice(source_y);
+                                    data_u.copy_from_slice(source_u);
+                                    data_v.copy_from_slice(source_v);
+                                    stream_frame.timestamp_us =
+                                        capture_start.elapsed().as_micros() as i64;
+                                    write_frame(&stream_frame.buffer);
+                                    buffer_source.capture_frame(&stream_frame);
                                 } else {
                                     let frame = VideoFrame {
                                         rotation: VideoRotation::VideoRotation0,
@@ -220,7 +222,7 @@ impl CameraStream {
                                         timestamp_us: capture_start.elapsed().as_micros() as i64,
                                     };
                                     buffer_source.capture_frame(&frame);
-                                    write_frame(&frame.buffer, width, height);
+                                    write_frame(&frame.buffer);
                                     i420 = frame.buffer; // recover for reuse
                                 }
                             }
@@ -258,10 +260,6 @@ impl CameraStream {
         }
     }
 
-    pub fn extent(&self) -> (u32, u32) {
-        (self.stream_width, self.stream_height)
-    }
-
     pub fn get_failures_count(&self) -> u32 {
         *self.failures_count.lock().unwrap()
     }
@@ -289,8 +287,6 @@ impl CameraStream {
                     .map_err(|e| format!("Failed to open camera with any format: {e}"))
             })?;
 
-        let (stream_width, stream_height) =
-            aspect_fit(self.width, self.height, CAMERA_WIDTH, CAMERA_HEIGHT);
         let mut new_stream = Self {
             capture_thread: None,
             tx: None,
@@ -299,8 +295,6 @@ impl CameraStream {
             video_buffer_manager: self.video_buffer_manager.clone(),
             width: self.width,
             height: self.height,
-            stream_width,
-            stream_height,
             device_name: self.device_name.clone(),
             failures_count: self.failures_count.clone(),
         };
