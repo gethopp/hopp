@@ -577,6 +577,7 @@ const SelectedRoom = ({ room }: { room: Room }) => {
     const remoteEntries = coreParticipants
       .filter((p) => p.connected)
       .filter((p) => {
+        if (p.identity === "local") return false;
         const pid = extractUserId(p.identity);
         return pid !== user?.id;
       })
