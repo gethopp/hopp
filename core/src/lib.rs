@@ -1559,6 +1559,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         log::warn!("user_event: Room service not available");
                     }
                 }
+                if let Some(screensharing_window) = &self.screensharing_window {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.publish_drawing_mode(screensharing_window.drawing_mode());
+                    }
+                }
             }
             UserEvent::CloseScreenShareWindow => {
                 log::info!("user_event: CloseScreenShareWindow");
@@ -1765,7 +1770,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         if let Some(screen_sharing_window) = &mut self.screensharing_window {
             if screen_sharing_window.window_id() == window_id {
                 let input_event = screen_sharing_window.handle_window_event(event);
-                // Mutable borrow on screen_sharing_window is dropped here
                 if let Some(event) = input_event {
                     if let Some(rs) = &self.room_service {
                         match event {

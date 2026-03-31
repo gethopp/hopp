@@ -1009,6 +1009,16 @@ impl ScreensharingWindow {
         self.participants_manager.set_drawing_mode(identity, mode);
     }
 
+    pub fn drawing_mode(&self) -> crate::room_service::DrawingMode {
+        match self.state.active_tab {
+            "draw" => crate::room_service::DrawingMode::Draw(crate::room_service::DrawSettings {
+                permanent: self.state.draw_persist,
+            }),
+            "point" => crate::room_service::DrawingMode::ClickAnimation,
+            _ => crate::room_service::DrawingMode::Disabled,
+        }
+    }
+
     pub fn update_auto_clear(&mut self) -> Vec<u64> {
         self.participants_manager.update_auto_clear()
     }
