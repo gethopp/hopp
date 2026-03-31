@@ -481,8 +481,9 @@ pub fn listen(socket_path: &str) -> Result<(SocketSender, EventSocket), std::io:
         log::info!("Listening on port {port}, waiting for client");
         listener.set_nonblocking(true)?;
         let mut stream = None;
-        for i in 0..10 {
-            log::info!("Waiting for client {i}/10");
+        let times = if cfg!(debug_assertions) { 100 } else { 50 };
+        for i in 0..times {
+            log::info!("Waiting for client {i}/{times}");
             match listener.accept() {
                 Ok((s, _)) => {
                     stream = Some(s);
