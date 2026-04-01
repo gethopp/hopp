@@ -9,12 +9,7 @@ use std::ptr::NonNull;
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
-
-#[derive(Clone, Copy)]
-pub enum DeviceKind {
-    Input,
-    Output,
-}
+use super::DeviceKind;
 
 type ListenerFn =
     unsafe extern "C-unwind" fn(u32, u32, NonNull<AudioObjectPropertyAddress>, *mut c_void) -> i32;

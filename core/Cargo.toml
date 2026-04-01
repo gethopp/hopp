@@ -22,7 +22,9 @@ exclude = [ "tests", "dev" ]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-msmf"] }
+windows-core = "0.58.0"
 windows = { version = "0.58.0", features = [
+    "implement",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_Direct3D",
@@ -31,7 +33,10 @@ windows = { version = "0.58.0", features = [
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     ]}
 

@@ -62,7 +62,6 @@ pub struct Capturer {
     /// We try-join them on each `stop_thread` call; they'll eventually exit when
     /// the device errors out or the process ends.
     orphaned_threads: Vec<JoinHandle<()>>,
-    #[cfg(target_os = "macos")]
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
@@ -76,7 +75,6 @@ impl Capturer {
             sample_tx: None,
             active_device_name: None,
             orphaned_threads: Vec::new(),
-            #[cfg(target_os = "macos")]
             _device_monitor: super::device_monitor::DeviceMonitor::new(
                 super::device_monitor::DeviceKind::Input,
                 proxy,

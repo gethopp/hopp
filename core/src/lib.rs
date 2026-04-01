@@ -1,6 +1,5 @@
 pub mod audio {
     pub mod capturer;
-    #[cfg(target_os = "macos")]
     pub mod device_monitor;
     pub mod mixer;
     pub mod player;

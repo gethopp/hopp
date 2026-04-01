@@ -15,7 +15,6 @@ pub enum PlayerError {
 struct PlayerInner {
     mixer: MixerHandle,
     processor: SharedProcessor,
-    #[cfg(target_os = "macos")]
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
@@ -37,7 +36,6 @@ impl Player {
         log::info!("Player::start");
         let (mixer, processor) = MixerHandle::new().map_err(PlayerError::Mixer)?;
 
-        #[cfg(target_os = "macos")]
         let device_monitor = super::device_monitor::DeviceMonitor::new(
             super::device_monitor::DeviceKind::Output,
             self.event_loop_proxy.clone(),
@@ -47,7 +45,6 @@ impl Player {
         self.inner = Some(PlayerInner {
             mixer,
             processor,
-            #[cfg(target_os = "macos")]
             _device_monitor: device_monitor,
         });
         Ok(())
