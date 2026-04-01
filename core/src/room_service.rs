@@ -2493,10 +2493,86 @@ async fn handle_room_events(
 
                 match track {
                     livekit::track::RemoteTrack::Video(_) => {
-                        log::info!(
-                            "handle_room_events: Video track unsubscribed from {}",
-                            participant_identity
-                        );
+                        match publication.source() {
+                            TrackSource::Camera => {
+                                log::info!(
+                                    "handle_room_events: Camera track unsubscribed from {}",
+                                    participant_identity
+                                );
+                                let any_camera_active = {
+                                    let mut guard = participants.write().unwrap();
+                                    if let Some(info) = guard.get_mut(&participant_identity) {
+                                        info.stop_camera_stream();
+                                    }
+                                    guard.values().any(|info| info.camera_active())
+                                };
+                                if !any_camera_active {
+                                    if let Err(e) =
+                                        event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
+                                    {
+                                        log::error!(
+                                            "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                                        );
+                                    }
+                                }
+                            }
+                            TrackSource::Screenshare => {
+                                log::info!(
+                                    "handle_room_events: Screen share track unsubscribed from {}",
+                                    participant_identity
+                                );
+
+                                let is_current = {
+                                    let publisher_guard =
+                                        remote_screen_share.publisher_identity.lock().unwrap();
+                                    publisher_guard.as_deref()
+                                        == Some(participant_identity.as_str())
+                                };
+
+                                if is_current {
+                                    {
+                                        let mut stop_tx_guard =
+                                            remote_screen_share.stop_tx.lock().unwrap();
+                                        if let Some(tx) = stop_tx_guard.take() {
+                                            let _ = tx.send(());
+                                        }
+                                    }
+                                    remote_screen_share
+                                        .publisher_identity
+                                        .lock()
+                                        .unwrap()
+                                        .take();
+
+                                    // Derive audio identity to clear is_screensharing
+                                    let audio_identity = participant_identity
+                                        .strip_suffix(":video")
+                                        .map(|prefix| format!("{prefix}:audio"));
+                                    if let Some(audio_id) = audio_identity {
+                                        let mut participants_guard = participants.write().unwrap();
+                                        if let Some(info) = participants_guard.get_mut(&audio_id) {
+                                            info.set_is_screensharing(false);
+                                        }
+                                    }
+
+                                    snapshot_sender.send_participants_snapshot();
+
+                                    if let Err(e) = event_loop_proxy
+                                        .send_event(UserEvent::CloseScreenShareWindow)
+                                    {
+                                        log::error!(
+                                            "handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}"
+                                        );
+                                    }
+                                }
+                            }
+                            source => {
+                                log::info!(
+                                    "handle_room_events: Video track unsubscribed from {} ({:?})",
+                                    participant_identity,
+                                    source,
+                                );
+                            }
+                        }
                     }
                     livekit::track::RemoteTrack::Audio(_) => {
                         log::info!(
