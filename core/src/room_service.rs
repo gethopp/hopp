@@ -923,7 +923,10 @@ async fn room_service_commands(
                         RtcVideoSource::Native(screen_source.clone()),
                     );
                     screen_track.mute();
+                    #[cfg(target_os = "macos")]
                     let use_av1 = false;
+                    #[cfg(target_os = "windows")]
+                    let use_av1 = true;
                     let max_bitrate = if use_av1 {
                         AV1_BITRATE_DEFAULT
                     } else {

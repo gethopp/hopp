@@ -816,6 +816,7 @@ impl ScreensharingWindow {
             (pointer, pencil, point)
         };
 
+        let point_cursor_hotspot = (15.0, 20.0);
         // On non-macOS platforms, fall back to winit CustomCursor at 30px.
         #[cfg(not(target_os = "macos"))]
         let (custom_cursor_pointer, custom_cursor_pencil, custom_cursor_point) = {
@@ -836,8 +837,8 @@ impl ScreensharingWindow {
                     point_rgba,
                     pt_w as u16,
                     pt_h as u16,
-                    POINT_CURSOR_HOTSPOT.0 as u16,
-                    POINT_CURSOR_HOTSPOT.1 as u16,
+                    point_cursor_hotspot.0 as u16,
+                    point_cursor_hotspot.1 as u16,
                 )
                 .expect("create point-mode cursor"),
             );
