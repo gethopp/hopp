@@ -216,6 +216,10 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
         .with_transparent(true)
         .with_visible(false);
 
+    // On windows set the decorations in order to align the bottom of the window with the taskbar
+    #[cfg(target_os = "windows")]
+    let attrs = attrs.with_decorations(true);
+
     let Some(window) = event_loop.create_window(attrs).ok() else {
         log::warn!("probe_available_screen_area: failed to create probe window, using defaults");
         return default_screen_area_from_hardcoded();
@@ -257,13 +261,26 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
             let settled = true;
 
             if settled {
+                // On windows the probing window returns wrong origin, by
+                // locking it to the monitor's origin we ensure that we get the
+                // proper dims.
+                if let Some(monitor) = window.current_monitor() {
+                    let mon_pos: winit::dpi::LogicalPosition<f64> =
+                        monitor.position().to_logical(monitor.scale_factor());
+                    let dy = mon_pos.y - area.position.y;
+                    if dy > 0.0 {
+                        area.position.y = mon_pos.y;
+                        area.extent.height -= dy;
+                    }
+                }
+
                 let elapsed = start.elapsed();
                 log::info!(
                     "probe_available_screen_area: position=({:.1}, {:.1}), size={:.1}x{:.1} (took {:.1?})",
-                    pos.x,
-                    pos.y,
-                    inner.width,
-                    inner.height,
+                    area.position.x,
+                    area.position.y,
+                    area.extent.width,
+                    area.extent.height,
                     elapsed
                 );
                 break;
