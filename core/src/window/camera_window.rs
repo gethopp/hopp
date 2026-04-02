@@ -717,7 +717,10 @@ impl CameraWindow {
                 let event = if self.state.camera_active {
                     UserEvent::StopCamera
                 } else {
-                    UserEvent::StartCamera(CameraStartMessage { device_name: None })
+                    UserEvent::StartCamera {
+                        msg: CameraStartMessage { device_name: None },
+                        from_socket: false,
+                    }
                 };
                 log::info!("CameraWindow: video toggle -> {:?}", event);
                 if let Err(e) = self.event_loop_proxy.send_event(event) {
@@ -755,10 +758,10 @@ impl CameraWindow {
                 let msg = CameraStartMessage {
                     device_name: Some(name),
                 };
-                if let Err(e) = self
-                    .event_loop_proxy
-                    .send_event(UserEvent::StartCamera(msg))
-                {
+                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::StartCamera {
+                    msg,
+                    from_socket: false,
+                }) {
                     log::error!("Failed to send StartCamera: {e:?}");
                 }
             }
@@ -778,7 +781,10 @@ impl CameraWindow {
                 let msg = socket_lib::AudioCaptureMessage { device_name: name };
                 if let Err(e) = self
                     .event_loop_proxy
-                    .send_event(UserEvent::StartAudioCapture(msg))
+                    .send_event(UserEvent::StartAudioCapture {
+                        msg,
+                        from_socket: false,
+                    })
                 {
                     log::error!("Failed to send StartAudioCapture: {e:?}");
                 }

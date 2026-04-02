@@ -1321,7 +1321,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             // TODO: rename this
-            UserEvent::StartAudioCapture(msg) => {
+            UserEvent::StartAudioCapture { msg, from_socket } => {
                 log::info!(
                     "user_event: StartAudioCapture device_name={}",
                     msg.device_name
@@ -1335,8 +1335,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: StartAudioCapture failed: {e}");
                 }
 
-                if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
-                    error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
+                if from_socket {
+                    if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
+                        error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
+                    }
                 }
             }
 
@@ -1374,7 +1376,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending camera list: {e:?}");
                 }
             }
-            UserEvent::StartCamera(msg) => {
+            UserEvent::StartCamera { msg, from_socket } => {
                 let device_name = if msg.device_name.is_some() {
                     msg.device_name
                 } else {
@@ -1406,9 +1408,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let room_service = match self.room_service.as_ref() {
                     Some(rs) => rs,
                     None => {
-                        let _ = self.socket.send(Message::StartCameraResult(Err(
-                            "Room service not found".to_string(),
-                        )));
+                        if from_socket {
+                            let _ = self.socket.send(Message::StartCameraResult(Err(
+                                "Room service not found".to_string(),
+                            )));
+                        }
                         return;
                     }
                 };
@@ -1417,9 +1421,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     Some(s) => s,
                     None => {
                         log::error!("user_event: StartCamera: no camera buffer source available");
-                        let _ = self.socket.send(Message::StartCameraResult(Err(
-                            "Camera not ready".to_string(),
-                        )));
+                        if from_socket {
+                            let _ = self.socket.send(Message::StartCameraResult(Err(
+                                "Camera not ready".to_string(),
+                            )));
+                        }
                         return;
                     }
                 };
@@ -1439,15 +1445,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(cam) = &mut self.camera_window {
                         cam.show_error_toast("Failed to start camera");
                     }
-                    if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone()))) {
-                        error!("user_event: Error sending StartCameraResult: {e:?}");
+                    if from_socket {
+                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
+                        {
+                            error!("user_event: Error sending StartCameraResult: {e:?}");
+                        }
                     }
                     return;
                 }
 
                 // Send success result via socket
-                if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
-                    error!("user_event: Error sending StartCameraResult: {e:?}");
+                if from_socket {
+                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
+                        error!("user_event: Error sending StartCameraResult: {e:?}");
+                    }
                 }
 
                 // Unmute camera track (fire-and-forget)
@@ -2165,13 +2176,19 @@ pub enum UserEvent {
     ControllerDrawPersistChanged(bool),
     LastModeChanged(socket_lib::StoredMode),
     ListAudioDevices,
-    StartAudioCapture(socket_lib::AudioCaptureMessage),
+    StartAudioCapture {
+        msg: socket_lib::AudioCaptureMessage,
+        from_socket: bool,
+    },
     StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ToggleMic,
     ListCameras,
-    StartCamera(CameraStartMessage),
+    StartCamera {
+        msg: CameraStartMessage,
+        from_socket: bool,
+    },
     StopCamera,
     OpenCamera,
     OpenScreensharing,
@@ -2313,13 +2330,19 @@ impl RenderEventLoop {
                     }
                     Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
                     Message::ListAudioDevices => UserEvent::ListAudioDevices,
-                    Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture(msg),
+                    Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
+                        msg,
+                        from_socket: true,
+                    },
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     Message::ToggleMic => UserEvent::ToggleMic,
                     Message::ListCameras => UserEvent::ListCameras,
-                    Message::StartCamera(msg) => UserEvent::StartCamera(msg),
+                    Message::StartCamera(msg) => UserEvent::StartCamera {
+                        msg,
+                        from_socket: true,
+                    },
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,

@@ -5,11 +5,13 @@ use windows::Win32::Media::Audio::{
     eCapture, eRender, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
     IMMNotificationClient_Impl, MMDeviceEnumerator, DEVICE_STATE,
 };
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+};
 use winit::event_loop::EventLoopProxy;
 
-use crate::UserEvent;
 use super::DeviceKind;
+use crate::UserEvent;
 
 // TODO: revisit this. AI made it.
 struct CallbackState {
@@ -43,17 +45,11 @@ impl IMMNotificationClient_Impl for DeviceChangeCallback_Impl {
         Ok(())
     }
 
-    fn OnDeviceAdded(
-        &self,
-        _device_id: &windows::core::PCWSTR,
-    ) -> windows::core::Result<()> {
+    fn OnDeviceAdded(&self, _device_id: &windows::core::PCWSTR) -> windows::core::Result<()> {
         Ok(())
     }
 
-    fn OnDeviceRemoved(
-        &self,
-        _device_id: &windows::core::PCWSTR,
-    ) -> windows::core::Result<()> {
+    fn OnDeviceRemoved(&self, _device_id: &windows::core::PCWSTR) -> windows::core::Result<()> {
         Ok(())
     }
 
@@ -91,8 +87,7 @@ impl DeviceMonitor {
                     .map_err(|e| format!("CoCreateInstance(MMDeviceEnumerator) failed: {e}"))?;
 
             let state = Arc::new(CallbackState { kind, proxy });
-            let callback_obj: IMMNotificationClient =
-                DeviceChangeCallback { state }.into();
+            let callback_obj: IMMNotificationClient = DeviceChangeCallback { state }.into();
 
             enumerator
                 .RegisterEndpointNotificationCallback(&callback_obj)
