@@ -17,9 +17,6 @@ use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
 
-#[cfg(target_os = "windows")]
-use super::direct_composition::DirectComposition;
-
 #[path = "click_animation.rs"]
 pub mod click_animation;
 use click_animation::ClickAnimationRenderer;
@@ -146,10 +143,6 @@ pub struct GraphicsContext<'a> {
     /// Reference to the overlay window
     window: Arc<Window>,
 
-    /// Windows-specific DirectComposition integration for transparent overlays
-    #[cfg(target_os = "windows")]
-    _direct_composition: DirectComposition,
-
     /// Renderer for click animations
     click_animation_renderer: ClickAnimationRenderer,
 
@@ -227,33 +220,10 @@ impl<'a> GraphicsContext<'a> {
             ..Default::default()
         });
 
-        #[cfg(target_os = "windows")]
-        let direct_composition =
-            DirectComposition::new(window_arc.clone()).ok_or(OverlayError::SurfaceCreationError)?;
-
-        let surface = {
-            #[cfg(target_os = "windows")]
-            {
-                direct_composition.create_surface(&instance)?
-            }
-            #[cfg(target_os = "macos")]
-            {
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {e:?}");
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-            // Add other OS targets here if needed
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
-                // Default or error for unsupported OS
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {:?}", e);
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-        };
-
+        let surface = instance.create_surface(window_arc.clone()).map_err(|e| {
+            log::error!("GraphicsContext::new: {e:?}");
+            OverlayError::SurfaceCreationError
+        })?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
@@ -307,20 +277,6 @@ impl<'a> GraphicsContext<'a> {
         };
         surface.configure(&device, &surface_config);
 
-        #[cfg(target_os = "windows")]
-        direct_composition.commit()?;
-
-        /*
-         * Workaround for resetting the default white background
-         * on transparent windows on windows.
-         */
-        #[cfg(target_os = "windows")]
-        {
-            window_arc.set_minimized(true);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            window_arc.set_minimized(false);
-        }
-
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
         let iced_renderer = IcedRenderer::new(
@@ -342,8 +298,6 @@ impl<'a> GraphicsContext<'a> {
             device,
             queue,
             window: window_arc,
-            #[cfg(target_os = "windows")]
-            _direct_composition: direct_composition,
             click_animation_renderer,
             iced_renderer,
             participants_manager: ParticipantsManager::default(),

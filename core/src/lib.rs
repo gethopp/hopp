@@ -35,9 +35,6 @@ pub mod graphics {
     pub mod graphics_window_context;
     pub mod yuv_buffer;
     pub mod yuv_renderer;
-
-    #[cfg(target_os = "windows")]
-    pub mod direct_composition;
 }
 
 pub mod utils {
