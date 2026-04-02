@@ -472,7 +472,10 @@ fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
 
     // Hide main window
     if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "macos")]
         let _ = window.hide();
+        #[cfg(target_os = "windows")]
+        let _ = window.minimize();
     }
 }
 
