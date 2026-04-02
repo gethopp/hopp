@@ -666,10 +666,8 @@ pub struct ScreensharingWindow {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
-    _queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     alpha_mode: wgpu::CompositeAlphaMode,
-    _engine: Engine,
     renderer: iced::Renderer,
     viewport: Viewport,
     cache: Option<Cache>,
@@ -748,7 +746,6 @@ impl ScreensharingWindow {
                 }
             })?;
         let device = context_manager.screensharing_context.device.clone();
-        let queue = context_manager.screensharing_context.queue.clone();
         let format = surface_info.format;
         let alpha_mode = surface_info.alpha_mode;
         log::info!("ScreensharingWindow: selected alpha_mode: {:?}", alpha_mode);
@@ -756,16 +753,11 @@ impl ScreensharingWindow {
         let physical_size = window.inner_size();
 
         // ── Iced renderer with Geist fonts ───────────────────────────────
-        let engine = Engine::new(
-            &context_manager.screensharing_context.adapter,
-            device.clone(),
-            queue.clone(),
-            format,
-            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
-            Shell::headless(),
+        let wgpu_renderer = iced_wgpu::Renderer::new(
+            context_manager.screensharing_context.engine.clone(),
+            GEIST_REGULAR,
+            Pixels::from(16),
         );
-        let wgpu_renderer =
-            iced_wgpu::Renderer::new(engine.clone(), GEIST_REGULAR, Pixels::from(16));
 
         // Load Geist font data into the global iced font system
         fonts_mod::load_fonts();
@@ -899,10 +891,8 @@ impl ScreensharingWindow {
             window,
             surface,
             device,
-            _queue: queue,
             format,
             alpha_mode,
-            _engine: engine,
             renderer,
             viewport,
             cache: Some(Cache::default()),

@@ -1,3 +1,5 @@
+use iced_wgpu::graphics::Shell;
+use iced_wgpu::Engine;
 use std::sync::Arc;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
@@ -24,6 +26,7 @@ pub struct GraphicsWindowContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub present_mode: wgpu::PresentMode,
+    pub engine: Engine,
 }
 
 impl GraphicsWindowContext {
@@ -69,12 +72,22 @@ impl GraphicsWindowContext {
         let surface_info =
             Self::configure_surface(surface, &adapter, &device, present_mode, window);
 
+        let engine = Engine::new(
+            &adapter,
+            device.clone(),
+            queue.clone(),
+            surface_info.format,
+            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
+            Shell::headless(),
+        );
+
         let ctx = Self {
             instance,
             adapter,
             device,
             queue,
             present_mode,
+            engine,
         };
         Ok((ctx, surface_info))
     }

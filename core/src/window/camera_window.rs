@@ -169,10 +169,8 @@ pub struct CameraWindow {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
-    _queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     alpha_mode: wgpu::CompositeAlphaMode,
-    _engine: Engine,
     renderer: iced::Renderer,
     viewport: Viewport,
     cache: Option<Cache>,
@@ -245,23 +243,16 @@ impl CameraWindow {
                 GraphicsWindowContextError::DeviceRequest => CameraWindowError::DeviceRequest,
             })?;
         let device = context_manager.camera_context.device.clone();
-        let queue = context_manager.camera_context.queue.clone();
         let format = surface_info.format;
         let alpha_mode = surface_info.alpha_mode;
         let surface = surface_info.surface;
         let physical_size = window.inner_size();
 
-        // ── Iced renderer with Geist fonts ───────────────────────────────
-        let engine = Engine::new(
-            &context_manager.camera_context.adapter,
-            device.clone(),
-            queue.clone(),
-            format,
-            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
-            Shell::headless(),
+        let wgpu_renderer = iced_wgpu::Renderer::new(
+            context_manager.camera_context.engine.clone(),
+            GEIST_REGULAR,
+            Pixels::from(16),
         );
-        let wgpu_renderer =
-            iced_wgpu::Renderer::new(engine.clone(), GEIST_REGULAR, Pixels::from(16));
 
         // Load Geist font data into the global iced font system
         fonts_mod::load_fonts();
@@ -293,10 +284,8 @@ impl CameraWindow {
             window,
             surface,
             device,
-            _queue: queue,
             format,
             alpha_mode,
-            _engine: engine,
             renderer,
             viewport,
             cache: Some(Cache::default()),
