@@ -95,7 +95,7 @@ impl CameraStream {
             failures_count: Arc::new(Mutex::new(0)),
         };
 
-        stream.start_capture_with_camera(camera, buffer_source)?;
+        stream.start_capture_with_camera(camera)?;
         Ok(stream)
     }
 
@@ -110,11 +110,7 @@ impl CameraStream {
             .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
     }
 
-    fn start_capture_with_camera(
-        &mut self,
-        mut camera: Camera,
-        buffer_source: NativeVideoSource,
-    ) -> Result<(), String> {
+    fn start_capture_with_camera(&mut self, mut camera: Camera) -> Result<(), String> {
         camera
             .open_stream()
             .map_err(|e| format!("Failed to open camera stream: {e}"))?;
@@ -256,7 +252,17 @@ impl CameraStream {
             let _ = tx.send(CameraStreamMessage::StopCapture);
         }
         if let Some(handle) = self.capture_thread.take() {
-            let _ = handle.join();
+            // Work around to camera.frame() blocking indefinitely.
+            // we should fix it in nokhwa instead.
+            for _ in 0..20 {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                    log::info!("CameraStream::stop_capture: thread joined");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            log::warn!("CameraStream::stop_capture: thread did not finish in 200ms, orphaning it");
         }
     }
 
@@ -299,7 +305,7 @@ impl CameraStream {
             failures_count: self.failures_count.clone(),
         };
 
-        new_stream.start_capture_with_camera(camera, self.buffer_source.clone())?;
+        new_stream.start_capture_with_camera(camera)?;
         Ok(new_stream)
     }
 }
