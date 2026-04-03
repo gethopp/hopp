@@ -41,13 +41,6 @@ use thiserror::Error;
 use fontdb::Database;
 use resvg::{tiny_skia, usvg};
 
-#[cfg(target_os = "macos")]
-use objc2::MainThreadOnly;
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{NSWindow, NSWindowDelegate};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{NSObject, NSObjectProtocol};
-
 use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
@@ -62,47 +55,10 @@ use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
-struct WindowConstant;
-
-impl WindowConstant {
-    /// Default window width in logical pixels.
-    const DEFAULT_WIDTH: f64 = 600.0;
-    /// Minimum window width in logical pixels.
-    const MIN_WIDTH: f64 = 500.0;
-    /// Content padding on all sides (left, right, bottom) — f32 for iced layout.
-    const PADDING: f32 = 12.0;
-    /// Header height: 4px top pad + ~26px segmented control + 12px bottom pad.
-    const HEADER_HEIGHT: f32 = 42.0;
-    /// Header right padding (less than content so the cog sits closer to the edge).
-    const HEADER_RIGHT_PADDING: f32 = 4.0;
-    /// Vertical skeleton: header + bottom padding (f64 for window-sizing math).
-    const SKELETON_H: f64 = Self::HEADER_HEIGHT as f64 + Self::PADDING as f64;
-    /// Horizontal skeleton: left + right padding (f64 for window-sizing math).
-    const SKELETON_W: f64 = 2.0 * Self::PADDING as f64;
-}
-
-const fn default_window_size() -> (f64, f64) {
-    let content_w = WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
-    let content_h = content_w / (16.0 / 9.0);
-    let h = content_h + WindowConstant::SKELETON_H;
-    (WindowConstant::DEFAULT_WIDTH, h)
-}
-
-/// Returns the minimum logical (width, height) for a given stream aspect ratio.
-fn min_window_size_for_aspect(aspect: f64) -> (f64, f64) {
-    let min_content_w = WindowConstant::MIN_WIDTH - WindowConstant::SKELETON_W;
-    let min_content_h = min_content_w / aspect;
-    let min_h = min_content_h + WindowConstant::SKELETON_H;
-    (WindowConstant::MIN_WIDTH, min_h)
-}
-
-/// Minimum logical (width, height) for the default 16:9 aspect ratio.
-const fn min_window_size() -> (f64, f64) {
-    let min_content_w = WindowConstant::MIN_WIDTH - WindowConstant::SKELETON_W;
-    let min_content_h = min_content_w / (16.0 / 9.0);
-    let min_h = min_content_h + WindowConstant::SKELETON_H;
-    (WindowConstant::MIN_WIDTH, min_h)
-}
+use super::aspect_ratio::{
+    calculate_max_window_size, default_window_size, min_window_size, AspectRatioEnforcer,
+    WindowConstant,
+};
 
 pub fn screensharing_window_attributes() -> WindowAttributes {
     let (init_w, init_h) = default_window_size();
@@ -134,71 +90,6 @@ struct ScreenArea {
     position: Position,
     /// Available dimensions in logical pixels.
     extent: Extent,
-}
-
-// TODO(@konsalex): Extract to MacOS specific module for screenshare to avoid
-// so much MacOS specific code in this file.
-#[cfg(target_os = "macos")]
-objc2::define_class!(
-    #[unsafe(super = NSObject)]
-    #[thread_kind = objc2::MainThreadOnly]
-    struct MacosZoomDelegate;
-
-    unsafe impl NSObjectProtocol for MacosZoomDelegate {}
-
-    unsafe impl NSWindowDelegate for MacosZoomDelegate {
-        // Callback for:
-        // https://developer.apple.com/documentation/appkit/nswindowdelegate/windowwillusestandardframe(_:defaultframe:)
-        #[unsafe(method(windowWillUseStandardFrame:defaultFrame:))]
-        fn window_will_use_standard_frame_default_frame(
-            &self,
-            window: &NSWindow,
-            default_frame: objc2_foundation::NSRect,
-        ) -> objc2_foundation::NSRect {
-            use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-            let frame = window.frame();
-            let content_w = (frame.size.width - WindowConstant::SKELETON_W).max(1.0);
-            let content_h = (frame.size.height - WindowConstant::SKELETON_H).max(1.0);
-            let aspect = content_w / content_h;
-
-            let visible_frame = if let Some(screen) = window.screen() {
-                unsafe { objc2::msg_send![&*screen, visibleFrame] }
-            } else {
-                default_frame
-            };
-
-            let available = Extent {
-                width: visible_frame.size.width,
-                height: visible_frame.size.height,
-            };
-
-            let (width, height) =
-                calculate_max_window_size(available, aspect).unwrap_or_else(|| {
-                    let content_w = WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
-                    let content_h = content_w / aspect;
-                    (
-                        WindowConstant::DEFAULT_WIDTH,
-                        content_h + WindowConstant::SKELETON_H,
-                    )
-                });
-
-            NSRect::new(
-                NSPoint::new(visible_frame.origin.x, visible_frame.origin.y),
-                NSSize::new(width, height),
-            )
-        }
-    }
-);
-
-#[cfg(target_os = "macos")]
-impl MacosZoomDelegate {
-    fn new() -> objc2::rc::Retained<Self> {
-        let mtm =
-            objc2::MainThreadMarker::new().expect("macOS zoom delegate must be on main thread");
-        let this = Self::alloc(mtm);
-        unsafe { objc2::msg_send![this, init] }
-    }
 }
 
 /// Probe the available screen area by creating a temporary borderless, maximized,
@@ -689,8 +580,7 @@ pub struct ScreensharingWindow {
     redraw_in_progress: Arc<AtomicBool>,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
-    #[cfg(target_os = "macos")]
-    _macos_zoom_delegate: objc2::rc::Retained<MacosZoomDelegate>,
+    aspect_ratio_enforcer: AspectRatioEnforcer,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(target_os = "macos")]
@@ -771,15 +661,9 @@ impl ScreensharingWindow {
         let clipboard = Clipboard::connect(window.clone());
 
         #[cfg(target_os = "macos")]
-        let macos_zoom_delegate = configure_macos_zoom_behavior(&window);
+        super::vibrancy::apply_macos_vibrancy(&window, 8.0);
 
-        #[cfg(target_os = "macos")]
-        {
-            super::vibrancy::apply_macos_vibrancy(&window, 8.0);
-            // Lock the window frame aspect ratio so macOS enforces it for ALL
-            // resize methods (drag, keyboard shortcuts, tiling, accessibility).
-            set_macos_window_aspect_ratio(&window, 16.0 / 9.0);
-        }
+        let aspect_ratio_enforcer = AspectRatioEnforcer::new(&window);
 
         // Create custom cursors for the participant area.
         // Logical size: 30×30 points (matching the SVG viewBox).
@@ -934,8 +818,7 @@ impl ScreensharingWindow {
             redraw_in_progress,
             redraw_tx,
             redraw_thread: Some(redraw_thread),
-            #[cfg(target_os = "macos")]
-            _macos_zoom_delegate: macos_zoom_delegate,
+            aspect_ratio_enforcer,
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
             #[cfg(target_os = "macos")]
@@ -1677,10 +1560,7 @@ impl ScreensharingWindow {
                             logical.height
                         );
                     } else {
-                        #[cfg(target_os = "macos")]
-                        let is_zoom = is_macos_window_zoomed(&self.window);
-                        #[cfg(not(target_os = "macos"))]
-                        let is_zoom = false;
+                        let is_zoom = self.aspect_ratio_enforcer.is_zoomed(&self.window);
 
                         if is_zoom {
                             log::info!(
@@ -1696,11 +1576,28 @@ impl ScreensharingWindow {
                                 logical.height
                             );
                         }
+
+                        if let Some((target_w, target_h)) =
+                            self.aspect_ratio_enforcer.correct_aspect_after_resize(
+                                &self.window,
+                                logical.width,
+                                logical.height,
+                                self.state.img_aspect,
+                                self.screen_area.extent,
+                                self.screen_area.position,
+                            )
+                        {
+                            self.programmatic_resize_target = Some((target_w, target_h));
+                            let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
+                                target_w, target_h,
+                            ));
+                            return None;
+                        }
                     }
 
                     // Always reconfigure surface + viewport.
-                    #[cfg(target_os = "macos")]
-                    set_macos_window_aspect_ratio(&self.window, self.state.img_aspect);
+                    self.aspect_ratio_enforcer
+                        .set_aspect_ratio(&self.window, self.state.img_aspect);
                     self.surface.configure(
                         &self.device,
                         &wgpu::SurfaceConfiguration {
@@ -2085,8 +1982,8 @@ impl ScreensharingWindow {
                     (current_size.width, content_h + WindowConstant::SKELETON_H)
                 };
 
-                #[cfg(target_os = "macos")]
-                set_macos_window_aspect_ratio(&self.window, aspect);
+                self.aspect_ratio_enforcer
+                    .set_aspect_ratio(&self.window, aspect);
 
                 let saved_pos = self.window.outer_position();
                 self.programmatic_resize_target = Some((width, height));
@@ -2225,146 +2122,6 @@ impl Drop for ScreensharingWindow {
             log::warn!("ScreensharingWindow::drop: redraw thread not taken, detaching");
             drop(self.redraw_thread.take());
         }
-    }
-}
-
-/// Configure the green traffic-light button to act as "zoom" (maximize in-place)
-/// instead of entering a new macOS fullscreen Space/desktop.
-#[cfg(target_os = "macos")]
-fn configure_macos_zoom_behavior(window: &Window) -> objc2::rc::Retained<MacosZoomDelegate> {
-    use objc2::rc::Retained;
-    use objc2::runtime::ProtocolObject;
-    use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let zoom_delegate = MacosZoomDelegate::new();
-
-    let Ok(raw_handle) = window.window_handle() else {
-        log::warn!("configure_macos_zoom_behavior: failed to get window handle");
-        return zoom_delegate;
-    };
-
-    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
-        log::warn!("configure_macos_zoom_behavior: not an AppKit handle");
-        return zoom_delegate;
-    };
-
-    unsafe {
-        let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
-        let Some(ns_view) = ns_view else {
-            return zoom_delegate;
-        };
-        let Some(ns_window) = ns_view.window() else {
-            return zoom_delegate;
-        };
-
-        ns_window.setDelegate(Some(ProtocolObject::from_ref(&*zoom_delegate)));
-        // Disabling Tiling as the "maximize" option of it does not preserve the aspect ratio.
-        ns_window.setCollectionBehavior(
-            NSWindowCollectionBehavior::FullScreenNone
-                | NSWindowCollectionBehavior::FullScreenDisallowsTiling,
-        );
-        log::info!("configure_macos_zoom_behavior: installed custom zoom delegate");
-    }
-
-    zoom_delegate
-}
-
-/// Returns `true` when the macOS window is in the "zoomed" (maximized) state.
-#[cfg(target_os = "macos")]
-fn is_macos_window_zoomed(window: &Window) -> bool {
-    use objc2::rc::Retained;
-    use objc2_app_kit::NSView;
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let Ok(raw_handle) = window.window_handle() else {
-        return false;
-    };
-    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
-        return false;
-    };
-
-    unsafe {
-        let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
-        let Some(ns_view) = ns_view else {
-            return false;
-        };
-        let Some(ns_window) = ns_view.window() else {
-            return false;
-        };
-        let zoomed: bool = objc2::msg_send![&*ns_window, isZoomed];
-        zoomed
-    }
-}
-
-/// Calculate the maximum logical window size that fits the given available
-/// screen extent while preserving the stream aspect ratio.
-fn calculate_max_window_size(available: Extent, stream_aspect: f64) -> Option<(f64, f64)> {
-    if available.width <= 0.0 || available.height <= 0.0 {
-        log::warn!("calculate_max_window_size: available space is zero or negative, falling back");
-        return None;
-    }
-
-    let max_content_h = available.height - WindowConstant::SKELETON_H;
-    let max_content_w = available.width - WindowConstant::SKELETON_W;
-
-    let (content_w, content_h) = if max_content_w / max_content_h > stream_aspect {
-        (max_content_h * stream_aspect, max_content_h)
-    } else {
-        (max_content_w, max_content_w / stream_aspect)
-    };
-
-    Some((
-        content_w + WindowConstant::SKELETON_W,
-        content_h + WindowConstant::SKELETON_H,
-    ))
-}
-
-/// Set the **frame-level** aspect ratio on the NSWindow so that the
-/// **content area** preserves the given stream aspect ratio.
-///
-/// Because the content area has fixed-height chrome that does not scale
-/// with the window, we read the current frame width and derive the frame
-/// height that produces the correct content aspect, then pass that to
-/// `NSWindow::setAspectRatio()`.  Re-applied on every `Resized` event.
-#[cfg(target_os = "macos")]
-fn set_macos_window_aspect_ratio(window: &Window, content_aspect: f64) {
-    use objc2::rc::Retained;
-    use objc2_app_kit::NSView;
-    use objc2_foundation::NSSize;
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let Ok(raw_handle) = window.window_handle() else {
-        log::warn!("set_macos_window_aspect_ratio: failed to get window handle");
-        return;
-    };
-
-    let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() else {
-        log::warn!("set_macos_window_aspect_ratio: not an AppKit handle");
-        return;
-    };
-
-    unsafe {
-        let ns_view: Option<Retained<NSView>> = Retained::retain(handle.ns_view.as_ptr().cast());
-        let Some(ns_view) = ns_view else {
-            log::warn!("set_macos_window_aspect_ratio: failed to retain NSView");
-            return;
-        };
-        let Some(ns_window) = ns_view.window() else {
-            log::warn!("set_macos_window_aspect_ratio: NSView has no window");
-            return;
-        };
-
-        let frame = ns_window.frame();
-        let frame_w = frame.size.width;
-        let content_w = frame_w - WindowConstant::SKELETON_W;
-        let content_h = content_w / content_aspect;
-        let frame_h = content_h + WindowConstant::SKELETON_H;
-
-        ns_window.setAspectRatio(NSSize::new(frame_w, frame_h));
-
-        let (min_w, min_h) = min_window_size_for_aspect(content_aspect);
-        ns_window.setMinSize(NSSize::new(min_w, min_h));
     }
 }
 

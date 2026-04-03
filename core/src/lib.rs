@@ -44,6 +44,7 @@ pub mod utils {
 }
 
 pub(crate) mod window {
+    pub(crate) mod aspect_ratio;
     pub(crate) mod camera_window;
     pub(crate) mod screensharing_window;
     pub(crate) mod stats_window;
