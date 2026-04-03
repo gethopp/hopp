@@ -445,7 +445,7 @@ impl CameraWindow {
     /// Build the Iced widget tree for the camera window.
     ///
     /// Layout (matching iced-poc main.rs):
-    /// - Outer container: Slate600 bg, white 50% border, 18px radius
+    /// - Outer container: macOS near-transparent (vibrancy); otherwise Zinc900
     /// - Header row: traffic-light space + centered controls + balance space
     /// - Responsive participant grid with name labels
     fn view<'a>(
@@ -551,7 +551,7 @@ impl CameraWindow {
                 let bg = if cfg!(target_os = "macos") {
                     Color::from_rgba(0.0, 0.0, 0.0, 0.05)
                 } else {
-                    ColorToken::Slate600.to_color()
+                    ColorToken::Zinc900.to_color()
                 };
                 container::Style {
                     background: Some(Background::Color(bg)),
@@ -868,7 +868,7 @@ impl CameraWindow {
         let clear_color = if cfg!(target_os = "macos") {
             Some(Color::TRANSPARENT)
         } else {
-            None
+            Some(ColorToken::Zinc900.to_color())
         };
         wgpu_renderer.present(clear_color, output.texture.format(), &view, &self.viewport);
 

@@ -69,8 +69,13 @@ impl StatsWindow {
 
         let window = Arc::new(event_loop.create_window(attrs)?);
 
+        #[cfg(target_os = "windows")]
+        let backends = wgpu::Backends::DX12;
+        #[cfg(not(target_os = "windows"))]
+        let backends = wgpu::Backends::PRIMARY;
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone())?;

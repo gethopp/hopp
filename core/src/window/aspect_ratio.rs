@@ -13,7 +13,7 @@ impl WindowConstant {
     pub const MIN_WIDTH: f64 = 500.0;
     pub const PADDING: f32 = 12.0;
     pub const HEADER_HEIGHT: f32 = 42.0;
-    pub const HEADER_RIGHT_PADDING: f32 = 4.0;
+    pub const HEADER_SIDE_PADDING: f32 = 4.0;
     pub const SKELETON_H: f64 = Self::HEADER_HEIGHT as f64 + Self::PADDING as f64;
     pub const SKELETON_W: f64 = 2.0 * Self::PADDING as f64;
 }

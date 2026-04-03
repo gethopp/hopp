@@ -43,8 +43,13 @@ impl GraphicsWindowContext {
         label: &str,
         surface_init_profile: SurfaceInitProfile,
     ) -> Result<(Self, SurfaceInfo), GraphicsWindowContextError> {
+        #[cfg(target_os = "windows")]
+        let backends = wgpu::Backends::DX12;
+        #[cfg(not(target_os = "windows"))]
+        let backends = wgpu::Backends::PRIMARY;
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends,
             ..Default::default()
         });
 

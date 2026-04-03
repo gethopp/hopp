@@ -1673,9 +1673,10 @@ impl ScreensharingWindow {
             ScreensharingMessage::ToggleDropdown,
         );
 
+        let traffic_light_spacer = if cfg!(target_os = "macos") { 68.0 } else { 0.0 };
+
         let header_ends = row![
-            Space::new().width(Length::Fixed(68.0)), // Space for native macOS traffic lights
-            Space::new().width(Length::Fixed(0.0)),  // gap before name
+            Space::new().width(Length::Fixed(traffic_light_spacer)),
             name_label,
             Space::new().width(Length::Fill),
             cog_button,
@@ -1689,13 +1690,19 @@ impl ScreensharingWindow {
             .center_x(Length::Fill)
             .center_y(Length::Fill);
 
+        let header_left_padding = if cfg!(target_os = "macos") {
+            WindowConstant::PADDING
+        } else {
+            WindowConstant::HEADER_SIDE_PADDING
+        };
+
         let header = container(stack![header_ends, header_center])
             .width(Length::Fill)
             .padding(Padding {
                 top: 4.0,
-                right: WindowConstant::HEADER_RIGHT_PADDING,
+                right: WindowConstant::HEADER_SIDE_PADDING,
                 bottom: WindowConstant::PADDING,
-                left: WindowConstant::PADDING,
+                left: header_left_padding,
             });
 
         // ── Content area (video stream) ──────────────────────────────────
@@ -1832,7 +1839,7 @@ impl ScreensharingWindow {
                     background: if cfg!(target_os = "macos") {
                         Some(Background::Color(Color::from_rgba(0.31, 0.31, 0.45, 0.15)))
                     } else {
-                        Some(Background::Color(ColorToken::Slate600.to_color()))
+                        Some(Background::Color(ColorToken::Zinc900.to_color()))
                     },
                     border: Border {
                         radius: 10.0.into(),
@@ -1866,7 +1873,7 @@ impl ScreensharingWindow {
                 menu,
                 ScreensharingMessage::DismissDropdown,
                 WindowConstant::HEADER_HEIGHT,
-                WindowConstant::HEADER_RIGHT_PADDING,
+                WindowConstant::HEADER_SIDE_PADDING,
             )
         } else {
             base
@@ -2079,7 +2086,7 @@ impl ScreensharingWindow {
         let clear_color = if cfg!(target_os = "macos") {
             Some(Color::TRANSPARENT)
         } else {
-            None
+            Some(ColorToken::Zinc900.to_color())
         };
         wgpu_renderer.present(clear_color, output.texture.format(), &view, &self.viewport);
 
