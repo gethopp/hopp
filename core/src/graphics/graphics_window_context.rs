@@ -44,12 +44,23 @@ impl GraphicsWindowContext {
         surface_init_profile: SurfaceInitProfile,
     ) -> Result<(Self, SurfaceInfo), GraphicsWindowContextError> {
         #[cfg(target_os = "windows")]
-        let backends = wgpu::Backends::DX12;
-        #[cfg(not(target_os = "windows"))]
-        let backends = wgpu::Backends::PRIMARY;
-
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends,
+            backends: wgpu::Backends::PRIMARY,
+            backend_options: match surface_init_profile {
+                SurfaceInitProfile::Overlay => wgpu::BackendOptions {
+                    dx12: wgpu::Dx12BackendOptions {
+                        presentation_system: wgpu::wgt::Dx12SwapchainKind::DxgiFromVisual,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                _ => wgpu::BackendOptions::default(),
+            },
+            ..Default::default()
+        });
+        #[cfg(not(target_os = "windows"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
 
@@ -206,7 +217,7 @@ impl ContextManager {
         })?);
         let (camera_context, _) = GraphicsWindowContext::new(
             &cam_window,
-            wgpu::PowerPreference::LowPower,
+            wgpu::PowerPreference::HighPerformance,
             wgpu::PresentMode::AutoVsync,
             "CameraWindow",
             SurfaceInitProfile::StandardWindow,
@@ -227,7 +238,7 @@ impl ContextManager {
         );
         let (screensharing_context, _) = GraphicsWindowContext::new(
             &screen_sharing_window,
-            wgpu::PowerPreference::None,
+            wgpu::PowerPreference::HighPerformance,
             wgpu::PresentMode::Immediate,
             "ScreensharingWindow",
             SurfaceInitProfile::StandardWindow,
