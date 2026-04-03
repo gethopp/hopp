@@ -594,6 +594,7 @@ impl<'a> Application<'a> {
         let window_outer_position = window.outer_position();
 
         let mut graphics_context = match GraphicsContext::new(
+            self.context_manager.as_ref().unwrap(),
             window,
             self.textures_path.clone(),
             selected_monitor.scale_factor(),

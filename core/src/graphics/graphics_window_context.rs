@@ -20,6 +20,11 @@ pub struct SurfaceInfo {
     pub alpha_mode: wgpu::CompositeAlphaMode,
 }
 
+pub enum SurfaceInitProfile {
+    StandardWindow,
+    Overlay,
+}
+
 pub struct GraphicsWindowContext {
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -27,6 +32,7 @@ pub struct GraphicsWindowContext {
     pub queue: wgpu::Queue,
     pub present_mode: wgpu::PresentMode,
     pub engine: Engine,
+    surface_init_profile: SurfaceInitProfile,
 }
 
 impl GraphicsWindowContext {
@@ -35,6 +41,7 @@ impl GraphicsWindowContext {
         power_preference: wgpu::PowerPreference,
         present_mode: wgpu::PresentMode,
         label: &str,
+        surface_init_profile: SurfaceInitProfile,
     ) -> Result<(Self, SurfaceInfo), GraphicsWindowContextError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -69,8 +76,14 @@ impl GraphicsWindowContext {
             GraphicsWindowContextError::DeviceRequest
         })?;
 
-        let surface_info =
-            Self::configure_surface(surface, &adapter, &device, present_mode, window);
+        let surface_info = Self::configure_surface(
+            surface,
+            &adapter,
+            &device,
+            present_mode,
+            window,
+            &surface_init_profile,
+        );
 
         let engine = Engine::new(
             &adapter,
@@ -88,6 +101,7 @@ impl GraphicsWindowContext {
             queue,
             present_mode,
             engine,
+            surface_init_profile,
         };
         Ok((ctx, surface_info))
     }
@@ -106,6 +120,7 @@ impl GraphicsWindowContext {
             &self.device,
             self.present_mode,
             window,
+            &self.surface_init_profile,
         ))
     }
 
@@ -115,16 +130,42 @@ impl GraphicsWindowContext {
         device: &wgpu::Device,
         present_mode: wgpu::PresentMode,
         window: &Arc<Window>,
+        profile: &SurfaceInitProfile,
     ) -> SurfaceInfo {
         let caps = surface.get_capabilities(adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-        let alpha_mode = crate::window::vibrancy::pick_transparent_alpha_mode(&caps);
         let physical_size = window.inner_size();
+
+        let (format, alpha_mode) = match profile {
+            SurfaceInitProfile::StandardWindow => {
+                let format = caps
+                    .formats
+                    .iter()
+                    .copied()
+                    .find(|f| !f.is_srgb())
+                    .unwrap_or(caps.formats[0]);
+                let alpha_mode = crate::window::vibrancy::pick_transparent_alpha_mode(&caps);
+                (format, alpha_mode)
+            }
+            SurfaceInitProfile::Overlay => {
+                let format = caps.formats[0];
+                let alpha_mode = caps
+                    .alpha_modes
+                    .iter()
+                    .find(|mode| {
+                        #[allow(unused_variables)]
+                        let post_multiplied = mode == &&wgpu::CompositeAlphaMode::PostMultiplied;
+                        #[cfg(target_os = "windows")]
+                        let post_multiplied = false;
+                        (mode != &&wgpu::CompositeAlphaMode::Opaque)
+                            && ((mode == &&wgpu::CompositeAlphaMode::PreMultiplied)
+                                || post_multiplied)
+                    })
+                    .copied()
+                    .unwrap_or(caps.alpha_modes[0]);
+                (format, alpha_mode)
+            }
+        };
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -147,6 +188,7 @@ impl GraphicsWindowContext {
 pub struct ContextManager {
     pub camera_context: GraphicsWindowContext,
     pub screensharing_context: GraphicsWindowContext,
+    pub overlay_context: GraphicsWindowContext,
 }
 
 impl ContextManager {
@@ -162,6 +204,7 @@ impl ContextManager {
             wgpu::PowerPreference::LowPower,
             wgpu::PresentMode::AutoVsync,
             "CameraWindow",
+            SurfaceInitProfile::StandardWindow,
         )?;
 
         let screen_sharing_attrs =
@@ -182,11 +225,26 @@ impl ContextManager {
             wgpu::PowerPreference::None,
             wgpu::PresentMode::Immediate,
             "ScreensharingWindow",
+            SurfaceInitProfile::StandardWindow,
+        )?;
+
+        let overlay_attrs = crate::window_manager::get_window_attributes().with_visible(false);
+        let overlay_window = Arc::new(event_loop.create_window(overlay_attrs).map_err(|e| {
+            log::error!("ContextManager: failed to create dummy overlay window: {e:?}");
+            GraphicsWindowContextError::SurfaceCreation
+        })?);
+        let (overlay_context, _) = GraphicsWindowContext::new(
+            &overlay_window,
+            wgpu::PowerPreference::HighPerformance,
+            wgpu::PresentMode::AutoVsync,
+            "OverlayWindow",
+            SurfaceInitProfile::Overlay,
         )?;
 
         Ok(Self {
             camera_context,
             screensharing_context,
+            overlay_context,
         })
     }
 
@@ -202,5 +260,12 @@ impl ContextManager {
         window: &Arc<Window>,
     ) -> Result<SurfaceInfo, GraphicsWindowContextError> {
         self.screensharing_context.create_surface(window)
+    }
+
+    pub fn create_overlay_surface(
+        &self,
+        window: &Arc<Window>,
+    ) -> Result<SurfaceInfo, GraphicsWindowContextError> {
+        self.overlay_context.create_surface(window)
     }
 }

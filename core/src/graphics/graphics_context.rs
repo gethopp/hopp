@@ -4,6 +4,7 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
+use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
 use crate::UserEvent;
@@ -169,6 +170,7 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// # Arguments
     ///
+    /// * `context_manager` - Cached GPU context manager
     /// * `window` - The overlay window to render to
     /// * `texture_path` - Base directory path for loading texture resources
     /// * `scale` - Display scale
@@ -190,12 +192,14 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
     pub fn new(
+        context_manager: &ContextManager,
         window_arc: Arc<Window>,
         texture_path: String,
         scale: f64,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> OverlayResult<Self> {
         Self::with_clock(
+            context_manager,
             window_arc,
             texture_path,
             scale,
@@ -206,6 +210,7 @@ impl<'a> GraphicsContext<'a> {
 
     /// Creates a new graphics context with a custom clock (for testing).
     pub fn with_clock(
+        context_manager: &ContextManager,
         window_arc: Arc<Window>,
         texture_path: String,
         scale: f64,
@@ -215,78 +220,17 @@ impl<'a> GraphicsContext<'a> {
         log::info!("GraphicsContext::new");
         let size = window_arc.inner_size();
         log::info!("GraphicsContext::new: window size: {size:?}, scale: {scale}");
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
 
-        let surface = instance.create_surface(window_arc.clone()).map_err(|e| {
-            log::error!("GraphicsContext::new: {e:?}");
-            OverlayError::SurfaceCreationError
-        })?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }));
-        if let Err(e) = adapter {
-            log::error!("GraphicsContext::new request_adapter: {e:?}");
-            return Err(OverlayError::AdapterRequestError);
-        }
-        let adapter = adapter.unwrap();
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: None,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|_| OverlayError::DeviceRequestError)?;
-
-        let surface_capabilities = surface.get_capabilities(&adapter);
-
-        let alpha_modes = surface_capabilities.alpha_modes;
-        let surface_formats = surface_capabilities.formats;
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_formats[0],
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync, // This is using fifo or fifo_relaxed
-            alpha_mode: alpha_modes
-                .iter()
-                .find(|mode| {
-                    /*
-                     * This is a workaround for windows, where we observed
-                     * crashes with post multiplied alpha.
-                     */
-                    #[allow(unused_variables)]
-                    let post_multiplied = mode == &&wgpu::CompositeAlphaMode::PostMultiplied;
-                    #[cfg(target_os = "windows")]
-                    let post_multiplied = false;
-                    (mode != &&wgpu::CompositeAlphaMode::Opaque)
-                        && ((mode == &&wgpu::CompositeAlphaMode::PreMultiplied) || post_multiplied)
-                })
-                .copied()
-                .unwrap_or(alpha_modes[0]),
-            view_formats: vec![],
-            desired_maximum_frame_latency: 0,
-        };
-        surface.configure(&device, &surface_config);
+        let surface_info = context_manager
+            .create_overlay_surface(&window_arc)
+            .map_err(|_| OverlayError::SurfaceCreationError)?;
+        let surface = surface_info.surface;
+        let device = context_manager.overlay_context.device.clone();
+        let queue = context_manager.overlay_context.queue.clone();
 
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
-        let iced_renderer = IcedRenderer::new(
-            &device,
-            &queue,
-            surface_config.format,
-            &adapter,
-            &window_arc,
-            &texture_path,
-        );
+        let iced_renderer = IcedRenderer::new(context_manager, &window_arc, &texture_path);
 
         let (sender, receiver) = std::sync::mpsc::channel();
         let redraw_thread = Some(std::thread::spawn(move || {

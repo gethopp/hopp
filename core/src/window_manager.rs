@@ -18,7 +18,7 @@ use crate::ServerError;
 /// Initial size for the overlay window (width and height in logical pixels)
 const OVERLAY_WINDOW_INITIAL_SIZE: f64 = 1.0;
 
-fn get_window_attributes() -> WindowAttributes {
+pub(crate) fn get_window_attributes() -> WindowAttributes {
     WindowAttributes::default()
         .with_title("Overlay window")
         .with_window_level(WindowLevel::AlwaysOnTop)

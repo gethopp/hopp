@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
+use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::geometry::Position;
 use iced::Renderer;
 use iced::{Font, Pixels};
-use iced_wgpu::{
-    core::mouse,
-    graphics::{Shell, Viewport},
-    Engine,
-};
+use iced_wgpu::graphics::Viewport;
+use iced_winit::core::mouse;
 use iced_winit::core::{renderer, time::Instant, window, Event, Theme};
 use iced_winit::{
     core::Size,
@@ -39,21 +37,11 @@ impl std::fmt::Debug for IcedRenderer {
 
 impl IcedRenderer {
     pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-        adapter: &wgpu::Adapter,
+        context_manager: &ContextManager,
         window: &Arc<Window>,
         texture_path: &String,
     ) -> Self {
-        let engine = Engine::new(
-            adapter,
-            device.clone(),
-            queue.clone(),
-            format,
-            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
-            Shell::headless(),
-        );
+        let engine = context_manager.overlay_context.engine.clone();
         let physical_size = window.inner_size();
         let viewport = Viewport::with_physical_size(
             Size::new(physical_size.width, physical_size.height),
