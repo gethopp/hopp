@@ -10,6 +10,7 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 
 ## Building
 - Verify your changes by running `task build_dev`
+- Never call anything else than `task build_dev`
 
 ## Formatting & Linting
 
