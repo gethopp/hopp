@@ -235,6 +235,7 @@ pub enum Message {
     ControllerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),
     ActiveMicChanged(String),
+    ActiveCameraChanged(String),
 }
 
 impl Message {

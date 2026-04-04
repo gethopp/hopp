@@ -1506,6 +1506,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(cam) = &mut self.camera_window {
                     cam.set_camera_active(true, device_name.clone());
                 }
+
+                if !from_socket {
+                    if let Some(name) = device_name {
+                        if let Err(e) = self
+                            .socket
+                            .send(Message::ActiveCameraChanged(name.to_string()))
+                        {
+                            error!("user_event: Error sending ActiveCameraChanged: {e:?}");
+                        }
+                    }
+                }
+
                 room_service.send_participants_snapshot();
             }
             UserEvent::StopCamera => {

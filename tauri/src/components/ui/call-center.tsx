@@ -502,11 +502,28 @@ function CameraIcon() {
   const [activeCamera, setActiveCamera] = useState<string>("");
 
   useEffect(() => {
-    if (!activeCamera && cameraDevices.length > 0) {
+    if (!cameraDevices.length) return;
+    if (activeCamera) return;
+    const resolve = async () => {
+      const lastUsedCamera = await tauriUtils.getLastUsedCamera();
+      if (lastUsedCamera && cameraDevices.find((d) => d.name === lastUsedCamera)) {
+        setActiveCamera(lastUsedCamera);
+        return;
+      }
       const defaultDevice = cameraDevices.find((d) => d.default) ?? cameraDevices[0];
       if (defaultDevice) setActiveCamera(defaultDevice.name);
-    }
+    };
+    resolve();
   }, [cameraDevices]);
+
+  useEffect(() => {
+    const unlisten = listen<string>("core_active_camera_changed", (event) => {
+      setActiveCamera(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   const handleCameraToggle = useCallback(async () => {
     const newEnabled = !cameraEnabled;

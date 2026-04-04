@@ -1078,6 +1078,18 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::ActiveCameraChanged(device_name) => {
+                log::info!("forward_core_events: active camera changed to: {device_name}");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.app_state.set_last_used_camera(device_name.clone());
+                drop(data);
+                if let Err(e) = app.emit("core_active_camera_changed", &device_name) {
+                    log::error!(
+                        "forward_core_events: failed to emit core_active_camera_changed: {e:?}"
+                    );
+                }
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }
