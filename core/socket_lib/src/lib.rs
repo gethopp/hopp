@@ -234,6 +234,7 @@ pub enum Message {
     OpenContentPicker,
     ControllerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),
+    ActiveMicChanged(String),
 }
 
 impl Message {

@@ -107,17 +107,26 @@ impl Capturer {
         let builder = MicrophoneBuilder::new();
 
         // Set up the device
+        let mut fell_back_to_default = false;
         let builder = if let Some(name) = device_name {
             let device = self
                 .available_devices
                 .iter()
-                .find(|dev| dev.input.to_string() == name)
-                .ok_or_else(|| format!("Device not found: {}. Call list_sources() first.", name))?;
+                .find(|dev| dev.input.to_string() == name);
 
-            match builder.device(device.input.clone()) {
-                Ok(b) => b,
-                Err(e) => {
-                    log::warn!("Failed to set device: {}, falling back to default", e);
+            match device {
+                Some(device) => match builder.device(device.input.clone()) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log::warn!("Failed to set device: {}, falling back to default", e);
+                        builder
+                            .default_device()
+                            .map_err(|e| format!("Failed to get default device: {}", e))?
+                    }
+                },
+                None => {
+                    log::warn!("Device not found: {}, falling back to default", name);
+                    fell_back_to_default = true;
                     builder
                         .default_device()
                         .map_err(|e| format!("Failed to get default device: {}", e))?
@@ -194,7 +203,14 @@ impl Capturer {
         self.stop_flag.store(false, Ordering::Relaxed);
         let stop_flag = Arc::clone(&self.stop_flag);
 
-        self.active_device_name = device_name.map(|s| s.to_string());
+        self.active_device_name = if device_name.is_none() || fell_back_to_default {
+            use cpal::traits::{DeviceTrait, HostTrait};
+            cpal::default_host()
+                .default_input_device()
+                .and_then(|d| d.name().ok())
+        } else {
+            device_name.map(|s| s.to_string())
+        };
         self.sample_tx = Some(sample_tx.clone());
 
         // Spawn the capture thread

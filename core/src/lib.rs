@@ -1334,6 +1334,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: StartAudioCapture failed: {e}");
                 }
 
+                if result.is_ok() {
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.set_selected_mic_name(
+                            self.audio_capturer
+                                .active_device_name()
+                                .map(|s| s.to_string()),
+                        );
+                    }
+                    if !from_socket {
+                        if let Some(device_name) = self.audio_capturer.active_device_name() {
+                            if let Err(e) = self
+                                .socket
+                                .send(Message::ActiveMicChanged(device_name.to_string()))
+                            {
+                                error!("user_event: Error sending ActiveMicChanged: {e:?}");
+                            }
+                        }
+                    }
+                }
+
                 if from_socket {
                     if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
                         error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
@@ -1471,6 +1491,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         event_loop,
                         participants,
                         self.event_loop_proxy.clone(),
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
                     ) {
                         Ok(cam) => {
                             log::info!("user_event: Camera window opened for local camera");
@@ -1516,6 +1539,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         event_loop,
                         participants,
                         self.event_loop_proxy.clone(),
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
                     ) {
                         Ok(cam) => self.camera_window = Some(cam),
                         Err(e) => log::error!("Failed to open camera window: {e:?}"),
@@ -1626,6 +1652,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DefaultInputDeviceChanged => {
                 self.audio_capturer.handle_default_device_changed();
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_selected_mic_name(
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    );
+                }
+                if let Some(device_name) = self.audio_capturer.active_device_name() {
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::ActiveMicChanged(device_name.to_string()))
+                    {
+                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
+                    }
+                }
             }
             UserEvent::ControllerDrawPersistChanged(persist) => {
                 self.controller_draw_persist = persist;

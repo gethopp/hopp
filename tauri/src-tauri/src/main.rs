@@ -1066,6 +1066,18 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to send preferred camera: {e:?}");
                 }
             }
+            Message::ActiveMicChanged(device_name) => {
+                log::info!("forward_core_events: active mic changed to: {device_name}");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.app_state.set_last_used_mic(device_name.clone());
+                drop(data);
+                if let Err(e) = app.emit("core_active_mic_changed", &device_name) {
+                    log::error!(
+                        "forward_core_events: failed to emit core_active_mic_changed: {e:?}"
+                    );
+                }
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }

@@ -354,6 +354,15 @@ function MicrophoneIcon() {
     resolve();
   }, [microphoneDevices]);
 
+  useEffect(() => {
+    const unlisten = listen<string>("core_active_mic_changed", (event) => {
+      setActiveMicId(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const handleMicToggle = useCallback(() => {
     const newState = !hasAudioEnabled;
     updateCallTokens({ hasAudioEnabled: newState });

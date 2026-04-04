@@ -220,6 +220,7 @@ impl CameraWindow {
         event_loop: &ActiveEventLoop,
         participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        active_mic_name: Option<String>,
     ) -> Result<Self, CameraWindowError> {
         log::info!("CameraWindow::new");
 
@@ -279,6 +280,7 @@ impl CameraWindow {
         let mut state = CameraState::default();
         state.viewport_size = IcedSize::new(logical.width as f32, logical.height as f32);
         state.camera_active = camera_active;
+        state.selected_mic_name = active_mic_name;
 
         Ok(Self {
             window,
@@ -325,6 +327,10 @@ impl CameraWindow {
         if active {
             self.state.selected_camera_name = device_name;
         }
+    }
+
+    pub fn set_selected_mic_name(&mut self, name: Option<String>) {
+        self.state.selected_mic_name = name;
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
