@@ -8,12 +8,24 @@ use log::{error, info};
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
+
+use super::metrics::SharedMetrics;
+
+static LAST_CB: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
 pub type SharedProcessor = Arc<Mutex<AudioProcessingModule>>;
 
 pub const MIXER_SAMPLE_RATE: u32 = 48000;
 pub const MIXER_NUM_CHANNELS: u32 = 1;
+
+/// Hard cap on per-source buffered frames (10ms each).
+///
+/// LiveKit's internal receive task runs on the main runtime and bursts frames
+/// to us when it's CPU-starved. We absorb bursts with headroom; if we blow
+/// past this cap we crash back by dropping from the front.
+const HARD_CAP_FRAMES: usize = 80; // 800ms
 
 struct MixerInner {
     _stream: cpal::Stream,
@@ -25,12 +37,18 @@ struct MixerInner {
 #[derive(Clone)]
 pub struct MixerHandle {
     inner: Arc<Mutex<MixerInner>>,
+    metrics: SharedMetrics,
 }
 
 impl std::fmt::Debug for MixerHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MixerHandle").finish()
     }
+}
+
+struct BurstTracker {
+    last_push: Option<std::time::Instant>,
+    current_len: u64,
 }
 
 #[derive(Clone)]
@@ -40,14 +58,39 @@ pub struct AudioSource {
     num_channels: u32,
     last_mix: Arc<Mutex<Option<std::time::Instant>>>,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    burst: Arc<Mutex<BurstTracker>>,
+    metrics: SharedMetrics,
 }
 
 impl AudioSource {
     pub fn push_samples(&self, samples: &[i16]) {
+        {
+            let now = std::time::Instant::now();
+            let mut burst = self.burst.lock();
+            let is_burst = burst
+                .last_push
+                .is_some_and(|prev| now.duration_since(prev).as_millis() < 5);
+            if is_burst {
+                burst.current_len += 1;
+                self.metrics.push_bursts.fetch_add(1, Relaxed);
+                self.metrics
+                    .max_burst_len
+                    .fetch_max(burst.current_len, Relaxed);
+            } else {
+                burst.current_len = 1;
+            }
+            burst.last_push = Some(now);
+        }
+
         let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
-        while buffer.len() > 10 {
-            buffer.pop_front();
+        // Emergency only: if we blow past the hard cap, crash back to target.
+        // Normal catch-up happens on the consumer side (see get_audio_frame_with_info).
+        if buffer.len() > HARD_CAP_FRAMES {
+            self.metrics.mixer_source_overflows.fetch_add(1, Relaxed);
+            while buffer.len() > HARD_CAP_FRAMES {
+                buffer.pop_front();
+            }
         }
     }
 }
@@ -72,6 +115,7 @@ impl audio_mixer::AudioMixerSource for AudioSource {
                     gap.as_millis()
                 );
                 self.buffer.lock().clear();
+                self.metrics.mixer_gap_clears.fetch_add(1, Relaxed);
             }
         }
         *last = Some(now);
@@ -90,6 +134,7 @@ impl audio_mixer::AudioMixerSource for AudioSource {
 fn open_output_stream(
     mixer: Arc<Mutex<AudioMixer>>,
     apm: SharedProcessor,
+    metrics: SharedMetrics,
 ) -> Result<cpal::Stream, String> {
     let host = cpal::default_host();
     let device = host
@@ -122,6 +167,20 @@ fn open_output_stream(
         .build_output_stream(
             &config,
             move |mut data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                {
+                    let mut last = LAST_CB.lock();
+                    if let Some(prev) = *last {
+                        let gap_ms = prev.elapsed().as_millis() as u64;
+                        if gap_ms > 15 {
+                            metrics.callback_gap_gt_15ms.fetch_add(1, Relaxed);
+                        }
+                        if gap_ms > 30 {
+                            metrics.callback_gap_gt_30ms.fetch_add(1, Relaxed);
+                        }
+                    }
+                    *last = Some(std::time::Instant::now());
+                }
+
                 while !data.is_empty() {
                     if data.len() <= buf.len() {
                         let rest = buf.split_off(data.len());
@@ -156,6 +215,8 @@ fn open_output_stream(
                                 output_sample_rate as i32,
                                 output_channels as i32,
                             );
+                        } else {
+                            metrics.reverse_frame_drops.fetch_add(1, Relaxed);
                         }
                     }
                     buf = sampled
@@ -177,12 +238,13 @@ fn open_output_stream(
 }
 
 impl MixerHandle {
-    pub fn new() -> Result<(Self, SharedProcessor), String> {
+    pub fn new() -> Result<(Self, SharedProcessor, SharedMetrics), String> {
+        let metrics = Arc::new(super::metrics::AudioMetrics::new());
         let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
             true, true, false, true,
         )));
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
-        let stream = open_output_stream(mixer.clone(), apm.clone())?;
+        let stream = open_output_stream(mixer.clone(), apm.clone(), metrics.clone())?;
         let handle = Self {
             inner: Arc::new(Mutex::new(MixerInner {
                 _stream: stream,
@@ -190,8 +252,9 @@ impl MixerHandle {
                 apm: apm.clone(),
                 next_ssrc: 1,
             })),
+            metrics: metrics.clone(),
         };
-        Ok((handle, apm))
+        Ok((handle, apm, metrics))
     }
 
     pub fn add_source(&self, sample_rate: u32, channels: u16) -> AudioSource {
@@ -204,6 +267,11 @@ impl MixerHandle {
             num_channels: channels as u32,
             last_mix: Arc::new(Mutex::new(None)),
             buffer: Arc::new(Mutex::new(VecDeque::new())),
+            burst: Arc::new(Mutex::new(BurstTracker {
+                last_push: None,
+                current_len: 0,
+            })),
+            metrics: self.metrics.clone(),
         };
         inner.mixer.lock().add_source(source.clone());
         source
@@ -211,7 +279,8 @@ impl MixerHandle {
 
     pub fn reconnect(&self) -> Result<(), String> {
         let mut inner = self.inner.lock();
-        let stream = open_output_stream(inner.mixer.clone(), inner.apm.clone())?;
+        let stream =
+            open_output_stream(inner.mixer.clone(), inner.apm.clone(), self.metrics.clone())?;
         inner._stream = stream;
         info!("Audio output reconnected");
         Ok(())

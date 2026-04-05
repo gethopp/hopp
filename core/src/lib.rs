@@ -1,6 +1,7 @@
 pub mod audio {
     pub mod capturer;
     pub mod device_monitor;
+    pub mod metrics;
     pub mod mixer;
     pub mod player;
 }
@@ -883,7 +884,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     return;
                 }
-                let audio_capture_result = (|| -> Result<(u32, tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>, crate::audio::mixer::SharedProcessor), String> {
+                let audio_capture_result = (|| -> Result<(u32, tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>, crate::audio::mixer::SharedProcessor, crate::audio::metrics::SharedMetrics), String> {
                     let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
                     let audio_device_name = &call_start.audio_device_name;
                     let audio_device = if audio_device_name.is_empty() { None } else { Some(audio_device_name.as_str()) };
@@ -893,9 +894,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         log::error!("{msg}");
                         msg.to_string()
                     })?;
-                    Ok((sample_rate, sample_rx, processor))
+                    let metrics = self.audio_player.metrics().ok_or_else(|| {
+                        let msg = "Audio metrics not available";
+                        log::error!("{msg}");
+                        msg.to_string()
+                    })?;
+                    Ok((sample_rate, sample_rx, processor, metrics))
                 })();
-                let (sample_rate, sample_rx, processor) = match audio_capture_result {
+                let (sample_rate, sample_rx, processor, metrics) = match audio_capture_result {
                     Ok(v) => v,
                     Err(e) => {
                         log::error!("user_event: CallStart audio capture failed: {e}");
@@ -914,6 +920,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sample_rate,
                         sample_rx,
                         processor,
+                        metrics,
                     ) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {

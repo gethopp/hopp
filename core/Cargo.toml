@@ -89,3 +89,4 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9
 cpal = "0.17.3"
 parking_lot = "0.12"
 simple-easing = "1.0"
+thread-priority = "1.1"
