@@ -26,6 +26,7 @@ pub const MIXER_NUM_CHANNELS: u32 = 1;
 /// to us when it's CPU-starved. We absorb bursts with headroom; if we blow
 /// past this cap we crash back by dropping from the front.
 const HARD_CAP_FRAMES: usize = 80; // 800ms
+const TARGET_DELAY: usize = 20;
 
 struct MixerInner {
     _stream: cpal::Stream,
@@ -121,7 +122,14 @@ impl audio_mixer::AudioMixerSource for AudioSource {
         *last = Some(now);
         drop(last);
 
-        let buf = self.buffer.lock().pop_front()?;
+        let buf = {
+            let mut buffer = self.buffer.lock();
+            if buffer.len() > TARGET_DELAY {
+                let _ = buffer.pop_front();
+            }
+            buffer.pop_front()?
+        };
+
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
@@ -243,6 +251,7 @@ impl MixerHandle {
         let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
             true, true, false, true,
         )));
+        apm.lock().set_stream_delay_ms(50);
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
         let stream = open_output_stream(mixer.clone(), apm.clone(), metrics.clone())?;
         let handle = Self {
