@@ -34,7 +34,7 @@ pub fn split_button<'a, Message: Clone + 'a>(
 
     let icon = text(icon_char.to_string())
         .font(ICONS_FONT)
-        .size(12.0)
+        .size(16.0)
         .color(Color::WHITE)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center);
@@ -46,8 +46,8 @@ pub fn split_button<'a, Message: Clone + 'a>(
             .center_x(Length::Fill)
             .center_y(Length::Fill),
     )
-    .width(Length::Fixed(28.0))
-    .height(Length::Fixed(16.0))
+    .width(Length::Fixed(32.0))
+    .height(Length::Fixed(22.0))
     .on_press(on_main_press.clone())
     .padding(Padding::from([1, 0]))
     .style(move |_theme: &Theme, status| hit_area_style(status, hover_bg));
@@ -58,7 +58,7 @@ pub fn split_button<'a, Message: Clone + 'a>(
         if let Some(dropdown_msg) = on_dropdown_toggle {
             let chevron = text(ICON_CHEVRON_DOWN.to_string())
                 .font(ICONS_FONT)
-                .size(12.0)
+                .size(14.0)
                 .color(Color::WHITE)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center);
@@ -70,8 +70,8 @@ pub fn split_button<'a, Message: Clone + 'a>(
                     .center_x(Length::Fill)
                     .center_y(Length::Fill),
             )
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0))
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
             .on_press(dropdown_msg)
             .padding(0)
             .style(move |_theme: &Theme, status| {
@@ -90,11 +90,11 @@ pub fn split_button<'a, Message: Clone + 'a>(
     let inner_layer = container(inner_row).padding(Padding::new(2.0));
 
     let total_width = if has_dropdown {
-        2.0 + 28.0 + 1.0 + 16.0 + 2.0
+        2.0 + 32.0 + 1.0 + 22.0 + 2.0
     } else {
-        2.0 + 28.0 + 2.0
+        2.0 + 32.0 + 2.0
     };
-    let total_height = 2.0 + 16.0 + 2.0;
+    let total_height = 2.0 + 22.0 + 2.0;
 
     let base_btn = button(Space::new())
         .width(Length::Fixed(total_width))
