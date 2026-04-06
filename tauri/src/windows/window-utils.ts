@@ -239,6 +239,14 @@ const enableDrawing = async (permanent: boolean): Promise<void> => {
   await invoke("enable_drawing", { permanent });
 };
 
+const getDrawingHintShown = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_drawing_hint_shown");
+};
+
+const setDrawingHintShown = async (shown: boolean): Promise<void> => {
+  return await invoke("set_drawing_hint_shown", { shown });
+};
+
 const minimizeMainWindow = async () => {
   return await invoke("minimize_main_window");
 };
@@ -357,6 +365,8 @@ export const tauriUtils = {
   getSharerDrawPersist,
   setSharerDrawPersist,
   enableDrawing,
+  getDrawingHintShown,
+  setDrawingHintShown,
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,

@@ -60,6 +60,9 @@ struct AppStateInternal {
 
     /// Whether the controller's drawing mode should persist until right-click
     pub controller_draw_persist: Option<bool>,
+
+    /// Whether the first-time drawing hint toast has been shown
+    pub drawing_hint_shown: Option<bool>,
 }
 
 /// Legacy version of the application state structure.
@@ -85,6 +88,7 @@ impl Default for AppStateInternal {
     /// - Last mode: none
     /// - Sharer draw persist: none
     /// - Controller draw persist: none
+    /// - Drawing hint shown: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
@@ -97,6 +101,7 @@ impl Default for AppStateInternal {
             last_mode: None,
             sharer_draw_persist: None,
             controller_draw_persist: None,
+            drawing_hint_shown: None,
         }
     }
 }
@@ -399,6 +404,22 @@ impl AppState {
         self.state.controller_draw_persist = Some(persist);
         if !self.save() {
             log::error!("set_controller_draw_persist: Failed to save app state");
+        }
+    }
+
+    /// Gets whether the first-time drawing hint toast has been shown.
+    pub fn drawing_hint_shown(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_hint_shown.unwrap_or(false)
+    }
+
+    /// Updates the drawing hint shown flag and saves to disk.
+    pub fn set_drawing_hint_shown(&mut self, shown: bool) {
+        log::info!("set_drawing_hint_shown: {shown}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_hint_shown = Some(shown);
+        if !self.save() {
+            log::error!("set_drawing_hint_shown: Failed to save app state");
         }
     }
 
