@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { checkForUpdates, downloadAndRelaunch } from "@/update.ts";
+import { checkForUpdates } from "@/update.ts";
 import useStore from "../../store/store";
 import { tauriUtils } from "@/windows/window-utils.ts";
 import { Sidebar } from "@/components/sidebar/Sidebar";
@@ -32,11 +32,9 @@ function App() {
     authToken,
     callTokens,
     teammates,
-    needsUpdate,
     updateInProgress,
     setCallTokens,
     setNeedsUpdate,
-    setUpdateInProgress,
     setUser,
     setTab,
     setTeammates,
@@ -361,7 +359,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("ping", () => {});
+      const unlistenFn = await listen("ping", () => { });
 
       return unlistenFn;
     };
@@ -415,24 +413,6 @@ function App() {
           <>
             <div className="flex flex-col items-start gap-1.5 p-2">
               <Participants teammates={teammates || []} />
-              <Button
-                variant={
-                  needsUpdate ?
-                    updateInProgress ?
-                      "loading"
-                    : "default"
-                  : "hidden"
-                }
-                isLoading={updateInProgress}
-                disabled={!!callTokens}
-                onClick={() => {
-                  downloadAndRelaunch();
-                  setUpdateInProgress(true);
-                  handleReject();
-                }}
-              >
-                Update and restart
-              </Button>
             </div>
           </>
         )}
