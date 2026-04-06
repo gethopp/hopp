@@ -8,6 +8,8 @@ use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
+use thread_priority::{set_current_thread_priority, ThreadPriority};
+use tokio::runtime::Handle as TokioHandle;
 
 use crate::audio::mixer::SharedProcessor;
 use crate::livekit::audio::AudioPublisher;
@@ -812,6 +814,17 @@ async fn room_service_commands(
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
 ) {
+    let audio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("hopp-audio")
+        .on_thread_start(|| {
+            let _ = set_current_thread_priority(ThreadPriority::Max);
+        })
+        .enable_all()
+        .build()
+        .expect("Failed to create audio runtime");
+    let audio_handle = audio_runtime.handle().clone();
+
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
 
@@ -851,10 +864,15 @@ async fn room_service_commands(
                     let (room, rx) = Room::connect(&url, &token, RoomOptions::default())
                         .await
                         .map_err(|e| format!("{e:?}"))?;
-                    let publisher =
-                        AudioPublisher::publish(&room, sample_rate, sample_rx, audio_processor)
-                            .await
-                            .map_err(|e| format!("{e}"))?;
+                    let publisher = AudioPublisher::publish(
+                        &room,
+                        sample_rate,
+                        sample_rx,
+                        audio_processor,
+                        &audio_handle,
+                    )
+                    .await
+                    .map_err(|e| format!("{e}"))?;
 
                     // Publish camera track (muted) — non-fatal
                     let camera_source = NativeVideoSource::new(
@@ -1134,6 +1152,7 @@ async fn room_service_commands(
                         publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
                     },
                     inner.connection_quality.clone(),
+                    audio_handle.clone(),
                 ));
                 log::info!("room_service_commands: Spawned handle_room_events");
                 let mut inner_room = inner.room.lock().await;
@@ -1971,6 +1990,7 @@ async fn handle_room_events(
     mixer: audio::mixer::MixerHandle,
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
+    audio_handle: TokioHandle,
 ) {
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -2414,6 +2434,7 @@ async fn handle_room_events(
                             audio_track,
                             mixer.clone(),
                             &participant_identity,
+                            &audio_handle,
                         );
 
                         let mut participants_guard = participants.write().unwrap();

@@ -15,6 +15,14 @@ pub type SharedProcessor = Arc<Mutex<AudioProcessingModule>>;
 pub const MIXER_SAMPLE_RATE: u32 = 48000;
 pub const MIXER_NUM_CHANNELS: u32 = 1;
 
+/// Hard cap on per-source buffered frames (10ms each).
+///
+/// LiveKit's internal receive task runs on the main runtime and bursts frames
+/// to us when it's CPU-starved. We absorb bursts with headroom; if we blow
+/// past this cap we crash back by dropping from the front.
+const HARD_CAP_FRAMES: usize = 80; // 800ms
+const TARGET_DELAY: usize = 20;
+
 struct MixerInner {
     _stream: cpal::Stream,
     mixer: Arc<Mutex<AudioMixer>>,
@@ -46,8 +54,12 @@ impl AudioSource {
     pub fn push_samples(&self, samples: &[i16]) {
         let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
-        while buffer.len() > 10 {
-            buffer.pop_front();
+        // Emergency only: if we blow past the hard cap, crash back to target.
+        // Normal catch-up happens on the consumer side (see get_audio_frame_with_info).
+        if buffer.len() > HARD_CAP_FRAMES {
+            while buffer.len() > HARD_CAP_FRAMES {
+                buffer.pop_front();
+            }
         }
     }
 }
@@ -77,7 +89,14 @@ impl audio_mixer::AudioMixerSource for AudioSource {
         *last = Some(now);
         drop(last);
 
-        let buf = self.buffer.lock().pop_front()?;
+        let buf = {
+            let mut buffer = self.buffer.lock();
+            if buffer.len() > TARGET_DELAY {
+                let _ = buffer.pop_front();
+            }
+            buffer.pop_front()?
+        };
+
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
@@ -148,15 +167,14 @@ fn open_output_stream(
                     );
                     // Feed copy to APM reverse stream (modifies buffer in-place)
                     {
-                        if let Some(mut proc) = apm.try_lock() {
-                            reverse_buf.clear();
-                            reverse_buf.extend_from_slice(sampled);
-                            let _ = proc.process_reverse_stream(
-                                &mut reverse_buf,
-                                output_sample_rate as i32,
-                                output_channels as i32,
-                            );
-                        }
+                        let mut proc = apm.lock();
+                        reverse_buf.clear();
+                        reverse_buf.extend_from_slice(sampled);
+                        let _ = proc.process_reverse_stream(
+                            &mut reverse_buf,
+                            output_sample_rate as i32,
+                            output_channels as i32,
+                        );
                     }
                     buf = sampled
                         .iter()
@@ -181,6 +199,7 @@ impl MixerHandle {
         let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
             true, true, false, true,
         )));
+        apm.lock().set_stream_delay_ms(50);
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
         let stream = open_output_stream(mixer.clone(), apm.clone())?;
         let handle = Self {

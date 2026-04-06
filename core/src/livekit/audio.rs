@@ -4,6 +4,7 @@ use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
+use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
@@ -25,6 +26,7 @@ impl AudioPublisher {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         processor: SharedProcessor,
+        audio_handle: &TokioHandle,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -60,7 +62,7 @@ impl AudioPublisher {
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
         log::info!("audio_publish: too {}", now.elapsed().as_millis());
 
-        let processing_task = tokio::spawn(process_audio_samples(
+        let processing_task = audio_handle.spawn(process_audio_samples(
             sample_rx,
             native_source,
             sample_rate,
@@ -173,6 +175,7 @@ pub fn play_remote_audio_track(
     track: RemoteAudioTrack,
     mixer: MixerHandle,
     participant_id: &str,
+    audio_handle: &TokioHandle,
 ) -> AudioTrackHandle {
     let source = mixer.add_source(LIVEKIT_SAMPLE_RATE, AUDIO_NUM_CHANNELS as u16);
     let source_clone = source.clone();
@@ -184,7 +187,8 @@ pub fn play_remote_audio_track(
     );
 
     let stream_key = participant_id.to_string();
-    let task = tokio::spawn(async move {
+    let audio_handle = audio_handle.clone();
+    let task = audio_handle.spawn(async move {
         log::info!("Starting audio receive loop for {}", stream_key);
         let mut frame_count: u64 = 0;
         let mut total_samples: u64 = 0;
@@ -235,7 +239,6 @@ async fn capture_frame(
         num_channels: AUDIO_NUM_CHANNELS,
         samples_per_channel: samples_per_channel as u32,
     };
-
     if let Err(e) = audio_source.capture_frame(&audio_frame).await {
         log::error!("Failed to send audio frame to LiveKit: {e}");
     }

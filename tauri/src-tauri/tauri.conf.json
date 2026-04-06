@@ -29,7 +29,7 @@
   },
   "productName": "hopp",
   "mainBinaryName": "hopp",
-  "version": "0.0.78",
+  "version": "0.0.79",
   "identifier": "com.hopp.app",
   "plugins": {
     "updater": {
