@@ -23,8 +23,7 @@ use iced::{
     Size as IcedSize,
 };
 use iced_wgpu::core::mouse;
-use iced_wgpu::graphics::{Shell, Viewport};
-use iced_wgpu::Engine;
+use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
 use iced_winit::core::{window, Event, Size, Theme};
