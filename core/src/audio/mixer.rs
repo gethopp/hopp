@@ -54,8 +54,6 @@ impl AudioSource {
     pub fn push_samples(&self, samples: &[i16]) {
         let mut buffer = self.buffer.lock();
         buffer.push_back(samples.to_vec());
-        // Emergency only: if we blow past the hard cap, crash back to target.
-        // Normal catch-up happens on the consumer side (see get_audio_frame_with_info).
         if buffer.len() > HARD_CAP_FRAMES {
             while buffer.len() > HARD_CAP_FRAMES {
                 buffer.pop_front();
