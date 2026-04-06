@@ -11,7 +11,6 @@ use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 use tokio::runtime::Handle as TokioHandle;
 
-use crate::audio::metrics::SharedMetrics;
 use crate::audio::mixer::SharedProcessor;
 use crate::livekit::audio::AudioPublisher;
 use crate::livekit::participant::ParticipantInfo;
@@ -66,7 +65,6 @@ enum RoomServiceCommand {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         audio_processor: SharedProcessor,
-        metrics: SharedMetrics,
     },
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -361,7 +359,6 @@ impl RoomService {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         audio_processor: SharedProcessor,
-        metrics: SharedMetrics,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room");
         self.service_command_tx
@@ -373,7 +370,6 @@ impl RoomService {
                 sample_rate,
                 sample_rx,
                 audio_processor,
-                metrics,
             })
             .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
         log::info!("create_room: command dispatched (non-blocking)");
@@ -843,7 +839,6 @@ async fn room_service_commands(
                 sample_rate,
                 sample_rx,
                 audio_processor,
-                metrics,
             } => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
@@ -874,7 +869,6 @@ async fn room_service_commands(
                         sample_rate,
                         sample_rx,
                         audio_processor,
-                        metrics.clone(),
                         &audio_handle,
                     )
                     .await

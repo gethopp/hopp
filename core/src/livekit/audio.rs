@@ -4,12 +4,10 @@ use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource};
 use livekit::Room;
-use std::sync::atomic::Ordering::Relaxed;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
-use crate::audio::metrics::SharedMetrics;
 use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
@@ -28,7 +26,6 @@ impl AudioPublisher {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         processor: SharedProcessor,
-        metrics: SharedMetrics,
         audio_handle: &TokioHandle,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
@@ -70,7 +67,6 @@ impl AudioPublisher {
             native_source,
             sample_rate,
             processor,
-            metrics,
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -105,7 +101,6 @@ async fn process_audio_samples(
     audio_source: NativeAudioSource,
     sample_rate: u32,
     processor: SharedProcessor,
-    metrics: SharedMetrics,
 ) {
     assert_eq!(
         sample_rate, MIXER_SAMPLE_RATE,
@@ -125,49 +120,35 @@ async fn process_audio_samples(
     let mut buffer: Vec<i16> = Vec::new();
     let mut chunk = vec![0i16; samples_per_unit];
 
-    let mut metrics_interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    while let Some(audio_data) = rx.recv().await {
+        // Drain all pending messages into buffer
+        buffer.extend_from_slice(&audio_data);
+        while let Ok(more) = rx.try_recv() {
+            buffer.extend_from_slice(&more);
+        }
 
-    loop {
-        tokio::select! {
-            _ = metrics_interval.tick() => {
-                metrics.log_summary();
+        // Trim oldest frames if over budget, aligned to frame boundary
+        if buffer.len() > max_buffer_samples {
+            let total_frames = buffer.len() / samples_per_unit;
+            let drop_frames = total_frames - max_buffer_frames;
+            let drop_samples = drop_frames * samples_per_unit;
+            log::warn!(
+                "Audio capture: dropping {}ms ({} frames) to cap latency",
+                drop_frames * 10,
+                drop_frames,
+            );
+            buffer.drain(..drop_samples);
+        }
+
+        // Process all complete frames
+        while buffer.len() >= samples_per_unit {
+            chunk.copy_from_slice(&buffer[..samples_per_unit]);
+            buffer.drain(..samples_per_unit);
+            {
+                let mut p = processor.lock();
+                let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
             }
-            audio_data = rx.recv() => {
-                let Some(audio_data) = audio_data else {
-                    break;
-                };
-
-                // Drain all pending messages into buffer
-                buffer.extend_from_slice(&audio_data);
-                while let Ok(more) = rx.try_recv() {
-                    buffer.extend_from_slice(&more);
-                }
-
-                // Trim oldest frames if over budget, aligned to frame boundary
-                if buffer.len() > max_buffer_samples {
-                    let total_frames = buffer.len() / samples_per_unit;
-                    let drop_frames = total_frames - max_buffer_frames;
-                    let drop_samples = drop_frames * samples_per_unit;
-                    log::warn!(
-                        "Audio capture: dropping {}ms ({} frames) to cap latency",
-                        drop_frames * 10,
-                        drop_frames,
-                    );
-                    metrics.mic_backpressure_drops.fetch_add(drop_frames as u64, Relaxed);
-                    buffer.drain(..drop_samples);
-                }
-
-                // Process all complete frames
-                while buffer.len() >= samples_per_unit {
-                    chunk.copy_from_slice(&buffer[..samples_per_unit]);
-                    buffer.drain(..samples_per_unit);
-                    {
-                        let mut p = processor.lock();
-                        let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
-                    }
-                    capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate, &metrics).await;
-                }
-            }
+            capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }
     }
 
@@ -251,7 +232,6 @@ async fn capture_frame(
     data: &[i16],
     samples_per_channel: usize,
     sample_rate: u32,
-    metrics: &SharedMetrics,
 ) {
     let audio_frame = AudioFrame {
         data: data.into(),
@@ -259,23 +239,7 @@ async fn capture_frame(
         num_channels: AUDIO_NUM_CHANNELS,
         samples_per_channel: samples_per_channel as u32,
     };
-
-    let t0 = std::time::Instant::now();
     if let Err(e) = audio_source.capture_frame(&audio_frame).await {
         log::error!("Failed to send audio frame to LiveKit: {e}");
-    }
-    let stall = t0.elapsed();
-
-    if stall > std::time::Duration::from_millis(20) {
-        let ms = stall.as_millis() as u64;
-        metrics.total_stall_ms.fetch_add(ms, Relaxed);
-        metrics.stall_over_20ms.fetch_add(1, Relaxed);
-        if ms > 50 {
-            metrics.stall_over_50ms.fetch_add(1, Relaxed);
-        }
-        if ms > 100 {
-            log::info!("capture_frame: stall {ms}");
-            metrics.stall_over_100ms.fetch_add(1, Relaxed);
-        }
     }
 }

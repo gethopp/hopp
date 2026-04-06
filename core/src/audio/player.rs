@@ -1,4 +1,3 @@
-use super::metrics::SharedMetrics;
 use super::mixer::{MixerHandle, SharedProcessor};
 use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
@@ -16,7 +15,6 @@ pub enum PlayerError {
 struct PlayerInner {
     mixer: MixerHandle,
     processor: SharedProcessor,
-    metrics: SharedMetrics,
     _device_monitor: super::device_monitor::DeviceMonitor,
 }
 
@@ -36,7 +34,7 @@ impl Player {
     #[allow(unused_variables)]
     pub fn start(&mut self) -> Result<(), PlayerError> {
         log::info!("Player::start");
-        let (mixer, processor, metrics) = MixerHandle::new().map_err(PlayerError::Mixer)?;
+        let (mixer, processor) = MixerHandle::new().map_err(PlayerError::Mixer)?;
 
         let device_monitor = super::device_monitor::DeviceMonitor::new(
             super::device_monitor::DeviceKind::Output,
@@ -47,7 +45,6 @@ impl Player {
         self.inner = Some(PlayerInner {
             mixer,
             processor,
-            metrics,
             _device_monitor: device_monitor,
         });
         Ok(())
@@ -64,10 +61,6 @@ impl Player {
 
     pub fn processor(&self) -> Option<SharedProcessor> {
         self.inner.as_ref().map(|i| i.processor.clone())
-    }
-
-    pub fn metrics(&self) -> Option<SharedMetrics> {
-        self.inner.as_ref().map(|i| i.metrics.clone())
     }
 }
 
