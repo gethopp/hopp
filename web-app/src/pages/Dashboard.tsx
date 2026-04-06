@@ -150,32 +150,48 @@ export function Dashboard() {
     }
   };
 
+  const { useQuery, useMutation } = useAPI();
+  const authToken = useHoppStore((store) => store.authToken);
+
+  const { data: teammates, isLoading: isTeammatesLoading } = useQuery("get", "/api/auth/teammates", undefined, {
+    queryHash: `teammates-${authToken}`,
+    select: (data) => data,
+  });
+
+  const isTeammatesLoaded = !isTeammatesLoading && teammates !== undefined;
+  const hasNoTeammates = isTeammatesLoaded && teammates.length === 0;
+
   useEffect(() => {
-    const fetchLatestRelease = async () => {
+    if (!isTeammatesLoaded) return;
+
+    const releaseUrl = hasNoTeammates
+      ? "https://api.github.com/repos/gethopp/hopp-releases/releases/tags/v1_beta"
+      : "https://api.github.com/repos/gethopp/hopp-releases/releases/latest";
+
+    const fallbackTag = hasNoTeammates ? "v1_beta" : "latest";
+
+    const fetchRelease = async () => {
       try {
-        const response = await fetch("https://api.github.com/repos/gethopp/hopp-releases/releases/latest");
-        if (!response.ok) throw new Error("Failed to fetch latest release");
+        const response = await fetch(releaseUrl);
+        if (!response.ok) throw new Error("Failed to fetch release");
         const data = await response.json();
         setLatestRelease(data);
       } catch (error) {
-        console.error("Error fetching latest release:", error);
+        console.error("Error fetching release:", error);
         const fallbackRelease: GitHubRelease = {
-          tag_name: "latest",
+          tag_name: fallbackTag,
           assets: [
             {
               name: "hopp_x64.dmg",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp.app.x64.tar.gz",
+              browser_download_url: `https://github.com/gethopp/hopp-releases/releases/download/${fallbackTag}/hopp.app.x64.tar.gz`,
             },
             {
               name: "hopp_aarch64.dmg",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp.app.aarch64.tar.gz",
+              browser_download_url: `https://github.com/gethopp/hopp-releases/releases/download/${fallbackTag}/hopp.app.aarch64.tar.gz`,
             },
             {
               name: "hopp.msi.zip",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp_x64_en-US.msi.zip",
+              browser_download_url: `https://github.com/gethopp/hopp-releases/releases/download/${fallbackTag}/hopp_x64_en-US.msi.zip`,
             },
           ],
         };
@@ -183,16 +199,8 @@ export function Dashboard() {
       }
     };
 
-    fetchLatestRelease();
-  }, []);
-
-  const { useQuery, useMutation } = useAPI();
-  const authToken = useHoppStore((store) => store.authToken);
-
-  const { data: teammates } = useQuery("get", "/api/auth/teammates", undefined, {
-    queryHash: `teammates-${authToken}`,
-    select: (data) => data,
-  });
+    fetchRelease();
+  }, [isTeammatesLoaded, hasNoTeammates]);
 
   const { data: inviteData } = useQuery("get", "/api/auth/get-invite-uuid", undefined, {
     queryHash: `invite-${authToken}`,
