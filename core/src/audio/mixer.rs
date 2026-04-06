@@ -215,17 +215,14 @@ fn open_output_stream(
                     );
                     // Feed copy to APM reverse stream (modifies buffer in-place)
                     {
-                        if let Some(mut proc) = apm.try_lock() {
-                            reverse_buf.clear();
-                            reverse_buf.extend_from_slice(sampled);
-                            let _ = proc.process_reverse_stream(
-                                &mut reverse_buf,
-                                output_sample_rate as i32,
-                                output_channels as i32,
-                            );
-                        } else {
-                            metrics.reverse_frame_drops.fetch_add(1, Relaxed);
-                        }
+                        let mut proc = apm.lock();
+                        reverse_buf.clear();
+                        reverse_buf.extend_from_slice(sampled);
+                        let _ = proc.process_reverse_stream(
+                            &mut reverse_buf,
+                            output_sample_rate as i32,
+                            output_channels as i32,
+                        );
                     }
                     buf = sampled
                         .iter()
