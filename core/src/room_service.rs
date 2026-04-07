@@ -266,6 +266,7 @@ fn populate_participants_from_room(
 pub struct RoomService {
     /* The runtime is used to spawn a thread for handling room events. */
     _async_runtime: tokio::runtime::Runtime,
+    _audio_runtime: tokio::runtime::Runtime,
     service_command_tx: mpsc::UnboundedSender<RoomServiceCommand>,
     inner: Arc<RoomServiceInner>,
 }
@@ -314,15 +315,27 @@ impl RoomService {
             cancel_connect: std::sync::Mutex::new(Vec::new()),
             snapshot_sender,
         });
+        let audio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("hopp-audio")
+            .on_thread_start(|| {
+                let _ = set_current_thread_priority(ThreadPriority::Max);
+            })
+            .enable_all()
+            .build()?;
+        let audio_handle = audio_runtime.handle().clone();
+
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         async_runtime.spawn(room_service_commands(
             service_command_rx,
             inner.clone(),
             livekit_server_url,
+            audio_handle,
         ));
 
         Ok(Self {
             _async_runtime: async_runtime,
+            _audio_runtime: audio_runtime,
             service_command_tx,
             inner,
         })
@@ -813,18 +826,8 @@ async fn room_service_commands(
     mut service_rx: mpsc::UnboundedReceiver<RoomServiceCommand>,
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
+    audio_handle: tokio::runtime::Handle,
 ) {
-    let audio_runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("hopp-audio")
-        .on_thread_start(|| {
-            let _ = set_current_thread_priority(ThreadPriority::Max);
-        })
-        .enable_all()
-        .build()
-        .expect("Failed to create audio runtime");
-    let audio_handle = audio_runtime.handle().clone();
-
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
 
