@@ -179,6 +179,8 @@ export interface CommandMap {
   set_sharer_draw_persist: { args: { persist: boolean }; return: void };
   get_controller_draw_persist: { args: void; return: boolean };
   set_controller_draw_persist: { args: { persist: boolean }; return: void };
+  get_drawing_hint_shown: { args: void; return: boolean };
+  set_drawing_hint_shown: { args: { shown: boolean }; return: void };
   enable_drawing: { args: { permanent: boolean }; return: void };
 
   // LiveKit

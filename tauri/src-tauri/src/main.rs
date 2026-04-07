@@ -458,6 +458,24 @@ fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
 }
 
 #[tauri::command(async)]
+fn get_drawing_hint_shown(app: tauri::AppHandle) -> bool {
+    log::info!("get_drawing_hint_shown");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    let value = data.app_state.drawing_hint_shown();
+    log::info!("get_drawing_hint_shown: {value}");
+    value
+}
+
+#[tauri::command(async)]
+fn set_drawing_hint_shown(app: tauri::AppHandle, shown: bool) {
+    log::info!("set_drawing_hint_shown: {shown}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_drawing_hint_shown(shown);
+}
+
+#[tauri::command(async)]
 fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
     log::info!("enable_drawing: permanent={permanent}");
     let data = app.state::<Mutex<AppData>>();
@@ -1492,6 +1510,8 @@ fn main() {
             get_last_used_camera,
             get_sharer_draw_persist,
             set_sharer_draw_persist,
+            get_drawing_hint_shown,
+            set_drawing_hint_shown,
             enable_drawing,
             minimize_main_window,
             set_livekit_url,
