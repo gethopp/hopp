@@ -94,6 +94,7 @@ function CompanySizeSelect({ form, showErrors }: { form: any; showErrors: boolea
                 </Button>
               </Pressable>
               <Popover
+                isNonModal
                 placement="bottom start"
                 offset={8}
                 className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"
@@ -199,6 +200,7 @@ function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: b
                 </Button>
               </Pressable>
               <Popover
+                isNonModal
                 placement="bottom start"
                 offset={8}
                 className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"
@@ -261,6 +263,7 @@ function ReferralSourceSelect({ form, showErrors }: { form: any; showErrors: boo
                   </Button>
                 </Pressable>
                 <Popover
+                  isNonModal
                   placement="bottom start"
                   offset={8}
                   className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"

@@ -22,6 +22,23 @@ import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
 import PairingBuddy from "@/assets/PairingBuddy.png";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
 import { HiOutlineQuestionMarkCircle } from "react-icons/hi2";
+import { isBefore, isValid, parseISO } from "date-fns";
+
+/** Instant (UTC) on or after which accounts count as the v1_beta cohort when every team member qualifies.
+ * Tuesday, April 7, 2026 at 12:00 PM
+ *
+ */
+const BETA_CUTOFF_DATE = parseISO("2026-04-07T11:00:00.000Z");
+
+function shouldServeBeta(currentUser: { created_at?: string }, teammates: { created_at?: string }[]): boolean {
+  const allMembers = [currentUser, ...teammates];
+  return allMembers.every((member) => {
+    if (!member.created_at) return false;
+    const memberDate = parseISO(member.created_at);
+    if (!isValid(memberDate)) return false;
+    return !isBefore(memberDate, BETA_CUTOFF_DATE);
+  });
+}
 
 // Create email validation schema using zod
 const emailSchema = z.string().email("Invalid email format");
@@ -153,22 +170,29 @@ export function Dashboard() {
   const { useQuery, useMutation } = useAPI();
   const authToken = useHoppStore((store) => store.authToken);
 
+  const { data: currentUser, isLoading: isUserLoading } = useQuery("get", "/api/auth/user", undefined, {
+    queryHash: `user-${authToken}`,
+    select: (data) => data,
+  });
+
   const { data: teammates, isLoading: isTeammatesLoading } = useQuery("get", "/api/auth/teammates", undefined, {
     queryHash: `teammates-${authToken}`,
     select: (data) => data,
   });
 
-  const isTeammatesLoaded = !isTeammatesLoading && teammates !== undefined;
-  const hasNoTeammates = isTeammatesLoaded && teammates.length === 0;
+  const isReleaseInputsReady =
+    !isUserLoading && !isTeammatesLoading && currentUser !== undefined && teammates !== undefined;
+  const serveBeta = isReleaseInputsReady && shouldServeBeta(currentUser, teammates);
 
   useEffect(() => {
-    if (!isTeammatesLoaded) return;
+    if (!isReleaseInputsReady) return;
 
-    const releaseUrl = hasNoTeammates
-      ? "https://api.github.com/repos/gethopp/hopp-releases/releases/tags/v1_beta"
+    const releaseUrl =
+      serveBeta ?
+        "https://api.github.com/repos/gethopp/hopp-releases/releases/tags/v1_beta"
       : "https://api.github.com/repos/gethopp/hopp-releases/releases/latest";
 
-    const fallbackTag = hasNoTeammates ? "v1_beta" : "latest";
+    const fallbackTag = serveBeta ? "v1_beta" : "latest";
 
     const fetchRelease = async () => {
       try {
@@ -200,7 +224,7 @@ export function Dashboard() {
     };
 
     fetchRelease();
-  }, [isTeammatesLoaded, hasNoTeammates]);
+  }, [isReleaseInputsReady, serveBeta]);
 
   const { data: inviteData } = useQuery("get", "/api/auth/get-invite-uuid", undefined, {
     queryHash: `invite-${authToken}`,
