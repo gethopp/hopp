@@ -38,6 +38,10 @@ impl CameraCapturer {
         super::stream::list_devices()
     }
 
+    pub fn active_device_name(&self) -> Option<&str> {
+        self.stream.as_ref().map(|s| s.device_name())
+    }
+
     pub fn start_capture(
         &mut self,
         device_name: Option<&str>,

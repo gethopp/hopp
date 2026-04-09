@@ -44,8 +44,10 @@ impl CameraStream {
         video_buffer_manager: Arc<VideoBufferManager>,
         buffer_source: NativeVideoSource,
     ) -> Result<Self, String> {
-        let cameras =
+        let mut cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
+        // Sort cameras like list_devices
+        cameras.sort_by(|a, b| a.human_name().cmp(&b.human_name()));
 
         let camera_info = if device_name.is_empty() {
             cameras
@@ -55,7 +57,11 @@ impl CameraStream {
             cameras
                 .iter()
                 .find(|c| c.human_name() == device_name)
-                .ok_or_else(|| format!("Camera '{}' not found", device_name))?
+                .or_else(|| {
+                    log::warn!("Camera '{device_name}' not found, falling back to default");
+                    cameras.first()
+                })
+                .ok_or_else(|| "No cameras available".to_string())?
         };
 
         let device_name = camera_info.human_name();
@@ -268,6 +274,10 @@ impl CameraStream {
 
     pub fn get_failures_count(&self) -> u32 {
         *self.failures_count.lock().unwrap()
+    }
+
+    pub fn device_name(&self) -> &str {
+        &self.device_name
     }
 
     pub fn copy(&self) -> Result<Self, String> {

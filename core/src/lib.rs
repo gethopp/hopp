@@ -1503,15 +1503,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
 
+                let actual_name = {
+                    let capturer = self.camera_capturer.lock().unwrap();
+                    capturer.active_device_name().map(|s| s.to_string())
+                };
+
                 if let Some(cam) = &mut self.camera_window {
-                    cam.set_camera_active(true, device_name.clone());
+                    cam.set_camera_active(true, actual_name.clone());
                 }
 
                 if !from_socket {
-                    if let Some(name) = device_name {
-                        if let Err(e) = self
-                            .socket
-                            .send(Message::ActiveCameraChanged(name.to_string()))
+                    if let Some(name) = &actual_name {
+                        if let Err(e) = self.socket.send(Message::ActiveCameraChanged(name.clone()))
                         {
                             error!("user_event: Error sending ActiveCameraChanged: {e:?}");
                         }
