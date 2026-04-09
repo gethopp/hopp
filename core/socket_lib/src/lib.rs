@@ -236,6 +236,7 @@ pub enum Message {
     LastModeChanged(StoredMode),
     ActiveMicChanged(String),
     ActiveCameraChanged(String),
+    SetNoiseCancellation(bool),
 }
 
 impl Message {

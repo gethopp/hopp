@@ -1,5 +1,6 @@
 pub mod audio {
     pub mod capturer;
+    pub mod denoiser;
     pub mod device_monitor;
     pub mod mixer;
     pub mod player;
@@ -71,6 +72,7 @@ use socket_lib::{
     ScreenShareMessage, SentryMetadata, SocketSender,
 };
 use std::fmt;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use thiserror::Error;
@@ -231,6 +233,7 @@ pub struct Application<'a> {
     window_manager: Option<window_manager::WindowManager>,
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
+    noise_cancellation_enabled: Arc<AtomicBool>,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
     context_manager: Option<ContextManager>,
@@ -339,6 +342,7 @@ impl<'a> Application<'a> {
             window_manager: None,
             audio_capturer,
             audio_player,
+            noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
             camera_capturer: camera_capturer.clone(),
             _camera_capturer_events: Some(std::thread::spawn(move || {
                 poll_camera_stream(camera_capturer_clone)
@@ -914,6 +918,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sample_rate,
                         sample_rx,
                         processor,
+                        self.noise_cancellation_enabled.clone(),
                     ) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
@@ -1377,6 +1382,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(room_service) = self.room_service.as_ref() {
                     room_service.unmute_audio_track();
                 }
+            }
+            UserEvent::SetNoiseCancellation(enabled) => {
+                log::info!("user_event: SetNoiseCancellation({enabled})");
+                self.noise_cancellation_enabled
+                    .store(enabled, std::sync::atomic::Ordering::Relaxed);
             }
             UserEvent::ToggleMic => {
                 log::info!("user_event: ToggleMic");
@@ -2263,6 +2273,7 @@ pub enum UserEvent {
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
+    SetNoiseCancellation(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
 }
 
@@ -2406,6 +2417,9 @@ impl RenderEventLoop {
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     Message::OpenStatsWindow => UserEvent::OpenStatsWindow,
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
+                    Message::SetNoiseCancellation(enabled) => {
+                        UserEvent::SetNoiseCancellation(enabled)
+                    }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
                         continue;

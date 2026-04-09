@@ -17,9 +17,9 @@ rust_log = "hopp_core=info"
 # Named participant profiles, reused across scenarios
 [participants.streamer]
 name = "Costantinos"
-camera_name = ""
-# camera_name = "MacBook Pro Camera"
-screenshare = true
+#camera_name = ""
+camera_name = "MacBook Pro Camera"
+screenshare = false
 
 [participants.viewer]
 name = "Iason"

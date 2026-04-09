@@ -7,6 +7,7 @@ use livekit::Room;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
+use crate::audio::denoiser::Denoiser;
 use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
 pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
@@ -25,6 +26,7 @@ impl AudioPublisher {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         processor: SharedProcessor,
+        denoiser: Option<Denoiser>,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -65,6 +67,7 @@ impl AudioPublisher {
             native_source,
             sample_rate,
             processor,
+            denoiser,
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -99,6 +102,7 @@ async fn process_audio_samples(
     audio_source: NativeAudioSource,
     sample_rate: u32,
     processor: SharedProcessor,
+    mut denoiser: Option<Denoiser>,
 ) {
     assert_eq!(
         sample_rate, MIXER_SAMPLE_RATE,
@@ -142,6 +146,9 @@ async fn process_audio_samples(
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
+            if let Some(ref mut denoiser) = denoiser {
+                denoiser.process(&mut chunk);
+            }
             {
                 let mut p = processor.lock();
                 let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
