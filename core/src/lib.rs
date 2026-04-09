@@ -71,6 +71,7 @@ use socket_lib::{
     ScreenShareMessage, SentryMetadata, SocketSender,
 };
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use thiserror::Error;
@@ -100,6 +101,8 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
 #[cfg(not(debug_assertions))]
 const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
+const HANG_PROTECTION_EXIT_CODE: i32 = 3;
+const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -238,6 +241,7 @@ pub struct Application<'a> {
     screensharing_window: Option<ScreensharingWindow>,
     screensharing_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
+    hang_protection_counter: Arc<AtomicU64>,
 }
 
 // window: winit window
@@ -306,6 +310,7 @@ impl<'a> Application<'a> {
         socket: SocketSender,
         socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        hang_protection_counter: Arc<AtomicU64>,
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
 
@@ -348,6 +353,7 @@ impl<'a> Application<'a> {
             screensharing_window: None,
             screensharing_redraw_thread: None,
             stats_window: None,
+            hang_protection_counter,
         })
     }
 
@@ -850,6 +856,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::Terminate => {
                 log::info!("user_event: Client disconnected, terminating.");
                 event_loop.exit();
+            }
+            UserEvent::HangProtection => {
+                self.hang_protection_counter.fetch_add(1, Ordering::Relaxed);
             }
             UserEvent::GetAvailableContent => {
                 log::debug!("user_event: Get available content");
@@ -2204,6 +2213,7 @@ pub enum UserEvent {
     Scroll(ScrollDelta, String),
     GetAvailableContent,
     Terminate,
+    HangProtection,
     CallStart(CallStartMessage),
     CallEnd,
     ScreenShare(ScreenShareMessage),
@@ -2432,8 +2442,42 @@ impl RenderEventLoop {
             }
         });
 
+        let hang_protection_counter = Arc::new(AtomicU64::new(0));
+        let hang_protection_counter_clone = hang_protection_counter.clone();
+        let hang_protection_proxy = self.event_loop.create_proxy();
+
+        std::thread::spawn(move || {
+            let mut last_count = hang_protection_counter_clone.load(Ordering::Relaxed);
+
+            loop {
+                let res = hang_protection_proxy.send_event(UserEvent::HangProtection);
+                if res.is_err() {
+                    log::error!("Hang protection: failed to send event, event loop closed");
+                    break;
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(
+                    HANG_PROTECTION_INTERVAL_SECONDS,
+                ));
+
+                let current_count = hang_protection_counter_clone.load(Ordering::Relaxed);
+                if current_count == last_count {
+                    log::error!("Hang protection: event loop is not responding, killing process");
+                    sentry_utils::upload_logs_event("Hang protection triggered".to_string());
+                    std::process::exit(HANG_PROTECTION_EXIT_CODE);
+                }
+                last_count = current_count;
+            }
+        });
+
         let proxy = self.event_loop.create_proxy();
-        let mut application = Application::new(input, sender, socket_responses, proxy)?;
+        let mut application = Application::new(
+            input,
+            sender,
+            socket_responses,
+            proxy,
+            hang_protection_counter,
+        )?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

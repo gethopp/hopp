@@ -195,6 +195,8 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                     data.event_socket = event_socket;
                                 }
                             }
+                        } else if code == 3 {
+                            crash_msg = "Core process terminated because the event loop stopped responding, please restart the app".to_string();
                         }
                     }
                     None => {
