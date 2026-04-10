@@ -856,19 +856,17 @@ async fn room_service_commands(
                     let (room, rx) = Room::connect(&url, &token, RoomOptions::default())
                         .await
                         .map_err(|e| format!("{e:?}"))?;
-                    let denoiser = match crate::audio::denoiser::Denoiser::new(
-                        sample_rate,
-                        noise_cancellation_enabled,
-                    ) {
-                        Ok(d) => {
-                            log::info!("DTLN denoiser initialized (tract)");
-                            Some(d)
-                        }
-                        Err(e) => {
-                            log::error!("Denoiser init failed, continuing without: {e}");
-                            None
-                        }
-                    };
+                    let denoiser =
+                        match crate::audio::denoiser::Denoiser::new(noise_cancellation_enabled) {
+                            Ok(d) => {
+                                log::info!("DTLN denoiser initialized (tract)");
+                                Some(d)
+                            }
+                            Err(e) => {
+                                log::error!("Denoiser init failed, continuing without: {e}");
+                                None
+                            }
+                        };
                     let publisher = AudioPublisher::publish(
                         &room,
                         sample_rate,

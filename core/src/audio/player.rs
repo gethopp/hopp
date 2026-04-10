@@ -1,4 +1,4 @@
-use super::mixer::{MixerHandle, SharedProcessor};
+use super::mixer::{MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
 

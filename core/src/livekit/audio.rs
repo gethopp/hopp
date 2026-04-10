@@ -10,7 +10,7 @@ use tokio_stream::StreamExt;
 use crate::audio::denoiser::Denoiser;
 use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
-pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
+pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
 const AUDIO_QUEUE_SIZE: u32 = 100;
@@ -146,12 +146,12 @@ async fn process_audio_samples(
         while buffer.len() >= samples_per_unit {
             chunk.copy_from_slice(&buffer[..samples_per_unit]);
             buffer.drain(..samples_per_unit);
-            if let Some(ref mut denoiser) = denoiser {
-                denoiser.process(&mut chunk);
-            }
             {
                 let mut p = processor.lock();
                 let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
+            }
+            if let Some(ref mut denoiser) = denoiser {
+                denoiser.process(&mut chunk);
             }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }

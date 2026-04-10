@@ -1,9 +1,4 @@
 use realfft::RealFftPlanner;
-use rubato::audioadapter_buffers::direct::InterleavedSlice;
-use rubato::{
-    calculate_cutoff, Async, FixedAsync, Resampler, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
-};
 use rustfft::num_complex::Complex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -12,9 +7,8 @@ use tract_onnx::prelude::*;
 
 const BLOCK_LEN: usize = 512;
 const BLOCK_SHIFT: usize = 128;
-const FFT_OUT_SIZE: usize = BLOCK_LEN / 2 + 1; // 257 frequency bins
+const FFT_OUT_SIZE: usize = BLOCK_LEN / 2 + 1;
 const MEMORY_ELEMENTS: usize = 1 * 2 * BLOCK_SHIFT * 2;
-const DENOISE_RATE: u32 = 16_000;
 
 const SPECTRAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_1.onnx");
 const SIGNAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_2.onnx");
@@ -191,75 +185,21 @@ impl DtlnEngine {
     }
 }
 
-/// DTLN noise cancellation with automatic 48kHz <-> 16kHz resampling.
-/// TODO: Check again if we can capture at 16kHz to avoid the resampling.
 pub struct Denoiser {
     engine: DtlnEngine,
     enabled: Arc<AtomicBool>,
-    downsampler: Async<f32>,
-    upsampler: Async<f32>,
-    down_out: Vec<f32>,
-    up_out: Vec<f32>,
-    accumulator: Vec<f32>,
-    output_accumulator: Vec<f32>,
-    samples_per_block: usize,
+    input_queue: Vec<f32>,
+    output_queue: Vec<f32>,
 }
 
 impl Denoiser {
-    pub fn new(input_sample_rate: u32, enabled: Arc<AtomicBool>) -> Result<Self, String> {
+    pub fn new(enabled: Arc<AtomicBool>) -> Result<Self, String> {
         let engine = DtlnEngine::new()?;
-
-        let samples_per_block =
-            (BLOCK_SHIFT as f64 * input_sample_rate as f64 / DENOISE_RATE as f64).round() as usize;
-
-        let sinc_len = 256;
-        // TODO(@konsalex):
-        // Used BlackmanHarris2 with good results,
-        // but Google's implementation uses Hann. Revisit it needed.
-        // https://chromium.googlesource.com/external/webrtc/+/23868b64bc1a0a3226011327bc079c1c67f6ea4b/webrtc/modules/audio_processing/aec/aec_core_neon.cc#646.
-        // let window = WindowFunction::BlackmanHarris2;
-        let window = WindowFunction::Hann;
-        let sinc_params = SincInterpolationParameters {
-            sinc_len,
-            f_cutoff: calculate_cutoff(sinc_len, window),
-            interpolation: SincInterpolationType::Cubic,
-            oversampling_factor: 256,
-            window,
-        };
-
-        let downsampler = Async::<f32>::new_sinc(
-            DENOISE_RATE as f64 / input_sample_rate as f64,
-            1.1,
-            &sinc_params,
-            samples_per_block,
-            1,
-            FixedAsync::Input,
-        )
-        .map_err(|e| format!("Failed to create downsampler: {e}"))?;
-
-        let upsampler = Async::<f32>::new_sinc(
-            input_sample_rate as f64 / DENOISE_RATE as f64,
-            1.1,
-            &sinc_params,
-            BLOCK_SHIFT,
-            1,
-            FixedAsync::Input,
-        )
-        .map_err(|e| format!("Failed to create upsampler: {e}"))?;
-
-        let down_out = vec![0f32; downsampler.output_frames_max()];
-        let up_out = vec![0f32; upsampler.output_frames_max()];
-
         Ok(Self {
             engine,
             enabled,
-            downsampler,
-            upsampler,
-            down_out,
-            up_out,
-            accumulator: Vec::with_capacity(samples_per_block * 4),
-            output_accumulator: Vec::new(),
-            samples_per_block,
+            input_queue: Vec::with_capacity(BLOCK_SHIFT * 4),
+            output_queue: Vec::with_capacity(BLOCK_SHIFT * 4),
         })
     }
 
@@ -267,40 +207,22 @@ impl Denoiser {
         self.enabled.load(Ordering::Relaxed)
     }
 
-    /// Denoise i16 samples in-place. No-op when disabled.
     pub fn process(&mut self, samples: &mut [i16]) {
         if !self.is_enabled() {
             return;
         }
 
-        // Convert i16 -> f32 and accumulate
+        // Queue new input samples as f32.
         for &s in samples.iter() {
-            self.accumulator.push(s as f32 / i16::MAX as f32);
+            self.input_queue.push(s as f32 / i16::MAX as f32);
         }
 
-        while self.accumulator.len() >= self.samples_per_block {
-            // Downsample to 16kHz
-            let mut block = [0f32; BLOCK_SHIFT];
-            let downsample_output_count = {
-                let input = InterleavedSlice::new(
-                    &self.accumulator[..self.samples_per_block],
-                    1,
-                    self.samples_per_block,
-                )
-                .expect("input adapter");
-                let out_cap = self.down_out.len();
-                let mut output = InterleavedSlice::new_mut(&mut self.down_out, 1, out_cap)
-                    .expect("output adapter");
-                self.downsampler
-                    .process_into_buffer(&input, &mut output, None)
-                    .expect("downsample failed")
-                    .1
-            };
-            let copy_count = downsample_output_count.min(BLOCK_SHIFT);
-            block[..copy_count].copy_from_slice(&self.down_out[..copy_count]);
-            self.accumulator.drain(..self.samples_per_block);
-
-            // Run DTLN engine
+        // Drain all full blocks from the input queue into the output queue.
+        while self.input_queue.len() >= BLOCK_SHIFT {
+            let block: [f32; BLOCK_SHIFT] = self.input_queue[..BLOCK_SHIFT]
+                .try_into()
+                .expect("slice len");
+            self.input_queue.drain(..BLOCK_SHIFT);
             let denoised = match self.engine.feed(&block) {
                 Ok(d) => d,
                 Err(e) => {
@@ -308,31 +230,23 @@ impl Denoiser {
                     block
                 }
             };
-
-            // Upsample back to input rate
-            let upsample_output_count = {
-                let input =
-                    InterleavedSlice::new(&denoised[..], 1, BLOCK_SHIFT).expect("input adapter");
-                let out_cap = self.up_out.len();
-                let mut output = InterleavedSlice::new_mut(&mut self.up_out, 1, out_cap)
-                    .expect("output adapter");
-                self.upsampler
-                    .process_into_buffer(&input, &mut output, None)
-                    .expect("upsample failed")
-                    .1
-            };
-            self.output_accumulator
-                .extend_from_slice(&self.up_out[..upsample_output_count]);
+            self.output_queue.extend_from_slice(&denoised);
         }
 
-        // Write denoised samples back to the input slice
-        let write_count = samples.len().min(self.output_accumulator.len());
-        for i in 0..write_count {
-            samples[i] = (self.output_accumulator[i].clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        // Emit exactly samples.len() denoised samples aligned with the input
+        // frame. When the output queue is short (e.g. first frame before the
+        // pipeline has warmed up), emit silence for the missing tail rather
+        // than leaking through the raw noisy input.
+        let available = self.output_queue.len().min(samples.len());
+        for (slot, &s) in samples[..available]
+            .iter_mut()
+            .zip(self.output_queue.iter())
+        {
+            *slot = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
         }
-        for sample in samples.iter_mut().skip(write_count) {
-            *sample = 0;
+        self.output_queue.drain(..available);
+        for slot in samples[available..].iter_mut() {
+            *slot = 0;
         }
-        self.output_accumulator.drain(..write_count);
     }
 }
