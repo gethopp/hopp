@@ -213,6 +213,7 @@ export interface CommandMap {
   mute_mic: { args: void; return: void };
   unmute_mic: { args: void; return: void };
   toggle_mic: { args: void; return: void };
+  set_noise_cancellation: { args: { enabled: boolean }; return: void };
   list_microphones: { args: void; return: AudioDevice[] };
   select_microphone: { args: { deviceName: string }; return: void };
 

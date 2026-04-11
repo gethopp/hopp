@@ -8,9 +8,10 @@ use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
+use crate::audio::denoiser::Denoiser;
 use crate::audio::mixer::{AudioSource, MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
 
-pub const LIVEKIT_SAMPLE_RATE: u32 = 48000;
+pub const LIVEKIT_SAMPLE_RATE: u32 = 16000;
 pub const AUDIO_NUM_CHANNELS: u32 = 1;
 const AUDIO_TRACK_NAME: &str = "microphone";
 const AUDIO_QUEUE_SIZE: u32 = 100;
@@ -27,6 +28,7 @@ impl AudioPublisher {
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         processor: SharedProcessor,
         audio_handle: &TokioHandle,
+        denoiser: Option<Denoiser>,
     ) -> Result<Self, String> {
         let audio_source_options = AudioSourceOptions {
             echo_cancellation: false,
@@ -67,6 +69,7 @@ impl AudioPublisher {
             native_source,
             sample_rate,
             processor,
+            denoiser,
         ));
 
         log::info!("AudioPublisher: audio track published ({}Hz)", sample_rate,);
@@ -101,13 +104,14 @@ async fn process_audio_samples(
     audio_source: NativeAudioSource,
     sample_rate: u32,
     processor: SharedProcessor,
+    mut denoiser: Option<Denoiser>,
 ) {
     assert_eq!(
         sample_rate, MIXER_SAMPLE_RATE,
         "Mic capture sample rate must match APM rate"
     );
     let samples_per_unit = (MIXER_SAMPLE_RATE / 100) as usize;
-    let max_buffer_frames = 10;
+    let max_buffer_frames = 20;
     let max_buffer_samples = max_buffer_frames * samples_per_unit;
 
     log::info!(
@@ -147,6 +151,9 @@ async fn process_audio_samples(
             {
                 let mut p = processor.lock();
                 let _ = p.process_stream(&mut chunk, sample_rate as i32, AUDIO_NUM_CHANNELS as i32);
+            }
+            if let Some(ref mut denoiser) = denoiser {
+                denoiser.process(&mut chunk);
             }
             capture_frame(&audio_source, &chunk, samples_per_unit, sample_rate).await;
         }

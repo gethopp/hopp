@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -65,6 +66,7 @@ enum RoomServiceCommand {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         audio_processor: SharedProcessor,
+        noise_cancellation_enabled: Arc<AtomicBool>,
     },
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
@@ -372,6 +374,7 @@ impl RoomService {
         sample_rate: u32,
         sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
         audio_processor: SharedProcessor,
+        noise_cancellation_enabled: Arc<AtomicBool>,
     ) -> Result<(), RoomServiceError> {
         log::info!("create_room");
         self.service_command_tx
@@ -383,6 +386,7 @@ impl RoomService {
                 sample_rate,
                 sample_rx,
                 audio_processor,
+                noise_cancellation_enabled,
             })
             .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
         log::info!("create_room: command dispatched (non-blocking)");
@@ -842,6 +846,7 @@ async fn room_service_commands(
                 sample_rate,
                 sample_rx,
                 audio_processor,
+                noise_cancellation_enabled,
             } => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
@@ -867,12 +872,24 @@ async fn room_service_commands(
                     let (room, rx) = Room::connect(&url, &token, RoomOptions::default())
                         .await
                         .map_err(|e| format!("{e:?}"))?;
+                    let denoiser =
+                        match crate::audio::denoiser::Denoiser::new(noise_cancellation_enabled) {
+                            Ok(d) => {
+                                log::info!("DTLN denoiser initialized (tract)");
+                                Some(d)
+                            }
+                            Err(e) => {
+                                log::error!("Denoiser init failed, continuing without: {e}");
+                                None
+                            }
+                        };
                     let publisher = AudioPublisher::publish(
                         &room,
                         sample_rate,
                         sample_rx,
                         audio_processor,
                         &audio_handle,
+                        denoiser,
                     )
                     .await
                     .map_err(|e| format!("{e}"))?;

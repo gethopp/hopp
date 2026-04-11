@@ -803,6 +803,15 @@ fn toggle_mic(app: tauri::AppHandle) {
 }
 
 #[tauri::command(async)]
+fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
+        log::error!("set_noise_cancellation: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
@@ -1532,6 +1541,7 @@ fn main() {
             mute_mic,
             unmute_mic,
             toggle_mic,
+            set_noise_cancellation,
             list_microphones,
             select_microphone,
             list_webcams,

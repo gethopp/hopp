@@ -1,12 +1,6 @@
 import React, { useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  HiArrowDownTray,
-  HiOutlineUsers,
-  HiOutlineLockOpen,
-  HiOutlineUserPlus,
-  HiOutlineMinus,
-} from "react-icons/hi2";
+import { HiArrowDownTray, HiOutlineUsers, HiOutlineLockOpen, HiOutlineUserPlus, HiOutlineMinus } from "react-icons/hi2";
 import { CgSpinner } from "react-icons/cg";
 import { differenceInDays, parseISO } from "date-fns";
 import { Separator } from "../ui/separator";
@@ -27,6 +21,7 @@ import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { OS } from "@/constants";
 import { useQueryClient } from "@tanstack/react-query";
 import { downloadAndRelaunch } from "@/update";
+import { LuCircleFadingArrowUp } from "react-icons/lu";
 
 const SidebarButton = ({
   active,
@@ -72,7 +67,7 @@ const getAvailableTabs = (
           key: "login",
         } as const,
       ]
-      : [
+    : [
         {
           label: "User List",
           icon: <HiOutlineUsers className="size-4 stroke-[1.5]" />,
@@ -119,7 +114,7 @@ const DownloadNewVersionButton = () => {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1.5 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
+          className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
           onClick={() => {
             setUpdateInProgress(true);
             void downloadAndRelaunch();
@@ -128,7 +123,7 @@ const DownloadNewVersionButton = () => {
         >
           {updateInProgress ?
             <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-            : <HiArrowDownTray className="size-3.5 text-gray-800" />}
+          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
