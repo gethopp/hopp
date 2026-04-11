@@ -118,7 +118,10 @@ impl DtlnEngine {
             let mask = outputs[0]
                 .to_array_view::<f32>()
                 .map_err(|e| format!("Failed to extract mask: {e}"))?;
-            let mask_flat = mask.as_slice().expect("contiguous mask");
+            let Some(mask_flat) = mask.as_slice() else {
+                log::error!("Failed to get contiguous mask for spectral model");
+                return Err("Non-contiguous mask array".into());
+            };
             for i in 0..FFT_OUT_SIZE {
                 let mag = self.in_magnitude[i] * mask_flat[i];
                 let phase = self.in_phase[i];
@@ -132,8 +135,11 @@ impl DtlnEngine {
             let new_mem = outputs[1]
                 .to_array_view::<f32>()
                 .map_err(|e| format!("Failed to extract spectral memory: {e}"))?;
-            self.spectral_memory
-                .copy_from_slice(new_mem.as_slice().expect("contiguous memory"));
+            if let Some(mem_slice) = new_mem.as_slice() {
+                self.spectral_memory.copy_from_slice(mem_slice);
+            } else {
+                log::error!("Failed to get contiguous memory for spectral model");
+            }
         }
 
         // Inverse FFT
@@ -164,7 +170,10 @@ impl DtlnEngine {
             let out_view = outputs[0]
                 .to_array_view::<f32>()
                 .map_err(|e| format!("Failed to extract signal output: {e}"))?;
-            let out_slice = out_view.as_slice().expect("contiguous output");
+            let Some(out_slice) = out_view.as_slice() else {
+                log::error!("Failed to get contiguous output for signal model");
+                return Err("Non-contiguous output array".into());
+            };
 
             self.out_buffer.copy_within(BLOCK_SHIFT.., 0);
             self.out_buffer[BLOCK_LEN - BLOCK_SHIFT..].fill(0f32);
@@ -175,13 +184,16 @@ impl DtlnEngine {
             let new_mem = outputs[1]
                 .to_array_view::<f32>()
                 .map_err(|e| format!("Failed to extract signal memory: {e}"))?;
-            self.signal_memory
-                .copy_from_slice(new_mem.as_slice().expect("contiguous memory"));
+            if let Some(mem_slice) = new_mem.as_slice() {
+                self.signal_memory.copy_from_slice(mem_slice);
+            } else {
+                log::error!("Failed to get contiguous memory for signal model");
+            }
         }
 
-        Ok(self.out_buffer[..BLOCK_SHIFT]
+        self.out_buffer[..BLOCK_SHIFT]
             .try_into()
-            .expect("slice is BLOCK_SHIFT long"))
+            .map_err(|_| "Output buffer slice has unexpected length".to_string())
     }
 }
 
@@ -219,9 +231,13 @@ impl Denoiser {
 
         // Drain all full blocks from the input queue into the output queue.
         while self.input_queue.len() >= BLOCK_SHIFT {
-            let block: [f32; BLOCK_SHIFT] = self.input_queue[..BLOCK_SHIFT]
-                .try_into()
-                .expect("slice len");
+            let block: [f32; BLOCK_SHIFT] = match self.input_queue[..BLOCK_SHIFT].try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    log::error!("Failed to convert input block");
+                    break;
+                }
+            };
             self.input_queue.drain(..BLOCK_SHIFT);
             let denoised = match self.engine.feed(&block) {
                 Ok(d) => d,
