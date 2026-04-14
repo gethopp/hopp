@@ -8,6 +8,13 @@ use winit::window::{Window, WindowAttributes, WindowLevel};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::WindowExtMacOS;
 
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+#[cfg(target_os = "macos")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowExtWindows;
 
@@ -110,6 +117,18 @@ impl WindowManager {
         #[cfg(target_os = "macos")]
         {
             window.set_has_shadow(false);
+
+            // Needed for the overlay window to follow space changes.
+            if let Ok(raw_handle) = window.window_handle() {
+                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
+                    let ns_view: Option<Retained<NSView>> =
+                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+                        ns_window
+                            .setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
+                    }
+                }
+            }
         }
 
         let position = get_window_position_for_monitor(monitor);
