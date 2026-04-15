@@ -78,6 +78,8 @@ const SMALL_HEIGHT_THRESHOLD: f32 = 600.0;
 const COMPACT_WIDTH_THRESHOLD: f32 = 300.0;
 const HIDE_NAME_TILE_THRESHOLD: f32 = 150.0;
 
+const COMPACT_TOP_INSET: f32 = 24.0;
+
 const ICON_MICROPHONE_ON: char = '\u{F105}';
 const ICON_MICROPHONE_OFF: char = '\u{F106}';
 const ICON_SCREEN_SHARE: char = '\u{F102}';
@@ -543,7 +545,15 @@ impl CameraWindow {
 
         // ── Main layout ─────────────────────────────────────────────────
         let content = if state.is_compact {
-            column![video_grid].width(Length::Fill).height(Length::Fill)
+            column![video_grid]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(Padding {
+                    top: COMPACT_TOP_INSET,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                })
         } else {
             column![header, video_grid]
                 .width(Length::Fill)
@@ -1354,7 +1364,11 @@ fn create_participant_grid<'a>(
     }
 
     // Subtract header height from vertical space, then apply grid padding
-    let header_offset = if is_compact { 0.0 } else { HEADER_HEIGHT };
+    let header_offset = if is_compact {
+        COMPACT_TOP_INSET
+    } else {
+        HEADER_HEIGHT
+    };
     let available_width = available_size.width - (MIN_GRID_PADDING * 2.0);
     let available_height = (available_size.height - header_offset) - (MIN_GRID_PADDING * 2.0);
 
