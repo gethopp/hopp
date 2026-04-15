@@ -76,6 +76,7 @@ const HEADER_HEIGHT: f32 = 20.0 + CONTENT_PADDING;
 const SMALL_WIDTH_THRESHOLD: f32 = 450.0;
 const SMALL_HEIGHT_THRESHOLD: f32 = 600.0;
 const COMPACT_WIDTH_THRESHOLD: f32 = 300.0;
+const HIDE_NAME_TILE_THRESHOLD: f32 = 150.0;
 
 const ICON_MICROPHONE_ON: char = '\u{F105}';
 const ICON_MICROPHONE_OFF: char = '\u{F106}';
@@ -1387,9 +1388,9 @@ fn create_participant_grid<'a>(
 
     // Apply minimum tile size (but don't exceed what fits)
     let tile_size = best_tile_size.max(MIN_TILE_SIZE);
-
     let tiles_per_row = best_cols;
     let num_rows = best_rows;
+    let hide_name = tile_size < HIDE_NAME_TILE_THRESHOLD;
 
     // Calculate actual grid dimensions
     let actual_cols = tiles_per_row.min(participant_count);
@@ -1426,7 +1427,7 @@ fn create_participant_grid<'a>(
                     is_small_window,
                     is_local,
                     local_tile_hovered,
-                    is_compact,
+                    hide_name,
                     skip_buffer,
                 ));
             }
