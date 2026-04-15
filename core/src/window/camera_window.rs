@@ -1212,6 +1212,7 @@ fn participant_card<'a>(
                 corner_radius: TILE_RADIUS,
                 stretch_to_fill: false,
                 skip_upload: skip_buffer,
+                mirror: is_local,
             };
             let video_bg: iced::widget::Shader<CameraMessage, _> = shader(video_program)
                 .width(Length::Fill)

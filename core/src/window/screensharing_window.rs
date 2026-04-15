@@ -1721,6 +1721,7 @@ impl ScreensharingWindow {
                     corner_radius: 12.0,
                     stretch_to_fill: true,
                     skip_upload: skip_buffer,
+                    mirror: false,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)

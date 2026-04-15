@@ -42,6 +42,7 @@ struct Params {
     tile_h: f32,
     corner_radius: f32,
     stretch_to_fill: u32,
+    flip_horizontal: u32,
 };
 @group(0) @binding(4) var<uniform> params: Params;
 
@@ -74,7 +75,10 @@ fn fs_main(in_: VSOut) -> @location(0) vec4<f32> {
     let uv_tex_w = f32(params.uv_tex_w);
 
     // Flip vertically (wgpu texture origin is top-left, UV origin bottom-left)
-    let flipped = vec2<f32>(in_.uv.x, 1.0 - in_.uv.y);
+    var flipped = vec2<f32>(in_.uv.x, 1.0 - in_.uv.y);
+    if (params.flip_horizontal != 0u) {
+        flipped.x = 1.0 - flipped.x;
+    }
 
     // Center-crop: compute UVs that center-crop source to fill tile.
     // When stretch_to_fill is set, skip the crop and use raw UVs (stretches to fill).

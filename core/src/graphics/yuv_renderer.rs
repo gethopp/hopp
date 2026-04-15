@@ -33,8 +33,10 @@ struct Params {
     corner_radius: f32,
     /// When non-zero, skip aspect-ratio crop and stretch the source to fill the tile.
     stretch_to_fill: u32,
+    /// When non-zero, flip the frame horizontally (for local camera mirror).
+    flip_horizontal: u32,
     // Pad to 48 bytes (wgpu requires uniform buffer sizes to be multiples of 16)
-    _pad: [u32; 3],
+    _pad: [u32; 2],
 }
 
 // ── Per-participant GPU state ────────────────────────────────────────────────
@@ -214,6 +216,7 @@ impl YuvPipeline {
         tile_height: u32,
         corner_radius: f32,
         stretch_to_fill: bool,
+        flip_horizontal: bool,
     ) {
         if width == 0 || height == 0 {
             return;
@@ -310,7 +313,8 @@ impl YuvPipeline {
             tile_h: tile_height as f32,
             corner_radius,
             stretch_to_fill: u32::from(stretch_to_fill),
-            _pad: [0; 3],
+            flip_horizontal: u32::from(flip_horizontal),
+            _pad: [0; 2],
         };
         queue.write_buffer(&state.params_buf, 0, bytemuck::bytes_of(&params));
     }
@@ -453,6 +457,8 @@ pub struct YuvVideoPrimitive {
     corner_radius: f32,
     /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
     stretch_to_fill: bool,
+    /// When true, flip horizontally for local camera mirror preview.
+    mirror: bool,
     /// When true, skip GPU texture upload (frame hasn't changed).
     skip_upload: bool,
 }
@@ -502,6 +508,7 @@ impl primitive::Primitive for YuvVideoPrimitive {
             self.tile_height,
             self.corner_radius,
             self.stretch_to_fill,
+            self.mirror,
         );
     }
 
@@ -531,6 +538,8 @@ pub struct YuvVideoProgram {
     pub corner_radius: f32,
     /// When true, skip aspect-ratio crop and stretch the source to fill the tile.
     pub stretch_to_fill: bool,
+    /// When true, flip horizontally for local camera mirror preview.
+    pub mirror: bool,
     /// When true, skip GPU texture upload (frame hasn't changed).
     pub skip_upload: bool,
 }
@@ -560,6 +569,7 @@ impl<Message> shader::Program<Message> for YuvVideoProgram {
             tile_height: bounds.height.max(1.0) as u32,
             corner_radius: self.corner_radius,
             stretch_to_fill: self.stretch_to_fill,
+            mirror: self.mirror,
             skip_upload: self.skip_upload,
         }
     }
