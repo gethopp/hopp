@@ -178,8 +178,7 @@ async fn collect_stats(
                     counters.total_inbound_bytes += s.inbound.bytes_received;
                     if is_screenshare {
                         counters.screenshare_inbound_bytes += s.inbound.bytes_received;
-                        counters.screenshare_jitter_buffer_delay +=
-                            s.inbound.jitter_buffer_delay as f64;
+                        counters.screenshare_jitter_buffer_delay += s.inbound.jitter_buffer_delay;
                         counters.screenshare_jitter_buffer_emitted_count +=
                             s.inbound.jitter_buffer_emitted_count;
                         snapshot.screenshare_fps = s.inbound.frames_per_second;

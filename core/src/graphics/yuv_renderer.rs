@@ -76,7 +76,23 @@ impl std::fmt::Debug for YuvPipeline {
 
 /// Align a value up to the given alignment.
 fn align_to(value: u32, alignment: u32) -> u32 {
-    (value + alignment - 1) / alignment * alignment
+    value.div_ceil(alignment) * alignment
+}
+
+pub(crate) struct YuvFrameData<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub y: &'a [u8],
+    pub u: &'a [u8],
+    pub v: &'a [u8],
+}
+
+pub(crate) struct YuvTileParams {
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub corner_radius: f32,
+    pub stretch_to_fill: bool,
+    pub flip_horizontal: bool,
 }
 
 impl YuvPipeline {
@@ -207,26 +223,18 @@ impl YuvPipeline {
         participant_id: u64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        y_data: &[u8],
-        u_data: &[u8],
-        v_data: &[u8],
-        tile_width: u32,
-        tile_height: u32,
-        corner_radius: f32,
-        stretch_to_fill: bool,
-        flip_horizontal: bool,
+        frame: &YuvFrameData,
+        tile: &YuvTileParams,
     ) {
-        if width == 0 || height == 0 {
+        if frame.width == 0 || frame.height == 0 {
             return;
         }
 
-        let state = self.ensure_textures(participant_id, device, width, height);
+        let state = self.ensure_textures(participant_id, device, frame.width, frame.height);
 
-        let y_tex_w = align_to(width, 256);
-        let uv_tex_w = align_to(width / 2, 256);
-        let uv_h = height / 2;
+        let y_tex_w = align_to(frame.width, 256);
+        let uv_tex_w = align_to(frame.width / 2, 256);
+        let uv_h = frame.height / 2;
 
         // Data is already padded to GPU-aligned strides in VideoBuffer,
         // upload directly — no intermediate copy needed.
@@ -237,15 +245,15 @@ impl YuvPipeline {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            y_data,
+            frame.y,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(y_tex_w),
-                rows_per_image: Some(height),
+                rows_per_image: Some(frame.height),
             },
             wgpu::Extent3d {
                 width: y_tex_w,
-                height,
+                height: frame.height,
                 depth_or_array_layers: 1,
             },
         );
@@ -257,7 +265,7 @@ impl YuvPipeline {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            u_data,
+            frame.u,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(uv_tex_w),
@@ -277,7 +285,7 @@ impl YuvPipeline {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            v_data,
+            frame.v,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(uv_tex_w),
@@ -293,27 +301,27 @@ impl YuvPipeline {
         // Update params uniform.
         // In stretch-to-fill mode, force aspect terms to match the source aspect so
         // crop math becomes a no-op even if the shader flag path is not taken.
-        let (tile_aspect_num, tile_aspect_den) = if stretch_to_fill {
-            (width.max(1), height.max(1))
+        let (tile_aspect_num, tile_aspect_den) = if tile.stretch_to_fill {
+            (frame.width.max(1), frame.height.max(1))
         } else {
             (
-                (tile_width as f32 * 1000.0) as u32,
-                (tile_height.max(1) as f32 * 1000.0) as u32,
+                (tile.tile_width as f32 * 1000.0) as u32,
+                (tile.tile_height.max(1) as f32 * 1000.0) as u32,
             )
         };
 
         let params = Params {
-            src_w: width,
-            src_h: height,
+            src_w: frame.width,
+            src_h: frame.height,
             y_tex_w,
             uv_tex_w,
             tile_aspect_num,
             tile_aspect_den,
-            tile_w: tile_width as f32,
-            tile_h: tile_height as f32,
-            corner_radius,
-            stretch_to_fill: u32::from(stretch_to_fill),
-            flip_horizontal: u32::from(flip_horizontal),
+            tile_w: tile.tile_width as f32,
+            tile_h: tile.tile_height as f32,
+            corner_radius: tile.corner_radius,
+            stretch_to_fill: u32::from(tile.stretch_to_fill),
+            flip_horizontal: u32::from(tile.flip_horizontal),
             _pad: [0; 2],
         };
         queue.write_buffer(&state.params_buf, 0, bytemuck::bytes_of(&params));
@@ -499,16 +507,20 @@ impl primitive::Primitive for YuvVideoPrimitive {
             self.participant_id,
             device,
             queue,
-            buf.width,
-            buf.height,
-            &buf.y,
-            &buf.u,
-            &buf.v,
-            self.tile_width,
-            self.tile_height,
-            self.corner_radius,
-            self.stretch_to_fill,
-            self.mirror,
+            &YuvFrameData {
+                width: buf.width,
+                height: buf.height,
+                y: &buf.y,
+                u: &buf.u,
+                v: &buf.v,
+            },
+            &YuvTileParams {
+                tile_width: self.tile_width,
+                tile_height: self.tile_height,
+                corner_radius: self.corner_radius,
+                stretch_to_fill: self.stretch_to_fill,
+                flip_horizontal: self.mirror,
+            },
         );
     }
 

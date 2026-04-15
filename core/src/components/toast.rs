@@ -45,16 +45,6 @@ pub fn show_toast(text: String, display_duration_ms: u128, position: ToastPositi
     }
 }
 
-/// Returns `true` while the toast (including its fade-out tail) is still visible.
-pub fn toast_active(state: &Option<ToastState>) -> bool {
-    match state {
-        Some(s) => {
-            s.shown_at.elapsed().as_millis() < FADE_IN_MS + s.display_duration_ms + FADE_OUT_MS
-        }
-        None => false,
-    }
-}
-
 /// Auto-clear the toast once the full lifecycle (fade-in + display + fade-out) has elapsed.
 pub fn tick_toast(state: &mut Option<ToastState>) {
     if let Some(s) = state {

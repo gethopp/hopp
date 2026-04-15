@@ -503,7 +503,7 @@ impl ColorToken {
     }
 
     /// Converts the color token to an iced::Color
-    pub fn to_color(&self) -> Color {
+    pub fn to_color(self) -> Color {
         let hex = self.hex();
         parse_hex_color(hex)
     }

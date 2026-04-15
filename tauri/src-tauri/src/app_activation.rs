@@ -11,7 +11,7 @@ use tauri::Manager;
 
 // SAFETY: The observer is an ObjC object registered on the main thread notification center.
 // We only store it so it stays alive; we never access it from another thread.
-struct SendSyncObserver(Retained<ProtocolObject<dyn NSObjectProtocol>>);
+struct SendSyncObserver(#[allow(dead_code)] Retained<ProtocolObject<dyn NSObjectProtocol>>);
 unsafe impl Send for SendSyncObserver {}
 unsafe impl Sync for SendSyncObserver {}
 
@@ -111,7 +111,7 @@ impl AppActivationObserver {
                     return;
                 } else {
                     log::info!("app_activation: reset policy to accessory");
-                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
 
                 // Guard: location must be set

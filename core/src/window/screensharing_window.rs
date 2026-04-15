@@ -21,8 +21,7 @@ use iced::{
 };
 use iced_core::clipboard::Kind;
 use iced_wgpu::core::mouse;
-use iced_wgpu::graphics::{Shell, Viewport};
-use iced_wgpu::Engine;
+use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
 use iced_winit::core::{window, Event, Size, Theme};
@@ -53,7 +52,6 @@ use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::utils::clock;
 use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
-use crate::windows::shadows::ShadowToken;
 
 use super::aspect_ratio::{
     calculate_max_window_size, default_window_size, min_window_size, AspectRatioEnforcer,
@@ -134,8 +132,7 @@ fn probe_available_screen_area(event_loop: &ActiveEventLoop) -> ScreenArea {
         let pos: Option<winit::dpi::LogicalPosition<f64>> =
             window.outer_position().ok().map(|p| p.to_logical(scale));
 
-        if inner.width > 0.0 && inner.height > 0.0 && pos.is_some() {
-            let pos = pos.unwrap();
+        if let Some(pos) = pos.filter(|_| inner.width > 0.0 && inner.height > 0.0) {
             area = ScreenArea {
                 position: Position { x: pos.x, y: pos.y },
                 extent: Extent {
@@ -595,19 +592,32 @@ pub struct ScreensharingWindow {
     custom_cursor_point: winit::window::CustomCursor,
 }
 
+pub struct ScreensharingWindowConfig {
+    pub screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
+    pub participants: Vec<(String, String, bool)>,
+    pub draw_persist: bool,
+    pub last_mode: Option<socket_lib::StoredMode>,
+    pub redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
+    pub redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
+}
+
 impl ScreensharingWindow {
     /// Create a new screensharing window with wgpu surface and iced renderer.
     pub fn new(
         context_manager: &ContextManager,
         event_loop: &ActiveEventLoop,
-        screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
-        participants: Vec<(String, String, bool)>,
-        draw_persist: bool,
-        last_mode: Option<socket_lib::StoredMode>,
-        redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
-        redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
+        config: ScreensharingWindowConfig,
     ) -> Result<Self, ScreensharingWindowError> {
         log::info!("ScreensharingWindow::new");
+
+        let ScreensharingWindowConfig {
+            screen_share_buffer,
+            participants,
+            draw_persist,
+            last_mode,
+            redraw_rx,
+            redraw_tx,
+        } = config;
 
         let screen_area = probe_available_screen_area(event_loop);
 
@@ -709,10 +719,10 @@ impl ScreensharingWindow {
             (pointer, pencil, point)
         };
 
-        let point_cursor_hotspot = (15.0, 20.0);
         // On non-macOS platforms, fall back to winit CustomCursor at 30px.
         #[cfg(not(target_os = "macos"))]
         let (custom_cursor_pointer, custom_cursor_pencil, custom_cursor_point) = {
+            let point_cursor_hotspot = (15.0, 20.0);
             let px = CURSOR_LOGICAL_SIZE as u32;
             let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
             let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);
@@ -910,10 +920,6 @@ impl ScreensharingWindow {
         }
     }
 
-    pub fn update_auto_clear(&mut self) -> Vec<u64> {
-        self.participants_manager.update_auto_clear()
-    }
-
     pub fn trigger_click_animation(&mut self, position: Position) {
         self.click_animation_renderer
             .enable_click_animation(position);
@@ -1015,15 +1021,15 @@ impl ScreensharingWindow {
         {
             use objc2_app_kit::NSCursor;
             if !self.mouse_in_participant_area {
-                unsafe { NSCursor::arrowCursor().set() };
+                NSCursor::arrowCursor().set();
             } else if self.state.active_tab == "draw" {
-                unsafe { self.ns_cursor_pencil.set() };
+                self.ns_cursor_pencil.set();
             } else if self.state.active_tab == "point" {
-                unsafe { self.ns_cursor_point.set() };
+                self.ns_cursor_point.set();
             } else if self.state.active_tab == "control" && self.local_participant_in_control {
-                unsafe { NSCursor::arrowCursor().set() };
+                NSCursor::arrowCursor().set();
             } else {
-                unsafe { self.ns_cursor_pointer.set() };
+                self.ns_cursor_pointer.set();
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -1427,17 +1433,14 @@ impl ScreensharingWindow {
             self.window.scale_factor() as f32,
             self.modifiers,
         ) {
-            match iced_event {
-                Event::Mouse(mouse_event) => {
-                    self.cursor = match mouse_event {
-                        iced::mouse::Event::CursorMoved { position } => {
-                            mouse::Cursor::Available(position)
-                        }
-                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                        _ => self.cursor,
-                    };
-                }
-                _ => {}
+            if let Event::Mouse(mouse_event) = iced_event {
+                self.cursor = match mouse_event {
+                    iced::mouse::Event::CursorMoved { position } => {
+                        mouse::Cursor::Available(position)
+                    }
+                    iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                    _ => self.cursor,
+                };
             }
 
             // Build user interface, process the event, and collect messages
@@ -2131,38 +2134,4 @@ impl Drop for ScreensharingWindow {
             drop(self.redraw_thread.take());
         }
     }
-}
-
-fn status_label(
-    label: &'static str,
-    is_active: bool,
-) -> iced::Element<'static, ScreensharingMessage, Theme, iced::Renderer> {
-    container(text(label).size(14).color(Color::WHITE).font(GEIST_MEDIUM))
-        .padding(Padding::from([6, 16]))
-        .style(move |_theme: &Theme| {
-            // Linear gradient from top to bottom (180deg = PI radians)
-            let grad = if is_active {
-                // Active: Lime gradient (from name_label speaking state)
-                gradient::Linear::new(Radians(std::f32::consts::PI))
-                    .add_stop(0.0, ColorToken::Lime800.to_color())
-                    .add_stop(1.0, ColorToken::Lime950.to_color())
-            } else {
-                // Inactive: Slate gradient (from name_label default state)
-                gradient::Linear::new(Radians(std::f32::consts::PI))
-                    .add_stop(0.0, ColorToken::Slate950.to_color())
-                    .add_stop(1.0, ColorToken::Slate900.to_color())
-            };
-
-            container::Style {
-                background: Some(Background::Gradient(grad.into())),
-                border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.3), // White with 30% opacity
-                    width: 1.0,
-                    radius: 20.0.into(),
-                },
-                shadow: ShadowToken::Xl.to_shadow(),
-                ..Default::default()
-            }
-        })
-        .into()
 }

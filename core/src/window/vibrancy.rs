@@ -2,7 +2,6 @@
 ///
 /// Inserts an `NSVisualEffectView` behind the wgpu Metal layer so the
 /// desktop shows through transparent regions rendered by the GPU.
-
 /// Pick the best transparent alpha mode from the surface capabilities.
 ///
 /// On macOS, prefers `PreMultiplied` > `PostMultiplied` so the compositor

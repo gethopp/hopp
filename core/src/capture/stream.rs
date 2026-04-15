@@ -12,7 +12,6 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     thread::JoinHandle,
 };
-use sysinfo::System;
 
 use super::CapturerError;
 
@@ -83,8 +82,7 @@ impl StreamBuffer {
  * from the capturing.
  */
 fn get_excluded_application_pids() -> Vec<u64> {
-    let system = System::new_all();
-    let mut pids = vec![];
+    let pids = vec![];
     // for (pid, process) in system.processes() {
     //     if let Some(name) = process.name().to_str() {
     //         if name.contains("hopp") {

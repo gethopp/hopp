@@ -9,11 +9,11 @@ use tokio_stream::StreamExt;
 
 /// Align a value up to the given alignment.
 fn align_to(value: u32, alignment: u32) -> u32 {
-    (value + alignment - 1) / alignment * alignment
+    value.div_ceil(alignment) * alignment
 }
 
 /// A buffer holding YUV420 planar video data
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct VideoBuffer {
     pub width: u32,
     pub height: u32,
@@ -24,22 +24,6 @@ pub struct VideoBuffer {
     pub u: Vec<u8>,
     pub v: Vec<u8>,
     pub frame_id: u64,
-}
-
-impl Default for VideoBuffer {
-    fn default() -> Self {
-        Self {
-            width: 0,
-            height: 0,
-            stride_y: 0,
-            stride_u: 0,
-            stride_v: 0,
-            y: Vec::new(),
-            u: Vec::new(),
-            v: Vec::new(),
-            frame_id: 0,
-        }
-    }
 }
 
 impl VideoBuffer {
@@ -62,7 +46,7 @@ impl VideoBuffer {
             self.stride_u = uv_stride;
             self.stride_v = uv_stride;
 
-            let ch = (height + 1) / 2;
+            let ch = height.div_ceil(2);
             let y_size = (y_stride * height) as usize;
             let u_size = (uv_stride * ch) as usize;
             let v_size = (uv_stride * ch) as usize;
@@ -74,7 +58,7 @@ impl VideoBuffer {
 
         let y_stride = self.stride_y;
         let uv_stride = self.stride_u;
-        let chroma_height = (height + 1) / 2;
+        let chroma_height = height.div_ceil(2);
 
         // Row-by-row copy — only the pixel data, padding bytes stay from resize/previous fill
         for row in 0..height as usize {
@@ -112,8 +96,8 @@ pub struct VideoBufferManager {
     inactive: std::sync::atomic::AtomicBool,
 }
 
-impl VideoBufferManager {
-    pub fn new() -> Self {
+impl Default for VideoBufferManager {
+    fn default() -> Self {
         Self {
             buffers: [
                 Mutex::new(VideoBuffer::default()),
@@ -123,7 +107,9 @@ impl VideoBufferManager {
             inactive: std::sync::atomic::AtomicBool::new(true),
         }
     }
+}
 
+impl VideoBufferManager {
     /// Returns the buffer to write into (the current write slot).
     pub fn write_buffer(&self) -> &Mutex<VideoBuffer> {
         self.inactive.store(false, Ordering::Release);

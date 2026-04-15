@@ -205,6 +205,7 @@ impl Capturer {
 
         self.active_device_name = if device_name.is_none() || fell_back_to_default {
             use cpal::traits::{DeviceTrait, HostTrait};
+            #[allow(deprecated)] // TODO: migrate to description() when cpal API stabilizes
             cpal::default_host()
                 .default_input_device()
                 .and_then(|d| d.name().ok())
@@ -224,14 +225,12 @@ impl Capturer {
                 }
 
                 output.clear();
-                let mut sample_idx = 0;
                 let mut got_any = false;
-                for s in source.by_ref().take(take_count) {
+                for (sample_idx, s) in source.by_ref().take(take_count).enumerate() {
                     got_any = true;
                     if sample_idx % num_channels == 0 {
                         output.push((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
                     }
-                    sample_idx += 1;
                 }
 
                 if !got_any {

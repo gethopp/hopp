@@ -31,7 +31,7 @@ pub enum ShadowToken {
 
 impl ShadowToken {
     /// Convert the shadow token to an iced Shadow
-    pub fn to_shadow(&self) -> Shadow {
+    pub fn to_shadow(self) -> Shadow {
         // Base shadow color: rgba(10, 13, 18, opacity)
         // #0A0D12 = rgb(10, 13, 18)
         let base_r = 10.0 / 255.0;

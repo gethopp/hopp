@@ -8,7 +8,7 @@ use tract_onnx::prelude::*;
 const BLOCK_LEN: usize = 512;
 const BLOCK_SHIFT: usize = 128;
 const FFT_OUT_SIZE: usize = BLOCK_LEN / 2 + 1;
-const MEMORY_ELEMENTS: usize = 1 * 2 * BLOCK_SHIFT * 2;
+const MEMORY_ELEMENTS: usize = 2 * BLOCK_SHIFT * 2;
 
 const SPECTRAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_1.onnx");
 const SIGNAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_2.onnx");
@@ -41,9 +41,9 @@ impl DtlnEngine {
         let spectral_model = tract_onnx::onnx()
             .model_for_read(&mut &SPECTRAL_MODEL_BYTES[..])
             .map_err(|e| format!("Failed to load spectral model: {e}"))?
-            .with_input_fact(0, f32::fact(&[1, 1, FFT_OUT_SIZE]).into())
+            .with_input_fact(0, f32::fact([1, 1, FFT_OUT_SIZE]).into())
             .map_err(|e| format!("Failed to set spectral input 0: {e}"))?
-            .with_input_fact(1, f32::fact(&[1, 2, BLOCK_SHIFT, 2]).into())
+            .with_input_fact(1, f32::fact([1, 2, BLOCK_SHIFT, 2]).into())
             .map_err(|e| format!("Failed to set spectral input 1: {e}"))?
             .into_optimized()
             .map_err(|e| format!("Failed to optimize spectral model: {e}"))?
@@ -53,9 +53,9 @@ impl DtlnEngine {
         let signal_model = tract_onnx::onnx()
             .model_for_read(&mut &SIGNAL_MODEL_BYTES[..])
             .map_err(|e| format!("Failed to load signal model: {e}"))?
-            .with_input_fact(0, f32::fact(&[1, 1, BLOCK_LEN]).into())
+            .with_input_fact(0, f32::fact([1, 1, BLOCK_LEN]).into())
             .map_err(|e| format!("Failed to set signal input 0: {e}"))?
-            .with_input_fact(1, f32::fact(&[1, 2, BLOCK_SHIFT, 2]).into())
+            .with_input_fact(1, f32::fact([1, 2, BLOCK_SHIFT, 2]).into())
             .map_err(|e| format!("Failed to set signal input 1: {e}"))?
             .into_optimized()
             .map_err(|e| format!("Failed to optimize signal model: {e}"))?
@@ -122,8 +122,8 @@ impl DtlnEngine {
                 log::error!("Failed to get contiguous mask for spectral model");
                 return Err("Non-contiguous mask array".into());
             };
-            for i in 0..FFT_OUT_SIZE {
-                let mag = self.in_magnitude[i] * mask_flat[i];
+            for (i, &mask_val) in mask_flat.iter().enumerate().take(FFT_OUT_SIZE) {
+                let mag = self.in_magnitude[i] * mask_val;
                 let phase = self.in_phase[i];
                 self.masked_spectrum[i] = Complex::new(mag * phase.cos(), mag * phase.sin());
             }

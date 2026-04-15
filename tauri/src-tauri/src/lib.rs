@@ -711,7 +711,7 @@ pub fn set_window_corner_radius_and_decorations(
     };
     ns_view.setWantsLayer(true);
 
-    if let Some(layer) = unsafe { ns_view.layer() } {
+    if let Some(layer) = ns_view.layer() {
         layer.setCornerRadius(radius);
         layer.setMasksToBounds(true);
     }
@@ -724,12 +724,10 @@ pub fn disable_app_nap() {
     let process_info = NSProcessInfo::processInfo();
     let reason = NSString::from_str("Avoid WebKit throttling for uninterrupted operation");
 
-    let activity = unsafe {
-        process_info.beginActivityWithOptions_reason(
-            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-            &reason,
-        )
-    };
+    let activity = process_info.beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        &reason,
+    );
 
     // Leak the activity token so App Nap stays disabled for the lifetime of the process.
     std::mem::forget(activity);

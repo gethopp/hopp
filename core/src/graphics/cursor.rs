@@ -86,10 +86,7 @@ impl Cursor {
 
     /// Sets the cursor position.
     pub fn set_position(&mut self, position: Option<Position>) {
-        self.last_update = match position {
-            Some(_) => Some(Instant::now()),
-            None => None,
-        };
+        self.last_update = position.map(|_| Instant::now());
         self.position = position;
     }
 

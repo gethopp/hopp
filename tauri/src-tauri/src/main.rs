@@ -29,8 +29,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::{env, sync::Arc};
 
-use std::time::Duration;
-
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri::PhysicalPosition;
 
@@ -55,7 +53,7 @@ async fn screenshare(
     }
 
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data
         .sender
         .send(Message::StartScreenShare(ScreenShareMessage {
@@ -108,7 +106,7 @@ async fn stop_sharing(app: tauri::AppHandle) {
 async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
     log::info!("get_available_content");
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::GetAvailableContent) {
         log::error!("get_available_content: failed to send message: {e:?}");
         return vec![];
@@ -378,29 +376,6 @@ fn skip_tray_notification_selection_window(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_tray_notification(false);
-}
-
-#[allow(unused_variables)]
-#[tauri::command(async)]
-fn set_dock_icon_visible(app: tauri::AppHandle, visible: bool) {
-    log::info!("set_dock_icon_visible: {visible}");
-    #[cfg(target_os = "macos")]
-    {
-        if visible {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        } else {
-            let content_picker_window = app.get_webview_window("contentPicker");
-            if content_picker_window.is_none() {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
-        }
-
-        {
-            let data = app.state::<Mutex<AppData>>();
-            let mut data = data.lock().unwrap();
-            data.activation_policy_regular = visible;
-        }
-    }
 }
 
 #[tauri::command(async)]
@@ -814,7 +789,7 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
 #[tauri::command(async)]
 fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data
         .sender
         .send(Message::StartCamera(socket_lib::CameraStartMessage {
@@ -875,7 +850,7 @@ fn close_screenshare_viewer(app: tauri::AppHandle) {
 #[tauri::command(async)]
 fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::ListAudioDevices) {
         log::error!("list_microphones: failed to send: {e:?}");
         return vec![];
@@ -895,7 +870,7 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
 #[tauri::command(async)]
 fn select_microphone(app: tauri::AppHandle, device_name: String) {
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data
         .sender
         .send(Message::StartAudioCapture(AudioCaptureMessage {
@@ -918,7 +893,7 @@ fn select_microphone(app: tauri::AppHandle, device_name: String) {
 #[tauri::command(async)]
 fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::ListCameras) {
         log::error!("list_webcams: failed to send: {e:?}");
         return vec![];
@@ -939,7 +914,7 @@ fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
 fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
     log::info!("bring_windows_to_front");
     let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
+    let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
         log::error!("bring_windows_to_front: failed to send: {e:?}");
         return false;

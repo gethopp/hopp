@@ -207,7 +207,6 @@ impl StatsWindow {
             Some(ConnectionQuality::Poor) => "Poor",
             Some(ConnectionQuality::Lost) => "Lost",
             None => "N/A",
-            _ => "Unknown",
         };
 
         let label_color = Color::from_rgb(0.6, 0.6, 0.6);
@@ -316,7 +315,7 @@ impl StatsWindow {
 
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.stats, self.connection_quality.clone()),
+            Self::view(&self.stats, self.connection_quality),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,

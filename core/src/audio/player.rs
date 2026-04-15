@@ -1,4 +1,4 @@
-use super::mixer::{MixerHandle, SharedProcessor, MIXER_SAMPLE_RATE};
+use super::mixer::{MixerHandle, SharedProcessor};
 use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
 
@@ -40,7 +40,7 @@ impl Player {
             super::device_monitor::DeviceKind::Output,
             self.event_loop_proxy.clone(),
         )
-        .map_err(|e| PlayerError::DeviceMonitor(format!("{e}")))?;
+        .map_err(|e| PlayerError::DeviceMonitor(e.to_string()))?;
 
         self.inner = Some(PlayerInner {
             mixer,

@@ -279,10 +279,12 @@ impl CameraWindow {
             .ok()
             .and_then(|p| p.get("local").map(|info| info.camera_active()))
             .unwrap_or(false);
-        let mut state = CameraState::default();
-        state.viewport_size = IcedSize::new(logical.width as f32, logical.height as f32);
-        state.camera_active = camera_active;
-        state.selected_mic_name = active_mic_name;
+        let state = CameraState {
+            viewport_size: IcedSize::new(logical.width as f32, logical.height as f32),
+            camera_active,
+            selected_mic_name: active_mic_name,
+            ..Default::default()
+        };
 
         Ok(Self {
             window,
@@ -348,17 +350,14 @@ impl CameraWindow {
                 self.window.scale_factor() as f32,
                 self.modifiers,
             ) {
-                match iced_event {
-                    Event::Mouse(mouse_event) => {
-                        self.cursor = match mouse_event {
-                            iced::mouse::Event::CursorMoved { position } => {
-                                mouse::Cursor::Available(position)
-                            }
-                            iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                            _ => self.cursor,
-                        };
-                    }
-                    _ => {}
+                if let Event::Mouse(mouse_event) = iced_event {
+                    self.cursor = match mouse_event {
+                        iced::mouse::Event::CursorMoved { position } => {
+                            mouse::Cursor::Available(position)
+                        }
+                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                        _ => self.cursor,
+                    };
                 }
 
                 // Build user interface, process the event, and collect messages
@@ -409,8 +408,7 @@ impl CameraWindow {
                         self.window.scale_factor() as f32,
                     );
                     let logical = self.viewport.logical_size();
-                    self.state.viewport_size =
-                        IcedSize::new(logical.width as f32, logical.height as f32);
+                    self.state.viewport_size = IcedSize::new(logical.width, logical.height);
 
                     self.sync_compact_constraints();
 
@@ -663,8 +661,7 @@ impl CameraWindow {
             }
         };
 
-        let mut layers: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> =
-            vec![base.into()];
+        let mut layers: Vec<iced::Element<'a, CameraMessage, Theme, iced::Renderer>> = vec![base];
         if let Some(floating) = floating_show_btn {
             layers.push(floating);
         }
@@ -1164,24 +1161,42 @@ fn self_visibility_button<'a>(
 
 /// Create a participant card tile.
 ///
+struct ParticipantCardProps<'a> {
+    pub(super) participant_id: u64,
+    pub(super) name: &'a str,
+    pub(super) is_speaking: bool,
+    pub(super) is_muted: bool,
+    pub(super) buffers: Arc<VideoBufferManager>,
+    pub(super) tile_size: f32,
+    pub(super) is_small_window: bool,
+    pub(super) is_local: bool,
+    pub(super) local_tile_hovered: bool,
+    pub(super) hide_name: bool,
+    pub(super) skip_buffer: bool,
+}
+
 /// If the participant has camera buffers, renders GPU-accelerated video via the
 /// shader widget. Otherwise, falls back to a solid Slate900 placeholder.
 /// - Overlaid name label at bottom-left
 /// - Shadow on outer container
 /// - Clipped with rounded corners (8px radius)
 fn participant_card<'a>(
-    participant_id: u64,
-    name: &str,
-    is_speaking: bool,
-    is_muted: bool,
-    buffers: Arc<VideoBufferManager>,
-    tile_size: f32,
-    is_small_window: bool,
-    is_local: bool,
-    local_tile_hovered: bool,
-    hide_name: bool,
-    skip_buffer: bool,
+    props: ParticipantCardProps<'_>,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    let ParticipantCardProps {
+        participant_id,
+        name,
+        is_speaking,
+        is_muted,
+        buffers,
+        tile_size,
+        is_small_window,
+        is_local,
+        local_tile_hovered,
+        hide_name,
+        skip_buffer,
+    } = props;
+
     // Adjust padding based on window size
     let overlay_padding = if is_small_window { 8.0 } else { 14.0 };
     let name_owned = name.to_string();
@@ -1432,19 +1447,19 @@ fn create_participant_grid<'a>(
                 let id = identity_to_id(identity);
                 let camera_buffers = info.camera_buffers();
                 let is_local = identity.as_str() == "local";
-                row_tiles.push(participant_card(
-                    id,
-                    info.name(),
-                    info.is_speaking(),
-                    info.muted(),
-                    camera_buffers,
+                row_tiles.push(participant_card(ParticipantCardProps {
+                    participant_id: id,
+                    name: info.name(),
+                    is_speaking: info.is_speaking(),
+                    is_muted: info.muted(),
+                    buffers: camera_buffers,
                     tile_size,
                     is_small_window,
                     is_local,
                     local_tile_hovered,
                     hide_name,
                     skip_buffer,
-                ));
+                }));
             }
         }
 

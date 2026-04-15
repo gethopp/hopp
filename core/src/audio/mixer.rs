@@ -197,7 +197,7 @@ impl MixerHandle {
         let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
             true, true, false, true,
         )));
-        apm.lock().set_stream_delay_ms(50);
+        let _ = apm.lock().set_stream_delay_ms(50);
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));
         let stream = open_output_stream(mixer.clone(), apm.clone())?;
         let handle = Self {

@@ -15,13 +15,14 @@ unsafe impl Sync for ActivityToken {}
 /// When enabled, prevents both display and system idle sleep by holding an
 /// `NSProcessInfo` activity with the appropriate options. Dropping or disabling
 /// releases the assertion and restores normal sleep behavior.
+#[derive(Default)]
 pub struct SleepPrevention {
     activity: Option<ActivityToken>,
 }
 
 impl SleepPrevention {
     pub fn new() -> Self {
-        SleepPrevention { activity: None }
+        Self::default()
     }
 
     /// Prevents display and system idle sleep. Idempotent: repeated calls are no-ops.

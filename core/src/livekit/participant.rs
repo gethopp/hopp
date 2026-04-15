@@ -31,7 +31,7 @@ impl ParticipantInfo {
             muted,
             is_speaking,
             is_screensharing: false,
-            camera_buffers: Arc::new(VideoBufferManager::new()),
+            camera_buffers: Arc::new(VideoBufferManager::default()),
             audio_handle: None,
             camera_stop_tx: None,
         }

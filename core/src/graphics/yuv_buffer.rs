@@ -93,7 +93,7 @@ pub fn generate_test_frame(buf: &mut YuvBuffer, frame_num: u64) {
     ];
 
     // Animate: shift which bar appears first
-    let shift = (frame_num / 1) as usize; // shift every (1 now) 15 frames (~0.5s at 30fps)
+    let shift = frame_num as usize; // shift every frame
 
     let bar_width = w / 8;
 

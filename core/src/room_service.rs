@@ -37,37 +37,22 @@ const CAMERA_MAX_BITRATE: u64 = 1_700_000;
 const CAMERA_MAX_FRAMERATE: f64 = 15.0;
 
 // Bitrate constants (in bits per second)
-const BITRATE_1920: u64 = 2_000_000; // 2 Mbps
-const BITRATE_2048: u64 = 3_500_000; // 3.5 Mbps
-const BITRATE_2560: u64 = 5_000_000; // 5 Mbps
-const BITRATE_DEFAULT: u64 = 8_000_000; // 8 Mbps
-
-const AV1_BITRATE_1920: u64 = 1_500_000; // 1.5 Mbps
-const AV1_BITRATE_2048: u64 = 2_500_000; // 2.5 Mbps
-const AV1_BITRATE_2560: u64 = 3_750_000; // 3.75 Mbps
 const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
-
-const H264_BITRATE_1920: u64 = 3_000_000; // 3 Mbps
-const H264_BITRATE_2048: u64 = 5_250_000; // 5.25 Mbps
-const H264_BITRATE_2560: u64 = 7_500_000; // 7.5 Mbps
 const H264_BITRATE_DEFAULT: u64 = 12_000_000; // 12 Mbps
 
-// Resolution thresholds
-const WIDTH_THRESHOLD_1920: u32 = 1920;
-const WIDTH_THRESHOLD_2048: u32 = 2048;
-const WIDTH_THRESHOLD_2560: u32 = 2560;
+pub struct CreateRoomParams {
+    pub token: String,
+    pub video_token: String,
+    pub event_loop_proxy: EventLoopProxy<UserEvent>,
+    pub mixer: audio::mixer::MixerHandle,
+    pub sample_rate: u32,
+    pub sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
+    pub audio_processor: SharedProcessor,
+    pub noise_cancellation_enabled: Arc<AtomicBool>,
+}
 
 enum RoomServiceCommand {
-    CreateRoom {
-        token: String,
-        video_token: String,
-        event_loop_proxy: EventLoopProxy<UserEvent>,
-        mixer: audio::mixer::MixerHandle,
-        sample_rate: u32,
-        sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
-        audio_processor: SharedProcessor,
-        noise_cancellation_enabled: Arc<AtomicBool>,
-    },
+    CreateRoom(CreateRoomParams),
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
@@ -365,29 +350,10 @@ impl RoomService {
     ///
     /// * `Ok(())` - The room was created successfully
     /// * `Err(())` - The room was not created successfully
-    pub fn create_room(
-        &self,
-        token: String,
-        video_token: String,
-        event_loop_proxy: EventLoopProxy<UserEvent>,
-        mixer: audio::mixer::MixerHandle,
-        sample_rate: u32,
-        sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
-        audio_processor: SharedProcessor,
-        noise_cancellation_enabled: Arc<AtomicBool>,
-    ) -> Result<(), RoomServiceError> {
+    pub fn create_room(&self, params: CreateRoomParams) -> Result<(), RoomServiceError> {
         log::info!("create_room");
         self.service_command_tx
-            .send(RoomServiceCommand::CreateRoom {
-                token,
-                video_token,
-                event_loop_proxy,
-                mixer,
-                sample_rate,
-                sample_rx,
-                audio_processor,
-                noise_cancellation_enabled,
-            })
+            .send(RoomServiceCommand::CreateRoom(params))
             .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
         log::info!("create_room: command dispatched (non-blocking)");
         Ok(())
@@ -838,7 +804,7 @@ async fn room_service_commands(
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
         match command {
-            RoomServiceCommand::CreateRoom {
+            RoomServiceCommand::CreateRoom(CreateRoomParams {
                 token,
                 video_token,
                 event_loop_proxy,
@@ -847,7 +813,7 @@ async fn room_service_commands(
                 sample_rx,
                 audio_processor,
                 noise_cancellation_enabled,
-            } => {
+            }) => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
 
@@ -892,7 +858,7 @@ async fn room_service_commands(
                         denoiser,
                     )
                     .await
-                    .map_err(|e| format!("{e}"))?;
+                    .map_err(|e| e.to_string())?;
 
                     // Publish camera track (muted) — non-fatal
                     let camera_source = NativeVideoSource::new(
@@ -1158,22 +1124,22 @@ async fn room_service_commands(
                 );
                 let snapshot = inner.snapshot_sender.build_snapshot();
                 let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(snapshot)));
-                tokio::spawn(handle_room_events(
-                    rx,
+                tokio::spawn(handle_room_events(RoomEventContext {
+                    receiver: rx,
                     event_loop_proxy,
                     user_identity,
                     video_participant_identity,
-                    inner.participants.clone(),
-                    inner.snapshot_sender.clone(),
+                    participants: inner.participants.clone(),
+                    snapshot_sender: inner.snapshot_sender.clone(),
                     mixer,
-                    RemoteScreenShare {
+                    remote_screen_share: RemoteScreenShare {
                         buffer: inner.remote_screen_share.buffer.clone(),
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
                         publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
                     },
-                    inner.connection_quality.clone(),
-                    audio_handle.clone(),
-                ));
+                    connection_quality: inner.connection_quality.clone(),
+                    audio_handle: audio_handle.clone(),
+                }));
                 log::info!("room_service_commands: Spawned handle_room_events");
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
@@ -1940,7 +1906,7 @@ fn start_remote_screen_share_stream(
         if let Some(existing) = buffer_guard.as_ref() {
             existing.clone()
         } else {
-            let new = Arc::new(VideoBufferManager::new());
+            let new = Arc::new(VideoBufferManager::default());
             *buffer_guard = Some(new.clone());
             new
         }
@@ -2000,8 +1966,8 @@ fn start_remote_screen_share_stream(
     }
 }
 
-async fn handle_room_events(
-    mut receiver: mpsc::UnboundedReceiver<RoomEvent>,
+struct RoomEventContext {
+    receiver: mpsc::UnboundedReceiver<RoomEvent>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     user_identity: String,
     video_participant_identity: String,
@@ -2011,7 +1977,21 @@ async fn handle_room_events(
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     audio_handle: TokioHandle,
-) {
+}
+
+async fn handle_room_events(ctx: RoomEventContext) {
+    let RoomEventContext {
+        mut receiver,
+        event_loop_proxy,
+        user_identity,
+        video_participant_identity,
+        participants,
+        snapshot_sender,
+        mixer,
+        remote_screen_share,
+        connection_quality,
+        audio_handle,
+    } = ctx;
     while let Some(msg) = receiver.recv().await {
         match msg {
             RoomEvent::DataReceived {

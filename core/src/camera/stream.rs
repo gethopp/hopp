@@ -47,7 +47,7 @@ impl CameraStream {
         let mut cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
         // Sort cameras like list_devices
-        cameras.sort_by(|a, b| a.human_name().cmp(&b.human_name()));
+        cameras.sort_by_key(|c| c.human_name());
 
         let camera_info = if device_name.is_empty() {
             cameras

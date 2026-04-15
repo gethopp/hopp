@@ -78,7 +78,7 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use window::camera_window::CameraWindow;
-use window::screensharing_window::ScreensharingWindow;
+use window::screensharing_window::{ScreensharingWindow, ScreensharingWindowConfig};
 use window::stats_window::StatsWindow;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -537,17 +537,18 @@ impl<'a> Application<'a> {
         match ScreensharingWindow::new(
             self.context_manager.as_ref().unwrap(),
             event_loop,
-            buffer,
-            participants,
-            self.controller_draw_persist,
-            self.last_mode.clone(),
-            redraw_rx,
-            redraw_tx,
+            ScreensharingWindowConfig {
+                screen_share_buffer: buffer,
+                participants,
+                draw_persist: self.controller_draw_persist,
+                last_mode: self.last_mode.clone(),
+                redraw_rx,
+                redraw_tx,
+            },
         ) {
             Ok(win) => self.screensharing_window = Some(win),
             Err(e) => {
                 log::error!("Failed to open screensharing window: {e:?}");
-                return;
             }
         }
     }
@@ -918,16 +919,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
                 if let Some(room_service) = self.room_service.as_ref() {
-                    match room_service.create_room(
-                        call_start.audio_token,
-                        call_start.video_token,
-                        self.event_loop_proxy.clone(),
-                        self.audio_player.mixer().unwrap().clone(),
+                    match room_service.create_room(room_service::CreateRoomParams {
+                        token: call_start.audio_token,
+                        video_token: call_start.video_token,
+                        event_loop_proxy: self.event_loop_proxy.clone(),
+                        mixer: self.audio_player.mixer().unwrap().clone(),
                         sample_rate,
                         sample_rx,
-                        processor,
-                        self.noise_cancellation_enabled.clone(),
-                    ) {
+                        audio_processor: processor,
+                        noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
+                    }) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
                                 error!("user_event: Error sending CallStartResult ack: {e:?}");
@@ -1416,26 +1417,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::StartCamera { msg, from_socket } => {
                 let device_name = if msg.device_name.is_some() {
                     msg.device_name
+                } else if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
+                    log::error!("user_event: StartCamera: failed to query preferred camera: {e:?}");
+                    None
                 } else {
-                    if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
-                        log::error!(
-                            "user_event: StartCamera: failed to query preferred camera: {e:?}"
-                        );
-                        None
-                    } else {
-                        match self
-                            .socket_responses
-                            .recv_timeout(std::time::Duration::from_millis(500))
-                        {
-                            Ok(Message::PreferredCamera(name)) => name,
-                            Ok(other) => {
-                                log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
-                                None
-                            }
-                            Err(_) => {
-                                log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
-                                None
-                            }
+                    match self
+                        .socket_responses
+                        .recv_timeout(std::time::Duration::from_millis(500))
+                    {
+                        Ok(Message::PreferredCamera(name)) => name,
+                        Ok(other) => {
+                            log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
+                            None
+                        }
+                        Err(_) => {
+                            log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
+                            None
                         }
                     }
                 };
@@ -1585,7 +1582,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
-                let buffer = Arc::new(crate::livekit::video::VideoBufferManager::new());
+                let buffer = Arc::new(crate::livekit::video::VideoBufferManager::default());
                 self.open_screensharing_window(event_loop, buffer, Vec::new(), None, None);
             }
             UserEvent::OpenContentPicker => {
@@ -1904,8 +1901,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                 Some(clipboard_text) => {
                                     let bytes = clipboard_text.as_bytes();
                                     const MAX_PACKET: usize = 15 * 1024;
-                                    let total_packets =
-                                        ((bytes.len() + MAX_PACKET - 1) / MAX_PACKET) as u64;
+                                    let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
                                     for i in 0..total_packets {
                                         let start = (i as usize) * MAX_PACKET;
                                         let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
