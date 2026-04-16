@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::mpsc;
 
-const TARGET_SAMPLE_RATE: u32 = 16000;
+const TARGET_SAMPLE_RATE: u32 = 48000;
 const TARGET_CHANNELS: u16 = 1;
 pub const SAMPLES_DIVIDER: u32 = 100;
 

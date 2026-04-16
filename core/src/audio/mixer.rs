@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 pub type SharedProcessor = Arc<Mutex<AudioProcessingModule>>;
 
-pub const MIXER_SAMPLE_RATE: u32 = 16000;
+pub const MIXER_SAMPLE_RATE: u32 = 48000;
 pub const MIXER_NUM_CHANNELS: u32 = 1;
 
 /// Hard cap on per-source buffered frames (10ms each).
