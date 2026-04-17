@@ -33,8 +33,8 @@ const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
 const MAX_FRAMERATE: f64 = 40.0;
 const CAMERA_TRACK_NAME: &str = "camera";
-const CAMERA_MAX_BITRATE: u64 = 1_700_000;
-const CAMERA_MAX_FRAMERATE: f64 = 15.0;
+const CAMERA_MAX_BITRATE: u64 = 3_500_000; // ~3.5Mbps for 1080p
+const CAMERA_MAX_FRAMERATE: f64 = 30.0;
 
 // Bitrate constants (in bits per second)
 const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
@@ -864,8 +864,8 @@ async fn room_service_commands(
                     // Publish camera track (muted) — non-fatal
                     let camera_source = NativeVideoSource::new(
                         VideoResolution {
-                            width: 1280,
-                            height: 720,
+                            width: 1920,
+                            height: 1080,
                         },
                         false,
                     );

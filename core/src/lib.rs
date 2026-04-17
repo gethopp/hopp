@@ -238,6 +238,7 @@ pub struct Application<'a> {
     noise_cancellation_enabled: Arc<AtomicBool>,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     _camera_capturer_events: Option<JoinHandle<()>>,
+    screensharing_active: bool,
     context_manager: Option<ContextManager>,
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
@@ -351,6 +352,7 @@ impl<'a> Application<'a> {
             _camera_capturer_events: Some(std::thread::spawn(move || {
                 poll_camera_stream(camera_capturer_clone)
             })),
+            screensharing_active: false,
             context_manager: None,
             camera_window: None,
             screensharing_window: None,
@@ -494,6 +496,7 @@ impl<'a> Application<'a> {
             }
         }
 
+        self.set_screensharing_active(true);
         Ok(())
     }
 
@@ -581,6 +584,14 @@ impl<'a> Application<'a> {
             room_service.mute_screen_share_track();
         }
         self.destroy_overlay_window();
+        self.set_screensharing_active(false);
+    }
+
+    fn set_screensharing_active(&mut self, active: bool) {
+        self.screensharing_active = active;
+        let capturer = self.camera_capturer.lock().unwrap();
+        capturer.set_screensharing_active(active);
+        log::info!("set_screensharing_active: {active}");
     }
 
     fn create_overlay_window(
@@ -1629,10 +1640,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         room_service.publish_drawing_mode(screensharing_window.drawing_mode());
                     }
                 }
+                self.set_screensharing_active(true);
             }
             UserEvent::CloseScreenShareWindow => {
                 log::info!("user_event: CloseScreenShareWindow");
                 self.close_screensharing_window();
+                self.set_screensharing_active(false);
             }
             UserEvent::OpenStatsWindow => {
                 log::debug!("user_event: OpenStatsWindow");

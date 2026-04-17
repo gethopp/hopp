@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::livekit::video::VideoBufferManager;
 
-use super::stream::{CameraStream, CameraStreamMessage};
+use super::stream::{CameraStream, CameraStreamConfig, CameraStreamMessage};
 
 const MAX_CAMERA_FAILURES_BEFORE_STOP: u32 = 5;
 const POLL_CAMERA_TIMEOUT_SECS: u64 = 100;
@@ -15,6 +15,7 @@ pub struct CameraCapturer {
     rx: Arc<Mutex<mpsc::Receiver<CameraStreamMessage>>>,
     tx: mpsc::Sender<CameraStreamMessage>,
     socket: Option<SocketSender>,
+    stream_config: Arc<CameraStreamConfig>,
 }
 
 impl Default for CameraCapturer {
@@ -31,6 +32,7 @@ impl CameraCapturer {
             rx: Arc::new(Mutex::new(rx)),
             tx,
             socket: None,
+            stream_config: Arc::new(CameraStreamConfig::new_high_quality()),
         }
     }
 
@@ -58,6 +60,7 @@ impl CameraCapturer {
             self.tx.clone(),
             video_buffer_manager.clone(),
             buffer_source,
+            self.stream_config.clone(),
         )?;
         self.stream = Some(stream);
         Ok(())
@@ -112,6 +115,14 @@ impl CameraCapturer {
             }
             None => None,
         };
+    }
+
+    pub fn set_screensharing_active(&self, active: bool) {
+        if active {
+            self.stream_config.set_low_quality();
+        } else {
+            self.stream_config.set_high_quality();
+        }
     }
 }
 

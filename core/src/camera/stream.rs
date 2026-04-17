@@ -8,6 +8,7 @@ use nokhwa::utils::{
     Resolution,
 };
 use nokhwa::Camera;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -15,9 +16,61 @@ use std::time::{Duration, Instant};
 use crate::livekit::video::VideoBufferManager;
 use crate::utils::geometry::aspect_fit;
 
-const CAMERA_FPS: u32 = 20;
-const CAMERA_WIDTH: u32 = 1280;
-const CAMERA_HEIGHT: u32 = 720;
+const CAMERA_CAPTURE_FPS: u32 = 30;
+const CAMERA_CAPTURE_WIDTH: u32 = 1920;
+const CAMERA_CAPTURE_HEIGHT: u32 = 1080;
+
+const CAMERA_STREAM_WIDTH_HIGH: u32 = 1920;
+const CAMERA_STREAM_HEIGHT_HIGH: u32 = 1080;
+const CAMERA_STREAM_FPS_HIGH: u32 = 30;
+
+const CAMERA_STREAM_WIDTH_LOW: u32 = 1280;
+const CAMERA_STREAM_HEIGHT_LOW: u32 = 720;
+const CAMERA_STREAM_FPS_LOW: u32 = 20;
+
+pub struct CameraStreamConfig {
+    target_width: AtomicU32,
+    target_height: AtomicU32,
+    target_fps: AtomicU32,
+}
+
+impl CameraStreamConfig {
+    pub fn new_high_quality() -> Self {
+        Self {
+            target_width: AtomicU32::new(CAMERA_STREAM_WIDTH_HIGH),
+            target_height: AtomicU32::new(CAMERA_STREAM_HEIGHT_HIGH),
+            target_fps: AtomicU32::new(CAMERA_STREAM_FPS_HIGH),
+        }
+    }
+
+    pub fn set_high_quality(&self) {
+        self.target_width
+            .store(CAMERA_STREAM_WIDTH_HIGH, Ordering::Relaxed);
+        self.target_height
+            .store(CAMERA_STREAM_HEIGHT_HIGH, Ordering::Relaxed);
+        self.target_fps
+            .store(CAMERA_STREAM_FPS_HIGH, Ordering::Relaxed);
+    }
+
+    pub fn set_low_quality(&self) {
+        self.target_width
+            .store(CAMERA_STREAM_WIDTH_LOW, Ordering::Relaxed);
+        self.target_height
+            .store(CAMERA_STREAM_HEIGHT_LOW, Ordering::Relaxed);
+        self.target_fps
+            .store(CAMERA_STREAM_FPS_LOW, Ordering::Relaxed);
+    }
+
+    pub fn target_width(&self) -> u32 {
+        self.target_width.load(Ordering::Relaxed)
+    }
+    pub fn target_height(&self) -> u32 {
+        self.target_height.load(Ordering::Relaxed)
+    }
+    pub fn target_fps(&self) -> u32 {
+        self.target_fps.load(Ordering::Relaxed)
+    }
+}
 
 pub enum CameraStreamMessage {
     Failed(String),
@@ -35,6 +88,7 @@ pub struct CameraStream {
     height: u32,
     device_name: String,
     failures_count: Arc<Mutex<u32>>,
+    config: Arc<CameraStreamConfig>,
 }
 
 impl CameraStream {
@@ -43,6 +97,7 @@ impl CameraStream {
         error_tx: mpsc::Sender<CameraStreamMessage>,
         video_buffer_manager: Arc<VideoBufferManager>,
         buffer_source: NativeVideoSource,
+        config: Arc<CameraStreamConfig>,
     ) -> Result<Self, String> {
         let mut cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -99,24 +154,29 @@ impl CameraStream {
             height,
             device_name: device_name.to_string(),
             failures_count: Arc::new(Mutex::new(0)),
+            config: config.clone(),
         };
 
-        stream.start_capture_with_camera(camera)?;
+        stream.start_capture_with_camera(camera, config.clone())?;
         Ok(stream)
     }
 
     fn try_open_camera(index: &CameraIndex, frame_format: FrameFormat) -> Result<Camera, String> {
         let format =
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
-                Resolution::new(CAMERA_WIDTH, CAMERA_HEIGHT),
+                Resolution::new(CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT),
                 frame_format,
-                CAMERA_FPS,
+                CAMERA_CAPTURE_FPS,
             )));
         Camera::new(index.clone(), format)
             .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
     }
 
-    fn start_capture_with_camera(&mut self, mut camera: Camera) -> Result<(), String> {
+    fn start_capture_with_camera(
+        &mut self,
+        mut camera: Camera,
+        config: Arc<CameraStreamConfig>,
+    ) -> Result<(), String> {
         camera
             .open_stream()
             .map_err(|e| format!("Failed to open camera stream: {e}"))?;
@@ -132,15 +192,18 @@ impl CameraStream {
         let failures_count = self.failures_count.clone();
         let width = self.width;
         let height = self.height;
-        let (stream_width, stream_height) = aspect_fit(width, height, CAMERA_WIDTH, CAMERA_HEIGHT);
-        let needs_scaling = stream_width != width || stream_height != height;
-        log::info!("CameraStream: native {width}x{height}, stream {stream_width}x{stream_height}, scaling: {needs_scaling}");
         let buffer_source = self.buffer_source.clone();
 
         let handle = std::thread::spawn(move || {
-            let frame_duration = Duration::from_micros(1_000_000 / CAMERA_FPS as u64);
+            let mut prev_stream_w: u32 = 0;
+            let mut prev_stream_h: u32 = 0;
+            let mut stream_frame = VideoFrame {
+                rotation: VideoRotation::VideoRotation0,
+                buffer: I420Buffer::new(1, 1),
+                timestamp_us: 0,
+            };
+            let mut needs_scaling = false;
 
-            // Pre-allocate buffers once and reuse every frame
             let mut rgb_buf =
                 if frame_format != FrameFormat::YUYV && frame_format != FrameFormat::NV12 {
                     log::info!("CameraStream: allocating RGB buffer at {width}x{height}");
@@ -150,11 +213,6 @@ impl CameraStream {
                 };
             log::info!("CameraStream: allocating I420 buffer at {width}x{height}");
             let mut i420 = I420Buffer::new(width, height);
-            let mut stream_frame = VideoFrame {
-                rotation: VideoRotation::VideoRotation0,
-                buffer: I420Buffer::new(stream_width, stream_height),
-                timestamp_us: 0,
-            };
 
             let capture_start = Instant::now();
 
@@ -165,6 +223,25 @@ impl CameraStream {
                     log::info!("CameraStream: StopCapture received, stopping");
                     video_buffer_manager.set_inactive(true);
                     break;
+                }
+
+                let cur_target_w = config.target_width();
+                let cur_target_h = config.target_height();
+                let cur_fps = config.target_fps();
+                let frame_duration = Duration::from_micros(1_000_000 / cur_fps as u64);
+
+                let (cur_stream_w, cur_stream_h) =
+                    aspect_fit(width, height, cur_target_w, cur_target_h);
+                if cur_stream_w != prev_stream_w || cur_stream_h != prev_stream_h {
+                    stream_frame = VideoFrame {
+                        rotation: VideoRotation::VideoRotation0,
+                        buffer: I420Buffer::new(cur_stream_w, cur_stream_h),
+                        timestamp_us: 0,
+                    };
+                    needs_scaling = cur_stream_w != width || cur_stream_h != height;
+                    prev_stream_w = cur_stream_w;
+                    prev_stream_h = cur_stream_h;
+                    log::info!("CameraStream: target changed to {cur_stream_w}x{cur_stream_h} @ {cur_fps}fps");
                 }
 
                 match camera.frame() {
@@ -200,13 +277,13 @@ impl CameraStream {
                                 let write_frame = |buffer: &I420Buffer| {
                                     let mut write_buf =
                                         video_buffer_manager.write_buffer().lock().unwrap();
-                                    write_buf.copy_from_i420(buffer, stream_width, stream_height);
+                                    write_buf.copy_from_i420(buffer, cur_stream_w, cur_stream_h);
                                     drop(write_buf);
                                     video_buffer_manager.advance_write();
                                 };
                                 if needs_scaling {
                                     let mut scaled =
-                                        i420.scale(stream_width as i32, stream_height as i32);
+                                        i420.scale(cur_stream_w as i32, cur_stream_h as i32);
                                     let (source_y, source_u, source_v) = scaled.data_mut();
                                     // TODO: check if this copy is needed
                                     let (data_y, data_u, data_v) = stream_frame.buffer.data_mut();
@@ -313,9 +390,10 @@ impl CameraStream {
             height: self.height,
             device_name: self.device_name.clone(),
             failures_count: self.failures_count.clone(),
+            config: self.config.clone(),
         };
 
-        new_stream.start_capture_with_camera(camera)?;
+        new_stream.start_capture_with_camera(camera, self.config.clone())?;
         Ok(new_stream)
     }
 }
