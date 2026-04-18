@@ -1092,6 +1092,11 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::MicrophoneAudioLevel(level) => {
+                if let Err(e) = app.emit("core_mic_audio_level", &level) {
+                    log::error!("forward_core_events: failed to emit mic audio level: {e:?}");
+                }
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }

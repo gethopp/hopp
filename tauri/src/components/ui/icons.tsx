@@ -87,7 +87,8 @@ const MicWithLevel = ({ level, className }: { level: number; className?: string 
   }, [level]);
 
   // Clamp level between 0 and 1, then boost it for visual effect
-  const fillPercent = Math.min(1, Math.max(0, smoothedLevel * 3)) * 100;
+  // Raw RMS values for speech are ~0.001–0.03; scale so peak speech ≈ 100% fill
+  const fillPercent = Math.min(1, Math.max(0, smoothedLevel * 40)) * 100;
   // Gradient goes from top (0%) to bottom (100%), so we invert
   const gradientStop = 100 - fillPercent;
 

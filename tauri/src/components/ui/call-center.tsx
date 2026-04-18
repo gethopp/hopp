@@ -369,7 +369,6 @@ function DrawingEnableButton() {
 
 /**
  * MicrophoneIcon — uses typedInvoke to list/select microphones and toggle mute via core.
- * Audio level visualization is disabled (core does not yet send audio levels back).
  */
 function MicrophoneIcon() {
   const { updateCallTokens, callTokens } = useStore();
@@ -437,7 +436,10 @@ function MicrophoneIcon() {
       icon={
         <div className="relative flex items-center justify-center">
           {hasAudioEnabled ?
-            <CustomIcons.MicWithLevel level={0} className={`size-4 ${Colors.mic.icon} relative z-10`} />
+            <CustomIcons.MicWithLevel
+              level={callTokens?.micLevel ?? 0}
+              className={`size-4 ${Colors.mic.icon} relative z-10`}
+            />
           : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
         </div>
       }

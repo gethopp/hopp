@@ -319,7 +319,8 @@ impl<'a> Application<'a> {
 
         let audio_player = audio::player::Player::new(event_loop_proxy.clone());
 
-        let audio_capturer = audio::capturer::Capturer::new(event_loop_proxy.clone());
+        let audio_capturer =
+            audio::capturer::Capturer::new(event_loop_proxy.clone(), socket.clone());
 
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();

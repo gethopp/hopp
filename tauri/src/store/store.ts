@@ -30,6 +30,7 @@ export type CallState = {
   isReconnecting?: boolean;
   isInitialisingCall?: boolean;
   participants: CoreParticipantState[];
+  micLevel: number;
 } & TCallTokensMessage["payload"];
 
 type State = {
@@ -119,7 +120,7 @@ const useStore = create<State & Actions>()(
       }),
     setCallTokens: (tokens) =>
       set((state) => {
-        state.callTokens = tokens;
+        state.callTokens = tokens ? { micLevel: 0, ...tokens } : null;
       }),
     updateCallTokens: (tokens) =>
       set((state) => {
@@ -262,6 +263,12 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
   }
 
   useStore.getState().updateCallTokens(updates);
+});
+
+listen<number>("core_mic_audio_level", (event) => {
+  const { callTokens } = useStore.getState();
+  if (!callTokens) return;
+  useStore.getState().updateCallTokens({ micLevel: event.payload });
 });
 
 // Listen for core role change events

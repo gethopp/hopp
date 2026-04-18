@@ -237,6 +237,8 @@ pub enum Message {
     ActiveMicChanged(String),
     ActiveCameraChanged(String),
     SetNoiseCancellation(bool),
+    /// Microphone RMS level in [0.0, 1.0], emitted ~1 Hz from core capturer.
+    MicrophoneAudioLevel(f32),
 }
 
 impl Message {

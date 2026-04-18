@@ -63,11 +63,15 @@ pub struct Capturer {
     /// the device errors out or the process ends.
     orphaned_threads: Vec<JoinHandle<()>>,
     _device_monitor: super::device_monitor::DeviceMonitor,
+    socket: socket_lib::SocketSender,
 }
 
 impl Capturer {
     #[allow(unused_variables)]
-    pub fn new(proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>) -> Self {
+    pub fn new(
+        proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
+        socket: socket_lib::SocketSender,
+    ) -> Self {
         Self {
             available_devices: vec![],
             capture_thread: None,
@@ -80,6 +84,7 @@ impl Capturer {
                 proxy,
             )
             .expect("Failed to start input device monitor"),
+            socket,
         }
     }
 
@@ -214,10 +219,16 @@ impl Capturer {
         };
         self.sample_tx = Some(sample_tx.clone());
 
+        let socket_for_level = self.socket.clone();
+
         // Spawn the capture thread
         let handle = std::thread::spawn(move || {
             let mut source = source;
             let mut output = Vec::with_capacity(buffer_frames);
+
+            let mut sum_sq = 0.0;
+            let mut sample_count = 0;
+            let mut last_emit = std::time::Instant::now();
 
             loop {
                 if stop_flag.load(Ordering::Relaxed) {
@@ -229,7 +240,10 @@ impl Capturer {
                 for (sample_idx, s) in source.by_ref().take(take_count).enumerate() {
                     got_any = true;
                     if sample_idx % num_channels == 0 {
-                        output.push((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
+                        let clamped = s.clamp(-1.0, 1.0);
+                        sum_sq += (clamped as f64) * (clamped as f64);
+                        sample_count += 1;
+                        output.push((clamped * i16::MAX as f32) as i16);
                     }
                 }
 
@@ -247,7 +261,24 @@ impl Capturer {
                 {
                     break;
                 }
+
+                const EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+                if last_emit.elapsed() >= EMIT_INTERVAL && sample_count > 0 {
+                    let rms = (sum_sq / sample_count as f64).sqrt() as f32;
+                    let level = rms.clamp(0.0, 1.0);
+                    if let Err(e) =
+                        socket_for_level.send(socket_lib::Message::MicrophoneAudioLevel(level))
+                    {
+                        log::warn!("capturer: failed to send mic level: {e:?}");
+                    }
+                    sum_sq = 0.0;
+                    sample_count = 0;
+                    last_emit = std::time::Instant::now();
+                }
             }
+
+            // Final zero so UI settles when capture stops.
+            let _ = socket_for_level.send(socket_lib::Message::MicrophoneAudioLevel(0.0));
         });
 
         self.capture_thread = Some(handle);
