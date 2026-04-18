@@ -337,7 +337,7 @@ impl CameraStream {
         if let Some(handle) = self.capture_thread.take() {
             // Work around to camera.frame() blocking indefinitely.
             // we should fix it in nokhwa instead.
-            for _ in 0..20 {
+            for _ in 0..200 {
                 if handle.is_finished() {
                     let _ = handle.join();
                     log::info!("CameraStream::stop_capture: thread joined");
@@ -345,7 +345,11 @@ impl CameraStream {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            log::warn!("CameraStream::stop_capture: thread did not finish in 200ms, orphaning it");
+            log::warn!("CameraStream::stop_capture: thread did not finish in 2000ms, orphaning it");
+            sentry_utils::upload_logs_event(
+                "CameraStream::stop_capture: thread did not finish in 2000ms, orphaning it"
+                    .to_string(),
+            );
         }
     }
 
