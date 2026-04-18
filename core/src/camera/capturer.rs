@@ -152,7 +152,11 @@ pub fn poll_camera_stream(capturer: Arc<Mutex<CameraCapturer>>) {
                 log::info!("poll_camera_stream: stop message");
                 break;
             }
-            Err(_) => {} // timeout, loop again
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {} // timeout, loop again
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                log::info!("poll_camera_stream: channel disconnected");
+                break;
+            }
             _ => {}
         }
     }

@@ -109,6 +109,11 @@ impl Capturer {
         device_name: Option<&str>,
         sample_tx: mpsc::UnboundedSender<Vec<i16>>,
     ) -> Result<u32, String> {
+        // Stop any existing capture thread before spawning a new one
+        if self.capture_thread.is_some() {
+            self.stop_thread();
+        }
+
         let builder = MicrophoneBuilder::new();
 
         // Set up the device

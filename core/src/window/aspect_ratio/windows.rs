@@ -204,14 +204,20 @@ fn set_windows_window_aspect_ratio(
         let raw_ptr = Arc::into_raw(Arc::clone(&state));
         unsafe {
             let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
-            let _ = SetWindowSubclass(
+            let ok = SetWindowSubclass(
                 hwnd,
                 Some(aspect_ratio_subclass_proc),
                 ASPECT_SUBCLASS_ID,
                 raw_ptr as usize,
             );
+            if ok.as_bool() {
+                *aspect_state = Some(state);
+            } else {
+                // Reclaim Arc to avoid leak
+                drop(Arc::from_raw(raw_ptr));
+                log::warn!("set_windows_window_aspect_ratio: SetWindowSubclass failed");
+            }
         }
-        *aspect_state = Some(state);
     }
 
     let (min_w, min_h) = min_window_size_for_aspect(content_aspect);

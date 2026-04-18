@@ -924,6 +924,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     Ok(v) => v,
                     Err(e) => {
                         log::error!("user_event: CallStart audio capture failed: {e}");
+                        self.audio_player.stop();
                         if let Err(send_err) = self.socket.send(Message::CallStartResult(Err(e))) {
                             error!("user_event: Error sending CallStartResult: {send_err:?}");
                         }
@@ -948,6 +949,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         }
                         Err(e) => {
                             log::error!("user_event: Failed to dispatch create room: {e:?}");
+                            self.stop_mic();
+                            self.audio_player.stop();
                             if let Err(e) = self
                                 .socket
                                 .send(Message::CallStartResult(Err(e.to_string())))
@@ -958,6 +961,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 } else {
                     log::error!("user_event: Room service not found for CallStart");
+                    self.stop_mic();
+                    self.audio_player.stop();
                     if let Err(e) = self.socket.send(Message::CallStartResult(Err(
                         ServerError::RoomServiceNotFound.to_string(),
                     ))) {
@@ -974,6 +979,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     Err(ref reason) => {
                         log::error!("user_event: Room creation failed: {reason}");
                         self.stop_mic();
+                        self.audio_player.stop();
                         if let Err(e) = self
                             .socket
                             .send(Message::RoomConnectionFailed(reason.clone()))
