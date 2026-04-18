@@ -120,7 +120,7 @@ const useStore = create<State & Actions>()(
       }),
     setCallTokens: (tokens) =>
       set((state) => {
-        state.callTokens = tokens ? { micLevel: 0, ...tokens } : null;
+        state.callTokens = tokens ? { ...tokens, micLevel: tokens.micLevel ?? 0 } : null;
       }),
     updateCallTokens: (tokens) =>
       set((state) => {

@@ -305,6 +305,7 @@ export const Rooms = () => {
           room: room,
           participants: [],
           isInitialisingCall: true,
+          micLevel: 0,
         });
 
         try {

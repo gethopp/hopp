@@ -156,6 +156,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             isRemoteControlEnabled: true,
             participants: [],
             isInitialisingCall: true,
+            micLevel: 0,
           });
           try {
             await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);

@@ -126,6 +126,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
         name: "Slack Session",
         user_id: user?.id || "",
       },
+      micLevel: 0,
     });
 
     // Switch to the rooms tab and show the window
