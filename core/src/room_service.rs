@@ -880,7 +880,7 @@ async fn room_service_commands(
                             TrackPublishOptions {
                                 source: TrackSource::Camera,
                                 video_codec: VideoCodec::VP9,
-                                simulcast: true,
+                                simulcast: false,
                                 video_encoding: Some(VideoEncoding {
                                     max_bitrate: CAMERA_MAX_BITRATE,
                                     max_framerate: CAMERA_MAX_FRAMERATE,
