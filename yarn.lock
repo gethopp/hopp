@@ -13085,6 +13085,7 @@ __metadata:
     "@radix-ui/react-popover": "npm:1.1.15"
     "@radix-ui/react-separator": "npm:^1.1.7"
     "@radix-ui/react-slot": "npm:^1.2.4"
+    "@radix-ui/react-switch": "npm:^1.2.6"
     "@radix-ui/react-tooltip": "npm:^1.2.8"
     "@tailwindcss/postcss": "npm:^4.1.13"
     "@tanstack/react-form": "npm:^1.23.8"

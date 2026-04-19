@@ -537,17 +537,22 @@ button {
   cursor: default;
 }
 
+/* Hide native scrollbars - all platforms use Radix custom ScrollArea */
+.scrollarea ::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollarea {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Windows Customisations */
 .windows {
   &#root {
     border: 2px solid var(--color-slate-200);
     /* Hack to make border visible on the right side */
     width: calc(100% - 1px);
-  }
-
-  .scrollarea {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
   }
 }
 

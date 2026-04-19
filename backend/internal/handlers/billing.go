@@ -19,6 +19,7 @@ import (
 	portalsession "github.com/stripe/stripe-go/v82/billingportal/session"
 	checkoutsession "github.com/stripe/stripe-go/v82/checkout/session"
 	"github.com/stripe/stripe-go/v82/customer"
+	stripesubscription "github.com/stripe/stripe-go/v82/subscription"
 	"github.com/stripe/stripe-go/v82/webhook"
 	"gorm.io/gorm"
 )
@@ -35,6 +36,7 @@ type BillingHandler struct {
 type SubscriptionResponse struct {
 	Status            models.SubscriptionStatus `json:"status"`
 	ManualUpgrade     bool                      `json:"manual_upgrade"`
+	BillingInterval   models.BillingInterval    `json:"billing_interval,omitempty"`
 	CurrentPeriodEnd  *time.Time                `json:"current_period_end,omitempty"`
 	CancelAtPeriodEnd *bool                     `json:"cancel_at_period_end,omitempty"`
 	IsAdmin           bool                      `json:"is_admin"`
@@ -77,7 +79,8 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 	var req struct {
 		PriceID  string `json:"price_id,omitempty"`
 		Tier     string `json:"tier" validate:"required"`
-		Referral string `json:"referral,omitempty"` // Rewardful referral ID for affiliate tracking
+		Interval string `json:"interval" validate:"omitempty,oneof=monthly yearly"`
+		Referral string `json:"referral,omitempty"`
 	}
 
 	if err := c.Bind(&req); err != nil {
@@ -92,16 +95,21 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 	var priceID string
 	if req.PriceID != "" {
 		priceID = req.PriceID
-	} else {
-		// Use the environment variable for paid tier
-		if req.Tier == "paid" {
+	} else if req.Tier == "paid" {
+		switch req.Interval {
+		case "yearly":
+			priceID = bh.Config.Stripe.PaidYearlyPriceID
+			if priceID == "" {
+				return echo.NewHTTPError(http.StatusInternalServerError, "STRIPE_PAID_YEARLY_PRICE_ID environment variable is not configured")
+			}
+		default:
 			priceID = bh.Config.Stripe.PaidPriceID
 			if priceID == "" {
 				return echo.NewHTTPError(http.StatusInternalServerError, "STRIPE_PAID_PRICE_ID environment variable is not configured")
 			}
-		} else {
-			return echo.NewHTTPError(http.StatusBadRequest, "Invalid tier or missing price_id")
 		}
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid tier or missing price_id")
 	}
 
 	if user.TeamID == nil {
@@ -170,6 +178,7 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 		Metadata: map[string]string{
 			"team_id":    strconv.Itoa(int(*user.TeamID)),
 			"tier":       req.Tier,
+			"interval":   req.Interval,
 			"admin_id":   user.ID,
 			"user_count": strconv.Itoa(len(teamMembers)),
 		},
@@ -291,6 +300,7 @@ func (bh *BillingHandler) GetSubscriptionStatus(c echo.Context) error {
 		subscriptionResponse = SubscriptionResponse{
 			Status:            subscription.Status,
 			ManualUpgrade:     team.IsManualUpgrade,
+			BillingInterval:   subscription.BillingInterval,
 			CurrentPeriodEnd:  &subscription.CurrentPeriodEnd,
 			CancelAtPeriodEnd: &subscription.CancelAtPeriodEnd,
 			IsAdmin:           user.IsAdmin,
@@ -410,6 +420,28 @@ func (bh *BillingHandler) handleSubscriptionUpdated(c echo.Context, event stripe
 		_ = notifications.SendTelegramNotification(fmt.Sprintf("Team ID: %s - subscription cancellation revoked", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
 	}
 
+	// Refresh period dates and billing interval from Stripe so renewals
+	// and plan switches (monthly <-> yearly via the billing portal) stay accurate.
+	if subscription.Items != nil && len(subscription.Items.Data) > 0 {
+		item := subscription.Items.Data[0]
+		dbSub.CurrentPeriodStart = time.Unix(item.CurrentPeriodStart, 0)
+		dbSub.CurrentPeriodEnd = time.Unix(item.CurrentPeriodEnd, 0)
+
+		if item.Price != nil && item.Price.Recurring != nil {
+			switch item.Price.Recurring.Interval {
+			case stripe.PriceRecurringIntervalYear:
+				dbSub.BillingInterval = models.IntervalYearly
+			default:
+				dbSub.BillingInterval = models.IntervalMonthly
+			}
+		}
+
+		if err := bh.DB.Save(dbSub).Error; err != nil {
+			c.Logger().Errorf("Failed to save subscription period/interval update: %v", err)
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -457,10 +489,29 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 	// Update subscription fields
 	dbSub.Status = models.StatusActive
 	dbSub.Tier = tier
-	// Note: Stripe subscription doesn't have direct CurrentPeriodStart/End fields
-	// These would typically come from the invoice or billing cycle
-	dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
-	dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0) // Assume monthly
+
+	// Derive billing interval from session metadata (defaults to monthly)
+	interval := models.BillingInterval(session.Metadata["interval"])
+	if interval != models.IntervalYearly {
+		interval = models.IntervalMonthly
+	}
+	dbSub.BillingInterval = interval
+
+	// Webhook payloads only include a minimal subscription stub (Items is nil).
+	// Fetch the full subscription from the Stripe API to get period dates.
+	fullSub, err := stripesubscription.Get(session.Subscription.ID, nil)
+	if err != nil {
+		c.Logger().Errorf("Failed to fetch full subscription from Stripe: %v", err)
+		dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
+		dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0)
+	} else if len(fullSub.Items.Data) > 0 {
+		item := fullSub.Items.Data[0]
+		dbSub.CurrentPeriodStart = time.Unix(item.CurrentPeriodStart, 0)
+		dbSub.CurrentPeriodEnd = time.Unix(item.CurrentPeriodEnd, 0)
+	} else {
+		dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
+		dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0)
+	}
 	dbSub.CancelAtPeriodEnd = session.Subscription.CancelAtPeriodEnd
 
 	if session.Subscription.CanceledAt != 0 {

@@ -61,12 +61,13 @@ type Config struct {
 		DSN string
 	}
 	Stripe struct {
-		SecretKey      string
-		PublishableKey string
-		WebhookSecret  string
-		PaidPriceID    string // Single price ID for paid tier
-		SuccessURL     string
-		CancelURL      string
+		SecretKey         string
+		PublishableKey    string
+		WebhookSecret     string
+		PaidPriceID       string // Price ID for monthly paid tier
+		PaidYearlyPriceID string // Price ID for yearly paid tier
+		SuccessURL        string
+		CancelURL         string
 	}
 }
 
@@ -164,11 +165,17 @@ func Load() (*Config, error) {
 	c.Stripe.PublishableKey = os.Getenv("STRIPE_PUBLISHABLE_KEY")
 	c.Stripe.WebhookSecret = os.Getenv("STRIPE_WEBHOOK_SECRET")
 	c.Stripe.PaidPriceID = os.Getenv("STRIPE_PAID_PRICE_ID")
+	c.Stripe.PaidYearlyPriceID = os.Getenv("STRIPE_PAID_YEARLY_PRICE_ID")
 
-	if c.Stripe.PaidPriceID != "" && !strings.HasPrefix(c.Stripe.PaidPriceID, "price_") {
-		fmt.Printf("WARNING: STRIPE_PAID_PRICE_ID should start with 'price_', but got: %s\n", c.Stripe.PaidPriceID)
-		fmt.Println("Please check your Stripe dashboard for the correct Price ID (not Product ID)")
-		return c, fmt.Errorf("STRIPE_PAID_PRICE_ID should start with 'price_', but got: %s", c.Stripe.PaidPriceID)
+	for _, entry := range []struct{ name, val string }{
+		{"STRIPE_PAID_PRICE_ID", c.Stripe.PaidPriceID},
+		{"STRIPE_PAID_YEARLY_PRICE_ID", c.Stripe.PaidYearlyPriceID},
+	} {
+		if entry.val != "" && !strings.HasPrefix(entry.val, "price_") {
+			fmt.Printf("WARNING: %s should start with 'price_', but got: %s\n", entry.name, entry.val)
+			fmt.Println("Please check your Stripe dashboard for the correct Price ID (not Product ID)")
+			return c, fmt.Errorf("%s should start with 'price_', but got: %s", entry.name, entry.val)
+		}
 	}
 
 	c.Stripe.SuccessURL = fmt.Sprintf("https://%s/subscription/success", c.Server.DeployDomain)

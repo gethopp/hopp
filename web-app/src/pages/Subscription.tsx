@@ -12,41 +12,35 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { components } from "@/openapi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import clsx from "clsx";
+import { Switch } from "@/components/ui/switch";
 import { FaCheck } from "react-icons/fa";
 import { PrimaryCTA } from "@/components/ui/atomic/Buttons";
 import { getRewardfulReferral } from "@/lib/rewardful";
 
 type SubscriptionResponse = components["schemas"]["SubscriptionResponse"];
 
-const tiers = [
-  {
-    name: "Cracked teams",
-    id: "tier-cracked",
-    href: "#",
-    priceMonthly: "$8",
-    description: "Perfect for engineering teams who want to ship faster and collaborate better.",
-    features: [
-      "Unlimited pair programming sessions",
-      "Support the only low-latency OSS screen sharing app",
-      "Social auth with Google, Slack support",
-      "<1 day support guarantee",
-    ],
-    featured: true,
-  },
-  {
-    name: "Enterprise",
-    id: "tier-enterprise",
-    href: "#",
-    priceMonthly: "Contact us",
-    description: "Advanced features and support for large organizations.",
-    features: ["Everything in Cracked teams", "Single sign-on (SSO)", "Custom invoicing", "Volume pricing discount"],
-    featured: false,
-  },
+const MONTHLY_PRICE = 8;
+const YEARLY_PRICE = 80; // 10 months for the price of 12
+const YEARLY_PER_MONTH = +(YEARLY_PRICE / 12).toFixed(2);
+
+const features = [
+  "Unlimited pair programming sessions",
+  "Support the only low-latency OSS screen sharing app",
+  "Social auth with Google, Slack support",
+  "<1 day support guarantee",
 ];
+
+const enterpriseTier = {
+  name: "Enterprise",
+  id: "tier-enterprise",
+  description: "Advanced features and support for large organizations.",
+  features: ["Everything in Cracked teams", "Single sign-on (SSO)", "Custom invoicing", "Volume pricing discount"],
+};
 
 export function Subscription() {
   const { authToken } = useHoppStore();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
   const [billingEmail, setBillingEmail] = useState("");
   const [billingEmailSaving, setBillingEmailSaving] = useState(false);
 
@@ -83,7 +77,7 @@ export function Subscription() {
 
   const updateBillingSettingsMutation = useMutation("put", "/api/auth/billing/settings");
 
-  const handleUpgrade = async (tier: string) => {
+  const handleUpgrade = async (tier: string, interval: "monthly" | "yearly" = billingInterval) => {
     if (!subscriptionStatus?.is_admin) {
       toast.error("Only team admins can manage subscriptions");
       return;
@@ -96,6 +90,7 @@ export function Subscription() {
       const response = await createCheckoutSessionMutation.mutateAsync({
         body: {
           tier: tier as "paid",
+          interval,
           ...(referral && { referral }),
         },
       });
@@ -276,9 +271,16 @@ export function Subscription() {
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
               <span>Current Plan</span>
-              <Badge variant={getTierBadgeVariant(getTier(subscriptionStatus))}>
-                {getTier(subscriptionStatus).charAt(0).toUpperCase() + getTier(subscriptionStatus).slice(1)}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {subscriptionStatus.billing_interval && (
+                  <Badge variant="secondary">
+                    {subscriptionStatus.billing_interval === "yearly" ? "Annual" : "Monthly"}
+                  </Badge>
+                )}
+                <Badge variant={getTierBadgeVariant(getTier(subscriptionStatus))}>
+                  {getTier(subscriptionStatus).charAt(0).toUpperCase() + getTier(subscriptionStatus).slice(1)}
+                </Badge>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -388,61 +390,101 @@ export function Subscription() {
   }
 
   // Otherwise show the pricing page for non-subscribed users
+  const displayPrice = billingInterval === "yearly" ? `$${YEARLY_PER_MONTH}` : `$${MONTHLY_PRICE}`;
+  const billingNote =
+    billingInterval === "yearly" ? `Billed as $${YEARLY_PRICE}/year/user - save 2 months` : "Billed monthly";
+
   return (
     <div className="relative isolate bg-white px-6 py-12 sm:py-16 lg:px-8">
       <div className="mx-auto max-w-4xl text-center">
         <h2 className="text-center text-4xl font-bold mb-8">Upgrade your team's subscription</h2>
+
+        {/* Monthly / Yearly toggle */}
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <span
+            className={clsx("text-sm font-medium", billingInterval === "monthly" ? "text-gray-900" : "text-gray-500")}
+          >
+            Monthly
+          </span>
+          <Switch
+            checked={billingInterval === "yearly"}
+            onCheckedChange={(checked) => setBillingInterval(checked ? "yearly" : "monthly")}
+          />
+          <span
+            className={clsx("text-sm font-medium", billingInterval === "yearly" ? "text-gray-900" : "text-gray-500")}
+          >
+            Yearly
+          </span>
+        </div>
       </div>
 
       <div className="mx-auto mt-8 grid max-w-lg grid-cols-1 items-center gap-y-6 sm:mt-12 sm:gap-y-0 lg:max-w-4xl lg:grid-cols-2">
-        {tiers.map((tier, tierIdx) => (
-          <div
-            key={tier.id}
+        {/* Cracked teams card */}
+        <div className="relative bg-white shadow-2xl scale-[1.05] rounded-3xl p-8 ring-1 ring-gray-900/10 sm:p-10">
+          <h5 id="tier-cracked" className="font-semibold text-indigo-600">
+            Cracked teams
+          </h5>
+          <p className="mt-4 flex items-baseline gap-x-2">
+            <span className="text-5xl font-semibold tracking-tight text-gray-900">{displayPrice}</span>
+            <span className="text-base text-gray-500">/month/user</span>
+          </p>
+          <p
             className={clsx(
-              tier.featured ? "relative bg-white shadow-2xl scale-[1.05]" : "bg-white/60 sm:mx-8 lg:mx-0",
-              tier.featured ? ""
-              : tierIdx === 0 ? "rounded-t-3xl sm:rounded-b-none lg:rounded-tr-none lg:rounded-bl-3xl"
-              : "sm:rounded-t-none lg:rounded-tr-3xl lg:rounded-bl-none",
-              "rounded-3xl p-8 ring-1 ring-gray-900/10 sm:p-10",
+              "mt-1 text-sm text-gray-500",
+              billingInterval === "yearly" ? "text-green-700" : "text-gray-500",
             )}
           >
-            <h5 id={tier.id} className="font-semibold text-indigo-600">
-              {tier.name}
-            </h5>
-            <p className="mt-4 flex items-baseline gap-x-2">
-              <span className="text-5xl font-semibold tracking-tight text-gray-900">{tier.priceMonthly}</span>
-              {tier.priceMonthly !== "Contact us" && <span className="text-base text-gray-500">/month/user</span>}
-            </p>
-            <p className="mt-6 text-base/7 text-gray-600">{tier.description}</p>
-            <ul role="list" className="mt-8 space-y-3 text-sm/6 text-gray-600 sm:mt-10">
-              {tier.features.map((feature) => (
-                <li key={feature} className="flex gap-x-3">
-                  <FaCheck aria-hidden="true" className="h-6 w-5 flex-none text-indigo-600" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-            <PrimaryCTA
-              onClick={() => {
-                if (tier.name === "Enterprise") {
-                  handleEnterpriseContact();
-                } else {
-                  handleUpgrade("paid");
-                }
-              }}
-              disabled={actionLoading === tier.id}
-              aria-describedby={tier.id}
-              className={clsx(tier.featured ? "" : "", "mt-8")}
-              fill={tier.featured ? "filled" : "outline"}
-            >
-              {tier.name === "Enterprise" ?
-                "Contact us"
-              : actionLoading === tier.id ?
-                "Loading..."
-              : "Get started today"}
-            </PrimaryCTA>
-          </div>
-        ))}
+            {billingNote}
+          </p>
+          <p className="mt-6 text-base/7 text-gray-600">
+            Perfect for engineering teams who want to ship faster and collaborate better.
+          </p>
+          <ul role="list" className="mt-8 space-y-3 text-sm/6 text-gray-600 sm:mt-10">
+            {features.map((feature) => (
+              <li key={feature} className="flex gap-x-3">
+                <FaCheck aria-hidden="true" className="h-6 w-5 flex-none text-indigo-600" />
+                {feature}
+              </li>
+            ))}
+          </ul>
+          <PrimaryCTA
+            onClick={() => handleUpgrade("paid", billingInterval)}
+            disabled={actionLoading === "tier-cracked"}
+            aria-describedby="tier-cracked"
+            className="mt-8"
+            fill="filled"
+          >
+            {actionLoading === "tier-cracked" ? "Loading..." : "Get started today"}
+          </PrimaryCTA>
+        </div>
+
+        {/* Enterprise card */}
+        <div className="bg-white/60 sm:rounded-t-none lg:rounded-tr-3xl lg:rounded-bl-none rounded-3xl p-8 ring-1 ring-gray-900/10 sm:p-10">
+          <h5 id={enterpriseTier.id} className="font-semibold text-indigo-600">
+            {enterpriseTier.name}
+          </h5>
+          <p className="mt-4 flex items-baseline gap-x-2">
+            <span className="text-5xl font-semibold tracking-tight text-gray-900">Contact us</span>
+          </p>
+          <p className="mt-6 text-base/7 text-gray-600">{enterpriseTier.description}</p>
+          <ul role="list" className="mt-8 space-y-3 text-sm/6 text-gray-600 sm:mt-10">
+            {enterpriseTier.features.map((feature) => (
+              <li key={feature} className="flex gap-x-3">
+                <FaCheck aria-hidden="true" className="h-6 w-5 flex-none text-indigo-600" />
+                {feature}
+              </li>
+            ))}
+          </ul>
+          <PrimaryCTA
+            onClick={handleEnterpriseContact}
+            disabled={actionLoading === enterpriseTier.id}
+            aria-describedby={enterpriseTier.id}
+            className="mt-8"
+            fill="outline"
+          >
+            Contact us
+          </PrimaryCTA>
+        </div>
       </div>
     </div>
   );
