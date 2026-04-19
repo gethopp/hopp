@@ -20,6 +20,7 @@ export const Debug = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const [trayNotification, setTrayNotification] = useState(false);
+  const [noiseCancellation, setNoiseCancellation] = useState(true);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
   const posthog = usePostHog();
 
@@ -37,6 +38,10 @@ export const Debug = () => {
       console.error("Failed to set tray notification:", error);
     }
   };
+
+  useEffect(() => {
+    typedInvoke("get_noise_cancellation").then(setNoiseCancellation);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -164,8 +169,9 @@ export const Debug = () => {
           </div>
           <Switch
             id="noise-cancellation"
-            defaultChecked={true}
+            checked={noiseCancellation}
             onCheckedChange={(checked) => {
+              setNoiseCancellation(checked);
               typedInvoke("set_noise_cancellation", { enabled: checked });
             }}
           />

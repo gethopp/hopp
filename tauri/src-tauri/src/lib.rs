@@ -83,6 +83,9 @@ pub struct AppData {
     /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
     pub suppress_hide_on_call_end: Arc<AtomicBool>,
 
+    /// Whether noise cancellation is enabled (synced with core process).
+    pub noise_cancellation_enabled: bool,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -117,6 +120,7 @@ impl AppData {
             #[cfg(target_os = "macos")]
             activation_policy_regular: false,
             suppress_hide_on_call_end,
+            noise_cancellation_enabled: true,
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }
