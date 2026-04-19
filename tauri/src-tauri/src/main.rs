@@ -602,6 +602,7 @@ fn call_started(
 ) -> Result<(), String> {
     log::info!("call_started");
     let data = app.state::<Mutex<AppData>>();
+    #[allow(unused_mut)]
     let mut data = data.lock().unwrap();
     #[cfg(target_os = "macos")]
     {
@@ -934,6 +935,7 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
 #[tauri::command(async)]
 fn end_call(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
+    #[allow(unused_mut)]
     let mut data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::CallEnd) {
         log::error!("end_call: failed to send: {e:?}");

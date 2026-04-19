@@ -50,8 +50,8 @@ unsafe extern "system" fn aspect_ratio_subclass_proc(
             let aspect = state.content_aspect();
             let scale = state.scale_factor();
 
-            let skel_w = WindowConstant::SKELETON_W as f64 * scale;
-            let skel_h = WindowConstant::SKELETON_H as f64 * scale;
+            let skel_w = WindowConstant::SKELETON_W * scale;
+            let skel_h = WindowConstant::SKELETON_H * scale;
             let min_w = WindowConstant::MIN_WIDTH * scale;
 
             let mut client_rect = RECT::default();
