@@ -2363,6 +2363,11 @@ export interface components {
       /** @description Whether the team has been manually upgraded */
       manual_upgrade: boolean;
       /**
+       * @description Billing interval for the subscription (omitted for manual upgrades or trialing)
+       * @enum {string}
+       */
+      billing_interval?: "monthly" | "yearly";
+      /**
        * Format: date-time
        * @description End date of current billing period (null for manual upgrades or trialing)
        */
@@ -2378,6 +2383,11 @@ export interface components {
        * @enum {string}
        */
       tier: "paid";
+      /**
+       * @description Billing interval (defaults to monthly if omitted)
+       * @enum {string}
+       */
+      interval?: "monthly" | "yearly";
       /** @description Optional Stripe price ID (uses environment default if not provided) */
       price_id?: string;
       /** @description Optional Rewardful referral ID for affiliate tracking */

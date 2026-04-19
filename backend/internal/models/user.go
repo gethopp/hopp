@@ -215,14 +215,26 @@ func UpdateSubscriptionQuantity(tx *gorm.DB, teamID uint) error {
 		return fmt.Errorf("no subscription items found")
 	}
 
-	subscriptionItemID := stripeSubscription.Items.Data[0].ID
+	item := stripeSubscription.Items.Data[0]
+	oldQty := item.Quantity
+	newQty := int64(newUserCount)
 
-	// Update the subscription item quantity for the next billing cycle
-	params := &stripe.SubscriptionItemParams{
-		Quantity: stripe.Int64(int64(newUserCount)),
+	if newQty == oldQty {
+		return nil
 	}
 
-	_, err = subscriptionitem.Update(subscriptionItemID, params)
+	params := &stripe.SubscriptionItemParams{
+		Quantity: stripe.Int64(newQty),
+	}
+
+	// Yearly seat additions get an immediate prorated invoice so teams can't
+	// ride free seats until renewal. Monthly subs and yearly seat removals
+	// keep the Stripe default (create_prorations → credit/debit on next invoice).
+	if dbSub.BillingInterval == IntervalYearly && newQty > oldQty {
+		params.ProrationBehavior = stripe.String("always_invoice")
+	}
+
+	_, err = subscriptionitem.Update(item.ID, params)
 	if err != nil {
 		return fmt.Errorf("failed to update subscription quantity: %w", err)
 	}
