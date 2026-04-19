@@ -511,6 +511,7 @@ impl Capturer {
         content: Content,
         stream_resolution: Extent,
         include_cursor: bool,
+        buffer_source: NativeVideoSource,
     ) -> Result<(), CapturerError> {
         log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor}");
         if self.active_stream.is_some() {
@@ -520,7 +521,13 @@ impl Capturer {
         }
 
         let scale = 1.0;
-        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), include_cursor)?;
+        let mut stream = Stream::new(
+            stream_resolution,
+            scale,
+            self.tx.clone(),
+            include_cursor,
+            buffer_source,
+        )?;
 
         stream.start_capture(content.id)?;
         self.active_stream = Some(stream);
@@ -746,17 +753,6 @@ impl Capturer {
             width: 0.,
             height: 0.,
         }
-    }
-
-    pub fn set_buffer_source(&mut self, buffer_source: NativeVideoSource) {
-        if self.active_stream.is_none() {
-            log::error!("set_buffer_source: no active stream");
-            return;
-        }
-        self.active_stream
-            .as_mut()
-            .unwrap()
-            .set_buffer_source(buffer_source);
     }
 }
 

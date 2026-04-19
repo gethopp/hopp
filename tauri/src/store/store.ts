@@ -6,6 +6,7 @@ import { isEqual } from "lodash";
 import { emit, listen } from "@tauri-apps/api/event";
 import { TCallTokensMessage } from "@/payloads";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { CoreParticipantState, CoreRoleEvent } from "@/core_payloads";
 
 const windowName = getCurrentWindow().label;
 
@@ -22,18 +23,14 @@ export type CallState = {
   timeStarted: Date;
   hasAudioEnabled: boolean;
   hasCameraEnabled: boolean;
-  // Managing buttons for starting/joining/terminating screenshare streams
   role: ParticipantRole;
   isRemoteControlEnabled: boolean;
   isRoomCall?: boolean;
-  cameraTrackId?: string | null;
   room?: components["schemas"]["Room"];
-  cameraWindowOpen?: boolean;
-  krispToggle?: boolean;
-  controllerSupportsAv1?: boolean;
-  av1Enabled?: boolean;
-  // Reconnection state
   isReconnecting?: boolean;
+  isInitialisingCall?: boolean;
+  participants: CoreParticipantState[];
+  micLevel: number;
 } & TCallTokensMessage["payload"];
 
 type State = {
@@ -64,6 +61,8 @@ type Actions = {
   reset: () => void;
   setCalling: (calling: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
+  // TODO(@konsalex): Rename `xxCallToken` as its not
+  // representative anymore or the actual state it holds.
   updateCallTokens: (tokens: Partial<CallState>) => void;
   setCustomServerUrl: (url: string | null) => void;
   setLivekitUrl: (url: string | null) => void;
@@ -121,7 +120,7 @@ const useStore = create<State & Actions>()(
       }),
     setCallTokens: (tokens) =>
       set((state) => {
-        state.callTokens = tokens;
+        state.callTokens = tokens ? { ...tokens, micLevel: tokens.micLevel ?? 0 } : null;
       }),
     updateCallTokens: (tokens) =>
       set((state) => {
@@ -176,7 +175,7 @@ useStore.subscribe((state, prevState) => {
     emit("store-update", state);
   }
 
-  // Update tray icon based on call state (only from main window to avoid duplicates)
+  // Update tray icon and sleep prevention based on call state (only from main window to avoid duplicates)
   if (windowName === "main") {
     const wasInCall = prevState.callTokens !== null;
     const isInCall = state.callTokens !== null;
@@ -186,10 +185,16 @@ useStore.subscribe((state, prevState) => {
       invoke("set_tray_notification", { enabled: true }).catch((e) => {
         console.error("Failed to set tray notification:", e);
       });
+      invoke("toggle_call_sleep_prevention", { enabled: true }).catch((e) => {
+        console.error("Failed to enable sleep prevention:", e);
+      });
     } else if (wasInCall && !isInCall) {
       // Leaving a call - hide notification dot
       invoke("set_tray_notification", { enabled: false }).catch((e) => {
         console.error("Failed to set tray notification:", e);
+      });
+      invoke("toggle_call_sleep_prevention", { enabled: false }).catch((e) => {
+        console.error("Failed to disable sleep prevention:", e);
       });
     }
   }
@@ -231,6 +236,54 @@ listen("get-store", () => {
     state: useStore.getState(),
     window: windowName,
   });
+});
+
+// Listen for full participant snapshot from core and replace the participants array.
+// Also derive local audio/camera state so the UI stays in sync when toggled from core
+// (e.g. camera window mute button).
+listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
+  const { callTokens, user } = useStore.getState();
+  if (!callTokens) return;
+
+  const updates: Partial<CallState> = { participants: event.payload, isInitialisingCall: false };
+
+  if (user) {
+    const localParticipant = event.payload.find((p) => p.identity.includes("local"));
+    if (localParticipant) {
+      updates.hasCameraEnabled = localParticipant.has_camera;
+      updates.hasAudioEnabled = !localParticipant.muted;
+
+      if (localParticipant.is_screensharing) {
+        updates.role = ParticipantRole.SHARER;
+      } else {
+        const someoneElseSharing = event.payload.some((p) => p.is_screensharing && !p.identity.includes(user.id));
+        updates.role = someoneElseSharing ? ParticipantRole.CONTROLLER : ParticipantRole.NONE;
+      }
+    }
+  }
+
+  useStore.getState().updateCallTokens(updates);
+});
+
+listen<number>("core_mic_audio_level", (event) => {
+  const { callTokens } = useStore.getState();
+  if (!callTokens) return;
+  useStore.getState().updateCallTokens({ micLevel: event.payload });
+});
+
+// Listen for core role change events
+listen<CoreRoleEvent>("core_role_change", (event) => {
+  const { callTokens } = useStore.getState();
+  if (!callTokens) return;
+
+  const roleMap: Record<string, ParticipantRole> = {
+    Sharer: ParticipantRole.SHARER,
+    Controller: ParticipantRole.CONTROLLER,
+    None: ParticipantRole.NONE,
+  };
+
+  const newRole = roleMap[event.payload.role] ?? ParticipantRole.NONE;
+  useStore.getState().updateCallTokens({ role: newRole });
 });
 
 export default useStore;

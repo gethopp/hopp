@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { HiOutlineUsers, HiOutlineLockOpen, HiOutlineUserPlus, HiOutlineMinus } from "react-icons/hi2";
+import { HiArrowDownTray, HiOutlineUsers, HiOutlineLockOpen, HiOutlineUserPlus, HiOutlineMinus } from "react-icons/hi2";
+import { CgSpinner } from "react-icons/cg";
 import { differenceInDays, parseISO } from "date-fns";
 import { Separator } from "../ui/separator";
 import { clsx } from "clsx";
@@ -19,6 +20,8 @@ import {
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { OS } from "@/constants";
 import { useQueryClient } from "@tanstack/react-query";
+import { downloadAndRelaunch } from "@/update";
+import { LuCircleFadingArrowUp } from "react-icons/lu";
 
 const SidebarButton = ({
   active,
@@ -99,6 +102,35 @@ const getAvailableTabs = (
   ];
 };
 
+const DownloadNewVersionButton = () => {
+  const { needsUpdate, updateInProgress, setUpdateInProgress } = useStore();
+
+  if (!needsUpdate) {
+    return null;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
+          onClick={() => {
+            setUpdateInProgress(true);
+            void downloadAndRelaunch();
+          }}
+          disabled={updateInProgress}
+        >
+          {updateInProgress ?
+            <CgSpinner className="animate-spin size-3.5 text-gray-800" />
+          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">Download and install update</TooltipContent>
+    </Tooltip>
+  );
+};
+
 const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["PrivateUser"] }) => {
   // Only show if user is in trial
   if (!user.is_trial || !user.trial_ends_at) {
@@ -139,30 +171,32 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className={clsx(
-            "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
-            getTextColor(daysRemaining),
-          )}
-        >
-          {/* Background fill from bottom */}
+    <div className="flex flex-col items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
           <div
-            className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
-            style={{
-              height: `${percentage}%`,
-              backgroundColor: getBackgroundColor(daysRemaining),
-            }}
-          />
-          {/* Content */}
-          <span className="relative z-10">{daysRemaining}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="right">
-        Trial expires in {daysRemaining} day{daysRemaining !== 1 ? "s" : ""}
-      </TooltipContent>
-    </Tooltip>
+            className={clsx(
+              "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
+              getTextColor(daysRemaining),
+            )}
+          >
+            {/* Background fill from bottom */}
+            <div
+              className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
+              style={{
+                height: `${percentage}%`,
+                backgroundColor: getBackgroundColor(daysRemaining),
+              }}
+            />
+            {/* Content */}
+            <span className="relative z-10">{daysRemaining}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          Trial expires in {daysRemaining} day{daysRemaining !== 1 ? "s" : ""}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 };
 
@@ -194,9 +228,16 @@ export const Sidebar = () => {
         </div>
         <Separator className="w-[70%] mx-auto" />
         {/* Bottom user section */}
-        <div className="flex flex-col mt-auto">
-          <div className="flex flex-col gap-2 items-center">{user && <TrialCountdownAvatarFill user={user} />}</div>
-          <div className="mt-auto h-12 w-full flex items-center justify-center">
+        <div className="flex flex-col gap-1 mt-auto">
+          <div className="flex justify-center w-full">
+            <DownloadNewVersionButton />
+          </div>
+          {/* TODO: Remove after beta */}
+          <span className="flex flex-row items-center justify-center rounded-sm bg-white bg-linear-to-b from-gray-100 px-2 py-0.5 leading-3 text-center text-[10px] font-semibold text-gray-800 border border-slate-200 mx-1">
+            Beta
+          </span>
+          {user && <TrialCountdownAvatarFill user={user} />}
+          <div className="mt-[-5px] h-12 w-full flex items-center justify-center">
             <DropdownMenu>
               <DropdownMenuTrigger>
                 {!user && (

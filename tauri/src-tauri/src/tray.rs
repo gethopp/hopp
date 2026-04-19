@@ -35,6 +35,10 @@ impl TrayState {
     pub fn is_notification_enabled(&self) -> bool {
         self.inner.is_notification_enabled()
     }
+
+    pub fn rect(&self) -> Option<tauri::Rect> {
+        self.inner.rect()
+    }
 }
 
 // =============================================================================
@@ -66,6 +70,10 @@ mod default {
 
         pub fn is_notification_enabled(&self) -> bool {
             self.notification_enabled
+        }
+
+        pub fn rect(&self) -> Option<tauri::Rect> {
+            self.tray_icon.rect().ok().flatten()
         }
     }
 }
@@ -105,6 +113,10 @@ mod macos {
 
         pub fn is_notification_enabled(&self) -> bool {
             self.notification_enabled
+        }
+
+        pub fn rect(&self) -> Option<tauri::Rect> {
+            self.tray_icon.rect().ok().flatten()
         }
     }
 

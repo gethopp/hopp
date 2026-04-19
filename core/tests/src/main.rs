@@ -1,6 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io;
+use std::sync::OnceLock;
 
+pub static SOCKET_PATH: OnceLock<String> = OnceLock::new();
+
+mod audio_capture;
+mod camera;
 mod events;
 mod livekit_utils;
 mod local_drawing;
@@ -9,10 +14,15 @@ mod remote_cursor;
 mod remote_drawing;
 mod remote_keyboard;
 mod screenshare_client;
+mod screensharing;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Custom socket path (defaults to $TMPDIR/core-socket)
+    #[arg(long, global = true)]
+    socket_path: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -55,6 +65,45 @@ enum Commands {
         #[arg(value_enum)]
         test_type: LocalDrawingTest,
     },
+    /// Test audio capture functionality
+    Audio {
+        /// Type of audio test to run
+        #[arg(value_enum)]
+        test_type: AudioTest,
+        /// Optional mic device name to use for capture tests
+        #[arg(long)]
+        mic_id: Option<String>,
+    },
+    /// Test camera capture functionality
+    Camera {
+        /// Type of camera test to run
+        #[arg(value_enum)]
+        test_type: CameraTest,
+        /// Optional camera name to use
+        #[arg(long)]
+        camera_name: Option<String>,
+    },
+    /// Test screensharing window functionality
+    ScreensharingWindow {
+        /// Type of screensharing window test to run
+        #[arg(value_enum)]
+        test_type: ScreensharingWindowTest,
+    },
+    /// Join a call with camera and mic, stay until Ctrl-C
+    Call {
+        /// Optional camera name to use
+        #[arg(long)]
+        camera_name: Option<String>,
+        /// Optional mic device name to use
+        #[arg(long)]
+        mic_id: Option<String>,
+        /// Optional participant display name
+        #[arg(long, default_value = "Test Camera")]
+        name: String,
+        /// Start screen sharing
+        #[arg(long)]
+        screenshare: bool,
+    },
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -63,6 +112,10 @@ enum KeyboardTest {
     Chars,
     /// Test function keys (PageUp, PageDown, Home, End)
     FnKeys,
+    /// Test Ctrl+Option+Left Arrow (word-back navigation)
+    CtrlOptionArrow,
+    /// Test Cmd+Shift+3 (screenshot shortcut)
+    CmdShift3,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -125,6 +178,38 @@ enum ScreenshareTest {
     AvailableContent,
     /// Screen share every available monitor for 10 seconds each
     EveryMonitor,
+    /// Start call, wait 5s, end call, start another call
+    CallRestartCycle,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum AudioTest {
+    /// List available audio devices
+    ListDevices,
+    /// Capture from all devices (15s each)
+    CaptureAll,
+    /// Test mute/unmute cycle
+    MuteUnmute,
+    /// Capture for 30 seconds from default device
+    Capture30s,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum CameraTest {
+    /// List available cameras
+    ListDevices,
+    /// Share camera for 30 seconds
+    Share30s,
+    /// Subscribe to camera tracks and log when received
+    TrackSubscribe,
+    /// Open the camera window for manual interaction
+    Open,
+}
+
+#[derive(Clone, ValueEnum, Debug)]
+enum ScreensharingWindowTest {
+    /// Open the screensharing window for manual interaction
+    Open,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -142,6 +227,11 @@ enum DrawingTest {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    let socket_path = args
+        .socket_path
+        .unwrap_or_else(|| format!("{}/core-socket", std::env::temp_dir().display()));
+    SOCKET_PATH.set(socket_path).unwrap();
 
     // Handle different commands
     match args.command {
@@ -217,6 +307,14 @@ async fn main() -> io::Result<()> {
                     println!("Running keyboard fn keys test...");
                     remote_keyboard::test_keyboard_fn_keys().await?;
                 }
+                KeyboardTest::CtrlOptionArrow => {
+                    println!("Running Ctrl+Option+Left Arrow test...");
+                    remote_keyboard::test_keyboard_ctrl_option_arrow().await?;
+                }
+                KeyboardTest::CmdShift3 => {
+                    println!("Running Cmd+Shift+3 test...");
+                    remote_keyboard::test_keyboard_cmd_shift_3().await?;
+                }
             }
             println!("Keyboard test finished.");
         }
@@ -255,6 +353,10 @@ async fn main() -> io::Result<()> {
                     println!("Running every monitor screenshare test...");
                     screenshare_client::test_every_monitor()?;
                 }
+                ScreenshareTest::CallRestartCycle => {
+                    println!("Running call restart cycle test...");
+                    screenshare_client::test_call_restart_cycle()?;
+                }
             }
             println!("Screenshare test finished.");
         }
@@ -278,6 +380,78 @@ async fn main() -> io::Result<()> {
                 }
             }
             println!("Drawing test finished.");
+        }
+        Commands::Audio { test_type, mic_id } => {
+            match test_type {
+                AudioTest::ListDevices => {
+                    println!("Running audio list devices test...");
+                    audio_capture::test_list_devices()?;
+                }
+                AudioTest::CaptureAll => {
+                    println!("Running capture all devices test...");
+                    audio_capture::test_capture_all_devices(15)?;
+                }
+                AudioTest::MuteUnmute => {
+                    println!("Running mute/unmute test...");
+                    audio_capture::test_mute_unmute()?;
+                }
+                AudioTest::Capture30s => {
+                    println!("Running 30s capture test...");
+                    audio_capture::test_capture_30s(mic_id.as_deref())?;
+                }
+            }
+            println!("Audio test finished.");
+        }
+        Commands::Camera {
+            test_type,
+            camera_name,
+        } => {
+            match test_type {
+                CameraTest::ListDevices => {
+                    println!("Running camera list devices test...");
+                    camera::test_list_cameras()?;
+                }
+                CameraTest::Share30s => {
+                    println!("Running camera 30s test...");
+                    camera::test_camera_30s(camera_name.as_deref())?;
+                }
+                CameraTest::TrackSubscribe => {
+                    println!("Running camera track subscribe test...");
+                    camera::test_camera_track_subscribe().await?;
+                }
+                CameraTest::Open => {
+                    println!("Opening camera window...");
+                    camera::test_open_camera()?;
+                }
+            }
+            println!("Camera test finished.");
+        }
+        Commands::ScreensharingWindow { test_type } => {
+            match test_type {
+                ScreensharingWindowTest::Open => {
+                    println!("Opening screensharing window...");
+                    screensharing::test_open_screensharing()?;
+                }
+            }
+            println!("Screensharing window test finished.");
+        }
+        Commands::Call {
+            camera_name,
+            mic_id,
+            name,
+            screenshare,
+        } => {
+            println!(
+                "Joining call as '{}' with camera and mic (Ctrl-C to stop)...",
+                name
+            );
+            camera::test_call(
+                camera_name.as_deref(),
+                mic_id.as_deref(),
+                &name,
+                screenshare,
+            )?;
+            println!("Call test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {

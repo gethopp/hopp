@@ -30,4 +30,9 @@ dist-ssr
 
 openspec/changes
 CLAUDE.md
+<<<<<<< HEAD
+.claude
+||||||| 90a105d
+=======
 .claude/
+>>>>>>> origin/main

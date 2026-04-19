@@ -4,6 +4,7 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
+use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
 use crate::UserEvent;
@@ -16,9 +17,6 @@ use std::time::Instant;
 use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
-
-#[cfg(target_os = "windows")]
-use super::direct_composition::DirectComposition;
 
 #[path = "click_animation.rs"]
 pub mod click_animation;
@@ -146,10 +144,6 @@ pub struct GraphicsContext<'a> {
     /// Reference to the overlay window
     window: Arc<Window>,
 
-    /// Windows-specific DirectComposition integration for transparent overlays
-    #[cfg(target_os = "windows")]
-    _direct_composition: DirectComposition,
-
     /// Renderer for click animations
     click_animation_renderer: ClickAnimationRenderer,
 
@@ -176,6 +170,7 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// # Arguments
     ///
+    /// * `context_manager` - Cached GPU context manager
     /// * `window` - The overlay window to render to
     /// * `texture_path` - Base directory path for loading texture resources
     /// * `scale` - Display scale
@@ -197,12 +192,14 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// - **Windows**: Initializes DirectComposition for transparent overlay rendering
     pub fn new(
+        context_manager: &ContextManager,
         window_arc: Arc<Window>,
         texture_path: String,
         scale: f64,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> OverlayResult<Self> {
         Self::with_clock(
+            context_manager,
             window_arc,
             texture_path,
             scale,
@@ -213,6 +210,7 @@ impl<'a> GraphicsContext<'a> {
 
     /// Creates a new graphics context with a custom clock (for testing).
     pub fn with_clock(
+        context_manager: &ContextManager,
         window_arc: Arc<Window>,
         texture_path: String,
         scale: f64,
@@ -222,115 +220,17 @@ impl<'a> GraphicsContext<'a> {
         log::info!("GraphicsContext::new");
         let size = window_arc.inner_size();
         log::info!("GraphicsContext::new: window size: {size:?}, scale: {scale}");
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
 
-        #[cfg(target_os = "windows")]
-        let direct_composition =
-            DirectComposition::new(window_arc.clone()).ok_or(OverlayError::SurfaceCreationError)?;
-
-        let surface = {
-            #[cfg(target_os = "windows")]
-            {
-                direct_composition.create_surface(&instance)?
-            }
-            #[cfg(target_os = "macos")]
-            {
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {e:?}");
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-            // Add other OS targets here if needed
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-            {
-                // Default or error for unsupported OS
-                instance.create_surface(window_arc.clone()).map_err(|e| {
-                    log::error!("GraphicsContext::new: {:?}", e);
-                    OverlayError::SurfaceCreationError
-                })?
-            }
-        };
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }));
-        if let Err(e) = adapter {
-            log::error!("GraphicsContext::new request_adapter: {e:?}");
-            return Err(OverlayError::AdapterRequestError);
-        }
-        let adapter = adapter.unwrap();
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: None,
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        }))
-        .map_err(|_| OverlayError::DeviceRequestError)?;
-
-        let surface_capabilities = surface.get_capabilities(&adapter);
-
-        let alpha_modes = surface_capabilities.alpha_modes;
-        let surface_formats = surface_capabilities.formats;
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_formats[0],
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync, // This is using fifo or fifo_relaxed
-            alpha_mode: alpha_modes
-                .iter()
-                .find(|mode| {
-                    /*
-                     * This is a workaround for windows, where we observed
-                     * crashes with post multiplied alpha.
-                     */
-                    #[allow(unused_variables)]
-                    let post_multiplied = mode == &&wgpu::CompositeAlphaMode::PostMultiplied;
-                    #[cfg(target_os = "windows")]
-                    let post_multiplied = false;
-                    (mode != &&wgpu::CompositeAlphaMode::Opaque)
-                        && ((mode == &&wgpu::CompositeAlphaMode::PreMultiplied) || post_multiplied)
-                })
-                .copied()
-                .unwrap_or(alpha_modes[0]),
-            view_formats: vec![],
-            desired_maximum_frame_latency: 0,
-        };
-        surface.configure(&device, &surface_config);
-
-        #[cfg(target_os = "windows")]
-        direct_composition.commit()?;
-
-        /*
-         * Workaround for resetting the default white background
-         * on transparent windows on windows.
-         */
-        #[cfg(target_os = "windows")]
-        {
-            window_arc.set_minimized(true);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            window_arc.set_minimized(false);
-        }
+        let surface_info = context_manager
+            .create_overlay_surface(&window_arc)
+            .map_err(|_| OverlayError::SurfaceCreationError)?;
+        let surface = surface_info.surface;
+        let device = context_manager.overlay_context.device.clone();
+        let queue = context_manager.overlay_context.queue.clone();
 
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
-        let iced_renderer = IcedRenderer::new(
-            &device,
-            &queue,
-            surface_config.format,
-            &adapter,
-            &window_arc,
-            &texture_path,
-        );
+        let iced_renderer = IcedRenderer::new(context_manager, &window_arc, &texture_path);
 
         let (sender, receiver) = std::sync::mpsc::channel();
         let redraw_thread = Some(std::thread::spawn(move || {
@@ -342,8 +242,6 @@ impl<'a> GraphicsContext<'a> {
             device,
             queue,
             window: window_arc,
-            #[cfg(target_os = "windows")]
-            _direct_composition: direct_composition,
             click_animation_renderer,
             iced_renderer,
             participants_manager: ParticipantsManager::default(),
@@ -417,7 +315,7 @@ impl<'a> GraphicsContext<'a> {
     /// If frame acquisition fails (e.g., surface lost), the method logs the error
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
-    pub fn draw(&mut self) {
+    pub fn draw(&mut self, position_translator: &dyn Fn(Position) -> Position) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -436,6 +334,7 @@ impl<'a> GraphicsContext<'a> {
             &view,
             &self.participants_manager,
             &self.click_animation_renderer,
+            position_translator,
         );
 
         self.window.pre_present_notify();
@@ -456,7 +355,7 @@ impl<'a> GraphicsContext<'a> {
     /// Adds a new participant with automatic color assignment.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `name` - Full name of the participant (will be made unique)
     /// * `auto_clear` - Whether to automatically clear paths after 3 seconds (for local participant)
     ///
@@ -465,74 +364,79 @@ impl<'a> GraphicsContext<'a> {
     /// * `Err(ParticipantError)` - Failed to add participant (e.g., participant already exists)
     pub fn add_participant(
         &mut self,
-        sid: String,
+        identity: String,
         name: &str,
         auto_clear: bool,
     ) -> Result<(), ParticipantError> {
-        self.participants_manager
-            .add_participant(sid, name, auto_clear)
+        self.participants_manager.add_participant(
+            identity,
+            name,
+            auto_clear,
+            crate::room_service::DrawingMode::Disabled,
+        )
     }
 
     /// Removes a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant to remove
-    pub fn remove_participant(&mut self, sid: &str) {
-        self.participants_manager.remove_participant(sid);
+    /// * `identity` - Identity identifying the participant to remove
+    pub fn remove_participant(&mut self, identity: &str) {
+        self.participants_manager.remove_participant(identity);
     }
 
     /// Sets the drawing mode for a specific participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `mode` - The drawing mode to set
-    pub fn set_drawing_mode(&mut self, sid: &str, mode: crate::room_service::DrawingMode) {
-        self.participants_manager.set_drawing_mode(sid, mode);
+    pub fn set_drawing_mode(&mut self, identity: &str, mode: crate::room_service::DrawingMode) {
+        self.participants_manager.set_drawing_mode(identity, mode);
     }
 
     /// Starts a new drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Starting point of the path
     /// * `path_id` - Unique identifier for the drawing path
-    pub fn draw_start(&mut self, sid: &str, point: Position, path_id: u64) {
-        self.participants_manager.draw_start(sid, point, path_id);
+    pub fn draw_start(&mut self, identity: &str, point: Position, path_id: u64) {
+        self.participants_manager
+            .draw_start(identity, point, path_id);
     }
 
     /// Adds a point to the current drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Point to add to the current path
-    pub fn draw_add_point(&mut self, sid: &str, point: Position) {
-        self.participants_manager.draw_add_point(sid, point);
+    pub fn draw_add_point(&mut self, identity: &str, point: Position) {
+        self.participants_manager.draw_add_point(identity, point);
     }
 
     /// Ends the current drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `point` - Final point of the path
-    pub fn draw_end(&mut self, sid: &str, point: Position) {
-        self.participants_manager.draw_end(sid, point);
+    pub fn draw_end(&mut self, identity: &str, point: Position) {
+        self.participants_manager.draw_end(identity, point);
     }
 
     /// Clears a specific drawing path for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
+    /// * `identity` - Identity identifying the participant
     /// * `path_id` - Unique identifier for the drawing path to clear
-    pub fn draw_clear_path(&mut self, sid: &str, path_id: u64) {
-        self.participants_manager.draw_clear_path(sid, path_id);
+    pub fn draw_clear_path(&mut self, identity: &str, path_id: u64) {
+        self.participants_manager.draw_clear_path(identity, path_id);
     }
 
     /// Clears all drawing paths for a participant.
     ///
     /// # Arguments
-    /// * `sid` - Session ID identifying the participant
-    pub fn draw_clear_all_paths(&mut self, sid: &str) {
-        self.participants_manager.draw_clear_all_paths(sid);
+    /// * `identity` - Identity identifying the participant
+    pub fn draw_clear_all_paths(&mut self, identity: &str) {
+        self.participants_manager.draw_clear_all_paths(identity);
     }
 
     /// Updates auto-clear for all participants and returns removed path IDs.

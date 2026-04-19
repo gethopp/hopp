@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use socket_lib::StoredMode;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -6,22 +7,6 @@ use std::{
 };
 
 const OLD_USER_TOKEN_FILE: &str = "user_token.txt";
-
-/// Represents the user's preferred interaction mode for screen sharing sessions.
-/// This is stored persistently and restored when the user joins a new session.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
-pub enum StoredMode {
-    /// Remote control mode - mouse and keyboard events are forwarded to the sharer
-    RemoteControl,
-    /// Click animation mode - clicks are visualized on the shared screen
-    ClickAnimation,
-    /// Drawing mode - freehand drawing on the shared screen
-    Draw {
-        /// If true, drawings persist until manually cleared; if false, they auto-expire
-        permanent: bool,
-    },
-}
 
 /// Returns the name for file that stores the app state.
 fn get_app_state_filename() -> String {
@@ -51,6 +36,9 @@ struct AppStateInternal {
     /// The device ID of the last used microphone.
     pub last_used_mic: Option<String>,
 
+    /// The device name of the last used camera.
+    pub last_used_camera: Option<String>,
+
     /// Flag indicating if this is the user's first time running the application.
     pub first_run: bool,
 
@@ -66,8 +54,15 @@ struct AppStateInternal {
     /// The user's preferred interaction mode for screen sharing sessions
     pub last_mode: Option<StoredMode>,
 
-    /// Whether drawing mode should persist until right-click (permanent mode)
-    pub drawing_permanent: Option<bool>,
+    /// Whether the sharer's drawing mode should persist until right-click
+    #[serde(alias = "drawing_permanent")]
+    pub sharer_draw_persist: Option<bool>,
+
+    /// Whether the controller's drawing mode should persist until right-click
+    pub controller_draw_persist: Option<bool>,
+
+    /// Whether the first-time drawing hint toast has been shown
+    pub drawing_hint_shown: Option<bool>,
 }
 
 /// Legacy version of the application state structure.
@@ -85,22 +80,28 @@ impl Default for AppStateInternal {
     /// Default settings:
     /// - Tray notification: enabled
     /// - Last used microphone: none
+    /// - Last used camera: none
     /// - First run: true
     /// - User JWT: none
     /// - Hopp server URL: none
     /// - Feedback disabled: false
     /// - Last mode: none
-    /// - Drawing permanent: none
+    /// - Sharer draw persist: none
+    /// - Controller draw persist: none
+    /// - Drawing hint shown: none
     fn default() -> Self {
         AppStateInternal {
             tray_notification: true,
             last_used_mic: None,
+            last_used_camera: None,
             first_run: true,
             user_jwt: None,
             hopp_server_url: None,
             feedback_disabled: false,
             last_mode: None,
-            drawing_permanent: None,
+            sharer_draw_persist: None,
+            controller_draw_persist: None,
+            drawing_hint_shown: None,
         }
     }
 }
@@ -280,6 +281,22 @@ impl AppState {
         }
     }
 
+    /// Gets the last used camera device name.
+    pub fn last_used_camera(&self) -> Option<String> {
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_used_camera.clone()
+    }
+
+    /// Updates the last used camera setting and saves to disk.
+    pub fn set_last_used_camera(&mut self, camera: String) {
+        log::info!("set_last_used_camera: {camera}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.last_used_camera = Some(camera);
+        if !self.save() {
+            log::error!("set_last_used_camera: Failed to save app state");
+        }
+    }
+
     /// Checks if this is the user's first time running the application.
     pub fn first_run(&self) -> bool {
         let _lock = self.lock.lock().unwrap();
@@ -358,20 +375,51 @@ impl AppState {
         }
     }
 
-    /// Gets whether drawing mode should persist until right-click (permanent mode).
-    /// Returns false if the setting has not been configured.
-    pub fn drawing_permanent(&self) -> bool {
+    /// Gets whether the sharer's drawing mode should persist until right-click.
+    pub fn sharer_draw_persist(&self) -> bool {
         let _lock = self.lock.lock().unwrap();
-        self.state.drawing_permanent.unwrap_or(false)
+        self.state.sharer_draw_persist.unwrap_or(false)
     }
 
-    /// Updates the drawing permanent setting and saves to disk.
-    pub fn set_drawing_permanent(&mut self, permanent: bool) {
-        log::info!("set_drawing_permanent: {permanent}");
+    /// Updates the sharer draw persist setting and saves to disk.
+    pub fn set_sharer_draw_persist(&mut self, persist: bool) {
+        log::info!("set_sharer_draw_persist: {persist}");
         let _lock = self.lock.lock().unwrap();
-        self.state.drawing_permanent = Some(permanent);
+        self.state.sharer_draw_persist = Some(persist);
         if !self.save() {
-            log::error!("set_drawing_permanent: Failed to save app state");
+            log::error!("set_sharer_draw_persist: Failed to save app state");
+        }
+    }
+
+    /// Gets whether the controller's drawing mode should persist until right-click.
+    pub fn controller_draw_persist(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.controller_draw_persist.unwrap_or(false)
+    }
+
+    /// Updates the controller draw persist setting and saves to disk.
+    pub fn set_controller_draw_persist(&mut self, persist: bool) {
+        log::info!("set_controller_draw_persist: {persist}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.controller_draw_persist = Some(persist);
+        if !self.save() {
+            log::error!("set_controller_draw_persist: Failed to save app state");
+        }
+    }
+
+    /// Gets whether the first-time drawing hint toast has been shown.
+    pub fn drawing_hint_shown(&self) -> bool {
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_hint_shown.unwrap_or(false)
+    }
+
+    /// Updates the drawing hint shown flag and saves to disk.
+    pub fn set_drawing_hint_shown(&mut self, shown: bool) {
+        log::info!("set_drawing_hint_shown: {shown}");
+        let _lock = self.lock.lock().unwrap();
+        self.state.drawing_hint_shown = Some(shown);
+        if !self.save() {
+            log::error!("set_drawing_hint_shown: Failed to save app state");
         }
     }
 

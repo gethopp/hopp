@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 // https://vitejs.dev/config/
-export default defineConfig(async (config) => {
+export default defineConfig(async () => {
   return {
     plugins: [
       react(),
@@ -42,11 +42,9 @@ export default defineConfig(async (config) => {
       rollupOptions: {
         input: {
           main: resolve(__dirname, "index.html"),
-          screenshare: resolve(__dirname, "screenshare.html"),
           contentPicker: resolve(__dirname, "contentPicker.html"),
           permissions: resolve(__dirname, "permissions.html"),
           trayNotification: resolve(__dirname, "trayNotification.html"),
-          camera: resolve(__dirname, "camera.html"),
           feedback: resolve(__dirname, "feedback.html"),
         },
       },

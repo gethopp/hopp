@@ -51,13 +51,11 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
     // for users that are not with a call-banner (the callers)
     let tokensReceived = false;
 
-    const handleCallTokens = (data: TWebSocketMessage) => {
+    const handleCallTokens = async (data: TWebSocketMessage) => {
       if (data.type === "call_tokens") {
         console.log("Received call_tokens", data);
         tokensReceived = true;
         sounds.callAccepted.play();
-        tauriUtils.callStarted(callerId);
-
         setCallTokens({
           ...data.payload,
           timeStarted: new Date(),
@@ -65,10 +63,15 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
           hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
-          cameraTrackId: null,
-          cameraWindowOpen: false,
-          krispToggle: true,
+          participants: [],
+          isInitialisingCall: true,
+          micLevel: 0,
         });
+        try {
+          await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+        } catch {
+          setCallTokens(null);
+        }
 
         toast.dismiss(toastId);
       }

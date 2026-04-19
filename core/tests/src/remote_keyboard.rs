@@ -103,7 +103,7 @@ async fn internal_test_keyboard_fn_keys(room: &Room) -> io::Result<()> {
 /// Connects screenshare, runs the function key test, and stops screenshare.
 pub async fn test_keyboard_fn_keys() -> io::Result<()> {
     println!("Starting function key test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (mut cursor_socket, _, _) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 
@@ -124,10 +124,147 @@ pub async fn test_keyboard_fn_keys() -> io::Result<()> {
     Ok(())
 }
 
+/// Sends a keystroke event with full modifier support via the LiveKit data channel.
+async fn send_keystroke_with_modifiers(
+    room: &Room,
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    down: bool,
+) -> io::Result<()> {
+    let keystroke_data = KeystrokeData {
+        key: vec![key.to_string()],
+        meta,
+        ctrl,
+        shift,
+        alt,
+        down,
+    };
+    let event = ClientEvent::Keystroke(keystroke_data);
+    let payload = serde_json::to_vec(&event).map_err(io::Error::other)?;
+    room.local_participant()
+        .publish_data(DataPacket {
+            payload,
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+/// Simulates pressing and releasing a key with full modifier support.
+async fn simulate_key_press_with_modifiers(
+    room: &Room,
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+) -> io::Result<()> {
+    println!(
+        "Sending KeyDown: '{key}', Ctrl: {ctrl}, Alt/Option: {alt}, Shift: {shift}, Meta: {meta}"
+    );
+    send_keystroke_with_modifiers(room, key, ctrl, alt, shift, meta, true).await?;
+    sleep(Duration::from_millis(50)).await;
+    println!(
+        "Sending KeyUp: '{key}', Ctrl: {ctrl}, Alt/Option: {alt}, Shift: {shift}, Meta: {meta}"
+    );
+    send_keystroke_with_modifiers(room, key, ctrl, alt, shift, meta, false).await?;
+    sleep(Duration::from_millis(100)).await;
+    Ok(())
+}
+
+/// Connects screenshare, sends Ctrl+Option+Left Arrow after user focuses a window.
+pub async fn test_keyboard_ctrl_option_arrow() -> io::Result<()> {
+    println!("Starting Ctrl+Option+Left Arrow test...");
+    let (sender, _event_socket, _content) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test CtrlOptionArrow");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    println!(">>> Focus a text editor window now. Sending Ctrl+Option+Left Arrow in 5 seconds...");
+    sleep(Duration::from_secs(5)).await;
+
+    let pause = Duration::from_millis(20);
+
+    // Press modifiers individually, then key, then release
+    send_keystroke_with_modifiers(&room, "Alt", false, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Control", true, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "ArrowLeft", true, true, false, false, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "ArrowLeft", true, true, false, false, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Control", true, false, false, false, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Alt", false, false, false, false, false).await?;
+    println!("Ctrl+Option+Left Arrow sent.");
+
+    sleep(Duration::from_secs(2)).await;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&sender)?;
+    println!("Ctrl+Option+Left Arrow test complete.");
+    Ok(())
+}
+
+/// Connects screenshare, sends Cmd+Shift+3 (screenshot) after user focuses a window.
+pub async fn test_keyboard_cmd_shift_3() -> io::Result<()> {
+    println!("Starting Cmd+Shift+3 test...");
+    let (sender, _event_socket, _content) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test CmdShift3");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    println!(">>> Focus a window now. Sending Cmd+Shift+3 in 5 seconds...");
+    sleep(Duration::from_secs(5)).await;
+
+    let pause = Duration::from_millis(20);
+
+    // Press modifiers individually, then key, then release
+    send_keystroke_with_modifiers(&room, "Meta", false, false, false, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Shift", false, false, true, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "3", false, false, true, true, true).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "3", false, false, true, true, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Shift", false, false, false, true, false).await?;
+    sleep(pause).await;
+    send_keystroke_with_modifiers(&room, "Meta", false, false, false, false, false).await?;
+    println!("Cmd+Shift+3 sent.");
+
+    sleep(Duration::from_secs(2)).await;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&sender)?;
+    println!("Cmd+Shift+3 test complete.");
+    Ok(())
+}
+
 /// Connects screenshare, runs the keyboard character test, and stops screenshare.
 pub async fn test_keyboard_chars() -> io::Result<()> {
     println!("Starting keyboard test...");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await; // Give time for screenshare to potentially start
 
@@ -142,7 +279,7 @@ pub async fn test_keyboard_chars() -> io::Result<()> {
     internal_test_keyboard_chars(&room).await?;
 
     println!("Stopping screenshare...");
-    screenshare_client::stop_screenshare(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare(&sender)?;
     println!("Screenshare stopped.");
     println!("Keyboard test complete.");
     Ok(())

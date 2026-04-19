@@ -1,8 +1,6 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { TStoredMode } from "@/payloads";
-
 const isTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
 export let appVersion: null | string = null;
@@ -35,7 +33,7 @@ const createScreenShareWindow = async (videoToken: string, bringToFront: boolean
   }
 };
 
-const createContentPickerWindow = async (videoToken: string, useAv1: boolean) => {
+const createContentPickerWindow = async () => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
   if (isWindowOpen) {
@@ -49,7 +47,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
 
   if (isTauri) {
     try {
-      await invoke("create_content_picker_window", { videoToken, useAv1 });
+      await invoke("create_content_picker_window", {});
       const windowHandle = await WebviewWindow.getByLabel("contentPicker");
       if (windowHandle) {
         await windowHandle.setFocus();
@@ -58,7 +56,7 @@ const createContentPickerWindow = async (videoToken: string, useAv1: boolean) =>
       console.error("Failed to create content picker window:", error);
     }
   } else {
-    const URL = `contentPicker.html?videoToken=${videoToken}&useAv1=${useAv1}`;
+    const URL = `contentPicker.html`;
     window.open(URL);
   }
 };
@@ -90,7 +88,6 @@ const closeCameraWindow = async () => {
     const cameraWindow = await WebviewWindow.getByLabel("camera");
     if (cameraWindow) {
       await cameraWindow.close();
-      await setDockIconVisible(false);
     }
   }
 };
@@ -106,8 +103,7 @@ const storeTokenBackend = async (token: string) => {
 };
 
 const getStoredToken = async () => {
-  const token = await invoke<string | null>("get_stored_token");
-  return token;
+  return await invoke<string | null>("get_stored_token");
 };
 
 const deleteStoredToken = async () => {
@@ -168,7 +164,6 @@ const endCallCleanup = async () => {
   await resetCoreProcess();
   await closeScreenShareWindow();
   await closeContentPickerWindow();
-  await setDockIconVisible(false);
   await closeCameraWindow();
 };
 
@@ -216,10 +211,6 @@ const hideTrayIconInstruction = async () => {
   await invoke("skip_tray_notification_selection_window");
 };
 
-const setDockIconVisible = async (visible: boolean) => {
-  await invoke("set_dock_icon_visible", { visible });
-};
-
 const getLastUsedMic = async () => {
   return await invoke<string | null>("get_last_used_mic");
 };
@@ -228,24 +219,32 @@ const setLastUsedMic = async (micId: string) => {
   return await invoke("set_last_used_mic", { mic: micId });
 };
 
-const getLastMode = async (): Promise<TStoredMode | null> => {
-  return await invoke<TStoredMode | null>("get_last_mode");
+const getLastUsedCamera = async () => {
+  return await invoke<string | null>("get_last_used_camera");
 };
 
-const setLastMode = async (mode: TStoredMode): Promise<void> => {
-  return await invoke("set_last_mode", { mode });
+const setLastUsedCamera = async (camera: string) => {
+  return await invoke("set_last_used_camera", { camera });
 };
 
-const getDrawingPermanent = async (): Promise<boolean> => {
-  return await invoke<boolean>("get_drawing_permanent");
+const getSharerDrawPersist = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_sharer_draw_persist");
 };
 
-const setDrawingPermanent = async (permanent: boolean): Promise<void> => {
-  return await invoke("set_drawing_permanent", { permanent });
+const setSharerDrawPersist = async (persist: boolean): Promise<void> => {
+  return await invoke("set_sharer_draw_persist", { persist });
 };
 
 const enableDrawing = async (permanent: boolean): Promise<void> => {
   await invoke("enable_drawing", { permanent });
+};
+
+const getDrawingHintShown = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_drawing_hint_shown");
+};
+
+const setDrawingHintShown = async (shown: boolean): Promise<void> => {
+  return await invoke("set_drawing_hint_shown", { shown });
 };
 
 const minimizeMainWindow = async () => {
@@ -257,8 +256,7 @@ const setLivekitUrl = async (url: string) => {
 };
 
 const getLivekitUrl = async () => {
-  const url = await invoke<string>("get_livekit_url");
-  return url;
+  return await invoke<string>("get_livekit_url");
 };
 
 const setSentryMetadata = async (userEmail: string) => {
@@ -266,8 +264,8 @@ const setSentryMetadata = async (userEmail: string) => {
   return await invoke("set_sentry_metadata", { userEmail, appVersion });
 };
 
-const callStarted = async (callerId: string) => {
-  return await invoke("call_started", { callerId });
+const callStarted = async (audioToken: string, videoToken: string) => {
+  return await invoke("call_started", { audioToken, videoToken });
 };
 
 /**
@@ -360,14 +358,15 @@ export const tauriUtils = {
   getMicPermission,
   getScreenSharePermission,
   getCameraPermission,
-  setDockIconVisible,
   getLastUsedMic,
   setLastUsedMic,
-  getLastMode,
-  setLastMode,
-  getDrawingPermanent,
-  setDrawingPermanent,
+  getLastUsedCamera,
+  setLastUsedCamera,
+  getSharerDrawPersist,
+  setSharerDrawPersist,
   enableDrawing,
+  getDrawingHintShown,
+  setDrawingHintShown,
   minimizeMainWindow,
   setLivekitUrl,
   getLivekitUrl,

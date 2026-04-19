@@ -103,7 +103,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   // that will unsubscribe from the socket when the component unmounts
   useEffect(() => {
     // Add listener for call response
-    socketService.on(callbackIdRef.current, (data: TWebSocketMessage) => {
+    socketService.on(callbackIdRef.current, async (data: TWebSocketMessage) => {
       if (!isCalling) return;
 
       switch (data.type) {
@@ -140,7 +140,6 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           toast.success(`${props.user.first_name} accepted your call`, {
             duration: 1500,
           });
-          tauriUtils.callStarted(props.user.id);
           break;
         case "call_tokens":
           callResolvedRef.current = true;
@@ -155,10 +154,15 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             hasCameraEnabled: false,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
-            cameraTrackId: null,
-            cameraWindowOpen: false,
-            krispToggle: true,
+            participants: [],
+            isInitialisingCall: true,
+            micLevel: 0,
           });
+          try {
+            await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+          } catch {
+            setCallTokens(null);
+          }
           break;
       }
     });
@@ -223,7 +227,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
               <HiPhoneArrowUpRight className="size-3 animate-oscillate" />
               End
             </>
-            : <>
+          : <>
               <HiPhone className="size-3" />
               Call
             </>

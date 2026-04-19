@@ -14,7 +14,6 @@ import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { tauriUtils } from "../window-utils";
 import { CgSpinner } from "react-icons/cg";
 import clsx from "clsx";
-import useStore from "@/store/store";
 
 const appWindow = getCurrentWebviewWindow();
 
@@ -44,9 +43,7 @@ async function getContent(setContent: React.Dispatch<React.SetStateAction<Captur
 async function screenshare(
   content: CaptureContent["content"],
   resolution: ResolutionKey,
-  videoToken: string,
   accessibilityPermission: boolean,
-  useAv1: boolean,
 ) {
   const resolutionMap: Record<ResolutionKey, { width: number; height: number }> = {
     "1080p": { width: 1920, height: 1080 },
@@ -58,10 +55,8 @@ async function screenshare(
 
   await invoke("screenshare", {
     content: content,
-    token: videoToken,
     resolution: resolutionMap[resolution],
     accessibilityPermission: accessibilityPermission,
-    useAv1: useAv1,
   });
   return true;
 }
@@ -69,11 +64,9 @@ async function screenshare(
 function Window() {
   useDisableNativeContextMenu();
   useSystemTheme();
-  const { callTokens } = useStore();
   const [content, setContent] = useState<CaptureContent[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
   const [hasEmptyContentFromBackend, setHasEmptyContentFromBackend] = useState(false);
-  const videoToken = tauriUtils.getTokenParam("videoToken");
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
@@ -98,22 +91,12 @@ function Window() {
   const handleItemClick = async (content: CaptureContent["content"]) => {
     // TODO make this faster
     try {
-      if (videoToken == null || videoToken == "") {
-        toast.error("No video token found");
-        return;
-      }
       if (hasClickedRef.current) {
         return;
       }
       hasClickedRef.current = true;
       setHasClicked(true);
-      const success = await screenshare(
-        content,
-        resolution,
-        videoToken,
-        accessibilityPermission,
-        callTokens?.av1Enabled ?? false,
-      );
+      const success = await screenshare(content, resolution, accessibilityPermission);
       if (success) {
         await appWindow.close();
       }
@@ -138,7 +121,7 @@ function Window() {
     }
   };
 
-  const [resolution, setResolution] = useState<ResolutionKey>("1440p");
+  const [resolution, setResolution] = useState<ResolutionKey>("4K");
   const updateResolution = (value: string) => {
     setResolution(value as ResolutionKey);
   };

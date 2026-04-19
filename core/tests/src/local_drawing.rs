@@ -6,10 +6,10 @@ pub fn test_local_drawing_permanent() -> io::Result<()> {
     println!("\n=== TEST: Local Drawing (Permanent) ===");
 
     // Start screenshare session
-    let (mut socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     // Enable permanent drawing mode
-    socket.send_message(Message::DrawingEnabled(DrawingEnabled { permanent: true }))?;
+    sender.send(Message::DrawingEnabled(DrawingEnabled { permanent: true }))?;
     println!("Permanent drawing enabled. Draw with mouse, press Escape to exit.");
     println!("You have 15 seconds to test drawing...");
 
@@ -17,7 +17,7 @@ pub fn test_local_drawing_permanent() -> io::Result<()> {
     std::thread::sleep(Duration::from_secs(15));
 
     // Stop screenshare
-    screenshare_client::stop_screenshare_session(&mut socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
 
     println!("Test completed.");
     Ok(())
@@ -27,10 +27,10 @@ pub fn test_local_drawing_non_permanent() -> io::Result<()> {
     println!("\n=== TEST: Local Drawing (Non-Permanent) ===");
 
     // Start screenshare session
-    let (mut socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     // Enable non-permanent drawing mode
-    socket.send_message(Message::DrawingEnabled(DrawingEnabled { permanent: false }))?;
+    sender.send(Message::DrawingEnabled(DrawingEnabled { permanent: false }))?;
     println!("Non-permanent drawing enabled. Draw with mouse, press Escape to exit.");
     println!("You have 15 seconds to test drawing...");
 
@@ -38,7 +38,7 @@ pub fn test_local_drawing_non_permanent() -> io::Result<()> {
     std::thread::sleep(Duration::from_secs(15));
 
     // Stop screenshare
-    screenshare_client::stop_screenshare_session(&mut socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
 
     println!("Test completed.");
     Ok(())

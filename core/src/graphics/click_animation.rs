@@ -6,19 +6,20 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 const MAX_ANIMATIONS: usize = 30;
-pub const ANIMATION_DURATION: u64 = 1000;
-const RING_DELAY_MS: u128 = 300;
+pub const ANIMATION_DURATION: u64 = 800;
 
-/// Color #B91801
-const CLICK_COLOR: Color = Color {
-    r: 0.725,
-    g: 0.094,
-    b: 0.004,
-    a: 1.,
+/// #3b82f6 — Tailwind blue-500
+const RIPPLE_COLOR: Color = Color {
+    r: 0.231,
+    g: 0.510,
+    b: 0.965,
+    a: 1.0,
 };
 
-const INITIAL_RADIUS: f32 = 5.0;
-const MAX_RADIUS_GROWTH: f32 = 30.0;
+const BASE_RADIUS: f32 = 12.0;
+const MIN_SCALE: f32 = 0.8;
+const MAX_SCALE: f32 = 1.6;
+const STROKE_WIDTH: f32 = 2.0;
 
 #[derive(Debug)]
 struct ClickAnimation {
@@ -110,7 +111,12 @@ impl ClickAnimationRenderer {
         }
     }
 
-    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> Geometry {
+    pub fn draw(
+        &self,
+        renderer: &Renderer,
+        bounds: Rectangle,
+        translate: &dyn Fn(crate::utils::geometry::Position) -> crate::utils::geometry::Position,
+    ) -> Geometry {
         let mut frame = Frame::new(renderer, bounds.size());
         let now = self.clock.now();
         for slot in &self.used_slots {
@@ -125,24 +131,31 @@ impl ClickAnimationRenderer {
                 continue;
             }
 
-            let x = anim.position.x as f32;
-            let y = anim.position.y as f32;
+            let pos = translate(anim.position);
+            let x = pos.x as f32;
+            let y = pos.y as f32;
 
-            if elapsed <= RING_DELAY_MS {
-                // Filled circle phase
-                let circle = Path::circle(iced::Point::new(x, y), INITIAL_RADIUS);
-                frame.fill(&circle, CLICK_COLOR);
+            let t = elapsed as f32 / ANIMATION_DURATION as f32;
+            let eased = 1.0 - (1.0 - t).powi(3);
+
+            let scale = MIN_SCALE + (MAX_SCALE - MIN_SCALE) * eased;
+            let radius = BASE_RADIUS * scale;
+
+            let alpha = if eased <= 0.5 {
+                1.0 - 0.4 * eased
             } else {
-                // Expanding ring phase
-                let t = (elapsed - RING_DELAY_MS) as f32
-                    / (ANIMATION_DURATION as f32 - RING_DELAY_MS as f32);
-                let radius = INITIAL_RADIUS + MAX_RADIUS_GROWTH * t;
-                let circle = Path::circle(iced::Point::new(x, y), radius);
-                frame.stroke(
-                    &circle,
-                    Stroke::default().with_color(CLICK_COLOR).with_width(2.0),
-                );
-            }
+                0.8 * (1.0 - (eased - 0.5) / 0.5)
+            };
+
+            let color = Color {
+                a: alpha,
+                ..RIPPLE_COLOR
+            };
+            let circle = Path::circle(iced::Point::new(x, y), radius);
+            frame.stroke(
+                &circle,
+                Stroke::default().with_color(color).with_width(STROKE_WIDTH),
+            );
         }
         frame.into_geometry()
     }

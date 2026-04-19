@@ -118,6 +118,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
       role: ParticipantRole.NONE,
       isRemoteControlEnabled: true,
       isRoomCall: true,
+      participants: [],
       room: {
         id: sessionId,
         // TODO(@konsalex): Get the room name from the backend
@@ -125,6 +126,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
         name: "Slack Session",
         user_id: user?.id || "",
       },
+      micLevel: 0,
     });
 
     // Switch to the rooms tab and show the window

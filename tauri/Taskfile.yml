@@ -28,6 +28,16 @@ env:
       fi
 
 tasks:
+  build:
+    desc: Build the Tauri application.
+    dir: src-tauri
+    cmds:
+      - cargo build
+    dotenv: [".env.dev"]
+    env:
+      RUST_LOG: trace
+      RUST_BACKTRACE: full
+
   dev:
     desc: Start the Tauri development server.
     cmds:

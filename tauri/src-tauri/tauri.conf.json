@@ -29,12 +29,12 @@
   },
   "productName": "hopp",
   "mainBinaryName": "hopp",
-  "version": "0.0.70",
+  "version": "0.0.83",
   "identifier": "com.hopp.app",
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwQkQ0NjlDQ0Q0QkM4QTQKUldTa3lFdk5uRWE5a003RnhYVXV6OFZYc05UWFVBenRYTnhON2N5Zy8rVUYyd1JXRDNURVBGQ3MK",
-      "endpoints": ["https://github.com/gethopp/hopp-releases/releases/latest/download/latest.json"]
+      "endpoints": ["https://github.com/gethopp/hopp-releases/releases/download/v1_beta/latest.json"]
     },
     "deep-link": {
       "desktop": {

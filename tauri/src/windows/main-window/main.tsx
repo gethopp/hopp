@@ -56,6 +56,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         position="bottom-right"
         toastOptions={{
           duration: 1_500,
+          loading: { duration: Infinity },
         }}
       />
       <QueryClientProvider client={queryClient}>

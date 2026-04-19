@@ -2,7 +2,6 @@ import { formatDistanceToNow } from "date-fns";
 import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff, LuWifiOff } from "react-icons/lu";
 import { PiScribbleLoopBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
-import { useKrispNoiseFilter } from "@livekit/components-react/krisp";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import {
@@ -11,24 +10,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
-import {
-  useLocalParticipant,
-  useMediaDeviceSelect,
-  useRemoteParticipants,
-  useRoomContext,
-  useTracks,
-} from "@livekit/components-react";
-import {
-  Track,
-  ConnectionState,
-  RoomEvent,
-  VideoPresets,
-  LocalTrack,
-  ParticipantEvent,
-  AudioPresets,
-  EngineEvent,
-  RemoteParticipant,
-} from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "./select";
 import { SelectPortal } from "@radix-ui/react-select";
@@ -40,13 +21,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, X } from "lucide-react";
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import toast from "react-hot-toast";
-import ListenToRemoteAudio from "./listen-to-remote-audio";
-import { useScreenShareListener, useEndCall } from "@/lib/hooks";
-import { useAudioVolume } from "@/components/ui/bar-visualizer";
-import { LiveWaveform } from "@/components/ui/live-waveform";
+import { useEndCall } from "@/lib/hooks";
+import { typedInvoke } from "@/core_payloads";
+import { useQuery } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 
 const Colors = {
   deactivatedIcon: "text-slate-600",
@@ -57,7 +38,62 @@ const Colors = {
 } as const;
 
 export function CallCenter() {
-  const { callTokens } = useStore();
+  const { callTokens, teammates } = useStore();
+  const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
+  const [controllerCursorState, setControllerCursorState] = useState(true);
+  const [accessibilityPermission, setAccessibilityPermission] = useState(true);
+
+  const handleEndCall = useEndCall();
+  const handleEndCallRef = useRef(handleEndCall);
+  handleEndCallRef.current = handleEndCall;
+
+  // Determine remote participant state from core events
+  const remoteParticipantState = callTokens?.participants?.find(
+    (p) => callParticipant && p.identity.includes(callParticipant.id),
+  );
+  const isRemoteDisconnected = remoteParticipantState ? !remoteParticipantState.connected : false;
+  const isRemoteMuted = remoteParticipantState?.muted ?? false;
+
+  const fetchAccessibilityPermission = async () => {
+    const permission = await tauriUtils.getControlPermission();
+    setAccessibilityPermission(permission);
+    setControllerCursorState(permission);
+
+    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
+      setTimeout(() => {
+        tauriUtils.setControllerCursor(permission);
+      }, 2000);
+    }
+  };
+
+  useEffect(() => {
+    fetchAccessibilityPermission();
+  }, [callTokens?.role]);
+
+  useEffect(() => {
+    const unlisten = listen("core_call_ended", () => {
+      console.log("core_call_ended event received");
+      const { callTokens } = useStore.getState();
+      if (!callTokens) return;
+      handleEndCallRef.current();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen("core_room_connection_failed", () => {
+      console.log("core_call_ended event received");
+      const { callTokens } = useStore.getState();
+      if (!callTokens) return;
+      handleEndCallRef.current();
+      toast.error("Failed to establish connection");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   if (!callTokens) return null;
 
@@ -72,8 +108,16 @@ export function CallCenter() {
       )}
 
       <div className="w-full">
+        {/* Initial connecting banner */}
+        {callTokens.isInitialisingCall && (
+          <div className="mb-4 text-xs font-medium flex flex-row gap-2 items-center justify-center">
+            <div className="animate-spin size-3 border-[1.5px] border-slate-400 border-t-transparent rounded-full" />
+            Connecting to call
+          </div>
+        )}
+
         {/* Call Timer */}
-        {callTokens && (
+        {!callTokens.isInitialisingCall && (
           <div className="w-full text-center mb-4">
             <span className="text-xs font-medium">Pairing</span>{" "}
             <span className="text-xs muted font-medium">
@@ -85,84 +129,6 @@ export function CallCenter() {
           </div>
         )}
       </div>
-
-      <ConnectedActions />
-
-      {/* Horizontal line */}
-      <Separator className="w-full" />
-    </div>
-  );
-}
-
-export function ConnectedActions() {
-  const { callTokens, teammates } = useStore();
-  const callParticipant = teammates?.find((user) => user.id === callTokens?.participant);
-  const [controllerCursorState, setControllerCursorState] = useState(true);
-  const [accessibilityPermission, setAccessibilityPermission] = useState(true);
-  const [isRemoteDisconnected, setIsRemoteDisconnected] = useState(false);
-  const remoteParticipants = useRemoteParticipants();
-  const room = useRoomContext();
-
-  // Find the remote audio participant and check if they have microphone enabled
-  const remoteAudioParticipant = remoteParticipants.find(
-    (p) => p.identity.includes("audio") && callParticipant && p.identity.includes(callParticipant.id),
-  );
-  const isRemoteMuted = remoteAudioParticipant ? !remoteAudioParticipant.isMicrophoneEnabled : false;
-
-  useScreenShareListener();
-  const handleEndCall = useEndCall();
-
-  // Listen for participant disconnection events
-  useEffect(() => {
-    if (!callParticipant) return;
-
-    const handleParticipantDisconnected = (participant: RemoteParticipant) => {
-      if (participant.identity.includes("audio") && participant.identity.includes(callParticipant.id)) {
-        console.log("Remote participant disconnected:", participant.identity);
-        setIsRemoteDisconnected(true);
-      }
-    };
-
-    const handleParticipantConnected = (participant: RemoteParticipant) => {
-      if (participant.identity.includes("audio") && participant.identity.includes(callParticipant.id)) {
-        console.log("Remote participant connected:", participant.identity);
-        setIsRemoteDisconnected(false);
-      }
-    };
-
-    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
-    room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
-
-    // Initialize state based on current participants
-    setIsRemoteDisconnected(false);
-
-    return () => {
-      room.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
-      room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
-    };
-  }, [room, callParticipant?.id]);
-
-  const fetchAccessibilityPermission = async () => {
-    const permission = await tauriUtils.getControlPermission();
-    setAccessibilityPermission(permission);
-    setControllerCursorState(permission);
-
-    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
-      console.log("Accessibility permission is false, setting controller cursor to false");
-      // We need to make sure the viewing window has opened
-      setTimeout(() => {
-        tauriUtils.setControllerCursor(permission);
-      }, 2000);
-    }
-  };
-
-  useEffect(() => {
-    fetchAccessibilityPermission();
-  }, [callTokens?.role]);
-
-  return (
-    <>
-      {/* <ConnectionsHealthDebug /> */}
       <div
         className={clsx("gap-2 px-3 flex-nowrap grid mb-4 min-w-full", {
           "grid-cols-6": callTokens?.isRoomCall,
@@ -204,7 +170,7 @@ export function ConnectedActions() {
                 className="w-full border-gray-500 text-gray-600 flex flex-row gap-2"
                 variant="gradient-white"
                 onClick={() => {
-                  tauriUtils.createScreenShareWindow(callTokens.videoToken);
+                  typedInvoke("open_screenshare_viewer");
                 }}
               >
                 <HiOutlineEye className="size-4" />
@@ -266,21 +232,24 @@ export function ConnectedActions() {
           </div>
         </div>
       </div>
-      <ListenToRemoteAudio muted={callTokens?.cameraWindowOpen} />
-    </>
+      {/* Horizontal line */}
+      <Separator className="w-full" />
+    </div>
   );
 }
 
 function DrawingEnableButton() {
   const [drawingPermanent, setDrawingPermanent] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [hintShown, setHintShown] = useState(false);
 
-  // Load drawing permanent preference on mount
   useEffect(() => {
     const loadPreference = async () => {
       try {
-        const permanent = await tauriUtils.getDrawingPermanent();
+        const permanent = await tauriUtils.getSharerDrawPersist();
         setDrawingPermanent(permanent);
+        const shown = await tauriUtils.getDrawingHintShown();
+        setHintShown(shown);
       } catch (error) {
         console.error("Failed to load drawing permanent preference:", error);
       }
@@ -291,7 +260,7 @@ function DrawingEnableButton() {
   const handlePermanentToggle = async (checked: boolean) => {
     setDrawingPermanent(checked);
     try {
-      await tauriUtils.setDrawingPermanent(checked);
+      await tauriUtils.setSharerDrawPersist(checked);
     } catch (error) {
       console.error("Failed to save drawing permanent preference:", error);
     }
@@ -299,7 +268,50 @@ function DrawingEnableButton() {
 
   const handleEnableDrawing = async () => {
     try {
-      await tauriUtils.enableDrawing(drawingPermanent);
+      if (!hintShown) {
+        await new Promise<void>((resolve) => {
+          const toastDurationMs = 3_000;
+          let dismissed = false;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+          const dismissHintToast = () => {
+            if (dismissed) return;
+            dismissed = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            resolve();
+          };
+
+          const toastId = toast(
+            (t) => (
+              <div className="flex items-center gap-3">
+                <span className="text-sm leading-none">Press ESC to exit drawing mode</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    dismissHintToast();
+                  }}
+                  aria-label="Dismiss drawing hint"
+                  className="size-6 shrink-0 rounded-full border-0 bg-[#E7ECF1] p-0 text-[#1F2937] transition-colors hover:bg-[#DCE3EC] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+                >
+                  <X className="mx-auto size-3 stroke-[1.25]" />
+                </button>
+              </div>
+            ),
+            { duration: toastDurationMs },
+          );
+
+          timeoutId = setTimeout(() => {
+            toast.dismiss(toastId);
+            dismissHintToast();
+          }, toastDurationMs);
+        });
+        await tauriUtils.enableDrawing(drawingPermanent);
+        await tauriUtils.setDrawingHintShown(true);
+        setHintShown(true);
+      } else {
+        await tauriUtils.enableDrawing(drawingPermanent);
+      }
     } catch (error) {
       console.error("Failed to enable drawing:", error);
       toast.error("Failed to enable drawing", { duration: 2500 });
@@ -355,113 +367,79 @@ function DrawingEnableButton() {
   );
 }
 
+/**
+ * MicrophoneIcon — uses typedInvoke to list/select microphones and toggle mute via core.
+ */
 function MicrophoneIcon() {
-  const [retry, setRetry] = useState(0);
   const { updateCallTokens, callTokens } = useStore();
   const hasAudioEnabled = callTokens?.hasAudioEnabled || false;
-  const { localParticipant } = useLocalParticipant();
-  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
 
-  // Use the useAudioVolume hook from bar-visualizer for the mic button
-  const audioLevel = useAudioVolume(audioStream, { fftSize: 32, smoothingTimeConstant: 0.3 });
-
-  useEffect(() => {
-    if (!localParticipant) return;
-
-    const updateStream = () => {
-      const trackPub = localParticipant.getTrackPublications().find((p) => p.kind === Track.Kind.Audio);
-      if (trackPub?.track?.mediaStreamTrack) {
-        setAudioStream(new MediaStream([trackPub.track.mediaStreamTrack]));
-      } else {
-        setAudioStream(null);
-      }
-    };
-
-    updateStream();
-    const onLocalTrackPublished = () => updateStream();
-    const onLocalTrackUnpublished = () => updateStream();
-    const onTrackMuted = () => updateStream();
-    const onTrackUnmuted = () => updateStream();
-
-    localParticipant.on(ParticipantEvent.LocalTrackPublished, onLocalTrackPublished);
-    localParticipant.on(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
-    localParticipant.on(ParticipantEvent.TrackMuted, onTrackMuted);
-    localParticipant.on(ParticipantEvent.TrackUnmuted, onTrackUnmuted);
-
-    return () => {
-      localParticipant.off(ParticipantEvent.LocalTrackPublished, onLocalTrackPublished);
-      localParticipant.off(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
-      localParticipant.off(ParticipantEvent.TrackMuted, onTrackMuted);
-      localParticipant.off(ParticipantEvent.TrackUnmuted, onTrackUnmuted);
-    };
-  }, [localParticipant]);
-
-  /* Force re enumeration of mic devices on dropdown open */
-  const errorCallback = useCallback(
-    (error: Error) => {
-      console.error("Error selecting microphone: ", error);
-    },
-    [retry],
-  );
-
-  const {
-    devices: microphoneDevices,
-    activeDeviceId: activeMicrophoneDeviceId,
-    setActiveMediaDevice: setActiveMicrophoneDevice,
-  } = useMediaDeviceSelect({
-    kind: "audioinput",
-    requestPermissions: true,
-    onError: errorCallback,
+  const { data: microphoneDevices = [], refetch: refetchMics } = useQuery({
+    queryKey: ["list_microphones"],
+    enabled: !callTokens?.isInitialisingCall,
+    queryFn: async () => typedInvoke("list_microphones"),
+    select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
-  useEffect(() => {
-    const updateDefaultMic = async () => {
-      const lastUsedMic = await getLastUsedMic();
-      if (!lastUsedMic) return;
+  const [activeMicId, setActiveMicId] = useState<string>("");
 
-      for (const device of microphoneDevices) {
-        if (device.deviceId === lastUsedMic && device.deviceId !== activeMicrophoneDeviceId) {
-          setActiveMicrophoneDevice(device.deviceId);
-          break;
-        }
+  useEffect(() => {
+    if (!microphoneDevices.length) return;
+    if (activeMicId) return;
+    const resolve = async () => {
+      const lastUsedMic = await tauriUtils.getLastUsedMic();
+      if (lastUsedMic && microphoneDevices.find((d) => d.name === lastUsedMic)) {
+        setActiveMicId(lastUsedMic);
+        return;
       }
+      const defaultDevice = microphoneDevices.find((d) => d.default) ?? microphoneDevices[0];
+      if (defaultDevice) setActiveMicId(defaultDevice.name);
     };
-    updateDefaultMic();
+    resolve();
   }, [microphoneDevices]);
 
-  const getLastUsedMic = useCallback(async () => {
-    return await tauriUtils.getLastUsedMic();
+  useEffect(() => {
+    const unlisten = listen<string>("core_active_mic_changed", (event) => {
+      setActiveMicId(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
-  const updateMicrophonePreference = useCallback(async (deviceId: string) => {
-    return await tauriUtils.setLastUsedMic(deviceId);
+  const handleMicToggle = useCallback(() => {
+    const newState = !hasAudioEnabled;
+    updateCallTokens({ hasAudioEnabled: newState });
+    if (newState) {
+      typedInvoke("unmute_mic");
+    } else {
+      typedInvoke("mute_mic");
+    }
+  }, [hasAudioEnabled, updateCallTokens]);
+
+  const handleMicrophoneChange = useCallback((value: string) => {
+    setActiveMicId(value);
+    typedInvoke("select_microphone", { deviceName: value });
+    tauriUtils.setLastUsedMic(value);
   }, []);
 
-  const handleMicrophoneChange = (value: string) => {
-    console.debug("Selected microphone: ", value);
-    if (value !== activeMicrophoneDeviceId) {
-      setActiveMicrophoneDevice(value);
-      updateMicrophonePreference(value);
-    }
-  };
-
-  const handleDropdownOpenChange = (open: boolean) => {
-    if (open) {
-      setRetry((prev) => prev + 1);
-    }
-  };
+  const handleDropdownOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) refetchMics();
+    },
+    [refetchMics],
+  );
 
   return (
     <ToggleIconButton
-      onClick={() => {
-        updateCallTokens({
-          hasAudioEnabled: !hasAudioEnabled,
-        });
-      }}
+      onClick={handleMicToggle}
       icon={
         <div className="relative flex items-center justify-center">
           {hasAudioEnabled ?
-            <CustomIcons.MicWithLevel level={audioLevel} className={`size-4 ${Colors.mic.icon} relative z-10`} />
+            <CustomIcons.MicWithLevel
+              level={callTokens?.micLevel ?? 0}
+              className={`size-4 ${Colors.mic.icon} relative z-10`}
+            />
           : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
         </div>
       }
@@ -472,11 +450,7 @@ function MicrophoneIcon() {
         [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
       })}
       cornerIcon={
-        <Select
-          value={activeMicrophoneDeviceId}
-          onValueChange={handleMicrophoneChange}
-          onOpenChange={handleDropdownOpenChange}
-        >
+        <Select value={activeMicId} onValueChange={handleMicrophoneChange} onOpenChange={handleDropdownOpenChange}>
           <SelectTrigger
             iconClassName={clsx({
               [Colors.mic.text]: hasAudioEnabled,
@@ -486,38 +460,13 @@ function MicrophoneIcon() {
           />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
-              {microphoneDevices.map((device) => {
-                return (
-                  <SelectItem key={device.deviceId} value={device.deviceId}>
-                    <span className="text-xs truncate">
-                      {device.label || `Microphone ${device.label.slice(0, 8)}...`}
-                    </span>
-                  </SelectItem>
-                );
-              })}
-              {hasAudioEnabled && (
-                <>
-                  <div className="my-2 border-t border-slate-100" />
-                  <div className="flex flex-row justify-between items-center gap-2">
-                    <span className="text-xs font-medium ml-2 text-slate-500">Input</span>
-                    <div className="relative flex h-8 max-w-[120px] items-center rounded-md bg-slate-100 overflow-hidden px-3">
-                      <LiveWaveform
-                        active={hasAudioEnabled}
-                        deviceId={activeMicrophoneDeviceId}
-                        barWidth={3}
-                        barGap={1}
-                        barRadius={4}
-                        fadeEdges={true}
-                        fadeWidth={24}
-                        sensitivity={1.4}
-                        smoothingTimeConstant={0.85}
-                        height={24}
-                        mode="static"
-                        className="h-full w-full"
-                      />
-                    </div>
-                  </div>
-                </>
+              {microphoneDevices.map(
+                (device) =>
+                  device.name !== "" && (
+                    <SelectItem key={device.name} value={device.name}>
+                      <span className="text-xs truncate">{device.name}</span>
+                    </SelectItem>
+                  ),
               )}
             </SelectContent>
           </SelectPortal>
@@ -529,22 +478,14 @@ function MicrophoneIcon() {
   );
 }
 
-function ScreenShareIcon({
-  callTokens,
-  setCallTokens,
-  controllerSupportsAv1,
-}: {
-  callTokens: CallState | null;
-  setCallTokens: (callTokens: CallState | null) => void;
-  controllerSupportsAv1: boolean;
-}) {
-  const isRoomCall = callTokens?.isRoomCall || false;
+function ScreenShareIcon({ callTokens }: { callTokens: CallState | null }) {
+  const { setCallTokens } = useStore();
+
   const toggleScreenShare = useCallback(async () => {
-    if (!callTokens || !callTokens.videoToken) return;
+    if (!callTokens) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
-      // On success it will update CallState.hasVideoEnabled and State.isController
-      tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
+      tauriUtils.createContentPickerWindow();
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -553,12 +494,12 @@ function ScreenShareIcon({
       });
       tauriUtils.stopSharing();
     }
-  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
+  }, [callTokens, setCallTokens]);
 
   const changeScreenShare = useCallback(() => {
-    if (!callTokens || !callTokens.videoToken) return;
-    tauriUtils.createContentPickerWindow(callTokens.videoToken, controllerSupportsAv1 && !isRoomCall);
-  }, [callTokens, callTokens?.videoToken, controllerSupportsAv1, isRoomCall]);
+    if (!callTokens) return;
+    tauriUtils.createContentPickerWindow();
+  }, [callTokens]);
 
   return (
     <ToggleIconButton
@@ -597,90 +538,80 @@ function ScreenShareIcon({
 
 function CameraIcon() {
   const { updateCallTokens, callTokens } = useStore();
-  const [retry, setRetry] = useState(0);
-  const tracks = useTracks([Track.Source.Camera], {});
-  const { localParticipant } = useLocalParticipant();
   const cameraEnabled = callTokens?.hasCameraEnabled || false;
 
-  const clickedCameraRef = useRef(false);
-  const errorCallback = useCallback(
-    (error: Error) => {
-      if (!clickedCameraRef.current) return;
-
-      console.error("Error initializing camera: ", error);
-      toast.error("Failed to initialize camera", {
-        duration: 2500,
-      });
-    },
-    [retry],
-  );
-
-  const {
-    devices: cameraDevices,
-    activeDeviceId: activeCameraDeviceId,
-    setActiveMediaDevice: setActiveCameraDevice,
-  } = useMediaDeviceSelect({
-    kind: "videoinput",
-    requestPermissions: true,
-    onError: errorCallback,
+  const { data: cameraDevices = [], refetch: refetchCameras } = useQuery({
+    queryKey: ["list_webcams"],
+    queryFn: () => typedInvoke("list_webcams"),
+    select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
-  const isDisabled = cameraDevices.length === 0;
-
-  const handleCameraToggle = () => {
-    clickedCameraRef.current = true;
-    let newCameraEnabled = !cameraEnabled;
-    updateCallTokens({
-      ...callTokens,
-      hasCameraEnabled: newCameraEnabled,
-    });
-    if (!newCameraEnabled) {
-      const cameraTrack = localParticipant
-        .getTrackPublications()
-        .filter((track) => track.source === Track.Source.Camera)[0];
-      if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
-        localParticipant.unpublishTrack(cameraTrack.track);
-      }
-    }
-  };
-
-  const handleCameraChange = (value: string) => {
-    console.debug("Selected camera: ", value);
-    setActiveCameraDevice(value);
-  };
-
-  const handleDropdownOpenChange = (open: boolean) => {
-    if (open) {
-      setRetry((prev) => prev + 1);
-    }
-  };
+  const [activeCamera, setActiveCamera] = useState<string>("");
 
   useEffect(() => {
-    if (tracks.length > 0) {
-      tauriUtils.ensureCameraWindowIsVisible(callTokens?.cameraToken || "");
-      updateCallTokens({
-        ...callTokens,
-        cameraWindowOpen: true,
-      });
-    } else {
-      // If there are 0 then close the window
-      tauriUtils.closeCameraWindow();
-      updateCallTokens({
-        ...callTokens,
-        cameraWindowOpen: false,
-      });
-    }
+    if (!cameraDevices.length) return;
+    if (activeCamera) return;
+    const resolve = async () => {
+      const lastUsedCamera = await tauriUtils.getLastUsedCamera();
+      if (lastUsedCamera && cameraDevices.find((d) => d.name === lastUsedCamera)) {
+        setActiveCamera(lastUsedCamera);
+        return;
+      }
+      const defaultDevice = cameraDevices.find((d) => d.default) ?? cameraDevices[0];
+      if (defaultDevice) setActiveCamera(defaultDevice.name);
+    };
+    resolve();
+  }, [cameraDevices]);
 
-    if (localParticipant) {
-      for (const track of localParticipant.getTrackPublications()) {
-        if (track.source === Track.Source.Camera) {
-          updateCallTokens({
-            cameraTrackId: track.trackSid,
-          });
+  useEffect(() => {
+    const unlisten = listen<string>("core_active_camera_changed", (event) => {
+      setActiveCamera(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const handleCameraToggle = useCallback(async () => {
+    const newEnabled = !cameraEnabled;
+    updateCallTokens({ hasCameraEnabled: newEnabled });
+
+    if (newEnabled) {
+      try {
+        await typedInvoke("start_camera", { deviceName: activeCamera || undefined });
+      } catch (error) {
+        console.error("Failed to start camera:", error);
+        toast.error("Failed to initialize camera", { duration: 2500 });
+        updateCallTokens({ hasCameraEnabled: false });
+      }
+    } else {
+      // TODO(@konsalex): This is an optimistic update, not sure how I feel about this.
+      // We may need to make this sync somehow.
+      typedInvoke("stop_camera");
+    }
+  }, [cameraEnabled, updateCallTokens, activeCamera]);
+
+  const handleCameraChange = useCallback(
+    async (deviceName: string) => {
+      setActiveCamera(deviceName);
+      tauriUtils.setLastUsedCamera(deviceName);
+      if (cameraEnabled) {
+        try {
+          await typedInvoke("start_camera", { deviceName });
+        } catch (error) {
+          console.error("Failed to switch camera:", error);
         }
       }
-    }
-  }, [tracks]);
+    },
+    [cameraEnabled],
+  );
+
+  const handleDropdownOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) refetchCameras();
+    },
+    [refetchCameras],
+  );
 
   return (
     <ToggleIconButton
@@ -690,20 +621,14 @@ function CameraIcon() {
           <LuVideo className={`size-4 ${Colors.camera.icon}`} />
         : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
       }
-      state={
-        cameraEnabled ? "active"
-        : isDisabled ?
-          "deactivated"
-        : "neutral"
-      }
+      state={cameraEnabled ? "active" : "neutral"}
       size="unsized"
-      disabled={isDisabled}
       className={clsx("flex-1 min-w-0", {
         [Colors.deactivatedText]: !cameraEnabled,
         [`${Colors.camera.text} ${Colors.camera.ring}`]: cameraEnabled,
       })}
       cornerIcon={
-        <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
+        <Select value={activeCamera} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
           <SelectTrigger
             iconClassName={clsx({
               [Colors.camera.text]: cameraEnabled,
@@ -713,17 +638,14 @@ function CameraIcon() {
           />
           <SelectPortal container={document.getElementsByClassName("container")[0]}>
             <SelectContent align="center">
-              {cameraDevices.map((device) => {
-                return (
-                  device.deviceId !== "" && (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      <span className="text-xs truncate">
-                        {device.label || `Camera ${device.label.slice(0, 8)}...`}
-                      </span>
+              {cameraDevices.map(
+                (device) =>
+                  device.name !== "" && (
+                    <SelectItem key={device.name} value={device.name}>
+                      <span className="text-xs truncate">{device.name}</span>
                     </SelectItem>
-                  )
-                );
-              })}
+                  ),
+              )}
             </SelectContent>
           </SelectPortal>
         </Select>
@@ -735,183 +657,13 @@ function CameraIcon() {
 }
 
 function MediaDevicesSettings() {
-  const { callTokens, setCallTokens, updateCallTokens, livekitUrl, socketConnected } = useStore();
-  const { state: roomState } = useRoomContext();
-  const { localParticipant } = useLocalParticipant();
-  const { isNoiseFilterPending, setNoiseFilterEnabled, isNoiseFilterEnabled } = useKrispNoiseFilter({
-    filterOptions: {
-      quality: "medium",
-      bufferOverflowMs: 100,
-      bufferDropMs: 200,
-    },
-  });
-
-  // Monitor camera bandwidth usage
-  //useCameraBandwidthMonitor();
-
-  const room = useRoomContext();
-  const [roomConnected, setRoomConnected] = useState(false);
-
-  useEffect(() => {
-    const handleConnected = () => {
-      setRoomConnected(true);
-    };
-
-    room.on(RoomEvent.Connected, handleConnected);
-
-    return () => {
-      room.off(RoomEvent.Connected, handleConnected);
-    };
-  }, [room]);
-
-  // Early disconnection detection via SocketService
-  useEffect(() => {
-    if (!callTokens) return;
-
-    if (!socketConnected && !callTokens.isReconnecting) {
-      updateCallTokens({ isReconnecting: true });
-    } else if (socketConnected && callTokens.isReconnecting && roomState === ConnectionState.Connected) {
-      // Socket recovered and LiveKit is still connected — clear the banner
-      updateCallTokens({ isReconnecting: false });
-    }
-  }, [socketConnected, callTokens, updateCallTokens, roomState]);
-
-  // Listen to connection state changes and handle reconnection
-  useEffect(() => {
-    const handleConnectionStateChange = async (state: ConnectionState) => {
-      console.log("Connection state changed:", state);
-
-      if (state === ConnectionState.Disconnected && callTokens) {
-        // Room disconnected but we still have callTokens - try to reconnect
-        console.log("Room disconnected, attempting to reconnect...");
-        updateCallTokens({ isReconnecting: true });
-
-        try {
-          if (!livekitUrl) {
-            throw new Error("LiveKit URL not available");
-          }
-          await room.connect(livekitUrl, callTokens.audioToken);
-        } catch (error) {
-          console.error("Reconnection failed:", error);
-          updateCallTokens({ isReconnecting: false });
-        }
-      } else if (state === ConnectionState.Connected && callTokens?.isReconnecting && socketConnected) {
-        // Successfully reconnected (both LiveKit and socket are connected)
-        console.log("Successfully reconnected!");
-        updateCallTokens({ isReconnecting: false });
-      }
-    };
-
-    room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
-
-    return () => {
-      room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChange);
-    };
-  }, [room, callTokens, updateCallTokens, livekitUrl, socketConnected]);
-
-  useEffect(() => {
-    if (!callTokens) return;
-
-    console.debug(
-      `state changed: ${roomState} mic: ${callTokens?.hasAudioEnabled} camera: ${callTokens?.hasCameraEnabled}`,
-    );
-    if (roomState === ConnectionState.Connected) {
-      console.debug(`Setting microphone enabled: ${callTokens?.hasAudioEnabled}`);
-      localParticipant.setMicrophoneEnabled(
-        callTokens?.hasAudioEnabled,
-        {
-          channelCount: 1,
-        },
-        {
-          audioPreset: AudioPresets.speech,
-          forceStereo: false,
-        },
-      );
-
-      localParticipant.setCameraEnabled(
-        callTokens?.hasCameraEnabled,
-        {
-          resolution: VideoPresets.h720.resolution,
-        },
-        {
-          videoCodec: "h264",
-          simulcast: true,
-          videoEncoding: {
-            maxBitrate: 1_700_000,
-          },
-          videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
-        },
-      );
-
-      // Enable Krisp filter if audio is enabled and krispToggle is not disabled
-      const krispEnabled = callTokens?.krispToggle !== false; // Default to true if undefined
-      if (callTokens?.hasAudioEnabled && !isNoiseFilterPending && !isNoiseFilterEnabled && krispEnabled) {
-        console.log("Enabling Krisp filter");
-        setNoiseFilterEnabled(true);
-      } else if (!krispEnabled && isNoiseFilterEnabled) {
-        console.log("Disabling Krisp filter");
-        setNoiseFilterEnabled(false);
-      }
-    }
-  }, [
-    roomState,
-    callTokens?.hasAudioEnabled,
-    localParticipant,
-    roomConnected,
-    callTokens?.hasCameraEnabled,
-    callTokens?.krispToggle,
-  ]);
-
-  const remoteParticipants = useRemoteParticipants();
-  const [controllerSupportsAv1, setControllerSupportsAv1] = useState(false);
-  useEffect(() => {
-    if (!localParticipant || localParticipant === undefined || room?.state !== ConnectionState.Connected) return;
-
-    if (localParticipant?.permissions) {
-      const updatedPermissions = localParticipant.permissions;
-      updatedPermissions.canUpdateMetadata = true;
-      localParticipant.setPermissions(updatedPermissions);
-    }
-
-    const revCaps = RTCRtpReceiver.getCapabilities("video");
-    let av1Support = false;
-    for (const codec of revCaps?.codecs || []) {
-      if (codec.mimeType === "video/AV1") {
-        av1Support = true;
-        break;
-      }
-    }
-    localParticipant.setAttributes({
-      av1Support: av1Support.toString(),
-    });
-
-    setControllerSupportsAv1(
-      remoteParticipants
-        .filter((p) => p.identity.includes("audio"))
-        .every((p) => p.attributes["av1Support"] === "true"),
-    );
-  }, [localParticipant, room?.state, remoteParticipants]);
-
-  useEffect(() => {
-    if (!callTokens) return;
-
-    if (callTokens.controllerSupportsAv1 !== controllerSupportsAv1) {
-      setCallTokens({
-        ...callTokens,
-        controllerSupportsAv1,
-      });
-    }
-  }, [controllerSupportsAv1, callTokens, setCallTokens]);
+  const { callTokens } = useStore();
 
   return (
     <div className="flex flex-row gap-1 w-full">
       <MicrophoneIcon />
       <CameraIcon />
-      <ScreenShareIcon
-        callTokens={callTokens}
-        setCallTokens={setCallTokens}
-        controllerSupportsAv1={controllerSupportsAv1}
-      />
+      <ScreenShareIcon callTokens={callTokens} />
     </div>
   );
 }

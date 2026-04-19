@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import useStore from "@/store/store";
 import { socketService } from "@/services/socket";
 import { Button } from "@/components/ui/button";
@@ -11,14 +12,22 @@ import { URLS } from "@/constants";
 import { tauriUtils } from "@/windows/window-utils";
 import { usePostHog } from "posthog-js/react";
 import { invoke } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
+import { typedInvoke } from "@/core_payloads";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, updateCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
+  const { callTokens, setCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const [trayNotification, setTrayNotification] = useState(false);
+  const [noiseCancellation, setNoiseCancellation] = useState(true);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
   const posthog = usePostHog();
+
+  const { refetch, data, isLoading, isFetching } = useQuery({
+    queryKey: ["list_cameras"],
+    queryFn: () => typedInvoke("list_webcams"),
+  });
 
   const handleSetTrayNotification = async (enabled: boolean) => {
     try {
@@ -29,6 +38,10 @@ export const Debug = () => {
       console.error("Failed to set tray notification:", error);
     }
   };
+
+  useEffect(() => {
+    typedInvoke("get_noise_cancellation").then(setNoiseCancellation);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -109,11 +122,10 @@ export const Debug = () => {
               setCallTokens({
                 ...JSON.parse(e.target.value),
                 timeStarted: new Date(),
-                // hasAudioEnabled: true,
                 hasAudioEnabled: false,
                 hasCameraEnabled: false,
                 isRemoteControlEnabled: true,
-                cameraTrackId: null,
+                participants: [],
               });
             }}
           />
@@ -133,27 +145,37 @@ export const Debug = () => {
           Ping websocket
         </Button>
         <Button onClick={toggleSound}>{isPlaying ? "Stop call sound" : "Play call sound"}</Button>
-        <Button
-          onClick={() => {
-            updateCallTokens({
-              krispToggle: !(callTokens?.krispToggle ?? true),
-            });
-          }}
-          variant={callTokens?.krispToggle === false ? "destructive" : "default"}
-        >
-          Krisp: {callTokens?.krispToggle === false ? "Disabled" : "Enabled"}
+      </div>
+
+      <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
+        <Label className="text-sm font-medium">Core Process</Label>
+        <Button onClick={() => refetch()} size="sm">
+          {isLoading || isFetching ? "Loading..." : "List cameras"}
         </Button>
-        <Button
-          onClick={() => {
-            updateCallTokens({
-              av1Enabled: !(callTokens?.av1Enabled ?? false),
-            });
-          }}
-          disabled={!(callTokens?.controllerSupportsAv1 && !callTokens?.isRoomCall)}
-          variant={callTokens?.av1Enabled ? "default" : "destructive"}
-        >
-          AV1: {callTokens?.av1Enabled ? "Enabled" : "Disabled"}
+        {data && data.map((camera) => <div key={camera.id}>{camera.name}</div>)}
+        <Button onClick={() => typedInvoke("open_stats_window")} size="sm">
+          Open Stats Window
         </Button>
+      </div>
+
+      <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
+        <Label className="text-sm font-medium">App Settings</Label>
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <Label htmlFor="noise-cancellation" className="text-sm">
+              Noise Cancellation
+            </Label>
+            <span className="text-xs text-muted-foreground">Noise suppression on microphone input</span>
+          </div>
+          <Switch
+            id="noise-cancellation"
+            checked={noiseCancellation}
+            onCheckedChange={(checked) => {
+              setNoiseCancellation(checked);
+              typedInvoke("set_noise_cancellation", { enabled: checked });
+            }}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">

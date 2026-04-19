@@ -33,6 +33,18 @@ tasks:
       - |
         cargo build --target {{.DEFAULT_TARGET}}
 
+  run_clone:
+    desc: Run the clone process.
+    cmds:
+      - |
+        ./target/debug/hopp_core --socket-path "${TMPDIR}core-socket-clone" --textures-path $(pwd)/resources
+
+  dev_runner:
+    desc: Run a dev scenario (e.g. task dev_runner -- solo)
+    dir: dev
+    cmds:
+      - cargo run -- {{.CLI_ARGS}}
+
   release:
     desc: Builds release core process, it takes two argument vars, OS (mac | win) and AARCH (arm64 | x64)
     vars:

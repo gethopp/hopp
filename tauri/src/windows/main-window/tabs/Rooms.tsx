@@ -24,10 +24,9 @@ import {
 import { Label } from "@/components/ui/label";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
-import { useCallback, useEffect, useMemo } from "react";
+import { tauriUtils } from "@/windows/window-utils";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
-import { useParticipants, useRoomContext } from "@livekit/components-react";
-import { RoomEvent } from "livekit-client";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
 import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
@@ -53,6 +52,8 @@ const fuseSearch = (rooms: Room[], searchQuery: string) => {
 
 // Maximum number of avatars to display before showing +N overflow
 const MAX_VISIBLE_AVATARS = 5;
+
+const CONNECTING_TOAST_ID = "connecting-to-room";
 
 type BaseUser = components["schemas"]["BaseUser"];
 
@@ -145,20 +146,24 @@ export const Rooms = () => {
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [isJoiningRoom, setIsJoiningRoom] = useState(false);
+  const joiningToastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endCall = useEndCall();
 
   const { useQuery } = useAPI();
 
   // Get current user's rooms
   const {
-    error: roomsError,
     data: rooms,
     refetch,
+    isLoading: isLoadingRooms,
   } = useQuery("get", "/api/auth/rooms", undefined, {
     enabled: !!authToken,
     refetchInterval: 30_000,
     retry: true,
     queryHash: `rooms-${authToken}`,
+    // Avoid refetching on tab change
+    staleTime: 30_000,
   });
 
   // Poll for room presence every 10 seconds
@@ -191,13 +196,13 @@ export const Rooms = () => {
   );
 
   const { useMutation } = useAPI();
-  const { mutateAsync: getRoomTokens, error } = useMutation("get", "/api/auth/room/{id}", undefined);
+  const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const { mutateAsync: createRoom } = useMutation("post", "/api/auth/room", undefined);
 
   const handleCreateRoom = async (roomName: string) => {
     try {
-      const response = await createRoom({
+      await createRoom({
         body: { name: roomName },
       });
       refetch();
@@ -212,7 +217,7 @@ export const Rooms = () => {
   const handleDeleteRoom = async (room: Room) => {
     try {
       // Send JSON body as specified in OpenAPI
-      const response = await deleteRoom({
+      await deleteRoom({
         params: {
           path: {
             id: room.id,
@@ -262,10 +267,17 @@ export const Rooms = () => {
 
   const handleJoinRoom = useCallback(
     async (room: Room) => {
+      if (isJoiningRoom) return;
+
       // End existing call if there is one
       if (callTokens) {
         endCall();
       }
+
+      setIsJoiningRoom(true);
+      joiningToastTimeout.current = setTimeout(() => {
+        toast.loading("Connecting to room", { id: CONNECTING_TOAST_ID });
+      }, 300);
 
       try {
         const tokens = await getRoomTokens({
@@ -275,6 +287,7 @@ export const Rooms = () => {
             },
           },
         });
+
         if (!tokens) {
           toast.error("Error joining room");
           return;
@@ -289,20 +302,32 @@ export const Rooms = () => {
           hasCameraEnabled: false,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
-          cameraTrackId: null,
           room: room,
-          cameraWindowOpen: false,
-          krispToggle: true,
+          participants: [],
+          isInitialisingCall: true,
+          micLevel: 0,
         });
+
+        try {
+          await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+        } catch {
+          setCallTokens(null);
+          toast.error("Failed to start call");
+          return;
+        }
       } catch (error: any) {
         if (error?.error === "trial-ended") {
           toast.error("Trial has expired, contact us if you want to extend it");
         } else {
           toast.error("Error joining room");
         }
+      } finally {
+        if (joiningToastTimeout.current) clearTimeout(joiningToastTimeout.current);
+        toast.dismiss(CONNECTING_TOAST_ID);
+        setIsJoiningRoom(false);
       }
     },
-    [getRoomTokens, callTokens, setCallTokens, endCall],
+    [getRoomTokens, callTokens, setCallTokens, endCall, isJoiningRoom],
   );
 
   useEffect(() => {
@@ -321,7 +346,7 @@ export const Rooms = () => {
   }, [rooms, searchQuery]);
 
   callTokens?.audioToken;
-  const isRoomCall = !(callTokens == null || (callTokens !== null && !callTokens.room));
+  const isRoomCall = !(callTokens == null || !callTokens.room);
 
   return (
     <div className="flex flex-col items-start gap-1.5 p-2">
@@ -379,6 +404,7 @@ export const Rooms = () => {
                   <RoomButton
                     key={room.id}
                     onClick={() => handleJoinRoom(room)}
+                    disabled={!!callTokens?.isInitialisingCall || isJoiningRoom}
                     size="unsized"
                     title={room.name}
                     className="flex-1 min-w-0 text-slate-600"
@@ -420,7 +446,7 @@ export const Rooms = () => {
                 );
               })}
             </div>
-          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} />}
+          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
             <DialogContent container={document.getElementById("app-body")}>
               <DialogHeader>
@@ -479,7 +505,13 @@ export const Rooms = () => {
   );
 };
 
-const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void }) => {
+const EmptyRoomsState = ({
+  onCreateRoomClick,
+  isLoadingRooms,
+}: {
+  onCreateRoomClick: () => void;
+  isLoadingRooms: boolean;
+}) => {
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
       <img src={doorImage} alt="No rooms" className="size-38 mb-6" />
@@ -488,8 +520,8 @@ const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void 
         stand-ups or mob programming sessions.
       </p>
       <div className="flex flex-col gap-2 items-center">
-        <Button onClick={onCreateRoomClick} className="text-sm">
-          Create room
+        <Button onClick={onCreateRoomClick} className="text-sm" isLoading={isLoadingRooms} disabled={isLoadingRooms}>
+          {isLoadingRooms ? "Loading rooms" : "Create room"}
         </Button>
         <a href="https://docs.hopp.so/rooms" target="_blank" className="text-xs text-slate-600">
           Read docs
@@ -500,9 +532,9 @@ const EmptyRoomsState = ({ onCreateRoomClick }: { onCreateRoomClick: () => void 
 };
 
 const SelectedRoom = ({ room }: { room: Room }) => {
-  const participants = useParticipants();
-  const { teammates, user } = useStore();
-  const roomContext = useRoomContext();
+  const { teammates, user, callTokens } = useStore();
+  const coreParticipants = callTokens?.participants ?? [];
+  const prevCountRef = useRef(coreParticipants.length);
 
   const handleCopyRoomLink = async () => {
     const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
@@ -510,58 +542,59 @@ const SelectedRoom = ({ room }: { room: Room }) => {
     toast.success("Room link copied to clipboard");
   };
 
-  // Listen for participant connection events and play sound when someone joins
+  // Play sound when a new participant connects (count increases)
   useEffect(() => {
-    const handleParticipantConnected = (participant: any) => {
-      // Filter out video/camera tracks to only play sound for actual users
-      if (!participant.identity.includes("video") && !participant.identity.includes("camera")) {
-        sounds.callAccepted.play();
-      }
-    };
+    // Check with 0 to avoid double join sound
+    if (coreParticipants.length > prevCountRef.current && prevCountRef.current !== 0) {
+      sounds.callAccepted.play();
+    }
+    prevCountRef.current = coreParticipants.length;
+  }, [coreParticipants.length]);
 
-    // Add event listener for participant connections
-    roomContext.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
-
-    // Cleanup event listener on component unmount
-    return () => {
-      roomContext.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
-    };
-  }, [roomContext]);
-
-  // Parse participant identities and match with teammates
   const participantList = useMemo(() => {
-    return participants
-      .filter((participant) => !participant.identity.includes("video") && !participant.identity.includes("camera"))
-      .map((participant) => {
-        // Parse identity: format is "room:roomname:participantId:tracktype"
-        // Extract participantId by splitting on ":" and taking the second-to-last part
-        const identityParts = participant.identity.split(":");
-        let participantId: string;
+    // Parse identity: format is "room:roomname:participantId:tracktype"
+    const extractUserId = (identity: string): string => {
+      const parts = identity.split(":");
+      return parts.length >= 4 ? (parts[2] ?? identity) : identity;
+    };
 
-        if (identityParts.length >= 4) {
-          // Format: "room:roomname:participantId:tracktype"
-          participantId = identityParts[2] || participant.identity;
-        } else {
-          participantId = participant.identity;
+    const findUser = (participantId: string) => {
+      if (user && user.id === participantId) return user;
+      return teammates?.find((t) => t.id === participantId) ?? null;
+    };
+
+    // Local user always appears first
+    const localEntry =
+      user ?
+        {
+          id: "local",
+          participantId: user.id,
+          user: user,
+          isLocal: true,
+          isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
         }
+      : null;
 
-        // Find user in teammates or current user
-        let foundUser = null;
-        if (user && user.id === participantId) {
-          foundUser = user;
-        } else if (teammates) {
-          foundUser = teammates.find((teammate) => teammate.id === participantId);
-        }
-
+    const remoteEntries = coreParticipants
+      .filter((p) => p.connected)
+      .filter((p) => {
+        if (p.identity === "local") return false;
+        const pid = extractUserId(p.identity);
+        return pid !== user?.id;
+      })
+      .map((p) => {
+        const participantId = extractUserId(p.identity);
         return {
-          id: participant.identity,
+          id: p.identity,
           participantId,
-          user: foundUser,
-          isLocal: participant.isLocal,
-          isMicrophoneEnabled: participant.isMicrophoneEnabled,
+          user: findUser(participantId),
+          isLocal: false,
+          isMicrophoneEnabled: !p.muted,
         };
       });
-  }, [participants, teammates, user]);
+
+    return localEntry ? [localEntry, ...remoteEntries] : remoteEntries;
+  }, [coreParticipants, teammates, user, callTokens?.hasAudioEnabled]);
 
   return (
     <div className="flex flex-col w-full">

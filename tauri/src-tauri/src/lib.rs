@@ -1,5 +1,9 @@
+#[cfg(target_os = "macos")]
+pub mod app_activation;
 pub mod app_state;
 pub mod permissions;
+#[cfg(target_os = "macos")]
+pub mod sleep_prevention;
 pub mod sounds;
 pub mod tray;
 
@@ -8,6 +12,9 @@ use rand::{distributions::Alphanumeric, Rng};
 use sounds::SoundEntry;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
@@ -21,7 +28,7 @@ use tauri::{Rect, TitleBarStyle, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
-use socket_lib::{CursorSocket, Message};
+use socket_lib::{EventSocket, Message, SocketSender};
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, PhysicalPosition, PhysicalSize};
 
@@ -48,10 +55,11 @@ pub struct CoreProcess {
 /// Central application data structure that holds all the runtime state and resources
 /// needed by the Tauri application.
 pub struct AppData {
-    /// Socket connection to the core process for inter-process communication.
-    /// Used to send commands like screen sharing requests, cursor control,
-    /// and receive responses from the native core process.
-    pub socket: CursorSocket,
+    /// Send half of the socket connection to the core process.
+    pub sender: SocketSender,
+
+    /// Receive half that routes messages into `events` and `responses` channels.
+    pub event_socket: EventSocket,
 
     /// Active sound entries currently being played by the application.
     /// Each entry contains the sound name and a channel transmitter to control playback.
@@ -62,13 +70,6 @@ pub struct AppData {
     /// This is set to true when the user is writing feedback.
     pub deactivate_hiding: Arc<Mutex<bool>>,
 
-    /// On macOS, controls the application's activation policy and dock icon visibility.
-    /// Wrapped in Arc<Mutex<>> for thread-safe access.
-    /// On macOS we want to have a doc icon when the user is a controller in a call
-    /// and when the onboarding windows are open. The icon is needed in order to
-    /// allow cmd+tab to cycle through the windows.
-    pub dock_enabled: Arc<Mutex<bool>>,
-
     /// Persistent application state that survives across app restarts.
     /// Manages settings like first run status, tray notifications, and user preferences.
     pub app_state: app_state::AppState,
@@ -78,35 +79,82 @@ pub struct AppData {
 
     /// Tray icon state. On macOS, contains the actual tray state.
     pub tray_state: Option<tray::TrayState>,
+
+    /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
+    pub suppress_hide_on_call_end: Arc<AtomicBool>,
+
+    /// Whether noise cancellation is enabled (synced with core process).
+    pub noise_cancellation_enabled: bool,
+
+    /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
+    #[cfg(target_os = "macos")]
+    pub activation_observer: Option<app_activation::AppActivationObserver>,
+
+    /// Tracks whether the activation policy is currently Regular (true) or Accessory (false).
+    #[cfg(target_os = "macos")]
+    pub activation_policy_regular: bool,
+
+    /// macOS sleep prevention state — holds an activity assertion while a call is active.
+    #[cfg(target_os = "macos")]
+    pub sleep_prevention: sleep_prevention::SleepPrevention,
 }
 
 impl AppData {
-    /// Creates a new `AppData` instance with the provided dependencies.
-    ///
-    /// # Arguments
-    ///
-    /// * `socket` - The cursor socket for communicating with the core process
-    /// * `deactivate_hiding` - Shared flag to control window hiding behavior
-    /// * `dock_enabled` - Shared flag to control dock icon visibility
-    /// * `app_state` - Persistent application state manager
-    ///
-    /// # Returns
-    ///
-    /// A new `AppData` instance with empty sound entries and the provided state.
     pub fn new(
-        socket: CursorSocket,
+        sender: SocketSender,
+        event_socket: EventSocket,
         deactivate_hiding: Arc<Mutex<bool>>,
-        dock_enabled: Arc<Mutex<bool>>,
         app_state: app_state::AppState,
+        suppress_hide_on_call_end: Arc<AtomicBool>,
     ) -> Self {
         AppData {
-            socket,
+            sender,
+            event_socket,
             sound_entries: Vec::new(),
             deactivate_hiding,
-            dock_enabled,
             app_state,
             livekit_server_url: "".to_string(),
             tray_state: None,
+            #[cfg(target_os = "macos")]
+            activation_observer: None,
+            #[cfg(target_os = "macos")]
+            activation_policy_regular: false,
+            suppress_hide_on_call_end,
+            noise_cancellation_enabled: true,
+            #[cfg(target_os = "macos")]
+            sleep_prevention: sleep_prevention::SleepPrevention::new(),
+        }
+    }
+}
+
+/// Receive a response from core, retrying if a stale response from a
+/// previous timed-out request arrives first. The `extract` closure returns
+/// `Ok(T)` for the expected variant or `Err(Message)` for unexpected ones.
+pub fn recv_expected_response<T>(
+    event_socket: &EventSocket,
+    extract: impl Fn(Message) -> Result<T, Message>,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    // TODO: 10 seconds is too much. We should make our calls to be as fast as possible
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+        }
+        match event_socket.responses.recv_timeout(remaining) {
+            Ok(msg) => match extract(msg) {
+                Ok(val) => return Ok(val),
+                Err(other) => {
+                    let t = std::any::type_name::<T>();
+                    log::error!(
+                        "recv_expected_response<{t}>: unexpected response (stale?): {other:?}"
+                    );
+                    sentry_utils::upload_logs_event(format!(
+                        "recv_expected_response<{t}>: unexpected response: {other:?}"
+                    ));
+                }
+            },
+            Err(e) => return Err(e),
         }
     }
 }
@@ -137,21 +185,24 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                 Err(_) => {
                                     crash_msg = "Core process terminated because capturing failed from the OS and couldn't be recovered, please restart the app".to_string();
                                 }
-                                Ok((_core_process, mut socket)) => {
+                                Ok((_core_process, sender, event_socket)) => {
                                     crash_msg = "Core process restarted because capturing failed from the OS and couldn't be recovered, please select screen again".to_string();
 
                                     let data = app_handle.state::<Mutex<AppData>>();
                                     let mut data = data.lock().unwrap();
-                                    if let Err(e) = socket.send_message(Message::LivekitServerUrl(
+                                    if let Err(e) = sender.send(Message::LivekitServerUrl(
                                         data.livekit_server_url.clone(),
                                     )) {
                                         log::error!(
                                             "show_stdout: Failed to send livekit server url: {e:?}"
                                         );
                                     }
-                                    data.socket = socket;
+                                    data.sender = sender;
+                                    data.event_socket = event_socket;
                                 }
                             }
+                        } else if code == 3 {
+                            crash_msg = "Core process terminated because the event loop stopped responding, please restart the app".to_string();
                         }
                     }
                     None => {
@@ -220,16 +271,16 @@ fn start_sidecar(
 }
 
 /// Creates a socket connection to communicate with the core process.
-fn create_core_process_socket(socket_path: &str) -> Result<CursorSocket, CoreProcessCreationError> {
-    let max_tries = 10;
+fn create_core_process_socket(
+    socket_path: &str,
+) -> Result<(SocketSender, EventSocket), CoreProcessCreationError> {
+    let max_tries = 20;
     let mut tries = 0;
     loop {
-        match CursorSocket::new(socket_path) {
-            Ok(socket) => return Ok(socket),
+        match socket_lib::connect(socket_path) {
+            Ok(pair) => return Ok(pair),
             Err(_) => {
-                log::debug!(
-                    "create_render_process_socket: Failed to create socket, retrying in 1 second"
-                );
+                log::debug!("create_core_process_socket: Failed to connect, retrying in 1 second");
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
@@ -247,9 +298,9 @@ fn create_core_process_socket(socket_path: &str) -> Result<CursorSocket, CorePro
 /// We send this in order to stop the core process from timing out.
 /// This is used for killing the core process in case the tauri app
 /// has crashed.
-async fn send_ping(mut socket: CursorSocket) {
+async fn send_ping(sender: SocketSender) {
     loop {
-        let res = socket.send_message(Message::Ping);
+        let res = sender.send(Message::Ping);
         if let Err(e) = res {
             log::error!("Failed to send ping: {e:?}");
             break;
@@ -264,7 +315,7 @@ async fn send_ping(mut socket: CursorSocket) {
 /// Creates and initializes the core process with socket communication.
 pub fn create_core_process(
     app: &tauri::AppHandle,
-) -> Result<(CoreProcess, CursorSocket), CoreProcessCreationError> {
+) -> Result<(CoreProcess, SocketSender, EventSocket), CoreProcessCreationError> {
     log::info!("create_core_process: Creating core process");
     let mut resources_dir = app
         .path()
@@ -291,14 +342,15 @@ pub fn create_core_process(
 
     let (rx, core_process) = start_sidecar(app, &resources_dir, &socket_path);
     tauri::async_runtime::spawn(show_stdout(rx, app.clone()));
-    let socket = create_core_process_socket(&socket_path)?;
-    let socket_clone = socket.duplicate().unwrap();
-    tauri::async_runtime::spawn(send_ping(socket_clone));
+    let (sender, event_socket) = create_core_process_socket(&socket_path)?;
+    let ping_sender = sender.clone();
+    tauri::async_runtime::spawn(send_ping(ping_sender));
     Ok((
         CoreProcess {
             process: core_process,
         },
-        socket,
+        sender,
+        event_socket,
     ))
 }
 
@@ -362,7 +414,7 @@ pub fn get_log_level() -> LevelFilter {
 
 /// Centers the window relative to the tray icon position with multi-monitor support.
 #[cfg(target_os = "macos")]
-fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
+pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_window: bool) {
     log::info!("center_window_on_tray: tray_rect: {tray_rect:?}, show_window: {show_window:?}");
 
     /*
@@ -447,6 +499,7 @@ pub fn setup_tray_icon(
     app: &mut App<Wry>,
     menu: &tauri::menu::Menu<Wry>,
     location_set: Arc<Mutex<bool>>,
+    tray_clicked: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     {
@@ -476,6 +529,13 @@ pub fn setup_tray_icon(
                     ..
                 } = event
                 {
+                    tray_clicked.store(true, Ordering::Relaxed);
+                    let tray_clicked_reset = tray_clicked.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        tray_clicked_reset.store(false, Ordering::Relaxed);
+                    });
+
                     let app_handle = tray.app_handle();
                     if let Some(window) = app_handle.get_webview_window("main") {
                         match window.is_visible() {
@@ -657,7 +717,7 @@ pub fn set_window_corner_radius_and_decorations(
     };
     ns_view.setWantsLayer(true);
 
-    if let Some(layer) = unsafe { ns_view.layer() } {
+    if let Some(layer) = ns_view.layer() {
         layer.setCornerRadius(radius);
         layer.setMasksToBounds(true);
     }
@@ -670,12 +730,10 @@ pub fn disable_app_nap() {
     let process_info = NSProcessInfo::processInfo();
     let reason = NSString::from_str("Avoid WebKit throttling for uninterrupted operation");
 
-    let activity = unsafe {
-        process_info.beginActivityWithOptions_reason(
-            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-            &reason,
-        )
-    };
+    let activity = process_info.beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        &reason,
+    );
 
     // Leak the activity token so App Nap stays disabled for the lifetime of the process.
     std::mem::forget(activity);

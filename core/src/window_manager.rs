@@ -8,6 +8,13 @@ use winit::window::{Window, WindowAttributes, WindowLevel};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::WindowExtMacOS;
 
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSView, NSWindowCollectionBehavior};
+#[cfg(target_os = "macos")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowExtWindows;
 
@@ -18,7 +25,7 @@ use crate::ServerError;
 /// Initial size for the overlay window (width and height in logical pixels)
 const OVERLAY_WINDOW_INITIAL_SIZE: f64 = 1.0;
 
-fn get_window_attributes() -> WindowAttributes {
+pub(crate) fn get_window_attributes() -> WindowAttributes {
     WindowAttributes::default()
         .with_title("Overlay window")
         .with_window_level(WindowLevel::AlwaysOnTop)
@@ -110,6 +117,18 @@ impl WindowManager {
         #[cfg(target_os = "macos")]
         {
             window.set_has_shadow(false);
+
+            // Needed for the overlay window to follow space changes.
+            if let Ok(raw_handle) = window.window_handle() {
+                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
+                    let ns_view: Option<Retained<NSView>> =
+                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+                        ns_window
+                            .setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
+                    }
+                }
+            }
         }
 
         let position = get_window_position_for_monitor(monitor);
@@ -189,6 +208,16 @@ impl WindowManager {
                 .iter()
                 .find(|entry| entry.monitor_id == active_id)
             {
+                #[cfg(target_os = "macos")]
+                {
+                    // this is needed for the screensharing probing logic to work
+                    // if we don't do it the probing window is placed above the menubar
+                    entry.window.set_simple_fullscreen(false);
+                    // set_simple_fullscreen(false) restores the saved style mask which
+                    // includes Miniaturizable, causing the window to appear in the dock's
+                    // minimized list. Strip that flag immediately to prevent this.
+                    remove_miniaturizable_style(&entry.window);
+                }
                 entry.window.set_visible(false);
             }
         }
@@ -323,6 +352,25 @@ enum FullscreenError {
     FailedToGetRawWindowHandle,
     #[error("Failed to match fullscreen size within timeout")]
     FailedToMatchFullscreenSize,
+}
+
+#[cfg(target_os = "macos")]
+fn remove_miniaturizable_style(window: &winit::window::Window) {
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindowStyleMask};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(raw_handle) = window.window_handle() else {
+        return;
+    };
+    if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
+        let view = handle.ns_view.as_ptr();
+        let ns_view: Option<Retained<NSView>> = unsafe { Retained::retain(view.cast()) };
+        if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+            let mask = ns_window.styleMask();
+            ns_window.setStyleMask(mask & !NSWindowStyleMask::Miniaturizable);
+        }
+    }
 }
 
 fn set_fullscreen(

@@ -148,7 +148,7 @@ async fn draw_stroke(
 /// Triggers click animations at various points on the screen
 pub async fn test_click_animation_mode() -> io::Result<()> {
     println!("\n=== TEST: Click Animation Mode - Basic ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     let token = livekit_utils::generate_token("ClickAnimTester");
@@ -201,7 +201,7 @@ pub async fn test_click_animation_mode() -> io::Result<()> {
     send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }
 
@@ -213,7 +213,7 @@ pub async fn test_click_animation_mode() -> io::Result<()> {
 /// - Participant 4: Bottom-right quarter (0.5-1.0, 0.5-1.0)
 pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
     println!("\n=== TEST: 4 Participants Concurrent Drawing ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
 
@@ -376,7 +376,7 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
         }
         Err(e) => {
             println!("Task execution error: {e:?}");
-            screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+            screenshare_client::stop_screenshare_session(&sender)?;
             return Err(io::Error::other(e));
         }
     }
@@ -386,14 +386,14 @@ pub async fn test_four_participants_concurrent_drawing() -> io::Result<()> {
     sleep(Duration::from_secs(5)).await;
 
     println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }
 
 /// Test drawing 4 lines and clearing them one by one using DrawClearPath
 pub async fn test_draw_and_clear_paths_individually() -> io::Result<()> {
     println!("\n=== TEST: Draw and Clear Paths Individually ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     let token = livekit_utils::generate_token("PathClearTester");
@@ -443,14 +443,14 @@ pub async fn test_draw_and_clear_paths_individually() -> io::Result<()> {
     send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }
 
 /// Test drawing multiple lines and clearing all of them at once using DrawClearAllPaths
 pub async fn test_draw_and_clear_all_paths() -> io::Result<()> {
     println!("\n=== TEST: Draw and Clear All Paths ===");
-    let (mut cursor_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
 
     let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     let token = livekit_utils::generate_token("ClearAllTester");
@@ -505,6 +505,6 @@ pub async fn test_draw_and_clear_all_paths() -> io::Result<()> {
     send_drawing_mode(&room, DrawingMode::Disabled).await?;
 
     println!("\n=== TEST COMPLETED ===");
-    screenshare_client::stop_screenshare_session(&mut cursor_socket)?;
+    screenshare_client::stop_screenshare_session(&sender)?;
     Ok(())
 }

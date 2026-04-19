@@ -1,9 +1,30 @@
+pub mod audio {
+    pub mod capturer;
+    pub mod denoiser;
+    pub mod device_monitor;
+    pub mod mixer;
+    pub mod player;
+}
+
+pub mod livekit {
+    pub mod audio;
+    pub mod participant;
+    pub mod stats;
+    pub mod video;
+}
+
 pub mod room_service;
+mod snapshot_sender;
 
 pub mod input {
     pub mod clipboard;
     pub mod keyboard;
     pub mod mouse;
+}
+
+pub mod camera {
+    pub mod capturer;
+    pub mod stream;
 }
 
 pub mod capture {
@@ -12,9 +33,9 @@ pub mod capture {
 
 pub mod graphics {
     pub mod graphics_context;
-
-    #[cfg(target_os = "windows")]
-    pub mod direct_composition;
+    pub mod graphics_window_context;
+    pub mod yuv_buffer;
+    pub mod yuv_renderer;
 }
 
 pub mod utils {
@@ -23,11 +44,22 @@ pub mod utils {
     pub mod svg_renderer;
 }
 
+pub(crate) mod window {
+    pub(crate) mod aspect_ratio;
+    pub(crate) mod camera_window;
+    pub(crate) mod screensharing_window;
+    pub(crate) mod stats_window;
+    pub(crate) mod vibrancy;
+}
+pub(crate) mod components;
 pub(crate) mod overlay_window;
 pub(crate) mod window_manager;
+pub(crate) mod windows;
 
+use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer};
 use graphics::graphics_context::GraphicsContext;
+use graphics::graphics_window_context::ContextManager;
 use image::GenericImageView;
 use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
@@ -36,19 +68,25 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    AvailableContentMessage, CaptureContent, CursorSocket, Message, ScreenShareMessage,
-    SentryMetadata,
+    AvailableContentMessage, CallStartMessage, CameraStartMessage, CaptureContent, Message,
+    ScreenShareMessage, SentryMetadata, SocketSender,
 };
 use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
+use window::camera_window::CameraWindow;
+use window::screensharing_window::{ScreensharingWindow, ScreensharingWindowConfig};
+use window::stats_window::StatsWindow;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
+
+use window::screensharing_window::ScreenShareInputEvent;
 
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
@@ -57,12 +95,15 @@ use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
 
-/// Timeout in seconds for socket message reception
-const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
-
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
+#[cfg(debug_assertions)]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
+#[cfg(not(debug_assertions))]
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
+const HANG_PROTECTION_EXIT_CODE: i32 = 3;
+const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -122,7 +163,11 @@ impl<'a> RemoteControl<'a> {
             .update_cursors(self.gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
-        self.gfx.draw();
+        let translator = self
+            .cursor_controller
+            .get_overlay_window()
+            .create_position_translator();
+        self.gfx.draw(&translator);
         cleared_path_ids
     }
 }
@@ -173,18 +218,37 @@ impl<'a> RemoteControl<'a> {
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
     remote_control: Option<RemoteControl<'a>>,
+    // TODO: remove me
     textures_path: String,
     // The arc is needed because we move the object to the
     // thread that checks if the stream has failed.
     //screen_capturer: Arc<Mutex<ScreenCapturer>>,
     screen_capturer: Arc<Mutex<Capturer>>,
     _screen_capturer_events: Option<JoinHandle<()>>,
-    socket: CursorSocket,
+    socket: SocketSender,
+    socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     local_drawing: LocalDrawing,
+    controller_draw_persist: bool,
+    last_mode: Option<socket_lib::StoredMode>,
     window_manager: Option<window_manager::WindowManager>,
+    audio_capturer: audio::capturer::Capturer,
+    audio_player: audio::player::Player,
+    noise_cancellation_enabled: Arc<AtomicBool>,
+    camera_capturer: Arc<Mutex<CameraCapturer>>,
+    _camera_capturer_events: Option<JoinHandle<()>>,
+    screensharing_active: bool,
+    context_manager: Option<ContextManager>,
+    camera_window: Option<CameraWindow>,
+    screensharing_window: Option<ScreensharingWindow>,
+    screensharing_redraw_thread: Option<JoinHandle<()>>,
+    stats_window: Option<StatsWindow>,
+    hang_protection_counter: Arc<AtomicU64>,
 }
+
+// window: winit window
+// window_state: buttons pressed etc
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -246,10 +310,20 @@ impl<'a> Application<'a> {
     /// - Event loop proxy is invalid
     pub fn new(
         input: RenderLoopRunArgs,
-        socket: CursorSocket,
+        socket: SocketSender,
+        socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
+        hang_protection_counter: Arc<AtomicU64>,
     ) -> Result<Self, ApplicationError> {
         let screencapturer = Arc::new(Mutex::new(Capturer::new(event_loop_proxy.clone())));
+
+        let audio_player = audio::player::Player::new(event_loop_proxy.clone());
+
+        let audio_capturer =
+            audio::capturer::Capturer::new(event_loop_proxy.clone(), socket.clone());
+
+        let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
+        let camera_capturer_clone = camera_capturer.clone();
 
         Ok(Self {
             remote_control: None,
@@ -257,6 +331,7 @@ impl<'a> Application<'a> {
             screen_capturer: screencapturer.clone(),
             _screen_capturer_events: Some(std::thread::spawn(move || poll_stream(screencapturer))),
             socket,
+            socket_responses,
             room_service: None,
             event_loop_proxy,
             local_drawing: LocalDrawing {
@@ -268,7 +343,23 @@ impl<'a> Application<'a> {
                 previous_controllers_enabled: false,
                 cursor_set_times: 0,
             },
+            controller_draw_persist: false,
+            last_mode: None,
             window_manager: None,
+            audio_capturer,
+            audio_player,
+            noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
+            camera_capturer: camera_capturer.clone(),
+            _camera_capturer_events: Some(std::thread::spawn(move || {
+                poll_camera_stream(camera_capturer_clone)
+            })),
+            screensharing_active: false,
+            context_manager: None,
+            camera_window: None,
+            screensharing_window: None,
+            screensharing_redraw_thread: None,
+            stats_window: None,
+            hang_protection_counter,
         })
     }
 
@@ -320,24 +411,33 @@ impl<'a> Application<'a> {
         monitors: Vec<MonitorHandle>,
     ) -> Result<(), ServerError> {
         log::info!(
-            "screenshare: resolution: {:?} content: {} accessibility_permission: {} use_av1: {}",
+            "screenshare: resolution: {:?} content: {} accessibility_permission: {}",
             screenshare_input.resolution,
             screenshare_input.content,
             screenshare_input.accessibility_permission,
-            screenshare_input.use_av1
         );
 
         self.stop_screenshare();
+        self.close_screensharing_window();
 
         let mut screen_capturer = self.screen_capturer.lock().unwrap();
-        /*
-         * In order to not rely on the buffer source to exist before starting the room
-         * we start the stream first and we lazy initialize the stream buffer and the
-         * capture buffer.
-         *
-         * Then using the stream extent we can create the room and create the buffer source,
-         * which we set in the Stream.
-         */
+
+        let room_service = match self.room_service.as_ref() {
+            Some(rs) => rs,
+            None => {
+                drop(screen_capturer);
+                return Err(ServerError::RoomServiceNotFound);
+            }
+        };
+        let buffer_source = match room_service.get_buffer_source() {
+            Some(s) => s,
+            None => {
+                log::error!("screenshare: no buffer source available");
+                drop(screen_capturer);
+                return Err(ServerError::PublishTrackError);
+            }
+        };
+
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -345,6 +445,7 @@ impl<'a> Application<'a> {
                 height: screenshare_input.resolution.height,
             },
             !screenshare_input.accessibility_permission,
+            buffer_source,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -358,36 +459,8 @@ impl<'a> Application<'a> {
             return Err(ServerError::StreamExtentError);
         }
 
-        if self.room_service.is_none() {
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::RoomServiceNotFound);
-        }
-
-        let room_service = self.room_service.as_mut().unwrap();
-        let res = room_service.create_room(screenshare_input.token, self.event_loop_proxy.clone());
-        if let Err(error) = res {
-            log::error!("screenshare: error creating room: {error:?}");
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::RoomCreationError);
-        }
-        log::info!("screenshare: room created");
-
-        let res = room_service.publish_track(
-            extent.width as u32,
-            extent.height as u32,
-            screenshare_input.use_av1,
-        );
-        if let Err(error) = res {
-            log::error!("screenshare: error publishing track: {error:?}");
-            drop(screen_capturer);
-            self.stop_screenshare();
-            return Err(ServerError::PublishTrackError);
-        }
-        log::info!("screenshare: track published");
-        let buffer_source = room_service.get_buffer_source();
-        screen_capturer.set_buffer_source(buffer_source);
+        room_service.unmute_screen_share_track();
+        log::info!("screenshare: screen share track unmuted");
 
         let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
@@ -403,10 +476,99 @@ impl<'a> Application<'a> {
             return Err(e);
         }
 
-        /* We want to add the participants that already exist in the cursor controller list. */
-        self.room_service.as_ref().unwrap().iterate_participants();
+        let room_service = self.room_service.as_ref().unwrap();
+        if let Some(remote_control) = &mut self.remote_control {
+            let existing_participants = room_service.get_participants();
+            for participant in &existing_participants {
+                if let Err(e) = remote_control.gfx.add_participant(
+                    participant.identity.clone(),
+                    &participant.name,
+                    false,
+                ) {
+                    log::error!(
+                        "Failed to create cursor for participant {}: {e}",
+                        participant.identity
+                    );
+                } else {
+                    remote_control
+                        .cursor_controller
+                        .add_controller(participant.identity.clone());
+                }
+            }
+        }
 
+        self.set_screensharing_active(true);
         Ok(())
+    }
+
+    fn stop_camera(&mut self) {
+        log::info!("stop_camera");
+        {
+            let mut capturer = self.camera_capturer.lock().unwrap();
+            capturer.stop_capture();
+        }
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.mute_camera_track();
+        }
+    }
+
+    fn stop_mic(&mut self) {
+        log::info!("stop_mic");
+        self.audio_capturer.stop_capture();
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.unpublish_audio_track();
+        }
+    }
+
+    fn open_screensharing_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        buffer: Arc<crate::livekit::video::VideoBufferManager>,
+        participants: Vec<(String, String, bool)>,
+        redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
+        redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
+    ) {
+        // Join any previous redraw thread before creating a new window.
+        // By now the old window is gone and request_redraw() has returned,
+        // so join() won't deadlock.
+        self.join_screensharing_redraw_thread();
+
+        let (redraw_rx, redraw_tx) = redraw_rx.zip(redraw_tx).unwrap_or_else(|| {
+            let (tx, rx) =
+                std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
+            (rx, tx)
+        });
+        match ScreensharingWindow::new(
+            self.context_manager.as_ref().unwrap(),
+            event_loop,
+            ScreensharingWindowConfig {
+                screen_share_buffer: buffer,
+                participants,
+                draw_persist: self.controller_draw_persist,
+                last_mode: self.last_mode.clone(),
+                redraw_rx,
+                redraw_tx,
+            },
+        ) {
+            Ok(win) => self.screensharing_window = Some(win),
+            Err(e) => {
+                log::error!("Failed to open screensharing window: {e:?}");
+            }
+        }
+    }
+
+    fn join_screensharing_redraw_thread(&mut self) {
+        if let Some(handle) = self.screensharing_redraw_thread.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn close_screensharing_window(&mut self) {
+        log::info!("close_screensharing_window");
+        if let Some(mut window) = self.screensharing_window.take() {
+            window.hide();
+            self.screensharing_redraw_thread = window.take_redraw_thread();
+        }
     }
 
     fn stop_screenshare(&mut self) {
@@ -418,11 +580,19 @@ impl<'a> Application<'a> {
         }
         let mut screen_capturer = screen_capturer.unwrap();
         screen_capturer.stop_capture();
-        if let Some(room_service) = self.room_service.as_mut() {
-            room_service.destroy_room();
-        }
         drop(screen_capturer);
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.mute_screen_share_track();
+        }
         self.destroy_overlay_window();
+        self.set_screensharing_active(false);
+    }
+
+    fn set_screensharing_active(&mut self, active: bool) {
+        self.screensharing_active = active;
+        let capturer = self.camera_capturer.lock().unwrap();
+        capturer.set_screensharing_active(active);
+        log::info!("set_screensharing_active: {active}");
     }
 
     fn create_overlay_window(
@@ -447,6 +617,7 @@ impl<'a> Application<'a> {
         let window_outer_position = window.outer_position();
 
         let mut graphics_context = match GraphicsContext::new(
+            self.context_manager.as_ref().unwrap(),
             window,
             self.textures_path.clone(),
             selected_monitor.scale_factor(),
@@ -591,67 +762,6 @@ impl<'a> Application<'a> {
         }
         self.remote_control = None;
     }
-
-    /// Resets the application state after a session ends or encounters an error.
-    ///
-    /// This method performs comprehensive cleanup and state reset:
-    /// - Stops active screen sharing sessions
-    /// - Destroys overlay windows
-    /// - Cleans up LiveKit room
-    /// - Restarts screen capturer if needed
-    /// - Uploads telemetry data to monitoring systems
-    ///
-    /// # Usage
-    ///
-    /// This function is called when:
-    /// - The user ends a remote desktop session
-    /// - An error occurs that requires session reset
-    /// - The client disconnects unexpectedly
-    ///
-    /// # Error Handling
-    ///
-    /// If the screen capturer is in an invalid state, this method will:
-    /// 1. Perform manual cleanup of overlay window and room service
-    /// 2. Create a new screen capturer instance
-    /// 3. Restart the capture event polling thread
-    ///
-    /// # Side Effects
-    ///
-    /// - Uploads "Ending call" event to Sentry for telemetry
-    /// - May create new threads for screen capture polling
-    /// - Resets all session-specific state to initial values
-    fn reset_state(&mut self) {
-        let capturer_valid = {
-            let screen_capturer = self.screen_capturer.lock();
-            screen_capturer.is_ok()
-        };
-        if capturer_valid {
-            self.stop_screenshare();
-        } else {
-            log::warn!("reset_state: Screen capturer is not valid");
-            self.destroy_overlay_window();
-            if let Some(room_service) = self.room_service.as_mut() {
-                room_service.destroy_room();
-            }
-
-            /* Restart the screen capturer. */
-            self.screen_capturer =
-                Arc::new(Mutex::new(Capturer::new(self.event_loop_proxy.clone())));
-            let screen_capturer_clone = self.screen_capturer.clone();
-
-            /*
-             * The previous screen capturer is invalid so we can stop the polling thread,
-             * this should be unlikely to happen to happen.
-             * Therefore we can have thread running but not doing anything.
-             */
-            self._screen_capturer_events = Some(std::thread::spawn(move || {
-                poll_stream(screen_capturer_clone)
-            }));
-        }
-
-        // Upload logs to sentry when ending call.
-        sentry_utils::upload_logs_event("Ending call".to_string());
-    }
 }
 
 impl Drop for Application<'_> {
@@ -681,16 +791,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         match event {
             UserEvent::CursorPosition(x, y, sid) => {
                 log::debug!("user_event: cursor position: {x} {y} {sid}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor position");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.cursor_controller.cursor_move_controller(
+                        x as f64,
+                        y as f64,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.cursor_controller.cursor_move_controller(
-                    x as f64,
-                    y as f64,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_cursor_position(
+                        sid.as_str(),
+                        Some(Position {
+                            x: x as f64,
+                            y: y as f64,
+                        }),
+                    );
+                }
             }
             UserEvent::MouseClick(data, sid) => {
                 log::debug!("user_event: mouse click: {data:?} {sid}");
@@ -757,6 +873,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: Client disconnected, terminating.");
                 event_loop.exit();
             }
+            UserEvent::HangProtection => {
+                self.hang_protection_counter.fetch_add(1, Ordering::Relaxed);
+            }
             UserEvent::GetAvailableContent => {
                 log::debug!("user_event: Get available content");
                 let content = self.get_available_content(event_loop);
@@ -764,17 +883,149 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: No available content");
                     sentry_utils::upload_logs_event("No available content".to_string());
                 }
-                let res =
-                    self.socket
-                        .send_message(Message::AvailableContent(AvailableContentMessage {
-                            content,
-                        }));
+                let res = self
+                    .socket
+                    .send(Message::AvailableContent(AvailableContentMessage {
+                        content,
+                    }));
                 if res.is_err() {
                     log::error!(
                         "user_event: Error sending available content: {:?}",
                         res.err()
                     );
                 }
+            }
+            UserEvent::CallStart(call_start) => {
+                log::info!("user_event: CallStart");
+                if let Err(e) = self.audio_player.start() {
+                    log::error!("Failed to start audio player: {e}");
+                    sentry_utils::upload_logs_event(format!("Failed to start audio player: {e}"));
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::CallStartResult(Err(e.to_string())))
+                    {
+                        error!("user_event: Error sending CallStartResult: {e:?}");
+                    }
+                    return;
+                }
+                let audio_capture_result = (|| -> Result<(u32, tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>, crate::audio::mixer::SharedProcessor), String> {
+                    let (sample_tx, sample_rx) = tokio::sync::mpsc::unbounded_channel();
+                    let audio_device_name = &call_start.audio_device_name;
+                    let audio_device = if audio_device_name.is_empty() { None } else { Some(audio_device_name.as_str()) };
+                    let sample_rate = self.audio_capturer.start_capture(audio_device, sample_tx)?;
+                    let processor = self.audio_player.processor().ok_or_else(|| {
+                        let msg = "Audio processor not available";
+                        log::error!("{msg}");
+                        msg.to_string()
+                    })?;
+                    Ok((sample_rate, sample_rx, processor))
+                })();
+                let (sample_rate, sample_rx, processor) = match audio_capture_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("user_event: CallStart audio capture failed: {e}");
+                        self.audio_player.stop();
+                        if let Err(send_err) = self.socket.send(Message::CallStartResult(Err(e))) {
+                            error!("user_event: Error sending CallStartResult: {send_err:?}");
+                        }
+                        return;
+                    }
+                };
+                if let Some(room_service) = self.room_service.as_ref() {
+                    match room_service.create_room(room_service::CreateRoomParams {
+                        token: call_start.audio_token,
+                        video_token: call_start.video_token,
+                        event_loop_proxy: self.event_loop_proxy.clone(),
+                        mixer: self.audio_player.mixer().unwrap().clone(),
+                        sample_rate,
+                        sample_rx,
+                        audio_processor: processor,
+                        noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
+                    }) {
+                        Ok(_) => {
+                            if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
+                                error!("user_event: Error sending CallStartResult ack: {e:?}");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("user_event: Failed to dispatch create room: {e:?}");
+                            self.stop_mic();
+                            self.audio_player.stop();
+                            if let Err(e) = self
+                                .socket
+                                .send(Message::CallStartResult(Err(e.to_string())))
+                            {
+                                error!("user_event: Error sending CallStartResult: {e:?}");
+                            }
+                        }
+                    }
+                } else {
+                    log::error!("user_event: Room service not found for CallStart");
+                    self.stop_mic();
+                    self.audio_player.stop();
+                    if let Err(e) = self.socket.send(Message::CallStartResult(Err(
+                        ServerError::RoomServiceNotFound.to_string(),
+                    ))) {
+                        error!("user_event: Error sending CallStartResult: {e:?}");
+                    }
+                }
+            }
+            UserEvent::CreateRoomResult(result) => {
+                log::info!("user_event: CreateRoomResult: {result:?}");
+                match result {
+                    Ok(snapshot) => {
+                        let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                    }
+                    Err(ref reason) => {
+                        log::error!("user_event: Room creation failed: {reason}");
+                        self.stop_mic();
+                        self.audio_player.stop();
+                        if let Err(e) = self
+                            .socket
+                            .send(Message::RoomConnectionFailed(reason.clone()))
+                        {
+                            error!("user_event: Error sending RoomConnectionFailed: {e:?}");
+                        }
+                    }
+                }
+            }
+            UserEvent::CallEnd => {
+                log::info!("user_event: CallEnd");
+                self.stop_mic();
+                self.audio_player.stop();
+                self.stop_camera();
+
+                let capturer_valid = {
+                    let screen_capturer = self.screen_capturer.lock();
+                    screen_capturer.is_ok()
+                };
+                if capturer_valid {
+                    self.stop_screenshare();
+                } else {
+                    log::warn!("user_event: CallEnd: screen capturer is not valid");
+                    self.destroy_overlay_window();
+
+                    self.screen_capturer =
+                        Arc::new(Mutex::new(Capturer::new(self.event_loop_proxy.clone())));
+                    let screen_capturer_clone = self.screen_capturer.clone();
+                    self._screen_capturer_events = Some(std::thread::spawn(move || {
+                        poll_stream(screen_capturer_clone)
+                    }));
+                }
+
+                if let Some(room_service) = self.room_service.as_mut() {
+                    room_service.destroy_room();
+                }
+
+                self.camera_window = None;
+                self.close_screensharing_window();
+                self.stats_window = None;
+
+                if let Err(e) = self.socket.send(Message::CallEnded) {
+                    log::error!("user_event: Error sending CallEnded: {e:?}");
+                }
+
+                sentry_utils::upload_logs_event("Ending call".to_string());
             }
             UserEvent::ScreenShare(data) => {
                 log::debug!("user_event: Screen share: {data:?}");
@@ -791,15 +1042,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
 
+                if result_message.is_ok() {
+                    log::info!("participants snapshot after screenshare succeeds");
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.send_participants_snapshot();
+                    }
+                }
+
                 if let Err(e) = self
                     .socket
-                    .send_message(Message::StartScreenShareResult(result_message))
+                    .send(Message::StartScreenShareResult(result_message))
                 {
                     error!("user_event: Error sending start screen share result: {e:?}");
                 }
             }
             UserEvent::StopScreenShare => {
                 self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.send_participants_snapshot();
+                }
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
@@ -820,11 +1081,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.room_service
                     .as_ref()
                     .unwrap()
-                    .publish_sharer_location(x, y, true);
-            }
-            UserEvent::ResetState => {
-                debug!("user_event: Resetting state");
-                self.reset_state();
+                    .publish_cursor_position(x, y, true);
             }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
@@ -836,44 +1093,56 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant connected");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let sid = participant.sid.clone();
-                let name = participant.name.clone();
 
-                // Add participant to draw manager first (assigns color)
-                if let Err(e) = remote_control
-                    .gfx
-                    .add_participant(sid.clone(), &name, false)
-                {
-                    log::error!("Failed to create cursor for participant {sid}: {e}");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    let identity = participant.identity.clone();
+                    let name = participant.name.clone();
+
+                    // Add participant to draw manager first (assigns color)
+                    if let Err(e) =
+                        remote_control
+                            .gfx
+                            .add_participant(identity.clone(), &name, false)
+                    {
+                        log::error!("Failed to create cursor for participant {identity}: {e}");
+                    } else {
+                        // Then add to cursor controller for state tracking
+                        remote_control.cursor_controller.add_controller(identity);
+                    }
                 }
 
-                // Then add to cursor controller for state tracking
-                remote_control.cursor_controller.add_controller(sid);
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    if let Err(e) = screensharing_window.add_participant(
+                        participant.identity.clone(),
+                        &participant.name,
+                        false,
+                    ) {
+                        log::error!(
+                            "user_event: failed to add participant to screensharing window: {e:?}"
+                        );
+                    }
+                }
             }
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none participant disconnected");
-                    return;
+
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control
+                        .cursor_controller
+                        .remove_controller(participant.identity.as_str());
+                    // Remove participant from draw manager
+                    remote_control
+                        .gfx
+                        .remove_participant(participant.identity.as_str());
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control
-                    .cursor_controller
-                    .remove_controller(participant.sid.as_str());
-                // Remove participant from draw manager
-                remote_control
-                    .gfx
-                    .remove_participant(participant.sid.as_str());
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.remove_participant(participant.identity.as_str());
+                }
             }
             UserEvent::LivekitServerUrl(url) => {
                 log::debug!("user_event: Livekit server url: {url}");
-                let room_service = RoomService::new(url, self.event_loop_proxy.clone());
+
+                let room_service = RoomService::new(url, self.socket.clone());
                 if room_service.is_err() {
                     log::error!(
                         "user_event: Error creating room service: {:?}",
@@ -887,6 +1156,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ControllerTakesScreenShare => {
                 log::info!("user_event: Controller takes screen share");
                 self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.send_participants_snapshot();
+                }
             }
             UserEvent::ParticipantInControl(participant) => {
                 log::debug!("user_event: participant in control: {participant:?}");
@@ -898,6 +1170,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .as_ref()
                     .unwrap()
                     .publish_participant_in_control(participant);
+            }
+            UserEvent::LocalParticipantInControl(in_control) => {
+                log::debug!("user_event: local participant in control: {in_control}");
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_local_participant_in_control(in_control);
+                }
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
                 log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
@@ -944,98 +1222,103 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none drawing mode");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                match &drawing_mode {
-                    DrawingMode::Disabled => {
-                        remote_control
-                            .cursor_controller
-                            .set_controller_pointer(false, sid.as_str());
+                if let Some(remote_control) = &mut self.remote_control {
+                    match &drawing_mode {
+                        DrawingMode::Disabled => {
+                            remote_control
+                                .cursor_controller
+                                .set_controller_pointer(false, sid.as_str());
+                        }
+                        _ => {
+                            remote_control
+                                .cursor_controller
+                                .set_controller_pointer(true, sid.as_str());
+                        }
                     }
-                    _ => {
-                        remote_control
-                            .cursor_controller
-                            .set_controller_pointer(true, sid.as_str());
-                    }
+                    remote_control
+                        .gfx
+                        .set_drawing_mode(sid.as_str(), drawing_mode.clone());
                 }
-                remote_control
-                    .gfx
-                    .set_drawing_mode(sid.as_str(), drawing_mode);
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
                 log::debug!("user_event: DrawStart: {:?} {} {}", point, path_id, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw start");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_start(sid.as_str(), pos, path_id);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_start(sid.as_str(), pixel_position, path_id);
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_start(sid.as_str(), pos, path_id);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawAddPoint(point, sid) => {
                 log::debug!("user_event: DrawAddPoint: {:?} {}", point, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw add point");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_add_point(sid.as_str(), pos);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control
-                    .gfx
-                    .draw_add_point(sid.as_str(), pixel_position);
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_add_point(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawEnd(point, sid) => {
                 log::debug!("user_event: DrawEnd: {:?} {}", point, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw end");
-                    return;
+                let pos = Position {
+                    x: point.x,
+                    y: point.y,
+                };
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_end(sid.as_str(), pos);
+                    remote_control.cursor_controller.cursor_move_controller(
+                        point.x,
+                        point.y,
+                        sid.as_str(),
+                    );
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let overlay_window = remote_control.cursor_controller.get_overlay_window();
-                let pixel_position = overlay_window.get_pixel_position(point.x, point.y);
-                remote_control.gfx.draw_end(sid.as_str(), pixel_position);
-                remote_control.cursor_controller.cursor_move_controller(
-                    point.x,
-                    point.y,
-                    sid.as_str(),
-                );
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_end(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                }
             }
             UserEvent::DrawClearPath(path_id, sid) => {
                 log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw clear path");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
+                    remote_control.gfx.trigger_render();
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
-                remote_control.gfx.trigger_render();
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                }
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none draw clear all paths");
-                    return;
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.draw_clear_all_paths(sid.as_str());
+                    remote_control.gfx.trigger_render();
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                remote_control.gfx.draw_clear_all_paths(sid.as_str());
-                remote_control.gfx.trigger_render();
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.draw_clear_all_paths(sid.as_str());
+                }
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
                 log::debug!(
@@ -1043,18 +1326,403 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point,
                     sid
                 );
-                if self.remote_control.is_none() {
-                    log::warn!(
-                        "user_event: remote control is none click animation from participant"
-                    );
+                if let Some(remote_control) = &mut self.remote_control {
+                    remote_control.gfx.trigger_click_animation(Position {
+                        x: point.x,
+                        y: point.y,
+                    });
+                }
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.trigger_click_animation(Position {
+                        x: point.x,
+                        y: point.y,
+                    });
+                }
+            }
+            UserEvent::ListAudioDevices => {
+                log::debug!("user_event: ListAudioDevices");
+                let devices: Vec<socket_lib::AudioDevice> = self
+                    .audio_capturer
+                    .list_sources()
+                    .into_iter()
+                    .map(|(name, default)| socket_lib::AudioDevice { name, default })
+                    .collect();
+                if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
+                    error!("user_event: Error sending audio device list: {e:?}");
+                }
+            }
+            // TODO: rename this
+            UserEvent::StartAudioCapture { msg, from_socket } => {
+                log::info!(
+                    "user_event: StartAudioCapture device_name={}",
+                    msg.device_name
+                );
+                let result = self
+                    .audio_capturer
+                    .switch_device(Some(&msg.device_name))
+                    .map(|_| ());
+
+                if let Err(ref e) = result {
+                    log::error!("user_event: StartAudioCapture failed: {e}");
+                }
+
+                if result.is_ok() {
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.set_selected_mic_name(
+                            self.audio_capturer
+                                .active_device_name()
+                                .map(|s| s.to_string()),
+                        );
+                    }
+                    if !from_socket {
+                        if let Some(device_name) = self.audio_capturer.active_device_name() {
+                            if let Err(e) = self
+                                .socket
+                                .send(Message::ActiveMicChanged(device_name.to_string()))
+                            {
+                                error!("user_event: Error sending ActiveMicChanged: {e:?}");
+                            }
+                        }
+                    }
+                }
+
+                if from_socket {
+                    if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
+                        error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
+                    }
+                }
+            }
+
+            UserEvent::StopAudioCapture => {
+                log::info!("user_event: StopAudioCapture");
+                self.stop_mic();
+            }
+
+            UserEvent::MuteAudio => {
+                log::info!("user_event: MuteAudio");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.mute_audio_track();
+                }
+            }
+            UserEvent::UnmuteAudio => {
+                log::info!("user_event: UnmuteAudio");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.unmute_audio_track();
+                }
+            }
+            UserEvent::SetNoiseCancellation(enabled) => {
+                log::info!("user_event: SetNoiseCancellation({enabled})");
+                self.noise_cancellation_enabled
+                    .store(enabled, std::sync::atomic::Ordering::Relaxed);
+            }
+            UserEvent::ToggleMic => {
+                log::info!("user_event: ToggleMic");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    if room_service.is_audio_muted() {
+                        room_service.unmute_audio_track();
+                    } else {
+                        room_service.mute_audio_track();
+                    }
+                }
+            }
+            UserEvent::ListCameras => {
+                log::debug!("user_event: ListCameras");
+                let devices = CameraCapturer::list_devices();
+                if let Err(e) = self.socket.send(Message::CameraList(devices)) {
+                    error!("user_event: Error sending camera list: {e:?}");
+                }
+            }
+            UserEvent::StartCamera { msg, from_socket } => {
+                let device_name = if msg.device_name.is_some() {
+                    msg.device_name
+                } else if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
+                    log::error!("user_event: StartCamera: failed to query preferred camera: {e:?}");
+                    None
+                } else {
+                    match self
+                        .socket_responses
+                        .recv_timeout(std::time::Duration::from_millis(500))
+                    {
+                        Ok(Message::PreferredCamera(name)) => name,
+                        Ok(other) => {
+                            log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
+                            None
+                        }
+                        Err(_) => {
+                            log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
+                            None
+                        }
+                    }
+                };
+
+                log::info!("user_event: StartCamera device='{device_name:?}'");
+
+                let room_service = match self.room_service.as_ref() {
+                    Some(rs) => rs,
+                    None => {
+                        if from_socket {
+                            let _ = self.socket.send(Message::StartCameraResult(Err(
+                                "Room service not found".to_string(),
+                            )));
+                        }
+                        return;
+                    }
+                };
+
+                let buffer_source = match room_service.get_camera_buffer_source() {
+                    Some(s) => s,
+                    None => {
+                        log::error!("user_event: StartCamera: no camera buffer source available");
+                        if from_socket {
+                            let _ = self.socket.send(Message::StartCameraResult(Err(
+                                "Camera not ready".to_string(),
+                            )));
+                        }
+                        return;
+                    }
+                };
+
+                let capture_result = {
+                    let mut capturer = self.camera_capturer.lock().unwrap();
+                    capturer.start_capture(
+                        device_name.as_deref(),
+                        self.socket.clone(),
+                        room_service.local_camera_buffer_manager(),
+                        buffer_source,
+                    )
+                };
+
+                if let Err(ref e) = capture_result {
+                    log::error!("user_event: StartCamera failed: {e}");
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.show_error_toast("Failed to start camera");
+                    }
+                    if from_socket {
+                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
+                        {
+                            error!("user_event: Error sending StartCameraResult: {e:?}");
+                        }
+                    }
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let position = remote_control
-                    .cursor_controller
-                    .get_overlay_window()
-                    .get_pixel_position(point.x, point.y);
-                remote_control.gfx.trigger_click_animation(position);
+
+                // Send success result via socket
+                if from_socket {
+                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
+                        error!("user_event: Error sending StartCameraResult: {e:?}");
+                    }
+                }
+
+                // Unmute camera track (fire-and-forget)
+                room_service.unmute_camera_track();
+
+                // Open camera window if needed
+                if self.camera_window.is_none() {
+                    let participants = room_service.participants();
+                    match CameraWindow::new(
+                        self.context_manager.as_ref().unwrap(),
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    ) {
+                        Ok(cam) => {
+                            log::info!("user_event: Camera window opened for local camera");
+                            self.camera_window = Some(cam);
+                        }
+                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                    }
+                }
+
+                let actual_name = {
+                    let capturer = self.camera_capturer.lock().unwrap();
+                    capturer.active_device_name().map(|s| s.to_string())
+                };
+
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_camera_active(true, actual_name.clone());
+                }
+
+                if !from_socket {
+                    if let Some(name) = &actual_name {
+                        if let Err(e) = self.socket.send(Message::ActiveCameraChanged(name.clone()))
+                        {
+                            error!("user_event: Error sending ActiveCameraChanged: {e:?}");
+                        }
+                    }
+                }
+
+                room_service.send_participants_snapshot();
+            }
+            UserEvent::StopCamera => {
+                log::info!("user_event: StopCamera");
+                self.stop_camera();
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_camera_active(false, None);
+                }
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.send_participants_snapshot();
+                    let participants = room_service.participants();
+                    let any_active = {
+                        let guard = participants.read().unwrap();
+                        guard.values().any(|info| info.camera_active())
+                    };
+                    if !any_active {
+                        self.camera_window = None;
+                    }
+                }
+            }
+            UserEvent::OpenCamera => {
+                log::info!("user_event: OpenCamera");
+                if self.camera_window.is_some() {
+                    log::info!("user_event: Camera window already exists, skipping");
+                    return;
+                }
+                if let Some(room_service) = self.room_service.as_ref() {
+                    let participants = room_service.participants();
+                    match CameraWindow::new(
+                        self.context_manager.as_ref().unwrap(),
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    ) {
+                        Ok(cam) => self.camera_window = Some(cam),
+                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                    }
+                } else {
+                    log::warn!("user_event: room service is none, cannot open camera window");
+                }
+            }
+            UserEvent::OpenScreensharing => {
+                log::info!("user_event: OpenScreensharing");
+                let buffer = Arc::new(crate::livekit::video::VideoBufferManager::default());
+                self.open_screensharing_window(event_loop, buffer, Vec::new(), None, None);
+            }
+            UserEvent::OpenContentPicker => {
+                log::info!("user_event: OpenContentPicker");
+                if let Err(e) = self.socket.send(Message::OpenContentPicker) {
+                    log::error!("user_event: Error sending OpenContentPicker: {e:?}");
+                }
+            }
+            UserEvent::OpenScreenShareWindow {
+                participants,
+                redraw_rx,
+                redraw_tx,
+            } => {
+                log::info!("user_event: OpenScreenShareWindow");
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                    if let Some((rx, tx)) = redraw_rx.zip(redraw_tx) {
+                        self.screensharing_redraw_thread = screensharing_window
+                            .update_window_with_new_sharer(&participants, rx, tx);
+                    }
+                    screensharing_window.focus_window();
+                } else {
+                    self.stop_screenshare();
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.send_participants_snapshot();
+                        if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                            let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                            self.open_screensharing_window(
+                                event_loop,
+                                screen_share_buffer,
+                                participants,
+                                redraw_rx,
+                                redraw_tx,
+                            );
+                        } else {
+                            log::warn!("user_event: No screen share buffer available");
+                        }
+                    } else {
+                        log::warn!("user_event: Room service not available");
+                    }
+                }
+                if let Some(screensharing_window) = &self.screensharing_window {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.publish_drawing_mode(screensharing_window.drawing_mode());
+                    }
+                }
+                self.set_screensharing_active(true);
+            }
+            UserEvent::CloseScreenShareWindow => {
+                log::info!("user_event: CloseScreenShareWindow");
+                self.close_screensharing_window();
+                self.set_screensharing_active(false);
+            }
+            UserEvent::OpenStatsWindow => {
+                log::debug!("user_event: OpenStatsWindow");
+                if self.stats_window.is_none() {
+                    match StatsWindow::new(event_loop) {
+                        Ok(w) => self.stats_window = Some(w),
+                        Err(e) => log::error!("Failed to open stats window: {e:?}"),
+                    }
+                }
+            }
+            UserEvent::CloseCameraWindow => {
+                log::info!("user_event: CloseCameraWindow");
+                self.camera_window = None;
+            }
+            UserEvent::BringWindowsToFront => {
+                log::info!("user_event: BringWindowsToFront");
+                let mut focused = false;
+                if let Some(screen_sharing_window) = &self.screensharing_window {
+                    screen_sharing_window.focus_window();
+                    focused = true;
+                }
+                if let Some(cam) = &self.camera_window {
+                    cam.focus_window();
+                    focused = true;
+                }
+                if let Err(e) = self
+                    .socket
+                    .send(Message::BringWindowsToFrontResult(focused))
+                {
+                    log::error!("user_event: Error sending BringWindowsToFrontResult: {e:?}");
+                }
+            }
+            // TODO(@konsalex): We need to rethink how to tackle this,
+            // as a new-joiner in a Room will not have access to this
+            UserEvent::SharerControlEnabled(enabled) => {
+                if let Some(screensharing_window) = &mut self.screensharing_window {
+                    screensharing_window.set_remote_control_allowed(enabled);
+                }
+            }
+            UserEvent::DefaultOutputDeviceChanged => {
+                if let Some(mixer) = self.audio_player.mixer() {
+                    log::info!("Default audio output device changed, reconnecting...");
+                    if let Err(e) = mixer.reconnect() {
+                        log::error!("Failed to reconnect audio output: {e}");
+                    }
+                }
+            }
+            UserEvent::DefaultInputDeviceChanged => {
+                self.audio_capturer.handle_default_device_changed();
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_selected_mic_name(
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    );
+                }
+                if let Some(device_name) = self.audio_capturer.active_device_name() {
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::ActiveMicChanged(device_name.to_string()))
+                    {
+                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
+                    }
+                }
+            }
+            UserEvent::ControllerDrawPersistChanged(persist) => {
+                self.controller_draw_persist = persist;
+            }
+            UserEvent::LastModeChanged(mode) => {
+                self.last_mode = Some(mode);
             }
             UserEvent::LocalDrawingEnabled(drawing_enabled) => {
                 log::info!("user_event: LocalDrawingEnabled: {:?}", drawing_enabled);
@@ -1090,12 +1758,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .set_controllers_enabled(false);
                     remote_control.keyboard_controller.set_enabled(false);
 
-                    remote_control.gfx.set_drawing_mode(
-                        "local",
-                        room_service::DrawingMode::Draw(room_service::DrawSettings {
-                            permanent: drawing_enabled.permanent,
-                        }),
-                    );
+                    let draw_mode = room_service::DrawingMode::Draw(room_service::DrawSettings {
+                        permanent: drawing_enabled.permanent,
+                    });
+                    remote_control
+                        .gfx
+                        .set_drawing_mode("local", draw_mode.clone());
+
+                    if let Some(room_service) = &self.room_service {
+                        room_service.publish_drawing_mode(draw_mode);
+                    }
 
                     log::info!(
                         "Local drawing mode enabled (permanent: {})",
@@ -1140,6 +1812,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .gfx
                         .set_drawing_mode("local", room_service::DrawingMode::Disabled);
 
+                    if let Some(room_service) = &self.room_service {
+                        room_service.publish_drawing_mode(room_service::DrawingMode::Disabled);
+                    }
+
                     log::info!("Local drawing mode disabled");
 
                     remote_control.gfx.trigger_render();
@@ -1149,6 +1825,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.context_manager.is_none() {
+            match ContextManager::new(event_loop) {
+                Ok(cm) => self.context_manager = Some(cm),
+                Err(e) => log::error!("Application::resumed: failed to init GPU contexts: {e:?}"),
+            }
+        }
         if self.window_manager.is_none() {
             log::info!("Application::resumed: initializing WindowManager");
             match window_manager::WindowManager::new(event_loop) {
@@ -1168,6 +1850,145 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        // Route to camera window if it matches
+        if let Some(camera) = &mut self.camera_window {
+            if camera.window_id() == window_id {
+                camera.handle_window_event(event);
+                return;
+            }
+        }
+
+        // Route to stats window if it matches
+        if let Some(sw) = &mut self.stats_window {
+            if sw.window_id() == window_id {
+                sw.handle_window_event(event);
+                return;
+            }
+        }
+
+        // Route to screensharing window if it matches
+        if let Some(screen_sharing_window) = &mut self.screensharing_window {
+            if screen_sharing_window.window_id() == window_id {
+                let input_event = screen_sharing_window.handle_window_event(event);
+                if let Some(event) = input_event {
+                    if let Some(rs) = &self.room_service {
+                        match event {
+                            ScreenShareInputEvent::CursorMoved { x, y } => {
+                                rs.publish_cursor_position(x, y, true);
+                            }
+                            ScreenShareInputEvent::MouseClick(data) => {
+                                rs.publish_mouse_click(data);
+                            }
+                            ScreenShareInputEvent::Scroll(data) => {
+                                rs.publish_wheel_event(data);
+                            }
+                            ScreenShareInputEvent::KeyInput(data) => {
+                                rs.publish_keystroke(data);
+                            }
+                            ScreenShareInputEvent::DrawStart { x, y, path_id } => {
+                                rs.publish_draw_start(crate::room_service::DrawPathPoint {
+                                    point: crate::room_service::ClientPoint { x, y },
+                                    path_id,
+                                });
+                            }
+                            ScreenShareInputEvent::DrawAddPoint { x, y } => {
+                                rs.publish_draw_add_point(crate::room_service::ClientPoint {
+                                    x,
+                                    y,
+                                });
+                            }
+                            ScreenShareInputEvent::DrawEnd { x, y } => {
+                                rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
+                            }
+                            ScreenShareInputEvent::DrawClearAllPaths => {
+                                rs.publish_draw_clear_all_paths();
+                            }
+                            ScreenShareInputEvent::DrawClearPaths(ids) => {
+                                rs.publish_draw_clear_paths(ids);
+                            }
+                            ScreenShareInputEvent::ClickAnimation { x, y } => {
+                                rs.publish_click_animation(crate::room_service::ClientPoint {
+                                    x,
+                                    y,
+                                });
+                            }
+                            ScreenShareInputEvent::AddToClipboard { is_copy } => {
+                                rs.publish_add_to_clipboard(
+                                    crate::room_service::AddToClipboardData { is_copy },
+                                );
+                            }
+                            ScreenShareInputEvent::PasteFromClipboard(text) => match text {
+                                Some(clipboard_text) => {
+                                    let bytes = clipboard_text.as_bytes();
+                                    const MAX_PACKET: usize = 15 * 1024;
+                                    let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
+                                    for i in 0..total_packets {
+                                        let start = (i as usize) * MAX_PACKET;
+                                        let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                                        let chunk = bytes[start..end].to_vec();
+                                        rs.publish_paste_from_clipboard(
+                                            crate::room_service::PasteFromClipboardData {
+                                                data: Some(crate::room_service::ClipboardPayload {
+                                                    packet_id: i,
+                                                    total_packets,
+                                                    data: chunk,
+                                                }),
+                                            },
+                                        );
+                                    }
+                                }
+                                None => {
+                                    rs.publish_paste_from_clipboard(
+                                        crate::room_service::PasteFromClipboardData { data: None },
+                                    );
+                                }
+                            },
+                            ScreenShareInputEvent::DrawingModeChanged(mode) => {
+                                if mode == crate::room_service::DrawingMode::Disabled
+                                    || mode == crate::room_service::DrawingMode::ClickAnimation
+                                {
+                                    rs.publish_draw_clear_all_paths();
+                                }
+                                if let crate::room_service::DrawingMode::Draw(settings) = &mode {
+                                    if settings.permanent != self.controller_draw_persist {
+                                        self.controller_draw_persist = settings.permanent;
+                                        if let Err(e) =
+                                            self.socket.send(Message::ControllerDrawPersistChanged(
+                                                settings.permanent,
+                                            ))
+                                        {
+                                            log::error!("Failed to send ControllerDrawPersistChanged: {e:?}");
+                                        }
+                                    }
+                                }
+                                let stored = match &mode {
+                                    crate::room_service::DrawingMode::Draw(settings) => {
+                                        socket_lib::StoredMode::Draw {
+                                            permanent: settings.permanent,
+                                        }
+                                    }
+                                    crate::room_service::DrawingMode::ClickAnimation => {
+                                        socket_lib::StoredMode::ClickAnimation
+                                    }
+                                    _ => socket_lib::StoredMode::RemoteControl,
+                                };
+                                if self.last_mode.as_ref() != Some(&stored) {
+                                    self.last_mode = Some(stored.clone());
+                                    if let Err(e) =
+                                        self.socket.send(Message::LastModeChanged(stored))
+                                    {
+                                        log::error!("Failed to send LastModeChanged: {e:?}");
+                                    }
+                                }
+                                rs.publish_drawing_mode(mode);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -1217,17 +2038,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
-                                        let overlay_window =
-                                            remote_control.cursor_controller.get_overlay_window();
-                                        let normalized_point = overlay_window
-                                            .get_local_percentage_from_pixel(
-                                                position.x, position.y,
-                                            );
                                         room_service.publish_draw_start(
                                             room_service::DrawPathPoint {
                                                 point: room_service::ClientPoint {
-                                                    x: normalized_point.x,
-                                                    y: normalized_point.y,
+                                                    x: position.x,
+                                                    y: position.y,
                                                 },
                                                 path_id: self.local_drawing.current_path_id,
                                             },
@@ -1251,15 +2066,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                                     // Send LiveKit event
                                     if let Some(room_service) = &self.room_service {
-                                        let overlay_window =
-                                            remote_control.cursor_controller.get_overlay_window();
-                                        let normalized_point = overlay_window
-                                            .get_local_percentage_from_pixel(
-                                                position.x, position.y,
-                                            );
                                         room_service.publish_draw_end(room_service::ClientPoint {
-                                            x: normalized_point.x,
-                                            y: normalized_point.y,
+                                            x: position.x,
+                                            y: position.y,
                                         });
                                     }
 
@@ -1286,18 +2095,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if self.local_drawing.enabled {
-                    let display_scale = if let Some(remote_control) = &mut self.remote_control {
-                        remote_control
-                            .cursor_controller
-                            .get_overlay_window()
-                            .get_display_scale()
+                    // Convert physical position to percentage (0.0–1.0)
+                    let pos = if let Some(remote_control) = &self.remote_control {
+                        let overlay_window = remote_control.cursor_controller.get_overlay_window();
+                        let scale = overlay_window.get_display_scale();
+                        overlay_window
+                            .get_local_percentage_from_pixel(position.x / scale, position.y / scale)
                     } else {
-                        1.0
-                    };
-                    // Convert physical position to our Position type
-                    let pos = Position {
-                        x: position.x / display_scale,
-                        y: position.y / display_scale,
+                        Position {
+                            x: position.x,
+                            y: position.y,
+                        }
                     };
                     self.local_drawing.last_cursor_position = Some(pos);
 
@@ -1309,13 +2117,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                             // Send LiveKit event
                             if let Some(room_service) = &self.room_service {
-                                let overlay_window =
-                                    remote_control.cursor_controller.get_overlay_window();
-                                let normalized_point =
-                                    overlay_window.get_local_percentage_from_pixel(pos.x, pos.y);
                                 room_service.publish_draw_add_point(room_service::ClientPoint {
-                                    x: normalized_point.x,
-                                    y: normalized_point.y,
+                                    x: pos.x,
+                                    y: pos.y,
                                 });
                             }
                         }
@@ -1351,6 +2155,47 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             _ => {}
         }
     }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // We use explicitly WaitUntil to avoid busy-looping
+        // and super high CPU usage.
+        // Source: https://stackoverflow.com/a/76105294
+        use winit::event_loop::ControlFlow;
+
+        let now = std::time::Instant::now();
+        let mut next_redraw: Option<std::time::Instant> = None;
+
+        // Handle camera window
+        if let Some(camera) = &self.camera_window {
+            let camera_next = camera.next_redraw_at();
+            if now >= camera_next {
+                camera.request_redraw();
+            }
+            next_redraw = Some(camera_next);
+        }
+
+        // Handle stats window
+        if let Some(stats_win) = &mut self.stats_window {
+            if let Some(rs) = &self.room_service {
+                stats_win.update_stats(rs);
+            }
+            let sw_next = stats_win.next_redraw_at();
+            if now >= sw_next {
+                stats_win.request_redraw();
+            }
+            next_redraw = match next_redraw {
+                Some(existing) => Some(existing.min(sw_next)),
+                None => Some(sw_next),
+            };
+        }
+
+        // Set control flow based on earliest next redraw
+        if let Some(next) = next_redraw {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1380,7 +2225,7 @@ pub struct MouseClickData {
 #[derive(Debug, Clone)]
 pub struct ParticipantData {
     pub name: String,
-    pub sid: String,
+    pub identity: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1393,17 +2238,20 @@ pub enum UserEvent {
     Scroll(ScrollDelta, String),
     GetAvailableContent,
     Terminate,
+    HangProtection,
+    CallStart(CallStartMessage),
+    CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
-    ResetState,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
     LivekitServerUrl(String),
     ControllerTakesScreenShare,
     ParticipantInControl(String),
+    LocalParticipantInControl(bool),
     SentryMetadata(SentryMetadata),
     AddToClipboard(room_service::AddToClipboardData),
     PasteFromClipboard(room_service::PasteFromClipboardData),
@@ -1415,6 +2263,46 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    ControllerDrawPersistChanged(bool),
+    LastModeChanged(socket_lib::StoredMode),
+    ListAudioDevices,
+    StartAudioCapture {
+        msg: socket_lib::AudioCaptureMessage,
+        from_socket: bool,
+    },
+    StopAudioCapture,
+    MuteAudio,
+    UnmuteAudio,
+    ToggleMic,
+    ListCameras,
+    StartCamera {
+        msg: CameraStartMessage,
+        from_socket: bool,
+    },
+    StopCamera,
+    OpenCamera,
+    OpenScreensharing,
+    OpenContentPicker,
+    OpenScreenShareWindow {
+        participants: Vec<(String, String, bool)>,
+        redraw_rx: Option<
+            std::sync::Arc<
+                std::sync::Mutex<
+                    Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
+                >,
+            >,
+        >,
+        redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
+    },
+    CloseScreenShareWindow,
+    CloseCameraWindow,
+    OpenStatsWindow,
+    BringWindowsToFront,
+    SharerControlEnabled(bool),
+    DefaultOutputDeviceChanged,
+    DefaultInputDeviceChanged,
+    SetNoiseCancellation(bool),
+    CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
 }
 
 pub struct RenderEventLoop {
@@ -1466,75 +2354,159 @@ impl RenderEventLoop {
         log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
-        let mut socket = CursorSocket::new_create(&socket_path).map_err(|e| {
+        let (sender, mut event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
             log::error!("Error creating socket: {e:?}");
             RenderLoopError::SocketError(e)
         })?;
-        let socket_clone = socket.duplicate().map_err(|e| {
-            log::error!("Error duplicating socket: {e:?}");
-            RenderLoopError::SocketError(e)
-        })?;
+        let socket_responses = event_socket.take_responses();
 
         let event_loop_proxy = self.event_loop.create_proxy();
         /*
-         * Thread for processing messages from the tauri app.
+         * Thread for dispatching socket events to the winit event loop.
          */
-        std::thread::spawn(move || loop {
-            let message = match socket.receive_message_with_timeout(std::time::Duration::from_secs(
-                SOCKET_MESSAGE_TIMEOUT_SECONDS,
-            )) {
-                Ok(message) => message,
-                Err(e) => {
-                    /* When the listener has been disconnected we terminate the process. */
-                    log::error!("RenderEventLoop::run Error receiving message: {e:?}");
-                    let res = event_loop_proxy.send_event(UserEvent::Terminate);
-                    if res.is_err() {
-                        log::error!(
-                            "RenderEventLoop::run Error sending terminate event: {:?}",
-                            res.err()
-                        );
+        std::thread::spawn(move || {
+            loop {
+                let message =
+                    match event_socket
+                        .events
+                        .recv_timeout(std::time::Duration::from_secs(
+                            SOCKET_MESSAGE_TIMEOUT_SECONDS,
+                        )) {
+                        Ok(msg) => msg,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket message timeout, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            log::error!(
+                                "RenderEventLoop::run Socket event channel closed, terminating."
+                            );
+                            let res = event_loop_proxy.send_event(UserEvent::Terminate);
+                            if res.is_err() {
+                                log::error!(
+                                    "RenderEventLoop::run Error sending terminate event: {:?}",
+                                    res.err()
+                                );
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            std::process::exit(PROCESS_EXIT_CODE_ERROR);
+                        }
+                    };
+                let user_event = match message {
+                    Message::GetAvailableContent => UserEvent::GetAvailableContent,
+                    Message::CallStart(call_start_message) => {
+                        UserEvent::CallStart(call_start_message)
                     }
+                    Message::CallEnd => UserEvent::CallEnd,
+                    Message::StartScreenShare(screen_share_message) => {
+                        UserEvent::ScreenShare(screen_share_message)
+                    }
+                    Message::StopScreenshare => UserEvent::StopScreenShare,
+                    Message::ControllerCursorEnabled(enabled) => {
+                        UserEvent::ControllerCursorEnabled(enabled)
+                    }
+                    Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                    Message::ControllerDrawPersistChanged(persist) => {
+                        UserEvent::ControllerDrawPersistChanged(persist)
+                    }
+                    Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
+                    Message::ListAudioDevices => UserEvent::ListAudioDevices,
+                    Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
+                        msg,
+                        from_socket: true,
+                    },
+                    Message::StopAudioCapture => UserEvent::StopAudioCapture,
+                    Message::MuteAudio => UserEvent::MuteAudio,
+                    Message::UnmuteAudio => UserEvent::UnmuteAudio,
+                    Message::ToggleMic => UserEvent::ToggleMic,
+                    Message::ListCameras => UserEvent::ListCameras,
+                    Message::StartCamera(msg) => UserEvent::StartCamera {
+                        msg,
+                        from_socket: true,
+                    },
+                    Message::StopCamera => UserEvent::StopCamera,
+                    Message::OpenCamera => UserEvent::OpenCamera,
+                    Message::OpenScreensharing => UserEvent::OpenScreensharing,
+                    Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
+                        participants: Vec::new(),
+                        redraw_rx: None,
+                        redraw_tx: None,
+                    },
+                    Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
+                    Message::OpenStatsWindow => UserEvent::OpenStatsWindow,
+                    Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
+                    Message::SetNoiseCancellation(enabled) => {
+                        UserEvent::SetNoiseCancellation(enabled)
+                    }
+                    // Ping is on purpose empty. We use it only for keeping the connection alive.
+                    Message::Ping => {
+                        continue;
+                    }
+                    Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
+                    Message::SentryMetadata(sentry_metadata) => {
+                        UserEvent::SentryMetadata(sentry_metadata)
+                    }
+                    _ => {
+                        log::error!("RenderEventLoop::run Unknown message: {message:?}");
+                        continue;
+                    }
+                };
+                let res = event_loop_proxy.send_event(user_event);
+                if res.is_err() {
+                    log::error!(
+                        "RenderEventLoop::run Error sending user event: {:?}",
+                        res.err()
+                    );
+                }
+            }
+        });
 
-                    /* We want to make sure the process is terminated. */
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    std::process::exit(PROCESS_EXIT_CODE_ERROR);
+        let hang_protection_counter = Arc::new(AtomicU64::new(0));
+        let hang_protection_counter_clone = hang_protection_counter.clone();
+        let hang_protection_proxy = self.event_loop.create_proxy();
+
+        std::thread::spawn(move || {
+            let mut last_count = hang_protection_counter_clone.load(Ordering::Relaxed);
+
+            loop {
+                let res = hang_protection_proxy.send_event(UserEvent::HangProtection);
+                if res.is_err() {
+                    log::error!("Hang protection: failed to send event, event loop closed");
+                    break;
                 }
-            };
-            let user_event = match message {
-                Message::GetAvailableContent => UserEvent::GetAvailableContent,
-                Message::StartScreenShare(screen_share_message) => {
-                    UserEvent::ScreenShare(screen_share_message)
+
+                std::thread::sleep(std::time::Duration::from_secs(
+                    HANG_PROTECTION_INTERVAL_SECONDS,
+                ));
+
+                let current_count = hang_protection_counter_clone.load(Ordering::Relaxed);
+                if current_count == last_count {
+                    log::error!("Hang protection: event loop is not responding, killing process");
+                    sentry_utils::upload_logs_event("Hang protection triggered".to_string());
+                    std::process::exit(HANG_PROTECTION_EXIT_CODE);
                 }
-                Message::StopScreenshare => UserEvent::StopScreenShare,
-                Message::Reset => UserEvent::ResetState,
-                Message::ControllerCursorEnabled(enabled) => {
-                    UserEvent::ControllerCursorEnabled(enabled)
-                }
-                Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
-                // Ping is on purpose empty. We use it only for stopping the above receive to timeout.
-                Message::Ping => {
-                    continue;
-                }
-                Message::LivekitServerUrl(url) => UserEvent::LivekitServerUrl(url),
-                Message::SentryMetadata(sentry_metadata) => {
-                    UserEvent::SentryMetadata(sentry_metadata)
-                }
-                _ => {
-                    log::error!("RenderEventLoop::run Unknown message: {message:?}");
-                    continue;
-                }
-            };
-            let res = event_loop_proxy.send_event(user_event);
-            if res.is_err() {
-                log::error!(
-                    "RenderEventLoop::run Error sending user event: {:?}",
-                    res.err()
-                );
+                last_count = current_count;
             }
         });
 
         let proxy = self.event_loop.create_proxy();
-        let mut application = Application::new(input, socket_clone, proxy)?;
+        let mut application = Application::new(
+            input,
+            sender,
+            socket_responses,
+            proxy,
+            hang_protection_counter,
+        )?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

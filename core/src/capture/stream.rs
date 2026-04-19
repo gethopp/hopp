@@ -12,7 +12,6 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     thread::JoinHandle,
 };
-use sysinfo::System;
 
 use super::CapturerError;
 
@@ -83,20 +82,19 @@ impl StreamBuffer {
  * from the capturing.
  */
 fn get_excluded_application_pids() -> Vec<u64> {
-    let system = System::new_all();
-    let mut pids = vec![];
-    for (pid, process) in system.processes() {
-        if let Some(name) = process.name().to_str() {
-            if name.contains("hopp") {
-                pids.push(pid.as_u32() as u64);
-            }
-        }
-    }
+    let pids = vec![];
+    // for (pid, process) in system.processes() {
+    //     if let Some(name) = process.name().to_str() {
+    //         if name.contains("hopp") {
+    //             pids.push(pid.as_u32() as u64);
+    //         }
+    //     }
+    // }
     pids
 }
 
 fn create_capture_callback(
-    buffer_source: Arc<Mutex<Option<NativeVideoSource>>>,
+    buffer_source: NativeVideoSource,
     resolution: Extent,
     stream_buffer: Arc<Mutex<StreamBuffer>>,
     desktop_frame: Arc<Mutex<Frame>>,
@@ -105,6 +103,7 @@ fn create_capture_callback(
 ) -> impl FnMut(Result<DesktopFrame, CaptureError>) {
     let mut capture_buffer = NV12Buffer::new(1, 1);
     let mut stream_failed = false;
+    let capture_start = std::time::Instant::now();
     move |result: Result<DesktopFrame, CaptureError>| {
         let frame = match result {
             Ok(frame) => frame,
@@ -220,14 +219,9 @@ fn create_capture_callback(
             dst_y.copy_from_slice(data_y);
             dst_uv.copy_from_slice(data_uv);
         }
+        stream_buffer.video_frame.timestamp_us = capture_start.elapsed().as_micros() as i64;
 
-        let buffer_source = buffer_source.lock().unwrap();
-        if buffer_source.is_some() {
-            buffer_source
-                .as_ref()
-                .unwrap()
-                .capture_frame(&stream_buffer.video_frame);
-        }
+        buffer_source.capture_frame(&stream_buffer.video_frame);
     }
 }
 
@@ -293,7 +287,7 @@ pub struct Stream {
     stream_buffer: Arc<Mutex<StreamBuffer>>,
 
     /// Buffer source for the stream.
-    buffer_source: Arc<Mutex<Option<NativeVideoSource>>>,
+    buffer_source: NativeVideoSource,
 
     /// Metadata about the current capture frame dimensions and position.
     ///
@@ -335,8 +329,8 @@ impl Stream {
         _scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         include_cursor: bool,
+        buffer_source: NativeVideoSource,
     ) -> Result<Self, CapturerError> {
-        let buffer_source = Arc::new(Mutex::new(None));
         let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
         let frame = Arc::new(Mutex::new(Frame {
             origin_x: 0.,
@@ -551,11 +545,6 @@ impl Stream {
             width: stream_buffer.video_frame.buffer.width() as f64,
             height: stream_buffer.video_frame.buffer.height() as f64,
         }
-    }
-
-    pub fn set_buffer_source(&mut self, buffer_source: NativeVideoSource) {
-        let mut b_source = self.buffer_source.lock().unwrap();
-        *b_source = Some(buffer_source);
     }
 
     #[cfg(target_os = "linux")]
