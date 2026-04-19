@@ -23,6 +23,13 @@ const (
 	StatusIncomplete SubscriptionStatus = "incomplete"
 )
 
+type BillingInterval string
+
+const (
+	IntervalMonthly BillingInterval = "monthly"
+	IntervalYearly  BillingInterval = "yearly"
+)
+
 type Subscription struct {
 	gorm.Model
 	TeamID               uint               `gorm:"not null;uniqueIndex" json:"team_id"`
@@ -31,6 +38,7 @@ type Subscription struct {
 	StripeSubscriptionID string             `gorm:"not null;unique" json:"stripe_subscription_id"`
 	Status               SubscriptionStatus `gorm:"not null" json:"status"`
 	Tier                 SubscriptionTier   `gorm:"not null;default:'free'" json:"tier"`
+	BillingInterval      BillingInterval    `gorm:"not null;default:'monthly'" json:"billing_interval"`
 	CurrentPeriodStart   time.Time          `json:"current_period_start"`
 	CurrentPeriodEnd     time.Time          `json:"current_period_end"`
 	CancelAtPeriodEnd    bool               `gorm:"default:false" json:"cancel_at_period_end"`

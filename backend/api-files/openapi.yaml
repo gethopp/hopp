@@ -127,6 +127,10 @@ components:
         manual_upgrade:
           type: boolean
           description: Whether the team has been manually upgraded
+        billing_interval:
+          type: string
+          enum: [monthly, yearly]
+          description: Billing interval for the subscription (omitted for manual upgrades or trialing)
         current_period_end:
           type: string
           format: date-time
@@ -149,6 +153,10 @@ components:
           type: string
           enum: [paid]
           description: Subscription tier to create checkout session for
+        interval:
+          type: string
+          enum: [monthly, yearly]
+          description: Billing interval (defaults to monthly if omitted)
         price_id:
           type: string
           description: Optional Stripe price ID (uses environment default if not provided)
