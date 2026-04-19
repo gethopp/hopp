@@ -12770,7 +12770,6 @@ __metadata:
     class-variance-authority: "npm:^0.7.1"
     clsx: "npm:^2.1.1"
     cmdk: "npm:^1.1.1"
-    date-fns: "npm:^4.1.0"
     eslint: "npm:^9.19.0"
     eslint-plugin-react-hooks: "npm:^5.0.0"
     eslint-plugin-react-refresh: "npm:^0.4.18"
