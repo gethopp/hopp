@@ -163,16 +163,37 @@ fn open_output_stream(
                         output_channels as u32,
                         output_sample_rate,
                     );
-                    // Feed copy to APM reverse stream (modifies buffer in-place)
+                    // Feed copy to APM reverse stream (modifies buffer in-place).
+                    // livekit's process_reverse_stream asserts
+                    // `len % (rate/100 * channels) == 0 && len >= (rate/100 * channels)`.
+                    // On device reconnect or mixer geometry drift the resampled
+                    // slice can briefly violate that and crash the CoreAudio
+                    // render thread, so skip the call and report to Sentry
+                    // instead of panicking.
                     {
                         let mut proc = apm.lock();
                         reverse_buf.clear();
                         reverse_buf.extend_from_slice(sampled);
-                        let _ = proc.process_reverse_stream(
-                            &mut reverse_buf,
-                            output_sample_rate as i32,
-                            output_channels as i32,
-                        );
+                        let samples_per_10ms =
+                            (output_sample_rate as usize / 100) * output_channels as usize;
+                        if samples_per_10ms == 0
+                            || reverse_buf.len() < samples_per_10ms
+                            || reverse_buf.len() % samples_per_10ms != 0
+                        {
+                            sentry_utils::upload_logs_event(format!(
+                                "APM reverse stream skipped: len {} not multiple of 10ms frame {} ({}Hz {}ch)",
+                                reverse_buf.len(),
+                                samples_per_10ms,
+                                output_sample_rate,
+                                output_channels,
+                            ));
+                        } else {
+                            let _ = proc.process_reverse_stream(
+                                &mut reverse_buf,
+                                output_sample_rate as i32,
+                                output_channels as i32,
+                            );
+                        }
                     }
                     buf = sampled
                         .iter()
