@@ -1,4 +1,4 @@
-use rodio::conversions::SampleRateConverter;
+use livekit::webrtc::native::audio_resampler::AudioResampler;
 use rodio::microphone::{self, Input, MicrophoneBuilder};
 use rodio::Source;
 use std::num::NonZero;
@@ -30,25 +30,51 @@ pub fn list_audio_inputs() -> Vec<(String, bool)> {
     }
 }
 
-// Create an enum to handle both resampled and non-resampled cases
-enum MicSource {
-    Direct(rodio::microphone::Microphone),
-    Resampled(SampleRateConverter<rodio::microphone::Microphone>),
-}
-
-impl Iterator for MicSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            MicSource::Direct(m) => m.next(),
-            MicSource::Resampled(r) => r.next(),
-        }
-    }
-}
-
 struct AudioDevice {
     input: Input,
+}
+
+/// Accumulates RMS over captured samples and emits mic level at a fixed cadence.
+struct LevelEmitter {
+    socket: socket_lib::SocketSender,
+    sum_sq: f64,
+    sample_count: usize,
+    last_emit: std::time::Instant,
+}
+
+impl LevelEmitter {
+    const EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
+    fn new(socket: socket_lib::SocketSender) -> Self {
+        Self {
+            socket,
+            sum_sq: 0.0,
+            sample_count: 0,
+            last_emit: std::time::Instant::now(),
+        }
+    }
+
+    fn observe(&mut self, sample: f32) {
+        self.sum_sq += (sample as f64) * (sample as f64);
+        self.sample_count += 1;
+    }
+
+    fn emit_if_due(&mut self) {
+        if self.last_emit.elapsed() < Self::EMIT_INTERVAL || self.sample_count == 0 {
+            return;
+        }
+        let rms = (self.sum_sq / self.sample_count as f64).sqrt() as f32;
+        let level = rms.clamp(0.0, 1.0);
+        if let Err(e) = self
+            .socket
+            .send(socket_lib::Message::MicrophoneAudioLevel(level))
+        {
+            log::warn!("capturer: failed to send mic level: {e:?}");
+        }
+        self.sum_sq = 0.0;
+        self.sample_count = 0;
+        self.last_emit = std::time::Instant::now();
+    }
 }
 
 pub struct Capturer {
@@ -175,38 +201,17 @@ impl Capturer {
         let actual_sample_rate = mic.sample_rate().get();
         let actual_channels = mic.channels();
 
-        // Wrap mic in SampleRateConverter if sample rate differs
-        let needs_sample_rate_conversion = actual_sample_rate != TARGET_SAMPLE_RATE;
+        let num_channels = actual_channels.get() as usize;
 
-        if needs_sample_rate_conversion || actual_channels.get() != TARGET_CHANNELS {
+        if actual_sample_rate != TARGET_SAMPLE_RATE || actual_channels.get() != TARGET_CHANNELS {
             log::info!(
                 "Audio conversion: {}Hz {}ch → {}Hz {}ch",
                 actual_sample_rate,
                 actual_channels.get(),
                 TARGET_SAMPLE_RATE,
-                TARGET_CHANNELS
+                TARGET_CHANNELS,
             );
         }
-
-        let source = if needs_sample_rate_conversion {
-            log::info!(
-                "Using rodio SampleRateConverter: {}Hz → {}Hz",
-                actual_sample_rate,
-                TARGET_SAMPLE_RATE
-            );
-            MicSource::Resampled(SampleRateConverter::new(
-                mic,
-                actual_sample_rate.try_into().unwrap(),
-                TARGET_SAMPLE_RATE.try_into().unwrap(),
-                actual_channels,
-            ))
-        } else {
-            MicSource::Direct(mic)
-        };
-
-        let buffer_frames = (TARGET_SAMPLE_RATE / SAMPLES_DIVIDER) as usize;
-        let num_channels = actual_channels.get() as usize;
-        let take_count = buffer_frames * num_channels;
 
         // Reset and clone the stop flag
         self.stop_flag.store(false, Ordering::Relaxed);
@@ -214,7 +219,7 @@ impl Capturer {
 
         self.active_device_name = if device_name.is_none() || fell_back_to_default {
             use cpal::traits::{DeviceTrait, HostTrait};
-            #[allow(deprecated)] // TODO: migrate to description() when cpal API stabilizes
+            #[allow(deprecated)]
             cpal::default_host()
                 .default_input_device()
                 .and_then(|d| d.name().ok())
@@ -225,30 +230,27 @@ impl Capturer {
 
         let socket_for_level = self.socket.clone();
 
-        // Spawn the capture thread
         let handle = std::thread::spawn(move || {
-            let mut source = source;
-            let mut output = Vec::with_capacity(buffer_frames);
+            let mut mic = mic;
+            let mut resampler = AudioResampler::default();
+            let mut level = LevelEmitter::new(socket_for_level.clone());
 
-            let mut sum_sq = 0.0;
-            let mut sample_count = 0;
-            let mut last_emit = std::time::Instant::now();
+            let in_samples_per_frame = actual_sample_rate / SAMPLES_DIVIDER;
+            let samples_needed = in_samples_per_frame as usize * num_channels;
+            let mut scratch_i16: Vec<i16> = Vec::with_capacity(samples_needed);
 
             loop {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
 
-                output.clear();
+                scratch_i16.clear();
                 let mut got_any = false;
-                for (sample_idx, s) in source.by_ref().take(take_count).enumerate() {
+                for sample in mic.by_ref().take(samples_needed) {
                     got_any = true;
-                    if sample_idx % num_channels == 0 {
-                        let clamped = s.clamp(-1.0, 1.0);
-                        sum_sq += (clamped as f64) * (clamped as f64);
-                        sample_count += 1;
-                        output.push((clamped * i16::MAX as f32) as i16);
-                    }
+                    let clamped = sample.clamp(-1.0, 1.0);
+                    level.observe(clamped);
+                    scratch_i16.push((clamped * i16::MAX as f32) as i16);
                 }
 
                 if !got_any {
@@ -256,32 +258,22 @@ impl Capturer {
                     break;
                 }
 
-                if sample_tx
-                    .send(std::mem::replace(
-                        &mut output,
-                        Vec::with_capacity(buffer_frames),
-                    ))
-                    .is_err()
-                {
+                let output = resampler.remix_and_resample(
+                    &scratch_i16,
+                    in_samples_per_frame,
+                    actual_channels.get() as u32,
+                    actual_sample_rate,
+                    TARGET_CHANNELS as u32,
+                    TARGET_SAMPLE_RATE,
+                );
+
+                if sample_tx.send(output.to_vec()).is_err() {
                     break;
                 }
 
-                const EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
-                if last_emit.elapsed() >= EMIT_INTERVAL && sample_count > 0 {
-                    let rms = (sum_sq / sample_count as f64).sqrt() as f32;
-                    let level = rms.clamp(0.0, 1.0);
-                    if let Err(e) =
-                        socket_for_level.send(socket_lib::Message::MicrophoneAudioLevel(level))
-                    {
-                        log::warn!("capturer: failed to send mic level: {e:?}");
-                    }
-                    sum_sq = 0.0;
-                    sample_count = 0;
-                    last_emit = std::time::Instant::now();
-                }
+                level.emit_if_due();
             }
 
-            // Final zero so UI settles when capture stops.
             let _ = socket_for_level.send(socket_lib::Message::MicrophoneAudioLevel(0.0));
         });
 
