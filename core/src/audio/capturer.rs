@@ -12,7 +12,6 @@ const TARGET_CHANNELS: u16 = 1;
 pub const SAMPLES_DIVIDER: u32 = 100;
 
 /// List audio input devices (sorted by name). First entry is marked default for UI selection.
-/// Does not require a [`Capturer`] instance — mirrors [`crate::camera::capturer::CameraCapturer::list_devices`].
 pub fn list_audio_inputs() -> Vec<(String, bool)> {
     match microphone::available_inputs() {
         Ok(mics) => {

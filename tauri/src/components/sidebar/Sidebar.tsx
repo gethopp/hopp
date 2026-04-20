@@ -232,10 +232,6 @@ export const Sidebar = () => {
           <div className="flex justify-center w-full">
             <DownloadNewVersionButton />
           </div>
-          {/* TODO: Remove after beta */}
-          <span className="flex flex-row items-center justify-center rounded-sm bg-white bg-linear-to-b from-gray-100 px-2 py-0.5 leading-3 text-center text-[10px] font-semibold text-gray-800 border border-slate-200 mx-1">
-            Beta
-          </span>
           {user && <TrialCountdownAvatarFill user={user} />}
           <div className="mt-[-5px] h-12 w-full flex items-center justify-center">
             <DropdownMenu>

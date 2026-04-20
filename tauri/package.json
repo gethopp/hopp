@@ -11,8 +11,6 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@livekit/components-react": "^2.4.3",
-    "@livekit/krisp-noise-filter": "patch:@livekit/krisp-noise-filter@npm%3A0.3.0#../.yarn/patches/@livekit-krisp-noise-filter-npm-0.3.0-ad3abbd55c.patch",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.7",
     "@radix-ui/react-avatar": "^1.1.10",

@@ -247,9 +247,6 @@ pub struct Application<'a> {
     hang_protection_counter: Arc<AtomicU64>,
 }
 
-// window: winit window
-// window_state: buttons pressed etc
-
 #[derive(Error, Debug)]
 pub enum ApplicationError {
     #[error("Failed to create room service: {0}")]
@@ -1351,7 +1348,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     error!("user_event: Error sending audio device list: {e:?}");
                 }
             }
-            // TODO: rename this
             UserEvent::StartAudioCapture { msg, from_socket } => {
                 log::info!(
                     "user_event: StartAudioCapture device_name={}",

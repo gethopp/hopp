@@ -185,8 +185,6 @@ pub enum StoredMode {
     },
 }
 
-/// When you add a new message that will be used in Tauri,
-/// be sure to update tauri/src/core_payloads.ts with the appropriate payload to have type-safety inside Tauri Javascript code.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,

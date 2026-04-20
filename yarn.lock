@@ -1015,22 +1015,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@floating-ui/core@npm:^1.6.0, @floating-ui/core@npm:^1.7.3":
+"@floating-ui/core@npm:^1.7.3":
   version: 1.7.3
   resolution: "@floating-ui/core@npm:1.7.3"
   dependencies:
     "@floating-ui/utils": "npm:^0.2.10"
   checksum: 10c0/edfc23800122d81df0df0fb780b7328ae6c5f00efbb55bd48ea340f4af8c5b3b121ceb4bb81220966ab0f87b443204d37105abdd93d94846468be3243984144c
-  languageName: node
-  linkType: hard
-
-"@floating-ui/dom@npm:1.6.13":
-  version: 1.6.13
-  resolution: "@floating-ui/dom@npm:1.6.13"
-  dependencies:
-    "@floating-ui/core": "npm:^1.6.0"
-    "@floating-ui/utils": "npm:^0.2.9"
-  checksum: 10c0/272242d2eb6238ffcee0cb1f3c66e0eafae804d5d7b449db5ecf904bc37d31ad96cf575a9e650b93c1190f64f49a684b1559d10e05ed3ec210628b19116991a9
   languageName: node
   linkType: hard
 
@@ -1070,7 +1060,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@floating-ui/utils@npm:^0.2.10, @floating-ui/utils@npm:^0.2.8, @floating-ui/utils@npm:^0.2.9":
+"@floating-ui/utils@npm:^0.2.10, @floating-ui/utils@npm:^0.2.8":
   version: 0.2.10
   resolution: "@floating-ui/utils@npm:0.2.10"
   checksum: 10c0/e9bc2a1730ede1ee25843937e911ab6e846a733a4488623cd353f94721b05ec2c9ec6437613a2ac9379a94c2fd40c797a2ba6fa1df2716f5ce4aa6ddb1cf9ea4
@@ -1506,20 +1496,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@livekit/components-core@npm:0.12.10":
-  version: 0.12.10
-  resolution: "@livekit/components-core@npm:0.12.10"
-  dependencies:
-    "@floating-ui/dom": "npm:1.6.13"
-    loglevel: "npm:1.9.1"
-    rxjs: "npm:7.8.2"
-  peerDependencies:
-    livekit-client: ^2.13.3
-    tslib: ^2.6.2
-  checksum: 10c0/bfd84fb950f72dd037bd5329658c1e750a8ac6b8f2953ea673e3e944b8ea9d412ef9c98eb8b690052323e03c675964b162aacb00e60530cdc5187f77d21979bd
-  languageName: node
-  linkType: hard
-
 "@livekit/components-core@npm:0.12.12":
   version: 0.12.12
   resolution: "@livekit/components-core@npm:0.12.12"
@@ -1531,26 +1507,6 @@ __metadata:
     livekit-client: ^2.15.14
     tslib: ^2.6.2
   checksum: 10c0/788ae01fa6c58a0edbd629f4195f2f3a7bc94660d2fb729af8b27cab2b151abe36cd0a666989811c6187e51d32c847119853010a82be55844750ab3978079c38
-  languageName: node
-  linkType: hard
-
-"@livekit/components-react@npm:^2.4.3":
-  version: 2.9.15
-  resolution: "@livekit/components-react@npm:2.9.15"
-  dependencies:
-    "@livekit/components-core": "npm:0.12.10"
-    clsx: "npm:2.1.1"
-    usehooks-ts: "npm:3.1.1"
-  peerDependencies:
-    "@livekit/krisp-noise-filter": ^0.2.12 || ^0.3.0
-    livekit-client: ^2.13.3
-    react: ">=18"
-    react-dom: ">=18"
-    tslib: ^2.6.2
-  peerDependenciesMeta:
-    "@livekit/krisp-noise-filter":
-      optional: true
-  checksum: 10c0/58a93d85c3b8267d0afd00eceb4f34992ce66124f93450e828a78dd825ecc20e254c3123ed22ec33061a3728f50f4f020ff896769fb3a0ff79656ed8cf452a2b
   languageName: node
   linkType: hard
 
@@ -1583,29 +1539,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@livekit/krisp-noise-filter@npm:0.3.0":
-  version: 0.3.0
-  resolution: "@livekit/krisp-noise-filter@npm:0.3.0"
-  dependencies:
-    "@livekit/mutex": "npm:^1.1.1"
-  peerDependencies:
-    livekit-client: ^2.0.8
-  checksum: 10c0/1cd320fdc3a13d6edc94e9c1677ed781ffc6d5ba90475c69e906e7edba69ee22fab266a06958791957c0bd2edd3601c38509500e19e25fd1f86258fa8a28e625
-  languageName: node
-  linkType: hard
-
-"@livekit/krisp-noise-filter@patch:@livekit/krisp-noise-filter@npm%3A0.3.0#../.yarn/patches/@livekit-krisp-noise-filter-npm-0.3.0-ad3abbd55c.patch::locator=hopp%40workspace%3Atauri":
-  version: 0.3.0
-  resolution: "@livekit/krisp-noise-filter@patch:@livekit/krisp-noise-filter@npm%3A0.3.0#../.yarn/patches/@livekit-krisp-noise-filter-npm-0.3.0-ad3abbd55c.patch::version=0.3.0&hash=1a370a&locator=hopp%40workspace%3Atauri"
-  dependencies:
-    "@livekit/mutex": "npm:^1.1.1"
-  peerDependencies:
-    livekit-client: ^2.0.8
-  checksum: 10c0/401b404d45a9ae2a770e1f3157d84f2bc6131acdef577ce9a42eb176b215c8a5aba97459a7b179ed7d33a33607a70af898c741a036a1446fb91e6e2c9023b146
-  languageName: node
-  linkType: hard
-
-"@livekit/mutex@npm:1.1.1, @livekit/mutex@npm:^1.1.1":
+"@livekit/mutex@npm:1.1.1":
   version: 1.1.1
   resolution: "@livekit/mutex@npm:1.1.1"
   checksum: 10c0/d4bb1bd34e20939dfc8af0ae10b86918f3944336d0236d219e80a8c554207e8bfaf21e86794f0c56d2c28b43d74ca966111172a95eacb0e12b72133dd184d49a
@@ -8431,8 +8365,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "hopp@workspace:tauri"
   dependencies:
-    "@livekit/components-react": "npm:^2.4.3"
-    "@livekit/krisp-noise-filter": "patch:@livekit/krisp-noise-filter@npm%3A0.3.0#../.yarn/patches/@livekit-krisp-noise-filter-npm-0.3.0-ad3abbd55c.patch"
     "@radix-ui/react-alert-dialog": "npm:^1.1.15"
     "@radix-ui/react-aspect-ratio": "npm:^1.1.7"
     "@radix-ui/react-avatar": "npm:^1.1.10"

@@ -292,7 +292,7 @@ function DrawingEnableButton() {
                     dismissHintToast();
                   }}
                   aria-label="Dismiss drawing hint"
-                  className="size-6 shrink-0 rounded-full border-0 bg-[#E7ECF1] p-0 text-[#1F2937] transition-colors hover:bg-[#DCE3EC] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+                  className="size-6 shrink-0 rounded-full border-0 bg-white p-0 text-slate-900 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
                 >
                   <X className="mx-auto size-3 stroke-[1.25]" />
                 </button>
