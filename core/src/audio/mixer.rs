@@ -155,6 +155,18 @@ fn open_output_stream(
                     // Mix a new 10ms frame from all sources (mono at MIXER_SAMPLE_RATE)
                     let mut mixer_guard = mixer.lock();
                     let mixed = mixer_guard.mix(MIXER_NUM_CHANNELS as usize);
+                    // Feed mono mix to APM reverse stream before resampling to
+                    // multi-channel output.
+                    {
+                        let mut proc = apm.lock();
+                        reverse_buf.clear();
+                        reverse_buf.extend_from_slice(mixed);
+                        let _ = proc.process_reverse_stream(
+                            &mut reverse_buf,
+                            MIXER_SAMPLE_RATE as i32,
+                            MIXER_NUM_CHANNELS as i32,
+                        );
+                    }
                     let sampled = resampler.remix_and_resample(
                         mixed,
                         MIXER_SAMPLE_RATE / 100,
@@ -163,17 +175,6 @@ fn open_output_stream(
                         output_channels as u32,
                         output_sample_rate,
                     );
-                    // Feed copy to APM reverse stream (modifies buffer in-place)
-                    {
-                        let mut proc = apm.lock();
-                        reverse_buf.clear();
-                        reverse_buf.extend_from_slice(sampled);
-                        let _ = proc.process_reverse_stream(
-                            &mut reverse_buf,
-                            output_sample_rate as i32,
-                            output_channels as i32,
-                        );
-                    }
                     buf = sampled
                         .iter()
                         .map(|&s| s as f32 / i16::MAX as f32)
