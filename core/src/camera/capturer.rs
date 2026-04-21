@@ -7,7 +7,7 @@ use crate::livekit::video::VideoBufferManager;
 
 use super::stream::{CameraStream, CameraStreamConfig, CameraStreamMessage};
 
-const MAX_CAMERA_FAILURES_BEFORE_STOP: u32 = 5;
+pub const MAX_CAMERA_FAILURES_BEFORE_STOP: u32 = 1;
 const POLL_CAMERA_TIMEOUT_SECS: u64 = 100;
 
 pub struct CameraCapturer {
@@ -61,6 +61,7 @@ impl CameraCapturer {
             video_buffer_manager.clone(),
             buffer_source,
             self.stream_config.clone(),
+            Arc::new(Mutex::new(0u32)),
         )?;
         self.stream = Some(stream);
         Ok(())
@@ -145,8 +146,7 @@ pub fn poll_camera_stream(capturer: Arc<Mutex<CameraCapturer>>) {
         match rx_lock.recv_timeout(Duration::from_secs(POLL_CAMERA_TIMEOUT_SECS)) {
             Ok(CameraStreamMessage::Failed(reason)) => {
                 log::info!("poll_camera_stream: camera failed: {reason}");
-                let mut capturer = capturer.lock().unwrap();
-                capturer.restart_stream();
+                // TODO: properly forward this error.
             }
             Ok(CameraStreamMessage::Stop) => {
                 log::info!("poll_camera_stream: stop message");

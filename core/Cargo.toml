@@ -52,7 +52,6 @@ objc2-core-video = { version = "0.3.1", features = ["CVBuffer", "CVImageBuffer",
 objc2-core-media = { version = "0.3.1", features = ["CMSampleBuffer", "CMTime"] }
 dispatch2 = "0.3.0"
 objc2 = "0.6.1"
-nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-avfoundation"] }
 objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

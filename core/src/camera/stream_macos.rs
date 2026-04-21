@@ -118,6 +118,7 @@ struct CameraDelegateState {
     prev_stream_w: u32,
     prev_stream_h: u32,
     failures_count: Arc<Mutex<u32>>,
+    error_tx: mpsc::Sender<CameraStreamMessage>,
 }
 
 define_class!(
@@ -240,10 +241,15 @@ define_class!(
                         true
                     } else {
                         log::warn!("Unsupported pixel format: {}", format);
+                         *state.failures_count.lock().unwrap() += 1;
+                            let _ = state.error_tx.send(CameraStreamMessage::Failed(
+                                "Format conversion failed".to_string(),
+                            ));
                         false
                     };
 
                     if converted {
+                        *state.failures_count.lock().unwrap() = 0;
                         let cur_target_w = state.config.target_width();
                         let cur_target_h = state.config.target_height();
                         let (cur_stream_w, cur_stream_h) = aspect_fit(width, height, cur_target_w, cur_target_h);
@@ -304,10 +310,6 @@ define_class!(
             _sample_buffer: &CMSampleBuffer,
             _connection: &AVCaptureConnection,
         ) {
-            let state_guard = self.ivars().lock().unwrap();
-            if let Some(state) = state_guard.as_ref() {
-                *state.failures_count.lock().unwrap() += 1;
-            }
         }
     }
 );
@@ -339,6 +341,7 @@ impl CameraStream {
         video_buffer_manager: Arc<VideoBufferManager>,
         buffer_source: NativeVideoSource,
         config: Arc<CameraStreamConfig>,
+        failures_count: Arc<Mutex<u32>>,
     ) -> Result<Self, String> {
         unsafe {
             let devices = discover_video_devices();
@@ -403,8 +406,6 @@ impl CameraStream {
             let initial_fps = config.target_fps();
             set_device_fps(&device, initial_fps);
 
-            let failures_count = Arc::new(Mutex::new(0u32));
-
             let state = CameraDelegateState {
                 device: device.clone(),
                 buffer_source: buffer_source.clone(),
@@ -419,6 +420,7 @@ impl CameraStream {
                 prev_stream_w: 0,
                 prev_stream_h: 0,
                 failures_count: failures_count.clone(),
+                error_tx: error_tx.clone(),
             };
 
             let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
@@ -479,6 +481,7 @@ impl CameraStream {
             self.video_buffer_manager.clone(),
             self.buffer_source.clone(),
             self.config.clone(),
+            self.failures_count.clone(),
         )
     }
 }
