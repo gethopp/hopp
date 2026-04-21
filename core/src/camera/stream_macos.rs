@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 
 use dispatch2::DispatchQueue;
 use objc2::{
-    define_class, msg_send_id,
+    define_class, msg_send,
     rc::Retained,
-    runtime::{AnyObject, NSObjectProtocol, ProtocolObject},
-    AnyThread, ClassType, DefinedClass,
+    runtime::{NSObjectProtocol, ProtocolObject},
+    AnyThread, DefinedClass,
 };
 use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession,
@@ -22,16 +22,16 @@ use objc2_av_foundation::{
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
     kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
-    kCVPixelFormatType_420YpCbCr8PlanarFullRange, kCVPixelFormatType_422YpCbCr8,
-    kCVPixelFormatType_422YpCbCr8_yuvs, CVPixelBuffer, CVPixelBufferGetBaseAddress,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
+    kCVPixelFormatType_422YpCbCr8_yuvs, CVPixelBufferGetBaseAddress,
     CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
     CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType,
     CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
     CVPixelBufferUnlockBaseAddress,
 };
-use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSString};
+use objc2_foundation::{NSArray, NSObject};
 
+#[allow(deprecated)] // AVCaptureDeviceDiscoverySession replacement requires behavioral changes
 pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     unsafe {
         let media_type = AVMediaTypeVideo.unwrap();
@@ -61,7 +61,6 @@ struct CameraDelegateState {
     config: Arc<CameraStreamConfig>,
     capture_start: Instant,
     last_frame_time: Mutex<Instant>,
-    error_tx: mpsc::Sender<CameraStreamMessage>,
 }
 
 define_class!(
@@ -240,6 +239,7 @@ pub struct CameraStream {
     input: Retained<AVCaptureDeviceInput>,
     output: Retained<AVCaptureVideoDataOutput>,
     delegate: Retained<CameraDelegate>,
+    #[allow(dead_code)] // Retained to keep dispatch queue alive for output delegate
     queue: Retained<DispatchQueue>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffer_source: NativeVideoSource,
@@ -253,6 +253,7 @@ unsafe impl Send for CameraStream {}
 unsafe impl Sync for CameraStream {}
 
 impl CameraStream {
+    #[allow(deprecated)] // AVCaptureDeviceDiscoverySession replacement requires behavioral changes
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -319,11 +320,10 @@ impl CameraStream {
                 config: config.clone(),
                 capture_start: Instant::now(),
                 last_frame_time: Mutex::new(Instant::now()),
-                error_tx: error_tx.clone(),
             };
 
             let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
-            let delegate: Retained<CameraDelegate> = msg_send_id![super(delegate), init];
+            let delegate: Retained<CameraDelegate> = msg_send![super(delegate), init];
 
             let queue = DispatchQueue::new("HoppCameraQueue", None);
             let queue_retained: Retained<DispatchQueue> = queue.into();
