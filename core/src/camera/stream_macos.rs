@@ -26,7 +26,7 @@ use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
     kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
-    kCVPixelFormatType_422YpCbCr8_yuvs, CVPixelBufferGetBaseAddress,
+    kCVPixelFormatType_422YpCbCr8_yuvs, kCVReturnSuccess, CVPixelBufferGetBaseAddress,
     CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
     CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType,
     CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
@@ -77,6 +77,11 @@ unsafe fn set_device_fps(device: &AVCaptureDevice, fps: u32) {
     let format = device.activeFormat();
     let ranges = format.videoSupportedFrameRateRanges();
 
+    if ranges.count() == 0 {
+        log::warn!("Camera has no supported frame rate ranges, skipping FPS configuration");
+        return;
+    }
+
     let (found, min_fps) = (0..ranges.count()).fold((false, f64::INFINITY), |(found, min), i| {
         let range = ranges.objectAtIndex(i);
         let min_rate = range.minFrameRate();
@@ -112,6 +117,7 @@ struct CameraDelegateState {
     stream_frame: Option<VideoFrame<I420Buffer>>,
     prev_stream_w: u32,
     prev_stream_h: u32,
+    failures_count: Arc<Mutex<u32>>,
 }
 
 define_class!(
@@ -144,7 +150,11 @@ define_class!(
                 let image_buffer = sample_buffer.image_buffer();
                 if let Some(pixel_buffer) = image_buffer {
                     let lock_flags = CVPixelBufferLockFlags::ReadOnly;
-                    CVPixelBufferLockBaseAddress(&pixel_buffer, lock_flags);
+                    let lock_result = CVPixelBufferLockBaseAddress(&pixel_buffer, lock_flags);
+                    if lock_result != kCVReturnSuccess {
+                        log::warn!("Failed to lock pixel buffer: {}", lock_result);
+                        return;
+                    }
 
                     let format = CVPixelBufferGetPixelFormatType(&pixel_buffer);
                     let width = CVPixelBufferGetWidth(&pixel_buffer) as u32;
@@ -294,6 +304,10 @@ define_class!(
             _sample_buffer: &CMSampleBuffer,
             _connection: &AVCaptureConnection,
         ) {
+            let state_guard = self.ivars().lock().unwrap();
+            if let Some(state) = state_guard.as_ref() {
+                *state.failures_count.lock().unwrap() += 1;
+            }
         }
     }
 );
@@ -328,24 +342,36 @@ impl CameraStream {
     ) -> Result<Self, String> {
         unsafe {
             let devices = discover_video_devices();
+            let mut sorted_devices: Vec<Retained<AVCaptureDevice>> = (0..devices.count())
+                .map(|i| devices.objectAtIndex(i))
+                .collect();
+            sorted_devices.sort_by(|a, b| {
+                a.localizedName()
+                    .to_string()
+                    .cmp(&b.localizedName().to_string())
+            });
+
+            let default_device = || {
+                sorted_devices
+                    .first()
+                    .cloned()
+                    .ok_or("No cameras available".to_string())
+            };
+
             let device = if device_name.is_empty() {
-                devices
-                    .firstObject()
-                    .ok_or("No cameras available".to_string())?
+                default_device()?
             } else {
-                let found = (0..devices.count())
-                    .map(|i| devices.objectAtIndex(i))
-                    .find(|d| d.localizedName().to_string() == device_name);
-                match found {
-                    Some(d) => d,
+                match sorted_devices
+                    .iter()
+                    .find(|d| d.localizedName().to_string() == device_name)
+                {
+                    Some(d) => d.clone(),
                     None => {
                         log::warn!(
                             "Camera '{}' not found, falling back to default",
                             device_name
                         );
-                        devices
-                            .firstObject()
-                            .ok_or("No cameras available".to_string())?
+                        default_device()?
                     }
                 }
             };
@@ -377,17 +403,22 @@ impl CameraStream {
             let initial_fps = config.target_fps();
             set_device_fps(&device, initial_fps);
 
+            let failures_count = Arc::new(Mutex::new(0u32));
+
             let state = CameraDelegateState {
                 device: device.clone(),
                 buffer_source: buffer_source.clone(),
                 video_buffer_manager: video_buffer_manager.clone(),
                 config: config.clone(),
                 capture_start: Instant::now(),
-                current_fps: initial_fps,
+                // Use 0 as sentinel so first frame always re-applies FPS after session starts,
+                // since set_device_fps above runs before startRunning() and may have no effect.
+                current_fps: 0,
                 i420: None,
                 stream_frame: None,
                 prev_stream_w: 0,
                 prev_stream_h: 0,
+                failures_count: failures_count.clone(),
             };
 
             let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
@@ -412,7 +443,7 @@ impl CameraStream {
                 buffer_source,
                 video_buffer_manager,
                 device_name: actual_name,
-                failures_count: Arc::new(Mutex::new(0)),
+                failures_count,
                 config,
             })
         }
