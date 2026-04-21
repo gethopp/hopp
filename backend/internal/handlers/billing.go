@@ -470,15 +470,29 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 	// Determine tier from price ID
 	tier := models.SubscriptionTier(session.Metadata["tier"])
 
-	// Get or create subscription record
+	// Get or create subscription record.
+	// First try by Stripe subscription ID (handles idempotent replays).
+	// If not found, fall back to team ID so re-subscriptions after cancellation
+	// update the existing row instead of violating the team_id unique index.
 	dbSub, err := models.GetSubscriptionByStripeID(bh.DB, session.Subscription.ID)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return err
 	}
 
 	if dbSub == nil {
-		c.Logger().Infof("Creating new subscription: %+v", dbSub)
-		// Create new subscription
+		dbSub, err = models.GetSubscriptionByTeamID(bh.DB, uint(teamID))
+		if err != nil {
+			return err
+		}
+	}
+
+	if dbSub != nil {
+		c.Logger().Infof("Updating existing subscription for team %d with new stripe subscription ID: %s", teamID, session.Subscription.ID)
+		dbSub.StripeCustomerID = session.Customer.ID
+		dbSub.StripeSubscriptionID = session.Subscription.ID
+		dbSub.CanceledAt = nil
+	} else {
+		c.Logger().Infof("Creating new subscription for team %d", teamID)
 		dbSub = &models.Subscription{
 			TeamID:               uint(teamID),
 			StripeCustomerID:     session.Customer.ID,
