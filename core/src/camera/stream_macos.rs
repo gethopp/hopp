@@ -7,7 +7,7 @@ use livekit::webrtc::{
     video_source::native::NativeVideoSource,
 };
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use dispatch2::DispatchQueue;
 use objc2::{
@@ -22,7 +22,7 @@ use objc2_av_foundation::{
     AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
     AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
 };
-use objc2_core_media::CMSampleBuffer;
+use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
     kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
@@ -71,12 +71,43 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     }
 }
 
+/// Set FPS on device hardware. If target fps is outside supported ranges, uses the lowest supported fps.
+unsafe fn set_device_fps(device: &AVCaptureDevice, fps: u32) {
+    let fps_f64 = fps as f64;
+    let format = device.activeFormat();
+    let ranges = format.videoSupportedFrameRateRanges();
+
+    let (found, min_fps) = (0..ranges.count()).fold((false, f64::INFINITY), |(found, min), i| {
+        let range = ranges.objectAtIndex(i);
+        let min_rate = range.minFrameRate();
+        let matches = fps_f64 >= min_rate && fps_f64 <= range.maxFrameRate();
+        (found || matches, min.min(min_rate))
+    });
+    let actual_fps = if found {
+        fps_f64
+    } else {
+        log::info!("Camera does not support {fps}fps, using lowest supported {min_fps}fps");
+        min_fps
+    };
+
+    let duration = CMTime::new(1, actual_fps.round() as i32);
+    if device.lockForConfiguration().is_ok() {
+        device.setActiveVideoMinFrameDuration(duration);
+        device.setActiveVideoMaxFrameDuration(duration);
+        device.unlockForConfiguration();
+        log::info!("Camera FPS set to {actual_fps}");
+    } else {
+        log::warn!("Failed to lock device for FPS configuration");
+    }
+}
+
 struct CameraDelegateState {
+    device: Retained<AVCaptureDevice>,
     buffer_source: NativeVideoSource,
     video_buffer_manager: Arc<VideoBufferManager>,
     config: Arc<CameraStreamConfig>,
     capture_start: Instant,
-    last_frame_time: Mutex<Instant>,
+    current_fps: u32,
     i420: Option<I420Buffer>,
     stream_frame: Option<VideoFrame<I420Buffer>>,
     prev_stream_w: u32,
@@ -103,21 +134,16 @@ define_class!(
                 None => return,
             };
 
-            let now = Instant::now();
             let cur_fps = state.config.target_fps();
-            let frame_duration = Duration::from_micros(1_000_000 / cur_fps as u64);
-
-            let mut last_time = state.last_frame_time.lock().unwrap();
-            if now.duration_since(*last_time) < frame_duration {
-                return;
+            if cur_fps != state.current_fps {
+                unsafe { set_device_fps(&state.device, cur_fps) };
+                state.current_fps = cur_fps;
             }
-            *last_time = now;
-            drop(last_time);
 
             unsafe {
                 let image_buffer = sample_buffer.image_buffer();
                 if let Some(pixel_buffer) = image_buffer {
-                    let lock_flags = CVPixelBufferLockFlags(1); // read only
+                    let lock_flags = CVPixelBufferLockFlags::ReadOnly;
                     CVPixelBufferLockBaseAddress(&pixel_buffer, lock_flags);
 
                     let format = CVPixelBufferGetPixelFormatType(&pixel_buffer);
@@ -268,7 +294,6 @@ define_class!(
             _sample_buffer: &CMSampleBuffer,
             _connection: &AVCaptureConnection,
         ) {
-            // Do nothing
         }
     }
 );
@@ -303,29 +328,26 @@ impl CameraStream {
     ) -> Result<Self, String> {
         unsafe {
             let devices = discover_video_devices();
-            let mut target_device = None;
-
-            for i in 0..devices.count() {
-                let device = devices.objectAtIndex(i);
-                if device.localizedName().to_string() == device_name {
-                    target_device = Some(device);
-                    break;
-                }
-            }
-            let device = if let Some(dev) = target_device {
-                dev
-            } else if device_name.is_empty() {
+            let device = if device_name.is_empty() {
                 devices
                     .firstObject()
                     .ok_or("No cameras available".to_string())?
             } else {
-                log::warn!(
-                    "Camera '{}' not found, falling back to default",
-                    device_name
-                );
-                devices
-                    .firstObject()
-                    .ok_or("No cameras available".to_string())?
+                let found = (0..devices.count())
+                    .map(|i| devices.objectAtIndex(i))
+                    .find(|d| d.localizedName().to_string() == device_name);
+                match found {
+                    Some(d) => d,
+                    None => {
+                        log::warn!(
+                            "Camera '{}' not found, falling back to default",
+                            device_name
+                        );
+                        devices
+                            .firstObject()
+                            .ok_or("No cameras available".to_string())?
+                    }
+                }
             };
 
             let actual_name = device.localizedName().to_string();
@@ -352,12 +374,16 @@ impl CameraStream {
             }
             session.addOutput(&output);
 
+            let initial_fps = config.target_fps();
+            set_device_fps(&device, initial_fps);
+
             let state = CameraDelegateState {
+                device: device.clone(),
                 buffer_source: buffer_source.clone(),
                 video_buffer_manager: video_buffer_manager.clone(),
                 config: config.clone(),
                 capture_start: Instant::now(),
-                last_frame_time: Mutex::new(Instant::now()),
+                current_fps: initial_fps,
                 i420: None,
                 stream_frame: None,
                 prev_stream_w: 0,
