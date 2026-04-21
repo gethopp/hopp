@@ -8,7 +8,6 @@ use nokhwa::utils::{
     Resolution,
 };
 use nokhwa::Camera;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
