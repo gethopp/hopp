@@ -161,6 +161,22 @@ define_class!(
                             height as i32,
                         );
                         true
+                    } else if format == kCVPixelFormatType_422YpCbCr8 {
+                        let src_ptr = CVPixelBufferGetBaseAddress(&pixel_buffer) as *const u8;
+                        let src_stride = CVPixelBufferGetBytesPerRow(&pixel_buffer) as i32;
+                        yuv_sys::rs_UYVYToI420(
+                            src_ptr,
+                            src_stride,
+                            data_y.as_mut_ptr(),
+                            stride_y as i32,
+                            data_u.as_mut_ptr(),
+                            stride_u as i32,
+                            data_v.as_mut_ptr(),
+                            stride_v as i32,
+                            width as i32,
+                            height as i32,
+                        );
+                        true
                     } else {
                         log::warn!("Unsupported pixel format: {}", format);
                         false
