@@ -2,6 +2,7 @@ use super::{CameraStreamConfig, CameraStreamMessage};
 use crate::livekit::video::VideoBufferManager;
 use crate::utils::geometry::aspect_fit;
 use livekit::webrtc::{
+    prelude::VideoBuffer,
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
@@ -76,6 +77,10 @@ struct CameraDelegateState {
     config: Arc<CameraStreamConfig>,
     capture_start: Instant,
     last_frame_time: Mutex<Instant>,
+    i420: Option<I420Buffer>,
+    stream_frame: Option<VideoFrame<I420Buffer>>,
+    prev_stream_w: u32,
+    prev_stream_h: u32,
 }
 
 define_class!(
@@ -119,7 +124,13 @@ define_class!(
                     let width = CVPixelBufferGetWidth(&pixel_buffer) as u32;
                     let height = CVPixelBufferGetHeight(&pixel_buffer) as u32;
 
-                    let mut i420 = I420Buffer::new(width, height);
+                    let mut i420 = match state.i420.take() {
+                        Some(buf) if buf.width() == width && buf.height() == height => buf,
+                        _ => {
+                            log::info!("Allocating I420 buffer at {width}x{height}");
+                            I420Buffer::new(width, height)
+                        }
+                    };
                     let (stride_y, stride_u, stride_v) = i420.strides();
                     let (data_y, data_u, data_v) = i420.data_mut();
 
@@ -211,14 +222,28 @@ define_class!(
                         };
 
                         if needs_scaling {
-                            let scaled = i420.scale(cur_stream_w as i32, cur_stream_h as i32);
-                            let stream_frame = VideoFrame {
-                                rotation: VideoRotation::VideoRotation0,
-                                buffer: scaled,
-                                timestamp_us: state.capture_start.elapsed().as_micros() as i64,
-                            };
-                            write_frame(&stream_frame.buffer);
-                            state.buffer_source.capture_frame(&stream_frame);
+                            if cur_stream_w != state.prev_stream_w || cur_stream_h != state.prev_stream_h {
+                                state.stream_frame = Some(VideoFrame {
+                                    rotation: VideoRotation::VideoRotation0,
+                                    buffer: I420Buffer::new(cur_stream_w, cur_stream_h),
+                                    timestamp_us: 0,
+                                });
+                                state.prev_stream_w = cur_stream_w;
+                                state.prev_stream_h = cur_stream_h;
+                                log::info!("Target changed to {cur_stream_w}x{cur_stream_h}");
+                            }
+                            let mut scaled = i420.scale(cur_stream_w as i32, cur_stream_h as i32);
+                            if let Some(ref mut stream_frame) = state.stream_frame {
+                                let (src_y, src_u, src_v) = scaled.data_mut();
+                                let (dst_y, dst_u, dst_v) = stream_frame.buffer.data_mut();
+                                dst_y.copy_from_slice(src_y);
+                                dst_u.copy_from_slice(src_u);
+                                dst_v.copy_from_slice(src_v);
+                                stream_frame.timestamp_us = state.capture_start.elapsed().as_micros() as i64;
+                                write_frame(&stream_frame.buffer);
+                                state.buffer_source.capture_frame(stream_frame);
+                            }
+                            state.i420 = Some(i420);
                         } else {
                             let frame = VideoFrame {
                                 rotation: VideoRotation::VideoRotation0,
@@ -227,6 +252,7 @@ define_class!(
                             };
                             state.buffer_source.capture_frame(&frame);
                             write_frame(&frame.buffer);
+                            state.i420 = Some(frame.buffer);
                         }
                     }
 
@@ -332,6 +358,10 @@ impl CameraStream {
                 config: config.clone(),
                 capture_start: Instant::now(),
                 last_frame_time: Mutex::new(Instant::now()),
+                i420: None,
+                stream_frame: None,
+                prev_stream_w: 0,
+                prev_stream_h: 0,
             };
 
             let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
