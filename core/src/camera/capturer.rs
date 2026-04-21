@@ -61,6 +61,7 @@ impl CameraCapturer {
             video_buffer_manager.clone(),
             buffer_source,
             self.stream_config.clone(),
+            #[cfg(target_os = "macos")]
             Arc::new(Mutex::new(0u32)),
         )?;
         self.stream = Some(stream);
