@@ -16,8 +16,10 @@ use objc2::{
     AnyThread, DefinedClass,
 };
 use objc2_av_foundation::{
-    AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession,
-    AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
+    AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceDiscoverySession, AVCaptureDeviceInput,
+    AVCaptureDevicePosition, AVCaptureDeviceTypeBuiltInWideAngleCamera,
+    AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
+    AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
@@ -29,14 +31,27 @@ use objc2_core_video::{
     CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
     CVPixelBufferUnlockBaseAddress,
 };
-use objc2_foundation::{NSArray, NSObject};
+use objc2_foundation::{NSArray, NSObject, NSString};
 
-#[allow(deprecated)] // AVCaptureDeviceDiscoverySession replacement requires behavioral changes
+fn discover_video_devices() -> Retained<NSArray<AVCaptureDevice>> {
+    unsafe {
+        let device_types = NSArray::<NSString>::from_slice(&[
+            AVCaptureDeviceTypeBuiltInWideAngleCamera,
+            AVCaptureDeviceTypeExternal,
+        ]);
+        let session =
+            AVCaptureDeviceDiscoverySession::discoverySessionWithDeviceTypes_mediaType_position(
+                &device_types,
+                AVMediaTypeVideo,
+                AVCaptureDevicePosition::Unspecified,
+            );
+        session.devices()
+    }
+}
+
 pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     unsafe {
-        let media_type = AVMediaTypeVideo.unwrap();
-        let devices: Retained<NSArray<AVCaptureDevice>> =
-            AVCaptureDevice::devicesWithMediaType(media_type);
+        let devices = discover_video_devices();
         let mut result = Vec::new();
         for i in 0..devices.count() {
             let device = devices.objectAtIndex(i);
@@ -253,7 +268,6 @@ unsafe impl Send for CameraStream {}
 unsafe impl Sync for CameraStream {}
 
 impl CameraStream {
-    #[allow(deprecated)] // AVCaptureDeviceDiscoverySession replacement requires behavioral changes
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -262,9 +276,7 @@ impl CameraStream {
         config: Arc<CameraStreamConfig>,
     ) -> Result<Self, String> {
         unsafe {
-            let media_type = AVMediaTypeVideo.unwrap();
-            let devices: Retained<NSArray<AVCaptureDevice>> =
-                AVCaptureDevice::devicesWithMediaType(media_type);
+            let devices = discover_video_devices();
             let mut target_device = None;
 
             for i in 0..devices.count() {
