@@ -168,6 +168,8 @@ pub fn start_screenshare_session() -> io::Result<(SocketSender, EventSocket, Vec
     call_start(&sender, &event_socket)?;
     println!("Call started.");
 
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
     let width = 1920.0;
     let height = 1080.0;
 
@@ -179,8 +181,7 @@ pub fn start_screenshare_session() -> io::Result<(SocketSender, EventSocket, Vec
         width,
         height,
     )?;
-    println!("Screenshare requested. Waiting a moment for it to initialize...");
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    println!("Screenshare requested.");
     Ok((sender, event_socket, available_content.content))
 }
 

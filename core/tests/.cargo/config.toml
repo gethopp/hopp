@@ -5,7 +5,7 @@ rustflags = ["-C", "link-args=-ObjC"]
 rustflags = ["-C", "link-args=-ObjC"]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/STACK:8388608"]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-args=/STACK:8388608"]

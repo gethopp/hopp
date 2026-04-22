@@ -722,7 +722,7 @@ impl ScreensharingWindow {
         // On non-macOS platforms, fall back to winit CustomCursor at 30px.
         #[cfg(not(target_os = "macos"))]
         let (custom_cursor_pointer, custom_cursor_pencil, custom_cursor_point) = {
-            let point_cursor_hotspot = (15.0, 20.0);
+            let point_cursor_hotspot = (2.0, 4.0);
             let px = CURSOR_LOGICAL_SIZE as u32;
             let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
             let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);

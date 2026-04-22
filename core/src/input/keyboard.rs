@@ -486,6 +486,7 @@ impl<T: KeyboardLayoutTrait> KeyboardController<T> {
             && (keystroke_data.key != "Shift")
             && (!keystroke_data.key.is_empty())
             && !keystroke_data.meta
+            && !keystroke_data.alt
             && !keystroke_data.ctrl
             && keystroke_data.down
         {
