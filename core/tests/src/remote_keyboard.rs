@@ -261,6 +261,47 @@ pub async fn test_keyboard_cmd_shift_3() -> io::Result<()> {
     Ok(())
 }
 
+/// Connects screenshare, sends Alt+Tab (Windows window switcher) after user focuses a window.
+pub async fn test_keyboard_alt_tab() -> io::Result<()> {
+    println!("Starting Alt+Tab test...");
+    let (sender, _event_socket, _content) = screenshare_client::start_screenshare_session()?;
+
+    sleep(Duration::from_secs(2)).await;
+
+    let token = crate::livekit_utils::generate_token("Test AltTab");
+    let url = std::env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
+
+    let (room, mut _rx) = Room::connect(&url, &token, RoomOptions::default())
+        .await
+        .unwrap();
+    println!("Connected to room: {}", room.name());
+
+    println!(">>> Have multiple windows open on the remote. Sending Alt+Tab in 5 seconds...");
+    sleep(Duration::from_secs(5)).await;
+
+    let pause = Duration::from_millis(20);
+
+    // Alt DOWN
+    send_keystroke_with_modifiers(&room, "Alt", false, true, false, false, true).await?;
+    sleep(pause).await;
+    // Tab DOWN (with Alt held)
+    send_keystroke_with_modifiers(&room, "Tab", false, true, false, false, true).await?;
+    sleep(pause).await;
+    // Tab UP (Alt still held)
+    send_keystroke_with_modifiers(&room, "Tab", false, true, false, false, false).await?;
+    sleep(pause).await;
+    // Alt UP
+    send_keystroke_with_modifiers(&room, "Alt", false, false, false, false, false).await?;
+    println!("Alt+Tab sent.");
+
+    sleep(Duration::from_secs(2)).await;
+
+    println!("Stopping screenshare...");
+    screenshare_client::stop_screenshare(&sender)?;
+    println!("Alt+Tab test complete.");
+    Ok(())
+}
+
 /// Connects screenshare, runs the keyboard character test, and stops screenshare.
 pub async fn test_keyboard_chars() -> io::Result<()> {
     println!("Starting keyboard test...");
