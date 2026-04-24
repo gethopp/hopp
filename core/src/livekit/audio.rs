@@ -62,7 +62,7 @@ impl AudioPublisher {
             )
             .await
             .map_err(|e| format!("Failed to publish audio track: {e}"))?;
-        log::info!("audio_publish: too {}", now.elapsed().as_millis());
+        log::info!("audio_publish: took {}", now.elapsed().as_millis());
 
         let processing_task = audio_handle.spawn(process_audio_samples(
             sample_rx,
