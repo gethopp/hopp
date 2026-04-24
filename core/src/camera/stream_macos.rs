@@ -82,25 +82,21 @@ unsafe fn set_device_fps(device: &AVCaptureDevice, fps: u32) {
         return;
     }
 
-    let (found, min_fps) = (0..ranges.count()).fold((false, f64::INFINITY), |(found, min), i| {
+    let supported = (0..ranges.count()).any(|i| {
         let range = ranges.objectAtIndex(i);
-        let min_rate = range.minFrameRate();
-        let matches = fps_f64 >= min_rate && fps_f64 <= range.maxFrameRate();
-        (found || matches, min.min(min_rate))
+        fps_f64 >= range.minFrameRate() && fps_f64 <= range.maxFrameRate()
     });
-    let actual_fps = if found {
-        fps_f64
-    } else {
-        log::info!("Camera does not support {fps}fps, using lowest supported {min_fps}fps");
-        min_fps
-    };
+    if !supported {
+        log::info!("Camera does not support {fps}fps, using device default");
+        return;
+    }
 
-    let duration = CMTime::new(1, actual_fps.round() as i32);
+    let duration = CMTime::new(1, fps as i32);
     if device.lockForConfiguration().is_ok() {
         device.setActiveVideoMinFrameDuration(duration);
         device.setActiveVideoMaxFrameDuration(duration);
         device.unlockForConfiguration();
-        log::info!("Camera FPS set to {actual_fps}");
+        log::info!("Camera FPS set to {fps}");
     } else {
         log::warn!("Failed to lock device for FPS configuration");
     }
