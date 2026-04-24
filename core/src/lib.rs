@@ -1697,7 +1697,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::DefaultInputDeviceChanged => {
-                self.audio_capturer.handle_default_device_changed();
+                self.audio_capturer.handle_default_device_changed(false);
+                if let Some(cam) = &mut self.camera_window {
+                    cam.set_selected_mic_name(
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    );
+                }
+                if let Some(device_name) = self.audio_capturer.active_device_name() {
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::ActiveMicChanged(device_name.to_string()))
+                    {
+                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
+                    }
+                }
+            }
+            UserEvent::AudioCaptureError => {
+                log::warn!("user_event: AudioCaptureError - capture thread died");
+                self.audio_capturer.handle_default_device_changed(true);
                 if let Some(cam) = &mut self.camera_window {
                     cam.set_selected_mic_name(
                         self.audio_capturer
@@ -2297,6 +2316,7 @@ pub enum UserEvent {
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
+    AudioCaptureError,
     SetNoiseCancellation(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
 }

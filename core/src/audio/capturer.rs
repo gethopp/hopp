@@ -89,14 +89,15 @@ pub struct Capturer {
     orphaned_threads: Vec<JoinHandle<()>>,
     _device_monitor: super::device_monitor::DeviceMonitor,
     socket: socket_lib::SocketSender,
+    proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
 }
 
 impl Capturer {
-    #[allow(unused_variables)]
     pub fn new(
         proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
         socket: socket_lib::SocketSender,
     ) -> Self {
+        let proxy_for_monitor = proxy.clone();
         Self {
             available_devices: vec![],
             capture_thread: None,
@@ -106,10 +107,11 @@ impl Capturer {
             orphaned_threads: Vec::new(),
             _device_monitor: super::device_monitor::DeviceMonitor::new(
                 super::device_monitor::DeviceKind::Input,
-                proxy,
+                proxy_for_monitor,
             )
             .expect("Failed to start input device monitor"),
             socket,
+            proxy,
         }
     }
 
@@ -229,11 +231,13 @@ impl Capturer {
         self.sample_tx = Some(sample_tx.clone());
 
         let socket_for_level = self.socket.clone();
+        let proxy_for_thread = self.proxy.clone();
 
         let handle = std::thread::spawn(move || {
             let mut mic = mic;
             let mut resampler = AudioResampler::default();
             let mut level = LevelEmitter::new(socket_for_level.clone());
+            let mut unexpected_exit = false;
 
             let in_samples_per_frame = actual_sample_rate / SAMPLES_DIVIDER;
             let samples_needed = in_samples_per_frame as usize * num_channels;
@@ -245,16 +249,19 @@ impl Capturer {
                 }
 
                 scratch_i16.clear();
-                let mut got_any = false;
                 for sample in mic.by_ref().take(samples_needed) {
-                    got_any = true;
                     let clamped = sample.clamp(-1.0, 1.0);
                     level.observe(clamped);
                     scratch_i16.push((clamped * i16::MAX as f32) as i16);
                 }
 
-                if !got_any {
-                    log::error!("capturing mic failed");
+                if scratch_i16.len() < samples_needed {
+                    log::error!(
+                        "capturing mic: got {}/{} samples, device likely disconnected",
+                        scratch_i16.len(),
+                        samples_needed
+                    );
+                    unexpected_exit = true;
                     break;
                 }
 
@@ -275,6 +282,10 @@ impl Capturer {
             }
 
             let _ = socket_for_level.send(socket_lib::Message::MicrophoneAudioLevel(0.0));
+            if unexpected_exit {
+                log::warn!("capture thread died, notifying main thread");
+                let _ = proxy_for_thread.send_event(crate::UserEvent::AudioCaptureError);
+            }
         });
 
         self.capture_thread = Some(handle);
@@ -302,7 +313,7 @@ impl Capturer {
     /// Called when the OS default input device changes.
     /// If using default: reconnect (the default changed).
     /// If using a named device: only switch if that device disappeared.
-    pub fn handle_default_device_changed(&mut self) {
+    pub fn handle_default_device_changed(&mut self, force: bool) {
         if !self.is_capturing() {
             return;
         }
@@ -315,11 +326,18 @@ impl Capturer {
             }
             Some(name) => {
                 let name = name.clone();
-                let available = self.list_sources();
-                if !available.iter().any(|d| d.0 == name) {
-                    log::info!("Active mic '{name}' removed, switching to default");
+                if force {
+                    log::info!("Force-switching mic '{name}' to default");
                     if let Err(e) = self.switch_device(None) {
-                        log::error!("Failed to switch mic to default: {e}");
+                        log::error!("Failed to force-switch mic to default: {e}");
+                    }
+                } else {
+                    let available = self.list_sources();
+                    if !available.iter().any(|d| d.0 == name) {
+                        log::info!("Active mic '{name}' removed, switching to default");
+                        if let Err(e) = self.switch_device(None) {
+                            log::error!("Failed to switch mic to default: {e}");
+                        }
                     }
                 }
             }
