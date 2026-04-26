@@ -801,7 +801,7 @@ async fn room_service_commands(
     let mut stats_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut audio_publisher: Option<AudioPublisher> = None;
     let mut last_cursor_publish = Instant::now();
-    const CURSOR_THROTTLE: Duration = Duration::from_millis(16);
+    const CURSOR_THROTTLE: Duration = Duration::from_millis(10);
 
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
@@ -881,7 +881,7 @@ async fn room_service_commands(
                             LocalTrack::Video(camera_track.clone()),
                             TrackPublishOptions {
                                 source: TrackSource::Camera,
-                                video_codec: VideoCodec::VP9,
+                                video_codec: VideoCodec::H264,
                                 simulcast: false,
                                 video_encoding: Some(VideoEncoding {
                                     max_bitrate: CAMERA_MAX_BITRATE,

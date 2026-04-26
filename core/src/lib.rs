@@ -346,7 +346,7 @@ impl<'a> Application<'a> {
             window_manager: None,
             audio_capturer,
             audio_player,
-            noise_cancellation_enabled: Arc::new(AtomicBool::new(false)),
+            noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
             camera_capturer: camera_capturer.clone(),
             _camera_capturer_events: Some(std::thread::spawn(move || {
                 poll_camera_stream(camera_capturer_clone)
