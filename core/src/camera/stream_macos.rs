@@ -82,7 +82,7 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
 
 fn four_cc(pixel_type: u32) -> String {
     let bytes = pixel_type.to_be_bytes();
-    if bytes.iter().all(|&b| b >= 0x20 && b < 0x7f) {
+    if bytes.iter().all(|&b| (0x20..0x7f).contains(&b)) {
         format!("'{}'", std::str::from_utf8(&bytes).unwrap_or("????"))
     } else {
         format!("0x{pixel_type:08X}")
