@@ -1,6 +1,6 @@
 use super::{CameraStreamConfig, CameraStreamMessage};
-use crate::livekit::video::VideoBufferManager;
 use crate::utils::geometry::aspect_fit;
+use crate::{camera::stream::CAMERA_STREAM_FPS_HIGH, livekit::video::VideoBufferManager};
 use livekit::webrtc::{
     prelude::VideoBuffer,
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
@@ -20,11 +20,12 @@ use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceDiscoverySession, AVCaptureDeviceInput,
     AVCaptureDevicePosition, AVCaptureDeviceTypeBuiltInWideAngleCamera,
     AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
-    AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
+    AVCaptureVideoDataOutputSampleBufferDelegate, AVFrameRateRange, AVMediaTypeVideo,
 };
-use objc2_core_media::{CMSampleBuffer, CMTime};
+use objc2_core_media::{CMSampleBuffer, CMTime, CMTimeFlags};
 use objc2_core_video::{
-    kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
+    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
     kCVPixelFormatType_422YpCbCr8_yuvs, kCVReturnSuccess, CVPixelBufferGetBaseAddress,
     CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
@@ -32,7 +33,15 @@ use objc2_core_video::{
     CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
     CVPixelBufferUnlockBaseAddress,
 };
-use objc2_foundation::{NSArray, NSObject, NSString};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSString};
+
+const SUPPORTED_PIXEL_FORMATS: &[u32] = &[
+    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+    kCVPixelFormatType_32BGRA,
+    kCVPixelFormatType_422YpCbCr8_yuvs,
+    kCVPixelFormatType_422YpCbCr8,
+];
 
 fn discover_video_devices() -> Retained<NSArray<AVCaptureDevice>> {
     unsafe {
@@ -71,44 +80,54 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     }
 }
 
-/// Set FPS on device hardware. If target fps is outside supported ranges, uses the lowest supported fps.
-unsafe fn set_device_fps(device: &AVCaptureDevice, fps: u32) {
-    let fps_f64 = fps as f64;
-    let format = device.activeFormat();
-    let ranges = format.videoSupportedFrameRateRanges();
-
-    if ranges.count() == 0 {
-        log::warn!("Camera has no supported frame rate ranges, skipping FPS configuration");
-        return;
-    }
-
-    let supported = (0..ranges.count()).any(|i| {
-        let range = ranges.objectAtIndex(i);
-        fps_f64 >= range.minFrameRate() && fps_f64 <= range.maxFrameRate()
-    });
-    if !supported {
-        log::info!("Camera does not support {fps}fps, using device default");
-        return;
-    }
-
-    let duration = CMTime::new(1, fps as i32);
-    if device.lockForConfiguration().is_ok() {
-        device.setActiveVideoMinFrameDuration(duration);
-        device.setActiveVideoMaxFrameDuration(duration);
-        device.unlockForConfiguration();
-        log::info!("Camera FPS set to {fps}");
+fn four_cc(pixel_type: u32) -> String {
+    let bytes = pixel_type.to_be_bytes();
+    if bytes.iter().all(|&b| (0x20..0x7f).contains(&b)) {
+        format!("'{}'", std::str::from_utf8(&bytes).unwrap_or("????"))
     } else {
-        log::warn!("Failed to lock device for FPS configuration");
+        format!("0x{pixel_type:08X}")
+    }
+}
+
+fn clamp_fps_to_supported_ranges(
+    ranges: &NSArray<AVFrameRateRange>,
+    target_fps: f64,
+) -> Option<f64> {
+    let count = ranges.count();
+    if count == 0 {
+        return None;
+    }
+
+    unsafe {
+        for i in 0..count {
+            let range = ranges.objectAtIndex(i);
+            if target_fps >= range.minFrameRate() && target_fps <= range.maxFrameRate() {
+                return Some(target_fps);
+            }
+        }
+
+        let mut best_fps = None;
+        let mut best_distance = f64::MAX;
+        for i in 0..count {
+            let range = ranges.objectAtIndex(i);
+            for boundary in [range.minFrameRate(), range.maxFrameRate()] {
+                let distance = (boundary - target_fps).abs();
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_fps = Some(boundary);
+                }
+            }
+        }
+        best_fps
     }
 }
 
 struct CameraDelegateState {
-    device: Retained<AVCaptureDevice>,
     buffer_source: NativeVideoSource,
     video_buffer_manager: Arc<VideoBufferManager>,
     config: Arc<CameraStreamConfig>,
     capture_start: Instant,
-    current_fps: u32,
+    last_frame_time: Instant,
     i420: Option<I420Buffer>,
     stream_frame: Option<VideoFrame<I420Buffer>>,
     prev_stream_w: u32,
@@ -137,11 +156,13 @@ define_class!(
                 None => return,
             };
 
-            let cur_fps = state.config.target_fps();
-            if cur_fps != state.current_fps {
-                unsafe { set_device_fps(&state.device, cur_fps) };
-                state.current_fps = cur_fps;
+            let target_fps = state.config.target_fps();
+            let min_interval = std::time::Duration::from_micros(1_000_000 / target_fps as u64);
+            let now = Instant::now();
+            if now.duration_since(state.last_frame_time) < min_interval {
+                return;
             }
+            state.last_frame_time = now;
 
             unsafe {
                 let image_buffer = sample_buffer.image_buffer();
@@ -392,25 +413,60 @@ impl CameraStream {
 
             let output = AVCaptureVideoDataOutput::new();
             output.setAlwaysDiscardsLateVideoFrames(true);
-            output.setVideoSettings(None);
+            // TODO: we should choose the active format based on the resolution.
 
             if !session.canAddOutput(&output) {
                 return Err("Cannot add camera output to session".to_string());
             }
             session.addOutput(&output);
 
-            let initial_fps = config.target_fps();
-            set_device_fps(&device, initial_fps);
+            // Set hardware frame rate to avoid excess callbacks from the camera.
+            let target_fps = CAMERA_STREAM_FPS_HIGH as f64;
+            let active_format = device.activeFormat();
+            let frame_rate_ranges = active_format.videoSupportedFrameRateRanges();
+            if let Some(clamped_fps) = clamp_fps_to_supported_ranges(&frame_rate_ranges, target_fps)
+            {
+                if let Ok(()) = device.lockForConfiguration() {
+                    let frame_duration = CMTime {
+                        value: 1,
+                        timescale: clamped_fps as i32,
+                        flags: CMTimeFlags::Valid,
+                        epoch: 0,
+                    };
+                    device.setActiveVideoMinFrameDuration(frame_duration);
+                    device.setActiveVideoMaxFrameDuration(frame_duration);
+                    device.unlockForConfiguration();
+                    log::info!(
+                        "Camera frame rate set to {} fps (requested {})",
+                        clamped_fps,
+                        target_fps
+                    );
+                }
+            }
+
+            // Request first supported pixel format from device's available list.
+            let available_formats = output.availableVideoCVPixelFormatTypes();
+            let chosen_format = SUPPORTED_PIXEL_FORMATS.iter().find(|&&fmt| {
+                (0..available_formats.count())
+                    .any(|i| available_formats.objectAtIndex(i).as_u32() == fmt)
+            });
+            let Some(&format) = chosen_format else {
+                return Err("Camera does not support any required pixel format".to_string());
+            };
+            log::info!("Camera requesting pixel format: {}", four_cc(format));
+            let format_number = NSNumber::new_u32(format);
+            let format_anyobj = format_number.into_super().into_super().into_super();
+            let key: &NSString =
+                &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString);
+            let settings = NSDictionary::from_retained_objects(&[key], &[format_anyobj]);
+            output.setVideoSettings(Some(&settings));
 
             let state = CameraDelegateState {
-                device: device.clone(),
                 buffer_source: buffer_source.clone(),
                 video_buffer_manager: video_buffer_manager.clone(),
                 config: config.clone(),
                 capture_start: Instant::now(),
-                // Use 0 as sentinel so first frame always re-applies FPS after session starts,
-                // since set_device_fps above runs before startRunning() and may have no effect.
-                current_fps: 0,
+                last_frame_time: Instant::now(),
                 i420: None,
                 stream_frame: None,
                 prev_stream_w: 0,

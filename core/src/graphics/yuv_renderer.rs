@@ -49,6 +49,10 @@ struct ParticipantGpuState {
     bind_group: wgpu::BindGroup,
     params_buf: wgpu::Buffer,
     dims: (u32, u32),
+    y_staging_buf: [wgpu::Buffer; 2],
+    u_staging_buf: [wgpu::Buffer; 2],
+    v_staging_buf: [wgpu::Buffer; 2],
+    active_buffer: usize,
 }
 
 // ── Pipeline (shared GPU state) ─────────────────────────────────────────────
@@ -200,6 +204,51 @@ impl YuvPipeline {
                 ],
             });
 
+            let y_staging_buf = [
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV Y staging buffer 0"),
+                    size: (y_tex_w * height) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV Y staging buffer 1"),
+                    size: (y_tex_w * height) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+            ];
+
+            let u_staging_buf = [
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV U staging buffer 0"),
+                    size: (uv_tex_w * (height / 2)) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV U staging buffer 1"),
+                    size: (uv_tex_w * (height / 2)) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+            ];
+
+            let v_staging_buf = [
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV V staging buffer 0"),
+                    size: (uv_tex_w * (height / 2)) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("YUV V staging buffer 1"),
+                    size: (uv_tex_w * (height / 2)) as u64,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+            ];
+
             self.participants.insert(
                 participant_id,
                 ParticipantGpuState {
@@ -209,6 +258,10 @@ impl YuvPipeline {
                     bind_group,
                     params_buf,
                     dims: (width, height),
+                    y_staging_buf,
+                    u_staging_buf,
+                    v_staging_buf,
+                    active_buffer: 0,
                 },
             );
         }
@@ -217,7 +270,7 @@ impl YuvPipeline {
     }
 
     /// Upload YUV plane data to GPU textures for the given participant.
-    /// Accepts raw slices and dimensions directly to avoid intermediate copies.
+    /// Uses double-buffered staging buffers to avoid per-frame allocation.
     fn upload_yuv(
         &mut self,
         participant_id: u64,
@@ -236,20 +289,68 @@ impl YuvPipeline {
         let uv_tex_w = align_to(frame.width / 2, 256);
         let uv_h = frame.height / 2;
 
-        // Data is already padded to GPU-aligned strides in VideoBuffer,
-        // upload directly — no intermediate copy needed.
-        queue.write_texture(
+        // Toggle active buffer for next frame
+        let buf_idx = state.active_buffer;
+        state.active_buffer = 1 - buf_idx;
+
+        // --- Y plane ---
+        state.y_staging_buf[buf_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        {
+            let mut view = state.y_staging_buf[buf_idx]
+                .slice(..)
+                .get_mapped_range_mut();
+            view[..frame.y.len()].copy_from_slice(frame.y);
+        }
+        state.y_staging_buf[buf_idx].unmap();
+
+        // --- U plane ---
+        state.u_staging_buf[buf_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        {
+            let mut view = state.u_staging_buf[buf_idx]
+                .slice(..)
+                .get_mapped_range_mut();
+            view[..frame.u.len()].copy_from_slice(frame.u);
+        }
+        state.u_staging_buf[buf_idx].unmap();
+
+        // --- V plane ---
+        state.v_staging_buf[buf_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        {
+            let mut view = state.v_staging_buf[buf_idx]
+                .slice(..)
+                .get_mapped_range_mut();
+            view[..frame.v.len()].copy_from_slice(frame.v);
+        }
+        state.v_staging_buf[buf_idx].unmap();
+
+        // --- Single command encoder for all 3 planes ---
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("YUV upload encoder"),
+        });
+
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &state.y_staging_buf[buf_idx],
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(y_tex_w),
+                    rows_per_image: Some(frame.height),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
                 texture: &state.y_tex,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
-            },
-            frame.y,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(y_tex_w),
-                rows_per_image: Some(frame.height),
             },
             wgpu::Extent3d {
                 width: y_tex_w,
@@ -258,18 +359,20 @@ impl YuvPipeline {
             },
         );
 
-        queue.write_texture(
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &state.u_staging_buf[buf_idx],
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(uv_tex_w),
+                    rows_per_image: Some(uv_h),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
                 texture: &state.u_tex,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
-            },
-            frame.u,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(uv_tex_w),
-                rows_per_image: Some(uv_h),
             },
             wgpu::Extent3d {
                 width: uv_tex_w,
@@ -278,18 +381,20 @@ impl YuvPipeline {
             },
         );
 
-        queue.write_texture(
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &state.v_staging_buf[buf_idx],
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(uv_tex_w),
+                    rows_per_image: Some(uv_h),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
                 texture: &state.v_tex,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
-            },
-            frame.v,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(uv_tex_w),
-                rows_per_image: Some(uv_h),
             },
             wgpu::Extent3d {
                 width: uv_tex_w,
@@ -297,6 +402,8 @@ impl YuvPipeline {
                 depth_or_array_layers: 1,
             },
         );
+
+        queue.submit(Some(encoder.finish()));
 
         // Update params uniform.
         // In stretch-to-fill mode, force aspect terms to match the source aspect so

@@ -243,6 +243,7 @@ pub struct Application<'a> {
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
     screensharing_redraw_thread: Option<JoinHandle<()>>,
+    camera_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
 }
@@ -355,6 +356,7 @@ impl<'a> Application<'a> {
             camera_window: None,
             screensharing_window: None,
             screensharing_redraw_thread: None,
+            camera_redraw_thread: None,
             stats_window: None,
             hang_protection_counter,
         })
@@ -557,6 +559,19 @@ impl<'a> Application<'a> {
     fn join_screensharing_redraw_thread(&mut self) {
         if let Some(handle) = self.screensharing_redraw_thread.take() {
             let _ = handle.join();
+        }
+    }
+
+    fn join_camera_redraw_thread(&mut self) {
+        if let Some(handle) = self.camera_redraw_thread.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn close_camera_window(&mut self) {
+        log::info!("close_camera_window");
+        if let Some(mut cam) = self.camera_window.take() {
+            self.camera_redraw_thread = cam.take_redraw_thread();
         }
     }
 
@@ -1014,7 +1029,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     room_service.destroy_room();
                 }
 
-                self.camera_window = None;
+                self.close_camera_window();
                 self.close_screensharing_window();
                 self.stats_window = None;
 
@@ -1429,6 +1444,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::StartCamera { msg, from_socket } => {
+                if self.camera_window.is_none() {
+                    self.join_camera_redraw_thread();
+                }
                 let device_name = if msg.device_name.is_some() {
                     msg.device_name
                 } else if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
@@ -1566,7 +1584,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         guard.values().any(|info| info.camera_active())
                     };
                     if !any_active {
-                        self.camera_window = None;
+                        self.close_camera_window();
                     }
                 }
             }
@@ -1576,6 +1594,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::info!("user_event: Camera window already exists, skipping");
                     return;
                 }
+                self.join_camera_redraw_thread();
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
                     match CameraWindow::new(
@@ -1661,7 +1680,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CloseCameraWindow => {
                 log::info!("user_event: CloseCameraWindow");
-                self.camera_window = None;
+                self.close_camera_window();
             }
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
@@ -2179,15 +2198,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
         let now = std::time::Instant::now();
         let mut next_redraw: Option<std::time::Instant> = None;
-
-        // Handle camera window
-        if let Some(camera) = &self.camera_window {
-            let camera_next = camera.next_redraw_at();
-            if now >= camera_next {
-                camera.request_redraw();
-            }
-            next_redraw = Some(camera_next);
-        }
 
         // Handle stats window
         if let Some(stats_win) = &mut self.stats_window {
