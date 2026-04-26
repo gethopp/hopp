@@ -413,6 +413,7 @@ impl CameraStream {
 
             let output = AVCaptureVideoDataOutput::new();
             output.setAlwaysDiscardsLateVideoFrames(true);
+            // TODO: we should choose the active format based on the resolution.
 
             if !session.canAddOutput(&output) {
                 return Err("Cannot add camera output to session".to_string());

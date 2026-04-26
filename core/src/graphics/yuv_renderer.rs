@@ -297,7 +297,7 @@ impl YuvPipeline {
         state.y_staging_buf[buf_idx]
             .slice(..)
             .map_async(wgpu::MapMode::Write, |_| {});
-        device.poll(wgpu::PollType::Poll).ok();
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
         {
             let mut view = state.y_staging_buf[buf_idx]
                 .slice(..)
@@ -310,7 +310,7 @@ impl YuvPipeline {
         state.u_staging_buf[buf_idx]
             .slice(..)
             .map_async(wgpu::MapMode::Write, |_| {});
-        device.poll(wgpu::PollType::Poll).ok();
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
         {
             let mut view = state.u_staging_buf[buf_idx]
                 .slice(..)
@@ -323,7 +323,7 @@ impl YuvPipeline {
         state.v_staging_buf[buf_idx]
             .slice(..)
             .map_async(wgpu::MapMode::Write, |_| {});
-        device.poll(wgpu::PollType::Poll).ok();
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
         {
             let mut view = state.v_staging_buf[buf_idx]
                 .slice(..)
