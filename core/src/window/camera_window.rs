@@ -13,7 +13,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant as StdInstant};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use iced::widget::{
     button, column, container, mouse_area, row, shader, stack, svg, text, tooltip, Space,
@@ -59,8 +60,26 @@ const CAMERA_WINDOW_HEIGHT: f64 = 555.0;
 const CAMERA_WINDOW_MIN_WIDTH: f64 = 100.0;
 const CAMERA_WINDOW_MIN_HEIGHT: f64 = 100.0;
 
+use std::sync::mpsc;
+
 /// Target redraw interval: 30 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 30);
+
+pub enum RedrawCommand {
+    Stop,
+}
+
+fn spawn_redraw_thread(
+    redraw_rx: mpsc::Receiver<RedrawCommand>,
+    window: Arc<Window>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || loop {
+        match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
+            Ok(RedrawCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+        }
+    })
+}
 
 const CONTENT_PADDING: f32 = 12.0;
 
@@ -180,9 +199,10 @@ pub struct CameraWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: CameraState,
-    last_redraw: StdInstant,
     participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    redraw_tx: mpsc::Sender<RedrawCommand>,
+    redraw_thread: Option<JoinHandle<()>>,
 }
 
 pub fn camera_window_attributes() -> WindowAttributes {
@@ -286,8 +306,11 @@ impl CameraWindow {
             ..Default::default()
         };
 
+        let (redraw_tx, redraw_rx) = mpsc::channel();
+        let redraw_thread = Some(spawn_redraw_thread(redraw_rx, window.clone()));
+
         Ok(Self {
-            window,
+            window: window.clone(),
             surface,
             device,
             format,
@@ -299,9 +322,10 @@ impl CameraWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state,
-            last_redraw: StdInstant::now(),
             participants,
             event_loop_proxy,
+            redraw_tx,
+            redraw_thread,
         })
     }
 
@@ -316,13 +340,16 @@ impl CameraWindow {
     }
 
     /// Request a redraw of the camera window.
-    pub fn request_redraw(&self) {
+    pub fn request_redraw(&mut self) {
         self.window.request_redraw();
     }
 
-    /// Returns the instant when the next redraw should occur.
-    pub fn next_redraw_at(&self) -> StdInstant {
-        self.last_redraw + REDRAW_INTERVAL
+    /// Take ownership of the redraw thread handle for later joining.
+    pub fn take_redraw_thread(&mut self) -> Option<JoinHandle<()>> {
+        if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
+            log::error!("CameraWindow::take_redraw_thread: failed to send Stop: {e:?}");
+        }
+        self.redraw_thread.take()
     }
 
     /// Update the local camera active state. Call from StartCamera/StopCamera handlers.
@@ -427,17 +454,11 @@ impl CameraWindow {
                         },
                     );
 
-                    self.window.request_redraw();
+                    self.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
-                if self.last_redraw.elapsed() >= REDRAW_INTERVAL {
-                    self.redraw();
-                    self.last_redraw = StdInstant::now();
-                }
-                // Don't call window.request_redraw() here — it wakes the event loop
-                // immediately, creating a busy-loop. Frame scheduling is handled
-                // by Application::about_to_wait() via ControlFlow::WaitUntil.
+                self.redraw();
             }
             WindowEvent::CloseRequested => {
                 self.window.set_visible(false);
@@ -870,7 +891,6 @@ impl CameraWindow {
             },
             self.cursor,
         );
-
         self.cache = Some(interface.into_cache());
 
         // Present via wgpu
@@ -887,6 +907,12 @@ impl CameraWindow {
 
         self.window.pre_present_notify();
         output.present();
+    }
+}
+
+impl Drop for CameraWindow {
+    fn drop(&mut self) {
+        let _ = self.redraw_thread.take();
     }
 }
 

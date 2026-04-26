@@ -2027,7 +2027,6 @@ impl ScreensharingWindow {
                 return Vec::new();
             }
         }
-
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -2078,7 +2077,6 @@ impl ScreensharingWindow {
             },
             self.cursor,
         );
-
         self.cache = Some(interface.into_cache());
 
         // Present via wgpu
@@ -2107,6 +2105,7 @@ impl ScreensharingWindow {
         if !skip_buffer {
             self.last_rendered_frame_id = current_frame_id;
         }
+
         cleared
     }
 }
