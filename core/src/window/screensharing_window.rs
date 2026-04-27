@@ -1076,6 +1076,8 @@ impl ScreensharingWindow {
         let rect = self.participant_image_rect();
         let mut input_event = None;
 
+        let is_redraw = matches!(event, WindowEvent::RedrawRequested);
+
         match &event {
             WindowEvent::CursorMoved { position, .. } => {
                 let logical_x = (position.x / scale_factor as f64) as f32;
@@ -1428,103 +1430,107 @@ impl ScreensharingWindow {
 
         // Convert winit event to iced event
         // TODO check if we have to throttle this, we might get too many mouse events
-        if let Some(iced_event) = conversion::window_event(
-            event.clone(),
-            self.window.scale_factor() as f32,
-            self.modifiers,
-        ) {
-            if let Event::Mouse(mouse_event) = iced_event {
-                self.cursor = match mouse_event {
-                    iced::mouse::Event::CursorMoved { position } => {
-                        mouse::Cursor::Available(position)
-                    }
-                    iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                    _ => self.cursor,
-                };
-            }
-
-            // Build user interface, process the event, and collect messages
-            let mut messages: Vec<ScreensharingMessage> = Vec::new();
-
-            let cache = self.cache.take().unwrap_or_default();
-            let mut interface = UserInterface::build(
-                Self::view(
-                    &self.state,
-                    &self.screen_share_buffer,
-                    &self.participants_manager,
-                    &self.click_animation_renderer,
-                    true,
-                ),
-                self.viewport.logical_size(),
-                cache,
-                &mut self.renderer,
-            );
-
-            let iced_event = conversion::window_event(
+        if !is_redraw {
+            if let Some(iced_event) = conversion::window_event(
                 event.clone(),
                 self.window.scale_factor() as f32,
                 self.modifiers,
-            );
-            if let Some(ev) = iced_event {
-                let (_, statuses) = interface.update(
-                    &[ev],
-                    self.cursor,
-                    &mut self.renderer,
-                    &mut self.clipboard,
-                    &mut messages,
-                );
-                let _ = statuses;
-            }
-
-            self.cache = Some(interface.into_cache());
-
-            // Process collected messages
-            for msg in messages {
-                match &msg {
-                    ScreensharingMessage::TabSelected(id) => {
-                        let tab = match *id {
-                            "draw" => ScreenShareTab::Draw,
-                            "point" => ScreenShareTab::Point,
-                            _ => ScreenShareTab::Control,
-                        };
-                        let mode = match tab {
-                            ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
-                                crate::room_service::DrawSettings {
-                                    permanent: self.state.draw_persist,
-                                },
-                            ),
-                            ScreenShareTab::Point => {
-                                crate::room_service::DrawingMode::ClickAnimation
-                            }
-                            ScreenShareTab::Control => crate::room_service::DrawingMode::Disabled,
-                        };
-                        if mode == crate::room_service::DrawingMode::Disabled
-                            || mode == crate::room_service::DrawingMode::ClickAnimation
-                        {
-                            self.participants_manager
-                                .draw_clear_all_paths(LOCAL_PARTICIPANT_IDENTITY);
+            ) {
+                if let Event::Mouse(mouse_event) = iced_event {
+                    self.cursor = match mouse_event {
+                        iced::mouse::Event::CursorMoved { position } => {
+                            mouse::Cursor::Available(position)
                         }
-                        self.participants_manager
-                            .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
-                        self.state.left_mouse_pressed = false;
-                        input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
-                    }
-                    ScreensharingMessage::DropdownItemClicked(index) => {
-                        let permanent = *index == 1;
-                        let mode = crate::room_service::DrawingMode::Draw(
-                            crate::room_service::DrawSettings { permanent },
-                        );
-                        self.participants_manager
-                            .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
-                        input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
-                    }
-                    _ => {}
+                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                        _ => self.cursor,
+                    };
                 }
-                self.update(msg);
-            }
 
-            // Tick animation; keep requesting redraws while it runs.
-            seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
+                // Build user interface, process the event, and collect messages
+                let mut messages: Vec<ScreensharingMessage> = Vec::new();
+
+                let cache = self.cache.take().unwrap_or_default();
+                let mut interface = UserInterface::build(
+                    Self::view(
+                        &self.state,
+                        &self.screen_share_buffer,
+                        &self.participants_manager,
+                        &self.click_animation_renderer,
+                        true,
+                    ),
+                    self.viewport.logical_size(),
+                    cache,
+                    &mut self.renderer,
+                );
+
+                let iced_event = conversion::window_event(
+                    event.clone(),
+                    self.window.scale_factor() as f32,
+                    self.modifiers,
+                );
+                if let Some(ev) = iced_event {
+                    let (_, statuses) = interface.update(
+                        &[ev],
+                        self.cursor,
+                        &mut self.renderer,
+                        &mut self.clipboard,
+                        &mut messages,
+                    );
+                    let _ = statuses;
+                }
+
+                self.cache = Some(interface.into_cache());
+
+                // Process collected messages
+                for msg in messages {
+                    match &msg {
+                        ScreensharingMessage::TabSelected(id) => {
+                            let tab = match *id {
+                                "draw" => ScreenShareTab::Draw,
+                                "point" => ScreenShareTab::Point,
+                                _ => ScreenShareTab::Control,
+                            };
+                            let mode = match tab {
+                                ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
+                                    crate::room_service::DrawSettings {
+                                        permanent: self.state.draw_persist,
+                                    },
+                                ),
+                                ScreenShareTab::Point => {
+                                    crate::room_service::DrawingMode::ClickAnimation
+                                }
+                                ScreenShareTab::Control => {
+                                    crate::room_service::DrawingMode::Disabled
+                                }
+                            };
+                            if mode == crate::room_service::DrawingMode::Disabled
+                                || mode == crate::room_service::DrawingMode::ClickAnimation
+                            {
+                                self.participants_manager
+                                    .draw_clear_all_paths(LOCAL_PARTICIPANT_IDENTITY);
+                            }
+                            self.participants_manager
+                                .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
+                            self.state.left_mouse_pressed = false;
+                            input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                        }
+                        ScreensharingMessage::DropdownItemClicked(index) => {
+                            let permanent = *index == 1;
+                            let mode = crate::room_service::DrawingMode::Draw(
+                                crate::room_service::DrawSettings { permanent },
+                            );
+                            self.participants_manager
+                                .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
+                            input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                        }
+                        _ => {}
+                    }
+                    self.update(msg);
+                }
+
+                // Tick animation; keep requesting redraws while it runs.
+                seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
+            }
         }
 
         // Handle winit-specific events
@@ -1926,37 +1932,35 @@ impl ScreensharingWindow {
     }
 
     fn redraw_inner(&mut self) -> Vec<u64> {
-        // Check if stream dimensions changed and update window size
-        let current_frame_id;
+        let current_frame_id = self.screen_share_buffer.current_frame_id();
         let mut skip_buffer = false;
+
+        // Reset the last_rendered_frame_id on the first frame, we do this because we might get
+        // stale frame ids in the initial renders from the video buffer manager.
+        if current_frame_id > 0
+            && self.last_rendered_frame_id > 40
+            && current_frame_id < self.last_rendered_frame_id - 40
+        {
+            log::info!(
+                "redraw_inner: stream restart detected (frame_id={current_frame_id}, last_rendered={}), resetting",
+                self.last_rendered_frame_id
+            );
+            self.last_rendered_frame_id = 0;
+        }
+        if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
+            log::warn!(
+                "redraw_inner: dropping redraw {current_frame_id} {}",
+                self.last_rendered_frame_id
+            );
+            skip_buffer = true;
+        }
+
+        let (stream_w, stream_h);
         {
             let frame_lock = self.screen_share_buffer.latest_frame();
             let buf = frame_lock.lock().unwrap();
-            current_frame_id = buf.frame_id;
-
-            // Reset the last_rendered_frame_id on the first frame, we do this because we might get
-            // stale frame ids in the initial renders from the video buffer manager.
-            if current_frame_id > 0
-                && self.last_rendered_frame_id > 40
-                && current_frame_id < self.last_rendered_frame_id - 40
-            {
-                log::info!(
-                    "redraw_inner: stream restart detected (frame_id={current_frame_id}, last_rendered={}), resetting",
-                    self.last_rendered_frame_id
-                );
-                self.last_rendered_frame_id = 0;
-            }
-            // Skip if we already rendered this frame (stale RedrawRequested)
-            if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
-                log::warn!(
-                    "redraw_inner: dropping redraw {current_frame_id} {}",
-                    self.last_rendered_frame_id
-                );
-                skip_buffer = true;
-            }
-
-            let stream_w = buf.width;
-            let stream_h = buf.height;
+            stream_w = buf.width;
+            stream_h = buf.height;
 
             if stream_w > 0
                 && stream_h > 0

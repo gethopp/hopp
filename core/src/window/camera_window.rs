@@ -64,19 +64,32 @@ use std::sync::mpsc;
 
 /// Target redraw interval: 30 FPS
 const REDRAW_INTERVAL: Duration = Duration::from_millis(1_000 / 30);
+/// Redraw interval when screensharing is active: 15 FPS
+const REDRAW_INTERVAL_SCREENSHARING: Duration = Duration::from_millis(1_000 / 15);
 
 pub enum RedrawCommand {
     Stop,
+    SetScreensharingActive(bool),
 }
 
 fn spawn_redraw_thread(
     redraw_rx: mpsc::Receiver<RedrawCommand>,
     window: Arc<Window>,
 ) -> JoinHandle<()> {
-    std::thread::spawn(move || loop {
-        match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
-            Ok(RedrawCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+    std::thread::spawn(move || {
+        let mut interval = REDRAW_INTERVAL;
+        loop {
+            match redraw_rx.recv_timeout(interval) {
+                Ok(RedrawCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(RedrawCommand::SetScreensharingActive(active)) => {
+                    interval = if active {
+                        REDRAW_INTERVAL_SCREENSHARING
+                    } else {
+                        REDRAW_INTERVAL
+                    };
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+            }
         }
     })
 }
@@ -203,6 +216,9 @@ pub struct CameraWindow {
     event_loop_proxy: EventLoopProxy<UserEvent>,
     redraw_tx: mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<JoinHandle<()>>,
+    last_rendered_frame_ids: HashMap<String, u64>,
+    screensharing_active: bool,
+    resize_timer: Option<Instant>,
 }
 
 pub fn camera_window_attributes() -> WindowAttributes {
@@ -326,6 +342,9 @@ impl CameraWindow {
             event_loop_proxy,
             redraw_tx,
             redraw_thread,
+            last_rendered_frame_ids: HashMap::new(),
+            screensharing_active: false,
+            resize_timer: None,
         })
     }
 
@@ -350,6 +369,33 @@ impl CameraWindow {
             log::error!("CameraWindow::take_redraw_thread: failed to send Stop: {e:?}");
         }
         self.redraw_thread.take()
+    }
+
+    /// Update the redraw interval based on screensharing state.
+    /// When screensharing is active, reduces to 15 FPS to save resources.
+    pub fn set_screensharing_active(&mut self, active: bool) {
+        if active {
+            self.screensharing_active = true;
+            if self.resize_timer.is_some() {
+                return;
+            }
+            if let Err(e) = self
+                .redraw_tx
+                .send(RedrawCommand::SetScreensharingActive(active))
+            {
+                log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
+            }
+        } else {
+            self.screensharing_active = false;
+            if self.resize_timer.is_some() {
+                self.resize_timer = None;
+            } else if let Err(e) = self
+                .redraw_tx
+                .send(RedrawCommand::SetScreensharingActive(active))
+            {
+                log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
+            }
+        }
     }
 
     /// Update the local camera active state. Call from StartCamera/StopCamera handlers.
@@ -392,7 +438,7 @@ impl CameraWindow {
 
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
-                    Self::view(&self.state, &self.participants, true),
+                    Self::view(&self.state, &self.participants, true, &mut HashMap::new()),
                     self.viewport.logical_size(),
                     cache,
                     &mut self.renderer,
@@ -454,10 +500,35 @@ impl CameraWindow {
                         },
                     );
 
+                    if self.resize_timer.is_none() {
+                        self.resize_timer = Some(Instant::now() + Duration::from_secs(5));
+                        if self.screensharing_active {
+                            if let Err(e) = self
+                                .redraw_tx
+                                .send(RedrawCommand::SetScreensharingActive(false))
+                            {
+                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
+                            }
+                        }
+                    }
+
                     self.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
+                if let Some(timer) = self.resize_timer {
+                    if Instant::now() >= timer {
+                        self.resize_timer = None;
+                        if self.screensharing_active {
+                            if let Err(e) = self
+                                .redraw_tx
+                                .send(RedrawCommand::SetScreensharingActive(true))
+                            {
+                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
+                            }
+                        }
+                    }
+                }
                 self.redraw();
             }
             WindowEvent::CloseRequested => {
@@ -478,7 +549,8 @@ impl CameraWindow {
     fn view<'a>(
         state: &'a CameraState,
         participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
-        skip_buffer: bool,
+        outer_skip: bool,
+        last_rendered_frame_ids: &mut HashMap<String, u64>,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
         // ── Control buttons ────────────────────────────────────────────────
         let is_muted = participants
@@ -559,7 +631,8 @@ impl CameraWindow {
             state.self_hidden,
             state.local_tile_hovered,
             state.is_compact,
-            skip_buffer,
+            outer_skip,
+            last_rendered_frame_ids,
         );
 
         // ── Main layout ─────────────────────────────────────────────────
@@ -865,7 +938,12 @@ impl CameraWindow {
         // Build fresh interface from cache
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.state, &self.participants, false),
+            Self::view(
+                &self.state,
+                &self.participants,
+                false,
+                &mut self.last_rendered_frame_ids,
+            ),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,
@@ -1375,7 +1453,8 @@ fn create_participant_grid<'a>(
     self_hidden: bool,
     local_tile_hovered: bool,
     is_compact: bool,
-    skip_buffer: bool,
+    outer_skip: bool,
+    last_rendered_frame_ids: &mut HashMap<String, u64>,
 ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     let participants_guard = participants.read().unwrap();
 
@@ -1473,6 +1552,27 @@ fn create_participant_grid<'a>(
                 let id = identity_to_id(identity);
                 let camera_buffers = info.camera_buffers();
                 let is_local = identity.as_str() == "local";
+
+                let should_skip = if outer_skip {
+                    true
+                } else {
+                    let current_frame_id = camera_buffers.current_frame_id();
+                    let last_id = last_rendered_frame_ids
+                        .entry(identity.to_string())
+                        .or_insert(0);
+
+                    // Same logic for resetting the frame id as in the screensharing window
+                    if current_frame_id > 0 && *last_id > 40 && current_frame_id < *last_id - 40 {
+                        *last_id = 0;
+                    }
+
+                    let skip = current_frame_id > 0 && current_frame_id <= *last_id;
+                    if !skip {
+                        *last_id = current_frame_id;
+                    }
+                    skip
+                };
+
                 row_tiles.push(participant_card(ParticipantCardProps {
                     participant_id: id,
                     name: info.name(),
@@ -1484,7 +1584,7 @@ fn create_participant_grid<'a>(
                     is_local,
                     local_tile_hovered,
                     hide_name,
-                    skip_buffer,
+                    skip_buffer: should_skip,
                 }));
             }
         }
