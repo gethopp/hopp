@@ -1932,37 +1932,35 @@ impl ScreensharingWindow {
     }
 
     fn redraw_inner(&mut self) -> Vec<u64> {
-        // Check if stream dimensions changed and update window size
-        let current_frame_id;
+        let current_frame_id = self.screen_share_buffer.current_frame_id();
         let mut skip_buffer = false;
+
+        // Reset the last_rendered_frame_id on the first frame, we do this because we might get
+        // stale frame ids in the initial renders from the video buffer manager.
+        if current_frame_id > 0
+            && self.last_rendered_frame_id > 40
+            && current_frame_id < self.last_rendered_frame_id - 40
+        {
+            log::info!(
+                "redraw_inner: stream restart detected (frame_id={current_frame_id}, last_rendered={}), resetting",
+                self.last_rendered_frame_id
+            );
+            self.last_rendered_frame_id = 0;
+        }
+        if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
+            log::warn!(
+                "redraw_inner: dropping redraw {current_frame_id} {}",
+                self.last_rendered_frame_id
+            );
+            skip_buffer = true;
+        }
+
+        let (stream_w, stream_h);
         {
             let frame_lock = self.screen_share_buffer.latest_frame();
             let buf = frame_lock.lock().unwrap();
-            current_frame_id = buf.frame_id;
-
-            // Reset the last_rendered_frame_id on the first frame, we do this because we might get
-            // stale frame ids in the initial renders from the video buffer manager.
-            if current_frame_id > 0
-                && self.last_rendered_frame_id > 40
-                && current_frame_id < self.last_rendered_frame_id - 40
-            {
-                log::info!(
-                    "redraw_inner: stream restart detected (frame_id={current_frame_id}, last_rendered={}), resetting",
-                    self.last_rendered_frame_id
-                );
-                self.last_rendered_frame_id = 0;
-            }
-            // Skip if we already rendered this frame (stale RedrawRequested)
-            if current_frame_id > 0 && current_frame_id <= self.last_rendered_frame_id {
-                log::warn!(
-                    "redraw_inner: dropping redraw {current_frame_id} {}",
-                    self.last_rendered_frame_id
-                );
-                skip_buffer = true;
-            }
-
-            let stream_w = buf.width;
-            let stream_h = buf.height;
+            stream_w = buf.width;
+            stream_h = buf.height;
 
             if stream_w > 0
                 && stream_h > 0

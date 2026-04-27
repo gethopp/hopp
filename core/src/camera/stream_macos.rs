@@ -134,6 +134,7 @@ struct CameraDelegateState {
     prev_stream_h: u32,
     failures_count: Arc<Mutex<u32>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
+    frame_counter: u64,
 }
 
 define_class!(
@@ -302,6 +303,8 @@ define_class!(
                                 write_frame(&stream_frame.buffer);
                                 state.buffer_source.capture_frame(stream_frame);
                             }
+                            state.video_buffer_manager.set_frame_id(state.frame_counter);
+                            state.frame_counter += 1;
                             state.i420 = Some(i420);
                         } else {
                             let frame = VideoFrame {
@@ -311,6 +314,8 @@ define_class!(
                             };
                             state.buffer_source.capture_frame(&frame);
                             write_frame(&frame.buffer);
+                            state.video_buffer_manager.set_frame_id(state.frame_counter);
+                            state.frame_counter += 1;
                             state.i420 = Some(frame.buffer);
                         }
                     }
@@ -473,6 +478,7 @@ impl CameraStream {
                 prev_stream_h: 0,
                 failures_count: failures_count.clone(),
                 error_tx: error_tx.clone(),
+                frame_counter: 0,
             };
 
             let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));

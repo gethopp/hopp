@@ -158,6 +158,7 @@ impl CameraStream {
             let mut i420 = I420Buffer::new(width, height);
 
             let capture_start = Instant::now();
+            let mut frame_counter: u64 = 0;
 
             loop {
                 let frame_start = Instant::now();
@@ -237,6 +238,8 @@ impl CameraStream {
                                         capture_start.elapsed().as_micros() as i64;
                                     write_frame(&stream_frame.buffer);
                                     buffer_source.capture_frame(&stream_frame);
+                                    video_buffer_manager.set_frame_id(frame_counter);
+                                    frame_counter += 1;
                                 } else {
                                     let frame = VideoFrame {
                                         rotation: VideoRotation::VideoRotation0,
@@ -245,6 +248,8 @@ impl CameraStream {
                                     };
                                     buffer_source.capture_frame(&frame);
                                     write_frame(&frame.buffer);
+                                    video_buffer_manager.set_frame_id(frame_counter);
+                                    frame_counter += 1;
                                     i420 = frame.buffer; // recover for reuse
                                 }
                             }

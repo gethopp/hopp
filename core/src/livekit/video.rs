@@ -1,7 +1,7 @@
 use livekit::track::RemoteVideoTrack;
 use livekit::webrtc::video_frame::I420Buffer;
 use livekit::webrtc::video_stream::native::NativeVideoStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
@@ -23,7 +23,6 @@ pub struct VideoBuffer {
     pub y: Vec<u8>,
     pub u: Vec<u8>,
     pub v: Vec<u8>,
-    pub frame_id: u64,
 }
 
 impl VideoBuffer {
@@ -94,6 +93,7 @@ pub struct VideoBufferManager {
     buffers: [Mutex<VideoBuffer>; 2],
     write_index: AtomicUsize,
     inactive: std::sync::atomic::AtomicBool,
+    frame_id: AtomicU64,
 }
 
 impl Default for VideoBufferManager {
@@ -105,6 +105,7 @@ impl Default for VideoBufferManager {
             ],
             write_index: AtomicUsize::new(0),
             inactive: std::sync::atomic::AtomicBool::new(true),
+            frame_id: AtomicU64::new(0),
         }
     }
 }
@@ -137,6 +138,16 @@ impl VideoBufferManager {
     /// Mark the stream as inactive.
     pub fn set_inactive(&self, inactive: bool) {
         self.inactive.store(inactive, Ordering::Release);
+    }
+
+    /// Returns the current frame counter (lock-free).
+    pub fn current_frame_id(&self) -> u64 {
+        self.frame_id.load(Ordering::Relaxed)
+    }
+
+    /// Sets the frame counter (lock-free).
+    pub fn set_frame_id(&self, id: u64) {
+        self.frame_id.store(id, Ordering::Relaxed);
     }
 }
 
@@ -197,13 +208,10 @@ pub async fn process_video_stream(
                         let buf = manager.write_buffer();
                         {
                             let mut guard = buf.lock().unwrap();
-
                             guard.copy_from_i420(&i420, width, height);
-
-                            guard.frame_id = frame_counter;
-
-                            frame_counter += 1 + skipped;
                         }
+                        manager.set_frame_id(frame_counter);
+                        frame_counter += 1;
                         manager.advance_write();
 
                         if let Some(tx) = &redraw_tx {
