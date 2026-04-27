@@ -12,52 +12,51 @@ Hopp is an open-source pair programming app with screen sharing, remote control,
 - `web-app/` — React web application
 - `docs/` — Astro documentation site
 
+## Tech Stack
+
+- **Monorepo**: Yarn 4 workspaces, Node.js v20, Taskfile as primary entrypoint
+- **Backend**: Go 1.25, Echo, PostgreSQL, Redis, GORM, JWT auth, Stripe, Sentry, LiveKit server SDK
+- **Desktop**: Tauri 2 (Rust + React/TypeScript/Tailwind, Vite)
+- **Core**: Rust — screen capture, remote input, LiveKit streaming, camera window and screensharing window (winit + iced + wgpu, native OS windows, not Tauri webviews)
+- **Web App**: React + TypeScript, Vite, TanStack Query, Radix + Headless UI, Tailwind
+
 ## Commands
 
 All commands use [Taskfile](https://taskfile.dev). Run `task --list` in any directory to see available tasks.
 
-Avoid running the following commands as an agent, as this is preferred to run from a user in their terminal and navigate in the Desktop app.
+Do not run these as an agent — they require user interaction in a terminal/desktop.
 
-**Backend (Go):**
+**Backend:** `cd backend && task run` / `task test`
+**Core:** `cd core && cargo build` / `cargo test` / `cargo fmt`
+**Tauri:** `cd tauri && task dev` / `task build`
+**Web App:** `cd web-app && yarn dev` / `yarn build`
 
-```bash
-cd backend
-task run          # Run with hot reload (Air)
-task test         # Run tests
+## IPC Architecture
+
+```
+Tauri UI (React)  ←→  Tauri Backend (Rust)  ←→  Core Process (Rust)
+   (webview)            (tauri commands)          (hopp_core sidecar)
 ```
 
-**Core (Rust):**
+- **UI → Tauri**: `invoke()` calls typed via `CommandMap` in `tauri/src/core_payloads.ts`
+- **Tauri ↔ Core**: `socket_lib` — Unix socket (macOS/Linux) or TCP (Windows), length-prefixed JSON. All message variants in `core/socket_lib/src/lib.rs` (`enum Message`)
+- **Core → UI**: Core sends a `Message`, `forward_core_events()` in `tauri/src-tauri/src/main.rs` emits `app.emit("core_<event>", payload)`, frontend listens via `listen("core_<event>", cb)`
 
-```bash
-cd core
-cargo build
-cargo test
-cargo fmt         # Format code
-```
+### Adding a new IPC message
 
-**Tauri App:**
-
-```bash
-cd tauri
-task dev          # Dev mode with hot reload
-task build        # Production build
-```
-
-**Web App:**
-
-```bash
-cd web-app
-yarn dev
-yarn build
-```
+1. Add variant to `enum Message` in `core/socket_lib/src/lib.rs`
+2. If it's a response, add to `Message::is_response()`
+3. Handle in `core/src/lib.rs` (`handle_message` or `user_event`)
+4. If forwarded to UI: handle in `forward_core_events()` and `listen()` in frontend
+5. Mirror new structs in `tauri/src/core_payloads.ts`
 
 ## Code Style
 
-- **JS/TS:** Prettier (120 cols). Runs via pre-commit.
+- **JS/TS:** Prettier (120 cols). Pre-commit runs automatically.
 - **Rust:** `cargo fmt` per crate (`core/`, `tauri/src-tauri/`).
-- **Go:** `gofmt` + `golangci-lint` (config: `.golangcli.yml`).
-
-Pre-commit hooks enforce all formatting automatically.
+- **Go:** `gofmt` + `golangci-lint` (config: `.golangcli.yml`; linters: `govet`, `ineffassign`, `unused`, `staticcheck`).
+- **TS imports:** Use `@` alias → `src/` (configured in Vite for both `tauri/` and `web-app/`)
+- **Frontend security:** Prefer normal React bindings; avoid `dangerouslySetInnerHTML`; use `new URL()` / `URLSearchParams` over string concatenation for URLs.
 
 ## Testing
 
@@ -67,29 +66,8 @@ Pre-commit hooks enforce all formatting automatically.
 
 ## Key Conventions
 
-- Use `@` alias for imports in TS/React code (maps to `src/`)
-- API contracts defined in `backend/api-files/openapi.yaml`
-- Desktop app launches `hopp_core` binary and communicates over socket
-- Cross-platform: macOS, Windows, Linux all supported
-
-<!-- OPENSPEC:START -->
-
-# OpenSpec Instructions
-
-These instructions are for AI assistants working in this project.
-
-Always open `@/openspec/AGENTS.md` when the request:
-
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
-
-Use `@/openspec/AGENTS.md` to learn:
-
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
-
-Keep this managed block so 'openspec update' can refresh the instructions.
-
-<!-- OPENSPEC:END -->
+- API contract: `backend/api-files/openapi.yaml` (OpenAPI); type-safe clients generated from it
+- IPC contract: `socket_lib::Message` enum + TypeScript mirror in `tauri/src/core_payloads.ts`
+- Cross-platform desktop: macOS/Windows/Linux — platform APIs and capture/overlay/input constraints matter
+- Local dev uses mkcert HTTPS certs (WebKit requirement); Tauri dev expects Vite on port `1420`
+- `hopp_core` binary bundled as external resource in the desktop bundle
