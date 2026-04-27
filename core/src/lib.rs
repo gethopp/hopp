@@ -604,7 +604,7 @@ impl<'a> Application<'a> {
         self.screensharing_active = active;
         let capturer = self.camera_capturer.lock().unwrap();
         capturer.set_screensharing_active(active);
-        if let Some(cam) = &self.camera_window {
+        if let Some(cam) = &mut self.camera_window {
             cam.set_screensharing_active(active);
         }
         log::info!("set_screensharing_active: {active}");
@@ -1545,7 +1545,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .active_device_name()
                             .map(|s| s.to_string()),
                     ) {
-                        Ok(cam) => {
+                        Ok(mut cam) => {
                             log::info!("user_event: Camera window opened for local camera");
                             cam.set_screensharing_active(self.screensharing_active);
                             self.camera_window = Some(cam);
@@ -1610,7 +1610,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .active_device_name()
                             .map(|s| s.to_string()),
                     ) {
-                        Ok(cam) => {
+                        Ok(mut cam) => {
                             cam.set_screensharing_active(self.screensharing_active);
                             self.camera_window = Some(cam);
                         }

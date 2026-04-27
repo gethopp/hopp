@@ -217,6 +217,8 @@ pub struct CameraWindow {
     redraw_tx: mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<JoinHandle<()>>,
     last_rendered_frame_ids: HashMap<String, u64>,
+    screensharing_active: bool,
+    resize_timer: Option<Instant>,
 }
 
 pub fn camera_window_attributes() -> WindowAttributes {
@@ -341,6 +343,8 @@ impl CameraWindow {
             redraw_tx,
             redraw_thread,
             last_rendered_frame_ids: HashMap::new(),
+            screensharing_active: false,
+            resize_timer: None,
         })
     }
 
@@ -369,12 +373,28 @@ impl CameraWindow {
 
     /// Update the redraw interval based on screensharing state.
     /// When screensharing is active, reduces to 15 FPS to save resources.
-    pub fn set_screensharing_active(&self, active: bool) {
-        if let Err(e) = self
-            .redraw_tx
-            .send(RedrawCommand::SetScreensharingActive(active))
-        {
-            log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
+    pub fn set_screensharing_active(&mut self, active: bool) {
+        if active {
+            self.screensharing_active = true;
+            if self.resize_timer.is_some() {
+                return;
+            }
+            if let Err(e) = self
+                .redraw_tx
+                .send(RedrawCommand::SetScreensharingActive(active))
+            {
+                log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
+            }
+        } else {
+            self.screensharing_active = false;
+            if self.resize_timer.is_some() {
+                self.resize_timer = None;
+            } else if let Err(e) = self
+                .redraw_tx
+                .send(RedrawCommand::SetScreensharingActive(active))
+            {
+                log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
+            }
         }
     }
 
@@ -480,10 +500,35 @@ impl CameraWindow {
                         },
                     );
 
+                    if self.resize_timer.is_none() {
+                        self.resize_timer = Some(Instant::now() + Duration::from_secs(5));
+                        if self.screensharing_active {
+                            if let Err(e) = self
+                                .redraw_tx
+                                .send(RedrawCommand::SetScreensharingActive(false))
+                            {
+                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
+                            }
+                        }
+                    }
+
                     self.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
+                if let Some(timer) = self.resize_timer {
+                    if Instant::now() >= timer {
+                        self.resize_timer = None;
+                        if self.screensharing_active {
+                            if let Err(e) = self
+                                .redraw_tx
+                                .send(RedrawCommand::SetScreensharingActive(true))
+                            {
+                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
+                            }
+                        }
+                    }
+                }
                 self.redraw();
             }
             WindowEvent::CloseRequested => {
