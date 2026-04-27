@@ -231,6 +231,7 @@ pub enum Message {
     RoomConnectionFailed(String),
     OpenContentPicker,
     ControllerDrawPersistChanged(bool),
+    SharerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),
     ActiveMicChanged(String),
     ActiveCameraChanged(String),

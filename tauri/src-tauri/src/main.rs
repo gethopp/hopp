@@ -430,6 +430,12 @@ fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_sharer_draw_persist(persist);
+
+    if data.drawing_enabled {
+        if let Err(e) = data.sender.send(Message::SharerDrawPersistChanged(persist)) {
+            log::error!("set_sharer_draw_persist: failed to send message: {e:?}");
+        }
+    }
 }
 
 #[tauri::command(async)]

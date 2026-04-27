@@ -1708,6 +1708,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
+            UserEvent::SharerDrawPersistChanged(persist) => {
+                log::info!("user_event: SharerDrawPersistChanged: {persist}");
+                if let Some(drawing_window) = &mut self.drawing_window {
+                    drawing_window.set_draw_persist(persist);
+                }
+                if let Some(room_service) = &self.room_service {
+                    room_service.publish_drawing_mode(room_service::DrawingMode::Draw(
+                        room_service::DrawSettings { permanent: persist },
+                    ));
+                }
+            }
             UserEvent::ControllerDrawPersistChanged(persist) => {
                 self.controller_draw_persist = persist;
             }
@@ -2145,6 +2156,7 @@ pub enum UserEvent {
     DrawClearAllPaths(String),
     ClickAnimationFromParticipant(room_service::ClientPoint, String),
     LocalDrawingEnabled(socket_lib::DrawingEnabled),
+    SharerDrawPersistChanged(bool),
     ControllerDrawPersistChanged(bool),
     LastModeChanged(socket_lib::StoredMode),
     ListAudioDevices,
@@ -2299,6 +2311,9 @@ impl RenderEventLoop {
                         UserEvent::ControllerCursorEnabled(enabled)
                     }
                     Message::DrawingEnabled(permanent) => UserEvent::LocalDrawingEnabled(permanent),
+                    Message::SharerDrawPersistChanged(persist) => {
+                        UserEvent::SharerDrawPersistChanged(persist)
+                    }
                     Message::ControllerDrawPersistChanged(persist) => {
                         UserEvent::ControllerDrawPersistChanged(persist)
                     }

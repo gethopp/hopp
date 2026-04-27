@@ -296,6 +296,14 @@ impl DrawingWindow {
         self.window.set_visible(false);
     }
 
+    pub fn set_draw_persist(&mut self, permanent: bool) {
+        self.draw_persist = permanent;
+        self.participants_manager.set_drawing_mode(
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+            crate::room_service::DrawingMode::Draw(crate::room_service::DrawSettings { permanent }),
+        );
+    }
+
     fn set_default_cursor(&self) {
         #[cfg(target_os = "macos")]
         {
