@@ -235,8 +235,12 @@ const setSharerDrawPersist = async (persist: boolean): Promise<void> => {
   return await invoke("set_sharer_draw_persist", { persist });
 };
 
-const enableDrawing = async (permanent: boolean): Promise<void> => {
-  await invoke("enable_drawing", { permanent });
+const getDrawingEnabled = async (): Promise<boolean> => {
+  return await invoke<boolean>("get_drawing_enabled");
+};
+
+const setDrawingEnabled = async (enabled: boolean, permanent: boolean): Promise<void> => {
+  return await invoke("set_drawing_enabled", { enabled, permanent });
 };
 
 const getDrawingHintShown = async (): Promise<boolean> => {
@@ -364,7 +368,8 @@ export const tauriUtils = {
   setLastUsedCamera,
   getSharerDrawPersist,
   setSharerDrawPersist,
-  enableDrawing,
+  getDrawingEnabled,
+  setDrawingEnabled,
   getDrawingHintShown,
   setDrawingHintShown,
   minimizeMainWindow,

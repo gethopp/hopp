@@ -451,24 +451,40 @@ fn set_drawing_hint_shown(app: tauri::AppHandle, shown: bool) {
 }
 
 #[tauri::command(async)]
-fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
-    log::info!("enable_drawing: permanent={permanent}");
+fn get_drawing_enabled(app: tauri::AppHandle) -> bool {
+    log::info!("get_drawing_enabled");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
+    data.drawing_enabled
+}
+
+#[tauri::command(async)]
+fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
+    log::info!("set_drawing_enabled: enabled={enabled} permanent={permanent}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+
+    if data.drawing_enabled == enabled {
+        return;
+    }
+
+    data.drawing_enabled = enabled;
+
     if let Err(e) = data
         .sender
         .send(Message::DrawingEnabled(DrawingEnabled { permanent }))
     {
-        log::error!("enable_drawing: failed to send message: {e:?}");
+        log::error!("set_drawing_enabled: failed to send message: {e:?}");
     }
     drop(data);
 
-    // Hide main window
-    if let Some(window) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        let _ = window.hide();
-        #[cfg(target_os = "windows")]
-        let _ = window.minimize();
+    if enabled {
+        if let Some(window) = app.get_webview_window("main") {
+            #[cfg(target_os = "macos")]
+            let _ = window.hide();
+            #[cfg(target_os = "windows")]
+            let _ = window.minimize();
+        }
     }
 }
 
@@ -1511,7 +1527,8 @@ fn main() {
             set_sharer_draw_persist,
             get_drawing_hint_shown,
             set_drawing_hint_shown,
-            enable_drawing,
+            get_drawing_enabled,
+            set_drawing_enabled,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,

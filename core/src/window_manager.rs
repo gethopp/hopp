@@ -223,6 +223,13 @@ impl WindowManager {
         }
     }
 
+    pub fn active_window_position(&self) -> Option<LogicalPosition<f64>> {
+        let active_id = self.active_monitor_id.as_ref()?;
+        let entry = self.windows.iter().find(|e| &e.monitor_id == active_id)?;
+        let pos = entry.window.outer_position().ok()?;
+        Some(pos.to_logical(entry.window.scale_factor()))
+    }
+
     pub fn is_active_window(&self, window_id: winit::window::WindowId) -> bool {
         self.active_monitor_id.as_ref().is_some_and(|active_id| {
             self.windows

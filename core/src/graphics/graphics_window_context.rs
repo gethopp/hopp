@@ -205,6 +205,7 @@ pub struct ContextManager {
     pub camera_context: GraphicsWindowContext,
     pub screensharing_context: GraphicsWindowContext,
     pub overlay_context: GraphicsWindowContext,
+    pub drawing_context: GraphicsWindowContext,
 }
 
 impl ContextManager {
@@ -257,10 +258,25 @@ impl ContextManager {
             SurfaceInitProfile::Overlay,
         )?;
 
+        let drawing_attrs =
+            crate::window::drawing_window::drawing_window_attributes().with_visible(false);
+        let drawing_window = Arc::new(event_loop.create_window(drawing_attrs).map_err(|e| {
+            log::error!("ContextManager: failed to create dummy drawing window: {e:?}");
+            GraphicsWindowContextError::SurfaceCreation
+        })?);
+        let (drawing_context, _) = GraphicsWindowContext::new(
+            &drawing_window,
+            wgpu::PowerPreference::HighPerformance,
+            wgpu::PresentMode::AutoVsync,
+            "DrawingWindow",
+            SurfaceInitProfile::Overlay,
+        )?;
+
         Ok(Self {
             camera_context,
             screensharing_context,
             overlay_context,
+            drawing_context,
         })
     }
 
@@ -283,5 +299,12 @@ impl ContextManager {
         window: &Arc<Window>,
     ) -> Result<SurfaceInfo, GraphicsWindowContextError> {
         self.overlay_context.create_surface(window)
+    }
+
+    pub fn create_drawing_surface(
+        &self,
+        window: &Arc<Window>,
+    ) -> Result<SurfaceInfo, GraphicsWindowContextError> {
+        self.drawing_context.create_surface(window)
     }
 }

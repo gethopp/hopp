@@ -1,6 +1,6 @@
 import { formatDistanceToNow } from "date-fns";
 import { LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff, LuWifiOff } from "react-icons/lu";
-import { PiScribbleLoopBold } from "react-icons/pi";
+import { PiScribbleLoopBold, PiCursorBold } from "react-icons/pi";
 import useStore, { CallState, ParticipantRole } from "@/store/store";
 import { Separator } from "@/components/ui/separator";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
@@ -240,21 +240,26 @@ export function CallCenter() {
 
 function DrawingEnableButton() {
   const [drawingPermanent, setDrawingPermanent] = useState(false);
+  const [drawingEnabled, setDrawingEnabled] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [hintShown, setHintShown] = useState(false);
 
   useEffect(() => {
-    const loadPreference = async () => {
+    const loadPreferences = async () => {
       try {
-        const permanent = await tauriUtils.getSharerDrawPersist();
+        const [permanent, enabled, shown] = await Promise.all([
+          tauriUtils.getSharerDrawPersist(),
+          tauriUtils.getDrawingEnabled(),
+          tauriUtils.getDrawingHintShown(),
+        ]);
         setDrawingPermanent(permanent);
-        const shown = await tauriUtils.getDrawingHintShown();
+        setDrawingEnabled(enabled);
         setHintShown(shown);
       } catch (error) {
-        console.error("Failed to load drawing permanent preference:", error);
+        console.error("Failed to load drawing preferences:", error);
       }
     };
-    loadPreference();
+    loadPreferences();
   }, []);
 
   const handlePermanentToggle = async (checked: boolean) => {
@@ -266,9 +271,10 @@ function DrawingEnableButton() {
     }
   };
 
-  const handleEnableDrawing = async () => {
+  const handleToggleDrawing = async () => {
+    const newEnabled = !drawingEnabled;
     try {
-      if (!hintShown) {
+      if (newEnabled && !hintShown) {
         await new Promise<void>((resolve) => {
           const toastDurationMs = 3_000;
           let dismissed = false;
@@ -306,15 +312,15 @@ function DrawingEnableButton() {
             dismissHintToast();
           }, toastDurationMs);
         });
-        await tauriUtils.enableDrawing(drawingPermanent);
         await tauriUtils.setDrawingHintShown(true);
         setHintShown(true);
-      } else {
-        await tauriUtils.enableDrawing(drawingPermanent);
       }
+
+      await tauriUtils.setDrawingEnabled(newEnabled, drawingPermanent);
+      setDrawingEnabled(newEnabled);
     } catch (error) {
-      console.error("Failed to enable drawing:", error);
-      toast.error("Failed to enable drawing", { duration: 2500 });
+      console.error("Failed to toggle drawing:", error);
+      toast.error("Failed to toggle drawing", { duration: 2500 });
     }
   };
 
@@ -326,13 +332,15 @@ function DrawingEnableButton() {
             <Button
               variant="outline"
               size="icon"
-              onClick={handleEnableDrawing}
+              onClick={handleToggleDrawing}
               className="rounded-none first:rounded-l-lg focus:z-10"
             >
-              <PiScribbleLoopBold className="size-4" />
+              {drawingEnabled ?
+                <PiCursorBold className="size-4" />
+              : <PiScribbleLoopBold className="size-4" />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Enable drawing</TooltipContent>
+          <TooltipContent side="bottom">{drawingEnabled ? "Disable drawing" : "Enable drawing"}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
       <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>

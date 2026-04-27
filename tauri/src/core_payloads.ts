@@ -181,7 +181,8 @@ export interface CommandMap {
   set_controller_draw_persist: { args: { persist: boolean }; return: void };
   get_drawing_hint_shown: { args: void; return: boolean };
   set_drawing_hint_shown: { args: { shown: boolean }; return: void };
-  enable_drawing: { args: { permanent: boolean }; return: void };
+  get_drawing_enabled: { args: void; return: boolean };
+  set_drawing_enabled: { args: { enabled: boolean; permanent: boolean }; return: void };
 
   // LiveKit
   set_livekit_url: { args: { url: string }; return: void };

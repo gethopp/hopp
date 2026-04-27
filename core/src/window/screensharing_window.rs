@@ -14,13 +14,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant as StdInstant};
 
+use iced::mouse;
 use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
 use iced::{
     gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
     Shadow, Vector,
 };
 use iced_core::clipboard::Kind;
-use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
@@ -32,14 +32,16 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState};
 #[cfg(not(target_os = "macos"))]
-use winit::window::{CursorIcon, CustomCursor};
+use winit::window::CursorIcon;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use thiserror::Error;
 
-use fontdb::Database;
-use resvg::{tiny_skia, usvg};
-
+use super::aspect_ratio::{
+    calculate_max_window_size, default_window_size, min_window_size, AspectRatioEnforcer,
+    WindowConstant,
+};
+use super::drawing_helpers;
 use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
@@ -52,11 +54,6 @@ use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::utils::clock;
 use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
-
-use super::aspect_ratio::{
-    calculate_max_window_size, default_window_size, min_window_size, AspectRatioEnforcer,
-    WindowConstant,
-};
 
 pub fn screensharing_window_attributes() -> WindowAttributes {
     let (init_w, init_h) = default_window_size();
@@ -280,8 +277,6 @@ fn spawn_redraw_thread(
 }
 /// Dedicated renderer ID for the screensharing stream in YUV pipeline caches.
 const SCREENSHARE_STREAM_ID: u64 = u64::MAX;
-/// Identity used for the local participant's drawing/cursor state.
-const LOCAL_PARTICIPANT_IDENTITY: &str = "local";
 
 const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
 const ICON_PENCIL_SVG: &[u8] = include_bytes!("../../resources/icons/pencil.svg");
@@ -290,12 +285,6 @@ const ICON_PENCIL_SVG: &[u8] = include_bytes!("../../resources/icons/pencil.svg"
 const ICON_REMOTE_CONTROL: char = '\u{F107}';
 const ICON_PEN: char = '\u{F109}';
 const ICON_CLICK_POINTER: char = '\u{F108}';
-const CURSOR_ICON_POINTER: &[u8] =
-    include_bytes!("../../resources/icons/local-participant-cursor.svg");
-const CURSOR_ICON_PENCIL: &[u8] =
-    include_bytes!("../../resources/icons/local-participant-pencil.svg");
-const CURSOR_ICON_POINT: &[u8] =
-    include_bytes!("../../resources/icons/local-participant-pointer.svg");
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
@@ -420,131 +409,6 @@ impl Default for ScreensharingState {
             last_click_y: 0.0,
             sharer_name: "Screen".to_string(),
         }
-    }
-}
-
-/// Canvas overlay that draws remote participant cursors and drawing strokes
-/// on top of the video content.
-struct ParticipantOverlay<'a> {
-    participants: &'a ParticipantsManager,
-    click_animation_renderer: &'a ClickAnimationRenderer,
-}
-
-impl<'a, Message> canvas::Program<Message> for ParticipantOverlay<'a> {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &iced::Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let translate = |pos: Position| -> Position {
-            Position {
-                x: pos.x * bounds.width as f64,
-                y: pos.y * bounds.height as f64,
-            }
-        };
-        let mut geometries = self.participants.draw(renderer, bounds, &translate);
-        geometries.push(
-            self.click_animation_renderer
-                .draw(renderer, bounds, &translate),
-        );
-        geometries
-    }
-}
-
-/// Rasterize SVG bytes to straight-alpha RGBA at the given pixel size.
-fn rasterize_svg_to_rgba(svg_bytes: &[u8], px_size: u32) -> (Vec<u8>, u32, u32) {
-    let fontdb = std::sync::Arc::new(Database::new());
-    let usvg_options = usvg::Options {
-        fontdb,
-        ..Default::default()
-    };
-    let tree = usvg::Tree::from_data(svg_bytes, &usvg_options)
-        .expect("rasterize_svg_to_rgba: failed to parse cursor SVG");
-    let svg_size = tree.size();
-    let max_dim = svg_size.width().max(svg_size.height());
-    let scale = if max_dim > 0.0 {
-        px_size as f32 / max_dim
-    } else {
-        1.0
-    };
-    let w = (svg_size.width() * scale).ceil().max(1.0) as u32;
-    let h = (svg_size.height() * scale).ceil().max(1.0) as u32;
-    let mut pixmap = tiny_skia::Pixmap::new(w, h).expect("rasterize_svg_to_rgba: pixmap");
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-    // tiny_skia gives premultiplied RGBA — convert to straight alpha.
-    let mut rgba = pixmap.data().to_vec();
-    for px in rgba.chunks_exact_mut(4) {
-        let a = px[3] as f32;
-        if a > 0.0 && a < 255.0 {
-            let inv = 255.0 / a;
-            px[0] = (px[0] as f32 * inv).round().min(255.0) as u8;
-            px[1] = (px[1] as f32 * inv).round().min(255.0) as u8;
-            px[2] = (px[2] as f32 * inv).round().min(255.0) as u8;
-        }
-    }
-    (rgba, w, h)
-}
-
-/// Create an `NSCursor` from RGBA pixel data, with `logical_size` in points
-/// and `pixel_size` actual pixels.  The hotspot is given in **point** coords.
-#[cfg(target_os = "macos")]
-fn create_macos_cursor(
-    rgba: &[u8],
-    pixel_w: u32,
-    pixel_h: u32,
-    logical_w: f64,
-    logical_h: f64,
-    hotspot_x: f64,
-    hotspot_y: f64,
-) -> objc2::rc::Retained<objc2_app_kit::NSCursor> {
-    use objc2::rc::Retained;
-    use objc2::AnyThread;
-    use objc2_app_kit::{NSBitmapImageRep, NSCursor, NSImage, NSImageRep};
-    use objc2_foundation::{NSPoint, NSSize};
-
-    unsafe {
-        // Build NSBitmapImageRep with an empty buffer that we'll fill.
-        let planes_ptr: *mut *mut u8 = std::ptr::null_mut();
-        let rep: Retained<NSBitmapImageRep> = objc2::msg_send![
-            NSBitmapImageRep::alloc(),
-            initWithBitmapDataPlanes: planes_ptr,
-            pixelsWide: pixel_w as isize,
-            pixelsHigh: pixel_h as isize,
-            bitsPerSample: 8_isize,
-            samplesPerPixel: 4_isize,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: objc2_app_kit::NSDeviceRGBColorSpace,
-            bytesPerRow: (pixel_w * 4) as isize,
-            bitsPerPixel: 32_isize
-        ];
-
-        // Copy pixel data into the rep's buffer.
-        let bitmap_data: *mut u8 = objc2::msg_send![&rep, bitmapData];
-        std::ptr::copy_nonoverlapping(rgba.as_ptr(), bitmap_data, rgba.len());
-
-        // Wrap in NSImage and set the logical (point) size.
-        let image = NSImage::new();
-        let rep_as_imagerep: &NSImageRep =
-            &*((&rep as &NSBitmapImageRep) as *const NSBitmapImageRep as *const NSImageRep);
-        image.addRepresentation(rep_as_imagerep);
-        image.setSize(NSSize::new(logical_w, logical_h));
-
-        // Create cursor with hotspot in point coordinates.
-        NSCursor::initWithImage_hotSpot(
-            NSCursor::alloc(),
-            &image,
-            NSPoint::new(hotspot_x, hotspot_y),
-        )
     }
 }
 
@@ -676,67 +540,65 @@ impl ScreensharingWindow {
         let aspect_ratio_enforcer = AspectRatioEnforcer::new(&window);
 
         // Create custom cursors for the participant area.
-        // Logical size: 30×30 points (matching the SVG viewBox).
-        const CURSOR_LOGICAL_SIZE: f64 = 30.0;
-
-        // TODO(@konsalex): Extract in core init, to avoid re-rasterizing the cursors
-        // on every window creation.
-        // On macOS, rasterize at 4× the logical size for maximum crispness,
-        // then create native NSCursors with the point size set to 30×30.
         #[cfg(target_os = "macos")]
         let (ns_cursor_pointer, ns_cursor_pencil, ns_cursor_point) = {
-            let px = (CURSOR_LOGICAL_SIZE * 4.0).round() as u32;
-            let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
-            let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);
-            let (point_rgba, pt_w, pt_h) = rasterize_svg_to_rgba(CURSOR_ICON_POINT, px);
-            let pointer = create_macos_cursor(
+            let px = (drawing_helpers::CURSOR_LOGICAL_SIZE * 4.0).round() as u32;
+            let (pointer_rgba, pw, ph) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_POINTER, px);
+            let (pencil_rgba, ew, eh) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_PENCIL, px);
+            let (point_rgba, pt_w, pt_h) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_POINT, px);
+            let pointer = drawing_helpers::create_macos_cursor(
                 &pointer_rgba,
                 pw,
                 ph,
-                CURSOR_LOGICAL_SIZE,
-                CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
                 3.0,
                 2.0,
             );
-            let pencil = create_macos_cursor(
+            let pencil = drawing_helpers::create_macos_cursor(
                 &pencil_rgba,
                 ew,
                 eh,
-                CURSOR_LOGICAL_SIZE,
-                CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
                 2.0,
                 29.0,
             );
-            let point = create_macos_cursor(
+            let point = drawing_helpers::create_macos_cursor(
                 &point_rgba,
                 pt_w,
                 pt_h,
-                CURSOR_LOGICAL_SIZE,
-                CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
                 2.0,
                 4.0,
             );
             (pointer, pencil, point)
         };
 
-        // On non-macOS platforms, fall back to winit CustomCursor at 30px.
         #[cfg(not(target_os = "macos"))]
         let (custom_cursor_pointer, custom_cursor_pencil, custom_cursor_point) = {
             let point_cursor_hotspot = (2.0, 4.0);
-            let px = CURSOR_LOGICAL_SIZE as u32;
-            let (pointer_rgba, pw, ph) = rasterize_svg_to_rgba(CURSOR_ICON_POINTER, px);
-            let (pencil_rgba, ew, eh) = rasterize_svg_to_rgba(CURSOR_ICON_PENCIL, px);
-            let (point_rgba, pt_w, pt_h) = rasterize_svg_to_rgba(CURSOR_ICON_POINT, px);
+            let px = drawing_helpers::CURSOR_LOGICAL_SIZE as u32;
+            let (pointer_rgba, pw, ph) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_POINTER, px);
+            let (pencil_rgba, ew, eh) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_PENCIL, px);
+            let (point_rgba, pt_w, pt_h) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_POINT, px);
             let pointer = event_loop.create_custom_cursor(
-                CustomCursor::from_rgba(pointer_rgba, pw as u16, ph as u16, 3, 2)
+                winit::window::CustomCursor::from_rgba(pointer_rgba, pw as u16, ph as u16, 3, 2)
                     .expect("create pointer cursor"),
             );
             let pencil = event_loop.create_custom_cursor(
-                CustomCursor::from_rgba(pencil_rgba, ew as u16, eh as u16, 2, 29)
+                winit::window::CustomCursor::from_rgba(pencil_rgba, ew as u16, eh as u16, 2, 29)
                     .expect("create pencil cursor"),
             );
             let point = event_loop.create_custom_cursor(
-                CustomCursor::from_rgba(
+                winit::window::CustomCursor::from_rgba(
                     point_rgba,
                     pt_w as u16,
                     pt_h as u16,
@@ -761,8 +623,8 @@ impl ScreensharingWindow {
         }
         // Always add a local participant for the controller's own drawing/cursor state.
         if let Err(e) = participants_manager.add_participant(
-            LOCAL_PARTICIPANT_IDENTITY.to_string(),
-            LOCAL_PARTICIPANT_IDENTITY,
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY.to_string(),
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
             true,
             crate::room_service::DrawingMode::Disabled,
         ) {
@@ -809,7 +671,8 @@ impl ScreensharingWindow {
                         crate::room_service::DrawingMode::Disabled,
                     ),
                 };
-                participants_manager.set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, initial_mode);
+                participants_manager
+                    .set_drawing_mode(drawing_helpers::LOCAL_PARTICIPANT_IDENTITY, initial_mode);
                 ScreensharingState {
                     sharer_name: sharer_first_name,
                     draw_persist,
@@ -1099,7 +962,7 @@ impl ScreensharingWindow {
 
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         self.participants_manager.draw_add_point(
-                            LOCAL_PARTICIPANT_IDENTITY,
+                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                             crate::utils::geometry::Position { x: pct_x, y: pct_y },
                         );
                         input_event =
@@ -1120,7 +983,7 @@ impl ScreensharingWindow {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
                             self.participants_manager.draw_end(
-                                LOCAL_PARTICIPANT_IDENTITY,
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
@@ -1138,7 +1001,7 @@ impl ScreensharingWindow {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
                             self.participants_manager.draw_end(
-                                LOCAL_PARTICIPANT_IDENTITY,
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
@@ -1158,7 +1021,7 @@ impl ScreensharingWindow {
                     if self.state.active_tab == "draw" && self.state.left_mouse_pressed {
                         if let Some((lx, ly)) = self.state.last_draw_cursor {
                             self.participants_manager.draw_end(
-                                LOCAL_PARTICIPANT_IDENTITY,
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
                             input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
@@ -1192,7 +1055,7 @@ impl ScreensharingWindow {
                                     self.state.current_path_id += 1;
                                     self.state.left_mouse_pressed = true;
                                     self.participants_manager.draw_start(
-                                        LOCAL_PARTICIPANT_IDENTITY,
+                                        drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                         crate::utils::geometry::Position { x: pct_x, y: pct_y },
                                         self.state.current_path_id,
                                     );
@@ -1204,7 +1067,7 @@ impl ScreensharingWindow {
                                 } else {
                                     self.state.left_mouse_pressed = false;
                                     self.participants_manager.draw_end(
-                                        LOCAL_PARTICIPANT_IDENTITY,
+                                        drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                         crate::utils::geometry::Position { x: pct_x, y: pct_y },
                                     );
                                     input_event =
@@ -1213,8 +1076,9 @@ impl ScreensharingWindow {
                             }
                             winit::event::MouseButton::Right => {
                                 if down && self.state.draw_persist {
-                                    self.participants_manager
-                                        .draw_clear_all_paths(LOCAL_PARTICIPANT_IDENTITY);
+                                    self.participants_manager.draw_clear_all_paths(
+                                        drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                    );
                                     input_event = Some(ScreenShareInputEvent::DrawClearAllPaths);
                                 }
                             }
@@ -1506,11 +1370,14 @@ impl ScreensharingWindow {
                             if mode == crate::room_service::DrawingMode::Disabled
                                 || mode == crate::room_service::DrawingMode::ClickAnimation
                             {
-                                self.participants_manager
-                                    .draw_clear_all_paths(LOCAL_PARTICIPANT_IDENTITY);
+                                self.participants_manager.draw_clear_all_paths(
+                                    drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                );
                             }
-                            self.participants_manager
-                                .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
+                            self.participants_manager.set_drawing_mode(
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                mode.clone(),
+                            );
                             self.state.left_mouse_pressed = false;
                             input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
                         }
@@ -1519,8 +1386,10 @@ impl ScreensharingWindow {
                             let mode = crate::room_service::DrawingMode::Draw(
                                 crate::room_service::DrawSettings { permanent },
                             );
-                            self.participants_manager
-                                .set_drawing_mode(LOCAL_PARTICIPANT_IDENTITY, mode.clone());
+                            self.participants_manager.set_drawing_mode(
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                mode.clone(),
+                            );
                             input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
                         }
                         _ => {}
@@ -1748,9 +1617,9 @@ impl ScreensharingWindow {
             };
 
         let canvas_overlay: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
-            canvas(ParticipantOverlay {
+            canvas(drawing_helpers::ParticipantOverlay {
                 participants,
-                click_animation_renderer,
+                click_animation_renderer: Some(click_animation_renderer),
             })
             .width(Length::Fill)
             .height(Length::Fill)
