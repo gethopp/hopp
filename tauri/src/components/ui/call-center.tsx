@@ -247,13 +247,11 @@ function DrawingEnableButton() {
   useEffect(() => {
     const loadPreferences = async () => {
       try {
-        const [permanent, enabled, shown] = await Promise.all([
+        const [permanent, shown] = await Promise.all([
           tauriUtils.getSharerDrawPersist(),
-          tauriUtils.getDrawingEnabled(),
           tauriUtils.getDrawingHintShown(),
         ]);
         setDrawingPermanent(permanent);
-        setDrawingEnabled(enabled);
         setHintShown(shown);
       } catch (error) {
         console.error("Failed to load drawing preferences:", error);
