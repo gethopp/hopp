@@ -171,7 +171,7 @@ let isProcessingUpdate = false;
 useStore.subscribe((state, prevState) => {
   // Don't emit if we're currently processing an update from another window
   if (isProcessingUpdate) return;
-  if (!isEqual(state, prevState)) {
+  if (windowName === "main" && !isEqual(state, prevState)) {
     emit("store-update", state);
   }
 
@@ -202,6 +202,9 @@ useStore.subscribe((state, prevState) => {
 
 // Set up listener for store updates from other windows
 listen("store-update", (event) => {
+  // Main is the source of truth; ignore cross-window writes into main.
+  if (windowName === "main") return;
+
   const newState = event.payload as State;
   // Only update if the state is different
   if (!isEqual(useStore.getState(), newState)) {
@@ -216,6 +219,9 @@ listen("store-update", (event) => {
 // Request current state from other windows when initializing
 let hasReceivedInitialState = false;
 listen("get-store-response", async (event) => {
+  // Main does not hydrate from peers.
+  if (windowName === "main") return;
+
   // The below replicates the race-condition issue
   // alongside swapping `get-store` emit/listen order
   // await new Promise((resolve) => setTimeout(resolve, 200));
@@ -232,6 +238,9 @@ emit("get-store");
 
 // Listen for state requests from new windows
 listen("get-store", () => {
+  // Only main responds with canonical state.
+  if (windowName !== "main") return;
+
   emit("get-store-response", {
     state: useStore.getState(),
     window: windowName,
@@ -242,6 +251,10 @@ listen("get-store", () => {
 // Also derive local audio/camera state so the UI stays in sync when toggled from core
 // (e.g. camera window mute button).
 listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
+  // Core snapshots should be processed by main window only.
+  // Non-main windows can race and rebroadcast stale callTokens via store sync.
+  if (windowName !== "main") return;
+
   const { callTokens, user } = useStore.getState();
   if (!callTokens) return;
 
@@ -266,13 +279,22 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
 });
 
 listen<number>("core_mic_audio_level", (event) => {
+  // Keep mic level updates single-writer to avoid cross-window state races
+  // (aux windows can rebroadcast stale callTokens role via store-sync).
+  if (windowName !== "main") return;
+
   const { callTokens } = useStore.getState();
   if (!callTokens) return;
+  if (callTokens.micLevel === event.payload) return;
+
   useStore.getState().updateCallTokens({ micLevel: event.payload });
 });
 
 // Listen for core role change events
 listen<CoreRoleEvent>("core_role_change", (event) => {
+  // Keep role derivation single-writer in main window.
+  if (windowName !== "main") return;
+
   const { callTokens } = useStore.getState();
   if (!callTokens) return;
 
