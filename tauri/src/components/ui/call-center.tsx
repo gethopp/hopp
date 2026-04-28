@@ -262,6 +262,15 @@ function DrawingEnableButton() {
     loadPreferences();
   }, []);
 
+  useEffect(() => {
+    const unlisten = listen("core_drawing_disabled", () => {
+      setDrawingEnabled(false);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const handlePermanentToggle = async (checked: boolean) => {
     setDrawingPermanent(checked);
     try {

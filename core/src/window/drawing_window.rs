@@ -154,7 +154,6 @@ pub struct DrawingWindow {
     ns_cursor_pencil: objc2::rc::Retained<objc2_app_kit::NSCursor>,
     #[cfg(not(target_os = "macos"))]
     custom_cursor_pencil: winit::window::CustomCursor,
-    pencil_cursor_counter: u8,
 }
 
 impl DrawingWindow {
@@ -248,7 +247,7 @@ impl DrawingWindow {
         let (redraw_tx, redraw_rx) = std::sync::mpsc::channel();
         let redraw_thread = Some(spawn_redraw_thread(redraw_rx, window.clone()));
 
-        let mut s = Self {
+        let s = Self {
             window,
             surface,
             device,
@@ -271,9 +270,8 @@ impl DrawingWindow {
             ns_cursor_pencil,
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pencil,
-            pencil_cursor_counter: 0,
         };
-        s.set_pencil_cursor(true);
+        s.set_pencil_cursor();
         Ok(s)
     }
 
@@ -318,10 +316,7 @@ impl DrawingWindow {
         }
     }
 
-    fn set_pencil_cursor(&mut self, reset_counter: bool) {
-        if reset_counter {
-            self.pencil_cursor_counter = 20;
-        }
+    fn set_pencil_cursor(&self) {
         #[cfg(target_os = "macos")]
         {
             self.ns_cursor_pencil.set();
@@ -374,7 +369,7 @@ impl DrawingWindow {
             }
             WindowEvent::CursorEntered { .. } => {
                 log::info!("drawing_window: cursor entered");
-                self.set_pencil_cursor(true);
+                self.set_pencil_cursor();
             }
             WindowEvent::CursorLeft { .. } => {
                 if self.left_mouse_pressed {
@@ -391,7 +386,7 @@ impl DrawingWindow {
                 self.set_default_cursor();
             }
             WindowEvent::Focused(true) => {
-                self.set_pencil_cursor(true);
+                self.set_pencil_cursor();
             }
             WindowEvent::Focused(false) => {
                 if self.left_mouse_pressed {
@@ -408,6 +403,7 @@ impl DrawingWindow {
                 self.set_default_cursor();
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                self.set_pencil_cursor();
                 let (pct_x, pct_y) = match &self.cursor {
                     mouse::Cursor::Available(pos) => {
                         let physical_size = self.window.inner_size();
@@ -549,11 +545,6 @@ impl DrawingWindow {
     }
 
     fn redraw(&mut self) -> Vec<u64> {
-        if self.pencil_cursor_counter > 0 {
-            self.set_pencil_cursor(false);
-            self.pencil_cursor_counter -= 1;
-        }
-
         self.participants_manager.hide_inactive_cursors();
 
         let cleared = self.participants_manager.update_auto_clear();

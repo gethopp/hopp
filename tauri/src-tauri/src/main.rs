@@ -474,14 +474,15 @@ fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
         return;
     }
 
-    data.drawing_enabled = enabled;
-
     if let Err(e) = data
         .sender
         .send(Message::DrawingEnabled(DrawingEnabled { permanent }))
     {
         log::error!("set_drawing_enabled: failed to send message: {e:?}");
+        return;
     }
+
+    data.drawing_enabled = enabled;
     drop(data);
 
     if enabled {
@@ -1127,6 +1128,16 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
             Message::MicrophoneAudioLevel(level) => {
                 if let Err(e) = app.emit("core_mic_audio_level", &level) {
                     log::error!("forward_core_events: failed to emit mic audio level: {e:?}");
+                }
+            }
+            Message::DrawingDisabled => {
+                log::info!("forward_core_events: drawing disabled");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.drawing_enabled = false;
+                drop(data);
+                if let Err(e) = app.emit("core_drawing_disabled", &()) {
+                    log::error!("forward_core_events: failed to emit core_drawing_disabled: {e:?}");
                 }
             }
             other => {

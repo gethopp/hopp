@@ -564,6 +564,9 @@ impl<'a> Application<'a> {
             window.hide();
             self.drawing_redraw_thread = window.take_redraw_thread();
         }
+        if let Err(e) = self.socket.send(Message::DrawingDisabled) {
+            log::error!("Failed to send DrawingDisabled: {e:?}");
+        }
     }
 
     fn stop_screenshare(&mut self) {
@@ -581,6 +584,7 @@ impl<'a> Application<'a> {
         }
         self.destroy_overlay_window();
         self.set_screensharing_active(false);
+        self.close_drawing_window();
     }
 
     fn set_screensharing_active(&mut self, active: bool) {
@@ -1844,6 +1848,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             if drawing.window_id() == window_id {
                 let input_event = drawing.handle_window_event(event);
                 if let Some(event) = input_event {
+                    if matches!(
+                        event,
+                        window::drawing_window::DrawingWindowInputEvent::Escape
+                    ) {
+                        let _ = self
+                            .event_loop_proxy
+                            .send_event(UserEvent::LocalDrawingEnabled(
+                                socket_lib::DrawingEnabled { permanent: false },
+                            ));
+                    }
                     if let Some(rs) = &self.room_service {
                         match event {
                             window::drawing_window::DrawingWindowInputEvent::DrawStart {
@@ -1876,13 +1890,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             ) => {
                                 rs.publish_draw_clear_paths(ids);
                             }
-                            window::drawing_window::DrawingWindowInputEvent::Escape => {
-                                let _ = self.event_loop_proxy.send_event(
-                                    UserEvent::LocalDrawingEnabled(socket_lib::DrawingEnabled {
-                                        permanent: false,
-                                    }),
-                                );
-                            }
+                            window::drawing_window::DrawingWindowInputEvent::Escape => {}
                         }
                     }
                 }
