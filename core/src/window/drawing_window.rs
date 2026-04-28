@@ -179,6 +179,22 @@ impl DrawingWindow {
 
         window.focus_window();
 
+        #[cfg(target_os = "macos")]
+        {
+            use objc2::rc::Retained;
+            use objc2_app_kit::NSView;
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(raw_handle) = window.window_handle() {
+                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
+                    let ns_view: Option<Retained<NSView>> =
+                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+                        ns_window.disableCursorRects();
+                    }
+                }
+            }
+        }
+
         let surface_info =
             context_manager
                 .create_drawing_surface(&window)
@@ -271,7 +287,6 @@ impl DrawingWindow {
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pencil,
         };
-        s.set_pencil_cursor();
         Ok(s)
     }
 
