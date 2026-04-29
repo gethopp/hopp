@@ -19,9 +19,9 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::AppState, create_core_process, get_log_level, get_log_path, get_sentry_dsn,
-    permissions, ping_frontend, recv_expected_response, setup_start_on_launch, setup_tray_icon,
-    AppData,
+    app_state::{AppState, UserSettings},
+    create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
+    recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
 };
 #[cfg(target_os = "macos")]
 use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
@@ -641,10 +641,13 @@ fn call_started(
     let data = app.state::<Mutex<AppData>>();
     #[allow(unused_mut)]
     let mut data = data.lock().unwrap();
+    let user_settings = data.app_state.user_settings();
     #[cfg(target_os = "macos")]
     {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        data.activation_policy_regular = true;
+        if user_settings.show_dock_icon_in_call {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            data.activation_policy_regular = true;
+        }
     }
     // Resolve the audio device name: last used → default → first → ""
     let audio_device_name = {
@@ -692,6 +695,8 @@ fn call_started(
             audio_token: audio_token.clone(),
             video_token: video_token.clone(),
             audio_device_name,
+            start_mic_on_call: Some(user_settings.start_mic_on_call),
+            start_camera_on_call: Some(user_settings.start_camera_on_call),
         }))
     {
         log::error!("call_started: failed to send: {e:?}");
@@ -740,22 +745,6 @@ fn set_hopp_server_url(app: tauri::AppHandle, url: Option<String>) {
 }
 
 #[tauri::command(async)]
-fn get_feedback_disabled(app: tauri::AppHandle) -> bool {
-    log::info!("get_feedback_disabled");
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    data.app_state.feedback_disabled()
-}
-
-#[tauri::command(async)]
-fn set_feedback_disabled(app: tauri::AppHandle, disabled: bool) {
-    log::info!("set_feedback_disabled: {disabled}");
-    let data = app.state::<Mutex<AppData>>();
-    let mut data = data.lock().unwrap();
-    data.app_state.set_feedback_disabled(disabled);
-}
-
-#[tauri::command(async)]
 async fn create_feedback_window(
     app: tauri::AppHandle,
     team_id: String,
@@ -786,6 +775,73 @@ async fn create_feedback_window(
             background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
         },
     )
+}
+
+#[tauri::command(async)]
+async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("create_settings_window");
+    hopp::create_media_window(
+        &app,
+        hopp::MediaWindowConfig {
+            label: "settings",
+            title: "Settings",
+            url: "settings.html",
+            width: 520.0,
+            height: 400.0,
+            resizable: false,
+            always_on_top: false,
+            content_protected: false,
+            maximizable: false,
+            minimizable: true,
+            decorations: true,
+            transparent: false,
+            background_color: None,
+        },
+    )
+}
+
+#[tauri::command(async)]
+fn get_user_settings(app: tauri::AppHandle) -> UserSettings {
+    log::info!("get_user_settings");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    data.app_state.user_settings()
+}
+
+#[tauri::command(async)]
+fn set_call_feedback_popup(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_call_feedback_popup: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.call_feedback_popup = enabled);
+}
+
+#[tauri::command(async)]
+fn set_show_dock_icon_in_call(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_show_dock_icon_in_call: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.show_dock_icon_in_call = enabled);
+}
+
+#[tauri::command(async)]
+fn set_start_camera_on_call(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_start_camera_on_call: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.start_camera_on_call = enabled);
+}
+
+#[tauri::command(async)]
+fn set_start_mic_on_call(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_start_mic_on_call: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.start_mic_on_call = enabled);
 }
 
 #[tauri::command(async)]
@@ -1577,9 +1633,13 @@ fn main() {
             set_tray_notification,
             get_hopp_server_url,
             set_hopp_server_url,
-            get_feedback_disabled,
-            set_feedback_disabled,
             create_feedback_window,
+            create_settings_window,
+            get_user_settings,
+            set_call_feedback_popup,
+            set_show_dock_icon_in_call,
+            set_start_camera_on_call,
+            set_start_mic_on_call,
             mute_mic,
             unmute_mic,
             toggle_mic,

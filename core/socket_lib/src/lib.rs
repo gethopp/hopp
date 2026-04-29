@@ -107,6 +107,8 @@ pub struct CallStartMessage {
     pub audio_token: String,
     pub video_token: String,
     pub audio_device_name: String,
+    pub start_mic_on_call: Option<bool>,
+    pub start_camera_on_call: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -614,6 +616,8 @@ mod tests {
                 audio_token: "test-audio-token".to_string(),
                 video_token: "test-video-token".to_string(),
                 audio_device_name: String::new(),
+                start_mic_on_call: None,
+                start_camera_on_call: None,
             }))
             .unwrap();
         client_sender.send(Message::CallEnd).unwrap();

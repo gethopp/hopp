@@ -87,7 +87,7 @@ const RoomPresenceAvatars = ({
                         alt={`${info.first_name} ${info.last_name}`}
                         className="size-full object-cover"
                       />
-                    : <span className="text-[8px] font-medium text-emerald-700">
+                      : <span className="text-[8px] font-medium text-emerald-700">
                         {info.first_name[0]}
                         {info.last_name[0]}
                       </span>
@@ -164,6 +164,7 @@ export const Rooms = () => {
     queryHash: `rooms-${authToken}`,
     // Avoid refetching on tab change
     staleTime: 30_000,
+    select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
   // Poll for room presence every 10 seconds
@@ -411,7 +412,7 @@ export const Rooms = () => {
                     presenceAvatars={
                       presenceIds.length > 0 ?
                         <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
-                      : undefined
+                        : undefined
                     }
                     cornerIcon={
                       <DropdownMenu>
@@ -446,7 +447,7 @@ export const Rooms = () => {
                 );
               })}
             </div>
-          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
+            : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
           <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
             <DialogContent container={document.getElementById("app-body")}>
               <DialogHeader>
@@ -573,7 +574,7 @@ const SelectedRoom = ({ room }: { room: Room }) => {
           isLocal: true,
           isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
         }
-      : null;
+        : null;
 
     const remoteEntries = coreParticipants
       .filter((p) => p.connected)
@@ -644,7 +645,7 @@ const SelectedRoom = ({ room }: { room: Room }) => {
                     )}
                   </div>
                 </>
-              : <>
+                : <>
                   <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
                     <span className="text-xs font-medium text-slate-600">?</span>
                   </div>

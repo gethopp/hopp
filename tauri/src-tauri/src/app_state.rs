@@ -1,5 +1,26 @@
 use serde::{Deserialize, Serialize};
 pub use socket_lib::StoredMode;
+
+/// User-facing settings exposed in the Settings window.
+/// All fields are non-optional with sensible defaults.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserSettings {
+    pub call_feedback_popup: bool,
+    pub show_dock_icon_in_call: bool,
+    pub start_camera_on_call: bool,
+    pub start_mic_on_call: bool,
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        UserSettings {
+            call_feedback_popup: true,
+            show_dock_icon_in_call: true,
+            start_camera_on_call: false,
+            start_mic_on_call: false,
+        }
+    }
+}
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -28,6 +49,7 @@ fn get_app_state_filename() -> String {
 /// This struct represents the complete application state that gets
 /// persisted to disk. It includes all user preferences and settings
 /// that should survive between application restarts.
+/// All new fields should be Option<T>, so we avoid broken parsing and initializing to defaults.
 #[derive(Debug, Serialize, Deserialize)]
 struct AppStateInternal {
     /// Whether the notifications which shows that hopp is in the menu bar will be shown
@@ -48,9 +70,6 @@ struct AppStateInternal {
     /// Hopp server URL
     pub hopp_server_url: Option<String>,
 
-    /// Whether the post-call feedback dialog is disabled
-    pub feedback_disabled: bool,
-
     /// The user's preferred interaction mode for screen sharing sessions
     pub last_mode: Option<StoredMode>,
 
@@ -63,6 +82,9 @@ struct AppStateInternal {
 
     /// Whether the first-time drawing hint toast has been shown
     pub drawing_hint_shown: Option<bool>,
+
+    /// User-facing settings from the Settings window
+    pub user_settings: Option<UserSettings>,
 }
 
 /// Legacy version of the application state structure.
@@ -84,7 +106,6 @@ impl Default for AppStateInternal {
     /// - First run: true
     /// - User JWT: none
     /// - Hopp server URL: none
-    /// - Feedback disabled: false
     /// - Last mode: none
     /// - Sharer draw persist: none
     /// - Controller draw persist: none
@@ -97,11 +118,11 @@ impl Default for AppStateInternal {
             first_run: true,
             user_jwt: None,
             hopp_server_url: None,
-            feedback_disabled: false,
             last_mode: None,
             sharer_draw_persist: None,
             controller_draw_persist: None,
             drawing_hint_shown: None,
+            user_settings: None,
         }
     }
 }
@@ -343,22 +364,6 @@ impl AppState {
         }
     }
 
-    /// Gets whether post-call feedback dialog is disabled.
-    pub fn feedback_disabled(&self) -> bool {
-        let _lock = self.lock.lock().unwrap();
-        self.state.feedback_disabled
-    }
-
-    /// Updates the feedback disabled setting and saves to disk.
-    pub fn set_feedback_disabled(&mut self, disabled: bool) {
-        log::info!("set_feedback_disabled: {disabled}");
-        let _lock = self.lock.lock().unwrap();
-        self.state.feedback_disabled = disabled;
-        if !self.save() {
-            log::error!("set_feedback_disabled: Failed to save app state");
-        }
-    }
-
     /// Gets the user's preferred interaction mode.
     pub fn last_mode(&self) -> Option<StoredMode> {
         let _lock = self.lock.lock().unwrap();
@@ -420,6 +425,25 @@ impl AppState {
         self.state.drawing_hint_shown = Some(shown);
         if !self.save() {
             log::error!("set_drawing_hint_shown: Failed to save app state");
+        }
+    }
+
+    /// Gets the user settings, returning defaults if not yet stored.
+    pub fn user_settings(&self) -> UserSettings {
+        let _lock = self.lock.lock().unwrap();
+        self.state
+            .user_settings
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Updates a single user setting field and saves to disk.
+    pub fn update_user_setting(&mut self, f: impl FnOnce(&mut UserSettings)) {
+        let _lock = self.lock.lock().unwrap();
+        let settings = self.state.user_settings.get_or_insert_with(UserSettings::default);
+        f(settings);
+        if !self.save() {
+            log::error!("update_user_setting: Failed to save app state");
         }
     }
 

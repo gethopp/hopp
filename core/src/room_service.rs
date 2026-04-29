@@ -49,6 +49,7 @@ pub struct CreateRoomParams {
     pub sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
     pub audio_processor: SharedProcessor,
     pub noise_cancellation_enabled: Arc<AtomicBool>,
+    pub start_mic_on_call: bool,
 }
 
 enum RoomServiceCommand {
@@ -815,6 +816,7 @@ async fn room_service_commands(
                 sample_rx,
                 audio_processor,
                 noise_cancellation_enabled,
+                start_mic_on_call,
             }) => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
@@ -861,6 +863,11 @@ async fn room_service_commands(
                     )
                     .await
                     .map_err(|e| e.to_string())?;
+
+                    if !start_mic_on_call {
+                        log::info!("room_service: start_mic_on_call=false, muting audio track");
+                        publisher.mute();
+                    }
 
                     // Publish camera track (muted) — non-fatal
                     let camera_source = NativeVideoSource::new(
@@ -1077,7 +1084,7 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, false, false),
+                        ParticipantInfo::new(user_name, start_mic_on_call, false),
                     );
                 }
                 log::info!(

@@ -300,12 +300,22 @@ const setHoppServerUrl = async (url: string | null): Promise<void> => {
   }
 };
 
-const getFeedbackDisabled = async (): Promise<boolean> => {
-  return await invoke<boolean>("get_feedback_disabled");
+const setCallFeedbackPopup = async (enabled: boolean): Promise<void> => {
+  await invoke("set_call_feedback_popup", { enabled });
 };
 
-const setFeedbackDisabled = async (disabled: boolean): Promise<void> => {
-  await invoke("set_feedback_disabled", { disabled });
+const openSettingsWindow = async (): Promise<void> => {
+  if (isTauri) {
+    try {
+      await invoke("create_settings_window");
+      const windowHandle = await WebviewWindow.getByLabel("settings");
+      if (windowHandle) {
+        await windowHandle.setFocus();
+      }
+    } catch (error) {
+      console.error("Failed to open settings window:", error);
+    }
+  }
 };
 
 const createFeedbackWindow = async (teamId: string, roomId: string, participantId: string): Promise<void> => {
@@ -329,8 +339,8 @@ const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, parti
   if (!isTauri) return;
 
   try {
-    const disabled = await getFeedbackDisabled();
-    if (!disabled) {
+    const settings = await invoke<{ call_feedback_popup: boolean }>("get_user_settings");
+    if (settings.call_feedback_popup) {
       await createFeedbackWindow(teamId, roomId, participantId);
     }
   } catch (error) {
@@ -379,8 +389,8 @@ export const tauriUtils = {
   callStarted,
   loadCustomServerUrl,
   setHoppServerUrl,
-  getFeedbackDisabled,
-  setFeedbackDisabled,
+  setCallFeedbackPopup,
+  openSettingsWindow,
   createFeedbackWindow,
   showFeedbackWindowIfEnabled,
 };
