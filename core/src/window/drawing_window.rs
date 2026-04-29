@@ -10,8 +10,8 @@ use iced_winit::core::{window, Event, Size};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
-use winit::event::WindowEvent;
 use winit::dpi::LogicalSize;
+use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -32,10 +32,7 @@ pub fn drawing_window_attributes() -> WindowAttributes {
         .with_decorations(false)
         .with_transparent(true)
         .with_content_protected(true)
-        .with_inner_size(LogicalSize::new(
-            1.0,
-            1.0,
-        ))
+        .with_inner_size(LogicalSize::new(1.0, 1.0))
         .with_window_level(WindowLevel::AlwaysOnTop);
 
     #[cfg(target_os = "macos")]
