@@ -516,6 +516,7 @@ impl<'a> Application<'a> {
                 last_mode: self.last_mode.clone(),
                 redraw_rx,
                 redraw_tx,
+                event_loop_proxy: self.event_loop_proxy.clone(),
             },
         ) {
             Ok(win) => self.screensharing_window = Some(win),
@@ -1825,6 +1826,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     self.close_drawing_window();
                 }
             }
+            UserEvent::ExitRequested => {
+                log::info!("user_event: ExitRequested");
+                if let Err(e) = self.socket.send(Message::ExitRequested) {
+                    log::error!("user_event: Error sending ExitRequested: {e:?}");
+                }
+            }
         }
     }
 
@@ -2225,6 +2232,7 @@ pub enum UserEvent {
     AudioCaptureError,
     SetNoiseCancellation(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
+    ExitRequested,
 }
 
 pub struct RenderEventLoop {
@@ -2264,7 +2272,10 @@ impl RenderEventLoop {
         let mut event_loop = EventLoop::<UserEvent>::with_user_event();
 
         #[cfg(target_os = "macos")]
-        event_loop.with_activation_policy(winit::platform::macos::ActivationPolicy::Accessory);
+        {
+            event_loop.with_activation_policy(winit::platform::macos::ActivationPolicy::Accessory);
+            event_loop.with_default_menu(false);
+        }
 
         /* This is the beginning of the app, if this fails we can panic. */
         let event_loop = event_loop.build().expect("Failed to build event loop");

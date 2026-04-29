@@ -469,6 +469,26 @@ impl CameraWindow {
             }
         }
 
+        // Intercept Cmd+Q to prevent app quit
+        #[cfg(target_os = "macos")]
+        if let WindowEvent::KeyboardInput {
+            event: ref key_event,
+            ..
+        } = event
+        {
+            if key_event.state.is_pressed() && self.modifiers.super_key() {
+                if let winit::keyboard::Key::Character(ref ch) = key_event.logical_key {
+                    if ch.as_ref() == "q" {
+                        log::info!("CameraWindow: caught Cmd+Q, requesting exit");
+                        let _ = self
+                            .event_loop_proxy
+                            .send_event(crate::UserEvent::ExitRequested);
+                        return;
+                    }
+                }
+            }
+        }
+
         // Handle winit-specific events
         match event {
             WindowEvent::ModifiersChanged(new_modifiers) => {
