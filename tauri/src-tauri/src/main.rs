@@ -430,6 +430,12 @@ fn set_sharer_draw_persist(app: tauri::AppHandle, persist: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state.set_sharer_draw_persist(persist);
+
+    if data.drawing_enabled {
+        if let Err(e) = data.sender.send(Message::SharerDrawPersistChanged(persist)) {
+            log::error!("set_sharer_draw_persist: failed to send message: {e:?}");
+        }
+    }
 }
 
 #[tauri::command(async)]
@@ -451,25 +457,56 @@ fn set_drawing_hint_shown(app: tauri::AppHandle, shown: bool) {
 }
 
 #[tauri::command(async)]
-fn enable_drawing(app: tauri::AppHandle, permanent: bool) {
-    log::info!("enable_drawing: permanent={permanent}");
+fn get_drawing_enabled(app: tauri::AppHandle) -> bool {
+    log::info!("get_drawing_enabled");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
+    data.drawing_enabled
+}
+
+#[tauri::command(async)]
+fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
+    log::info!("set_drawing_enabled: enabled={enabled} permanent={permanent}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+
+    if data.drawing_enabled == enabled {
+        return;
+    }
+
     if let Err(e) = data
         .sender
         .send(Message::DrawingEnabled(DrawingEnabled { permanent }))
     {
-        log::error!("enable_drawing: failed to send message: {e:?}");
+        log::error!("set_drawing_enabled: failed to send message: {e:?}");
+        return;
     }
+
+    data.drawing_enabled = enabled;
     drop(data);
 
-    // Hide main window
     if let Some(window) = app.get_webview_window("main") {
-        #[cfg(target_os = "macos")]
-        let _ = window.hide();
-        #[cfg(target_os = "windows")]
-        let _ = window.minimize();
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.set_always_on_top(enabled);
+        if enabled {
+            #[cfg(target_os = "macos")]
+            let _ = window.hide();
+            #[cfg(target_os = "windows")]
+            let _ = window.minimize();
+        }
     }
+}
+
+#[tauri::command(async)]
+fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::CallEnd) {
+        log::error!("quit_app: failed to send CallEnd: {e:?}");
+    }
+    drop(data);
+    app.exit(0);
 }
 
 #[tauri::command(async)]
@@ -1107,6 +1144,20 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to emit mic audio level: {e:?}");
                 }
             }
+            Message::DrawingDisabled => {
+                log::info!("forward_core_events: drawing disabled");
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.drawing_enabled = false;
+                drop(data);
+                #[cfg(not(target_os = "macos"))]
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_always_on_top(false);
+                }
+                if let Err(e) = app.emit("core_drawing_disabled", &()) {
+                    log::error!("forward_core_events: failed to emit core_drawing_disabled: {e:?}");
+                }
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }
@@ -1511,7 +1562,8 @@ fn main() {
             set_sharer_draw_persist,
             get_drawing_hint_shown,
             set_drawing_hint_shown,
-            enable_drawing,
+            get_drawing_enabled,
+            set_drawing_enabled,
             minimize_main_window,
             set_livekit_url,
             get_livekit_url,
@@ -1545,6 +1597,7 @@ fn main() {
             toggle_call_sleep_prevention,
             bring_windows_to_front,
             open_stats_window,
+            quit_app,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

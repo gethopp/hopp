@@ -185,12 +185,11 @@ impl Draw {
         translate: &dyn Fn(Position) -> Position,
     ) -> Geometry {
         self.completed_cache.draw(renderer, bounds.size(), |frame| {
-            let glow_stroke = self.make_glow_stroke();
+            let outline_stroke = self.make_outline_stroke();
             let core_stroke = self.make_stroke();
             for draw_path in &self.completed_paths {
                 if let Some(path) = Self::build_path(&draw_path.points, translate) {
-                    // Two-pass rendering: glow first (wider, semi-transparent), then core
-                    frame.stroke(&path, glow_stroke);
+                    frame.stroke(&path, outline_stroke);
                     frame.stroke(&path, core_stroke);
                 }
             }
@@ -205,8 +204,7 @@ impl Draw {
     ) {
         if let Some(in_progress) = &self.in_progress_path {
             if let Some(path) = Self::build_path(&in_progress.points, translate) {
-                // Two-pass rendering: glow first (wider, semi-transparent), then core
-                frame.stroke(&path, self.make_glow_stroke());
+                frame.stroke(&path, self.make_outline_stroke());
                 frame.stroke(&path, self.make_stroke());
             }
         }
@@ -222,12 +220,12 @@ impl Draw {
         }
     }
 
-    fn make_glow_stroke(&self) -> Stroke<'static> {
-        let mut glow_color = self.color;
-        glow_color.a *= 0.60;
+    fn make_outline_stroke(&self) -> Stroke<'static> {
+        let mut outline_color = self.color;
+        outline_color.a *= 0.25;
         Stroke {
-            style: stroke::Style::Solid(glow_color),
-            width: 3.0 + 1.5,
+            style: stroke::Style::Solid(outline_color),
+            width: 3.0 + 0.75,
             line_cap: stroke::LineCap::Round,
             line_join: stroke::LineJoin::Round,
             line_dash: stroke::LineDash::default(),

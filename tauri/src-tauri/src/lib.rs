@@ -86,6 +86,9 @@ pub struct AppData {
     /// Whether noise cancellation is enabled (synced with core process).
     pub noise_cancellation_enabled: bool,
 
+    /// Whether drawing mode is currently enabled (runtime state).
+    pub drawing_enabled: bool,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -121,6 +124,7 @@ impl AppData {
             activation_policy_regular: false,
             suppress_hide_on_call_end,
             noise_cancellation_enabled: true,
+            drawing_enabled: false,
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }

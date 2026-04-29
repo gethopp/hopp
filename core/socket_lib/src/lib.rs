@@ -231,9 +231,11 @@ pub enum Message {
     RoomConnectionFailed(String),
     OpenContentPicker,
     ControllerDrawPersistChanged(bool),
+    SharerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),
     ActiveMicChanged(String),
     ActiveCameraChanged(String),
+    DrawingDisabled,
     SetNoiseCancellation(bool),
     /// Microphone RMS level in [0.0, 1.0], emitted ~1 Hz from core capturer.
     MicrophoneAudioLevel(f32),
