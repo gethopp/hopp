@@ -441,6 +441,7 @@ pub struct ScreensharingWindow {
     redraw_in_progress: Arc<AtomicBool>,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     event_loop_proxy: EventLoopProxy<crate::UserEvent>,
     aspect_ratio_enforcer: AspectRatioEnforcer,
     #[cfg(target_os = "macos")]
