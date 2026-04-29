@@ -268,6 +268,7 @@ export const Sidebar = () => {
                 >
                   Sign-out
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => invoke("quit_app")}>Quit</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <div className="muted text-slate-500 px-2 py-0.5">App version: {appVersion}</div>
               </DropdownMenuContent>

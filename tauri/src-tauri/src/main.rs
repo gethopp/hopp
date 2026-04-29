@@ -496,6 +496,18 @@ fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
 }
 
 #[tauri::command(async)]
+fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app");
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    if let Err(e) = data.sender.send(Message::CallEnd) {
+        log::error!("quit_app: failed to send CallEnd: {e:?}");
+    }
+    drop(data);
+    app.exit(0);
+}
+
+#[tauri::command(async)]
 fn minimize_main_window(app: tauri::AppHandle) {
     log::info!("minimize_main_window");
     if let Some(window) = app.get_webview_window("main") {
@@ -1579,6 +1591,7 @@ fn main() {
             toggle_call_sleep_prevention,
             bring_windows_to_front,
             open_stats_window,
+            quit_app,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
