@@ -6,14 +6,15 @@ use livekit::webrtc::{
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
+use std::panic::AssertUnwindSafe;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 use dispatch2::DispatchQueue;
 use objc2::{
-    define_class, msg_send,
+    define_class, exception, msg_send,
     rc::Retained,
-    runtime::{NSObjectProtocol, ProtocolObject},
+    runtime::{AnyObject, NSObjectProtocol, ProtocolObject},
     AnyThread, DefinedClass,
 };
 use objc2_av_foundation::{
@@ -22,7 +23,7 @@ use objc2_av_foundation::{
     AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
     AVCaptureVideoDataOutputSampleBufferDelegate, AVFrameRateRange, AVMediaTypeVideo,
 };
-use objc2_core_media::{CMSampleBuffer, CMTime, CMTimeFlags};
+use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
     kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -89,36 +90,59 @@ fn four_cc(pixel_type: u32) -> String {
     }
 }
 
-fn clamp_fps_to_supported_ranges(
+/// Picks a frame duration supported by the active format's frame-rate ranges.
+/// Uses `CMTime::with_seconds` then clamps to each range's `minFrameDuration` /
+/// `maxFrameDuration` (device-provided), avoiding lossy `fps as i32` timescales
+/// that can trigger `NSInvalidArgumentException` on external cameras.
+fn frame_duration_for_target_fps(
     ranges: &NSArray<AVFrameRateRange>,
     target_fps: f64,
-) -> Option<f64> {
+) -> Option<(CMTime, f64)> {
     let count = ranges.count();
-    if count == 0 {
+    if count == 0 || !target_fps.is_finite() || target_fps <= 0.0 {
         return None;
     }
 
     unsafe {
         for i in 0..count {
             let range = ranges.objectAtIndex(i);
-            if target_fps >= range.minFrameRate() && target_fps <= range.maxFrameRate() {
-                return Some(target_fps);
+            let min_rate = range.minFrameRate();
+            let max_rate = range.maxFrameRate();
+            if target_fps >= min_rate && target_fps <= max_rate {
+                let min_d = range.minFrameDuration();
+                let max_d = range.maxFrameDuration();
+                let preferred_timescale: i32 = 60_000;
+                let mut desired = CMTime::with_seconds(1.0 / target_fps, preferred_timescale);
+                if desired.compare(min_d) < 0 {
+                    desired = min_d;
+                } else if desired.compare(max_d) > 0 {
+                    desired = max_d;
+                }
+                let actual_fps = 1.0 / desired.seconds();
+                return Some((desired, actual_fps));
             }
         }
 
-        let mut best_fps = None;
+        let mut best_duration: Option<CMTime> = None;
         let mut best_distance = f64::MAX;
+
         for i in 0..count {
             let range = ranges.objectAtIndex(i);
-            for boundary in [range.minFrameRate(), range.maxFrameRate()] {
-                let distance = (boundary - target_fps).abs();
+            for (rate, duration) in [
+                (range.minFrameRate(), range.maxFrameDuration()),
+                (range.maxFrameRate(), range.minFrameDuration()),
+            ] {
+                let distance = (rate - target_fps).abs();
                 if distance < best_distance {
                     best_distance = distance;
-                    best_fps = Some(boundary);
+                    best_duration = Some(duration);
                 }
             }
         }
-        best_fps
+
+        let duration = best_duration?;
+        let actual_fps = 1.0 / duration.seconds();
+        Some((duration, actual_fps))
     }
 }
 
@@ -365,148 +389,166 @@ impl CameraStream {
         config: Arc<CameraStreamConfig>,
         failures_count: Arc<Mutex<u32>>,
     ) -> Result<Self, String> {
-        unsafe {
-            let devices = discover_video_devices();
-            let mut sorted_devices: Vec<Retained<AVCaptureDevice>> = (0..devices.count())
-                .map(|i| devices.objectAtIndex(i))
-                .collect();
-            sorted_devices.sort_by(|a, b| {
-                a.localizedName()
-                    .to_string()
-                    .cmp(&b.localizedName().to_string())
-            });
-
-            let default_device = || {
-                sorted_devices
-                    .first()
-                    .cloned()
-                    .ok_or("No cameras available".to_string())
-            };
-
-            let device = if device_name.is_empty() {
-                default_device()?
-            } else {
-                match sorted_devices
-                    .iter()
-                    .find(|d| d.localizedName().to_string() == device_name)
-                {
-                    Some(d) => d.clone(),
-                    None => {
-                        log::warn!(
-                            "Camera '{}' not found, falling back to default",
-                            device_name
-                        );
-                        default_device()?
-                    }
-                }
-            };
-
-            let actual_name = device.localizedName().to_string();
-
-            let session = AVCaptureSession::new();
-
-            let input_res = AVCaptureDeviceInput::deviceInputWithDevice_error(&device);
-            let input = match input_res {
-                Ok(i) => i,
-                Err(e) => return Err(format!("Failed to create capture device input: {:?}", e)),
-            };
-
-            if !session.canAddInput(&input) {
-                return Err("Cannot add camera input to session".to_string());
-            }
-            session.addInput(&input);
-
-            let output = AVCaptureVideoDataOutput::new();
-            output.setAlwaysDiscardsLateVideoFrames(true);
-            // TODO: we should choose the active format based on the resolution.
-
-            if !session.canAddOutput(&output) {
-                return Err("Cannot add camera output to session".to_string());
-            }
-            session.addOutput(&output);
-
-            // Set hardware frame rate to avoid excess callbacks from the camera.
-            let target_fps = CAMERA_STREAM_FPS_HIGH as f64;
-            let active_format = device.activeFormat();
-            let frame_rate_ranges = active_format.videoSupportedFrameRateRanges();
-            if let Some(clamped_fps) = clamp_fps_to_supported_ranges(&frame_rate_ranges, target_fps)
-            {
-                if let Ok(()) = device.lockForConfiguration() {
-                    let frame_duration = CMTime {
-                        value: 1,
-                        timescale: clamped_fps as i32,
-                        flags: CMTimeFlags::Valid,
-                        epoch: 0,
-                    };
-                    device.setActiveVideoMinFrameDuration(frame_duration);
-                    device.setActiveVideoMaxFrameDuration(frame_duration);
-                    device.unlockForConfiguration();
-                    log::info!(
-                        "Camera frame rate set to {} fps (requested {})",
-                        clamped_fps,
-                        target_fps
-                    );
-                }
-            }
-
-            // Request first supported pixel format from device's available list.
-            let available_formats = output.availableVideoCVPixelFormatTypes();
-            let chosen_format = SUPPORTED_PIXEL_FORMATS.iter().find(|&&fmt| {
-                (0..available_formats.count())
-                    .any(|i| available_formats.objectAtIndex(i).as_u32() == fmt)
-            });
-            let Some(&format) = chosen_format else {
-                return Err("Camera does not support any required pixel format".to_string());
-            };
-            log::info!("Camera requesting pixel format: {}", four_cc(format));
-            let format_number = NSNumber::new_u32(format);
-            let format_anyobj = format_number.into_super().into_super().into_super();
-            let key: &NSString =
-                &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString);
-            let settings = NSDictionary::from_retained_objects(&[key], &[format_anyobj]);
-            output.setVideoSettings(Some(&settings));
-
-            let state = CameraDelegateState {
-                buffer_source: buffer_source.clone(),
-                video_buffer_manager: video_buffer_manager.clone(),
-                config: config.clone(),
-                capture_start: Instant::now(),
-                last_frame_time: Instant::now(),
-                i420: None,
-                stream_frame: None,
-                prev_stream_w: 0,
-                prev_stream_h: 0,
-                failures_count: failures_count.clone(),
-                error_tx: error_tx.clone(),
-                frame_counter: 0,
-            };
-
-            let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
-            let delegate: Retained<CameraDelegate> = msg_send![super(delegate), init];
-
-            let queue = DispatchQueue::new("HoppCameraQueue", None);
-            let queue_retained: Retained<DispatchQueue> = queue.into();
-
-            let protocol_obj: &ProtocolObject<dyn AVCaptureVideoDataOutputSampleBufferDelegate> =
-                ProtocolObject::from_ref(&*delegate);
-            output.setSampleBufferDelegate_queue(Some(protocol_obj), Some(&queue_retained));
-
-            session.startRunning();
-
-            Ok(Self {
-                session,
-                input,
-                output,
-                delegate,
-                queue: queue_retained,
+        match exception::catch(AssertUnwindSafe(|| unsafe {
+            Self::new_inner(
+                device_name,
                 error_tx,
-                buffer_source,
                 video_buffer_manager,
-                device_name: actual_name,
-                failures_count,
+                buffer_source,
                 config,
-            })
+                failures_count,
+            )
+        })) {
+            Ok(result) => result,
+            Err(Some(exc)) => Err(format!("Objective-C exception during camera setup: {exc}")),
+            Err(None) => {
+                Err("Objective-C exception during camera setup (nil exception)".to_string())
+            }
         }
+    }
+
+    unsafe fn new_inner(
+        device_name: &str,
+        error_tx: mpsc::Sender<CameraStreamMessage>,
+        video_buffer_manager: Arc<VideoBufferManager>,
+        buffer_source: NativeVideoSource,
+        config: Arc<CameraStreamConfig>,
+        failures_count: Arc<Mutex<u32>>,
+    ) -> Result<Self, String> {
+        let devices = discover_video_devices();
+        let mut sorted_devices: Vec<Retained<AVCaptureDevice>> = (0..devices.count())
+            .map(|i| devices.objectAtIndex(i))
+            .collect();
+        sorted_devices.sort_by(|a, b| {
+            a.localizedName()
+                .to_string()
+                .cmp(&b.localizedName().to_string())
+        });
+
+        let default_device = || {
+            sorted_devices
+                .first()
+                .cloned()
+                .ok_or("No cameras available".to_string())
+        };
+
+        let device = if device_name.is_empty() {
+            default_device()?
+        } else {
+            match sorted_devices
+                .iter()
+                .find(|d| d.localizedName().to_string() == device_name)
+            {
+                Some(d) => d.clone(),
+                None => {
+                    log::warn!(
+                        "Camera '{}' not found, falling back to default",
+                        device_name
+                    );
+                    default_device()?
+                }
+            }
+        };
+
+        let actual_name = device.localizedName().to_string();
+
+        let session = AVCaptureSession::new();
+
+        let input_res = AVCaptureDeviceInput::deviceInputWithDevice_error(&device);
+        let input = match input_res {
+            Ok(i) => i,
+            Err(e) => return Err(format!("Failed to create capture device input: {:?}", e)),
+        };
+
+        if !session.canAddInput(&input) {
+            return Err("Cannot add camera input to session".to_string());
+        }
+        session.addInput(&input);
+
+        let output = AVCaptureVideoDataOutput::new();
+        output.setAlwaysDiscardsLateVideoFrames(true);
+        // TODO: we should choose the active format based on the resolution.
+
+        if !session.canAddOutput(&output) {
+            return Err("Cannot add camera output to session".to_string());
+        }
+        session.addOutput(&output);
+
+        // Set hardware frame rate to avoid excess callbacks from the camera.
+        let target_fps = CAMERA_STREAM_FPS_HIGH as f64;
+        let active_format = device.activeFormat();
+        let frame_rate_ranges = active_format.videoSupportedFrameRateRanges();
+        if let Some((frame_duration, actual_fps)) =
+            frame_duration_for_target_fps(&frame_rate_ranges, target_fps)
+        {
+            if let Ok(()) = device.lockForConfiguration() {
+                device.setActiveVideoMinFrameDuration(frame_duration);
+                device.setActiveVideoMaxFrameDuration(frame_duration);
+                device.unlockForConfiguration();
+                log::info!(
+                    "Camera frame duration set (≈{actual_fps:.2} fps, requested {target_fps})",
+                );
+            }
+        }
+
+        // Request first supported pixel format from device's available list.
+        let available_formats = output.availableVideoCVPixelFormatTypes();
+        let chosen_format = SUPPORTED_PIXEL_FORMATS.iter().find(|&&fmt| {
+            (0..available_formats.count())
+                .any(|i| available_formats.objectAtIndex(i).as_u32() == fmt)
+        });
+        let Some(&format) = chosen_format else {
+            return Err("Camera does not support any required pixel format".to_string());
+        };
+        log::info!("Camera requesting pixel format: {}", four_cc(format));
+        let format_number = NSNumber::new_u32(format);
+        let key: &NSString = &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString);
+        // `setVideoSettings` expects `NSDictionary<NSString, AnyObject>`; `NSNumber` is an
+        // NSObject subclass, so re-borrow the same pointer as `AnyObject`.
+        let value_any: &AnyObject = &*(&*format_number as *const NSNumber as *const AnyObject);
+        let settings = NSDictionary::<NSString, AnyObject>::from_slices(&[key], &[value_any]);
+        output.setVideoSettings(Some(&settings));
+
+        let state = CameraDelegateState {
+            buffer_source: buffer_source.clone(),
+            video_buffer_manager: video_buffer_manager.clone(),
+            config: config.clone(),
+            capture_start: Instant::now(),
+            last_frame_time: Instant::now(),
+            i420: None,
+            stream_frame: None,
+            prev_stream_w: 0,
+            prev_stream_h: 0,
+            failures_count: failures_count.clone(),
+            error_tx: error_tx.clone(),
+            frame_counter: 0,
+        };
+
+        let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
+        let delegate: Retained<CameraDelegate> = msg_send![super(delegate), init];
+
+        let queue = DispatchQueue::new("HoppCameraQueue", None);
+        let queue_retained: Retained<DispatchQueue> = queue.into();
+
+        let protocol_obj: &ProtocolObject<dyn AVCaptureVideoDataOutputSampleBufferDelegate> =
+            ProtocolObject::from_ref(&*delegate);
+        output.setSampleBufferDelegate_queue(Some(protocol_obj), Some(&queue_retained));
+
+        session.startRunning();
+
+        Ok(Self {
+            session,
+            input,
+            output,
+            delegate,
+            queue: queue_retained,
+            error_tx,
+            buffer_source,
+            video_buffer_manager,
+            device_name: actual_name,
+            failures_count,
+            config,
+        })
     }
 
     pub fn stop_capture(&mut self) {
