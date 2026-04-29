@@ -1736,11 +1736,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
 
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
                 if self.drawing_window.is_none() {
+                    let remote_control = self.remote_control.as_mut().unwrap();
+
                     // Store the current controller state before disabling
-                    self.previous_controllers_enabled =
+                    let previous_controllers_enabled =
                         remote_control.cursor_controller.is_controllers_enabled();
+                    self.previous_controllers_enabled = previous_controllers_enabled;
 
                     // Disable remote control
                     remote_control
@@ -1770,17 +1772,34 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         drawing_enabled.permanent,
                         overlay_position,
                     ) {
-                        Ok(win) => self.drawing_window = Some(win),
+                        Ok(win) => {
+                            self.drawing_window = Some(win);
+                            log::info!(
+                                "Local drawing mode enabled (permanent: {})",
+                                drawing_enabled.permanent
+                            );
+                        }
                         Err(e) => {
                             log::error!("Failed to create drawing window: {e:?}");
+
+                            // Restore remote control to previous state
+                            let remote_control = self.remote_control.as_mut().unwrap();
+                            remote_control
+                                .cursor_controller
+                                .set_controllers_enabled(previous_controllers_enabled);
+                            remote_control
+                                .keyboard_controller
+                                .set_enabled(previous_controllers_enabled);
+
+                            if let Some(room_service) = &self.room_service {
+                                room_service
+                                    .publish_drawing_mode(room_service::DrawingMode::Disabled);
+                            }
                         }
                     }
-
-                    log::info!(
-                        "Local drawing mode enabled (permanent: {})",
-                        drawing_enabled.permanent
-                    );
                 } else {
+                    let remote_control = self.remote_control.as_mut().unwrap();
+
                     // Send LiveKit event to clear all paths
                     if let Some(room_service) = &self.room_service {
                         room_service.publish_draw_clear_all_paths();
