@@ -29,7 +29,7 @@ use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
 use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState};
 #[cfg(not(target_os = "macos"))]
 use winit::window::CursorIcon;
@@ -441,6 +441,8 @@ pub struct ScreensharingWindow {
     redraw_in_progress: Arc<AtomicBool>,
     redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    event_loop_proxy: EventLoopProxy<crate::UserEvent>,
     aspect_ratio_enforcer: AspectRatioEnforcer,
     #[cfg(target_os = "macos")]
     ns_cursor_pointer: objc2::rc::Retained<objc2_app_kit::NSCursor>,
@@ -463,6 +465,7 @@ pub struct ScreensharingWindowConfig {
     pub last_mode: Option<socket_lib::StoredMode>,
     pub redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
     pub redraw_tx: std::sync::mpsc::Sender<RedrawCommand>,
+    pub event_loop_proxy: EventLoopProxy<crate::UserEvent>,
 }
 
 impl ScreensharingWindow {
@@ -481,6 +484,7 @@ impl ScreensharingWindow {
             last_mode,
             redraw_rx,
             redraw_tx,
+            event_loop_proxy,
         } = config;
 
         let screen_area = probe_available_screen_area(event_loop);
@@ -691,6 +695,7 @@ impl ScreensharingWindow {
             redraw_in_progress,
             redraw_tx,
             redraw_thread: Some(redraw_thread),
+            event_loop_proxy,
             aspect_ratio_enforcer,
             #[cfg(target_os = "macos")]
             ns_cursor_pointer,
@@ -1192,6 +1197,20 @@ impl ScreensharingWindow {
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
+                // Intercept Cmd+Q to gracefully exit instead of hard quit
+                #[cfg(target_os = "macos")]
+                if key_event.state.is_pressed() && self.modifiers.super_key() {
+                    if let Key::Character(ref ch) = key_event.logical_key {
+                        if ch.as_ref() == "q" {
+                            log::info!("ScreensharingWindow: caught Cmd+Q, requesting exit");
+                            let _ = self
+                                .event_loop_proxy
+                                .send_event(crate::UserEvent::ExitRequested);
+                            return input_event;
+                        }
+                    }
+                }
+
                 if self.mouse_in_participant_area
                     && self.state.active_tab == "control"
                     && self.state.remote_control_allowed

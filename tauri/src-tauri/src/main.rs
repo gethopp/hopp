@@ -1158,6 +1158,16 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to emit core_drawing_disabled: {e:?}");
                 }
             }
+            Message::ExitRequested => {
+                log::info!("forward_core_events: exit requested from core");
+                let data = app.state::<Mutex<AppData>>();
+                let data = data.lock().unwrap();
+                if let Err(e) = data.sender.send(Message::CallEnd) {
+                    log::error!("forward_core_events: failed to send CallEnd: {e:?}");
+                }
+                drop(data);
+                app.exit(0);
+            }
             other => {
                 log::error!("forward_core_events: unhandled event: {other:?}");
             }
