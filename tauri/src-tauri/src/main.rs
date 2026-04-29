@@ -485,8 +485,10 @@ fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
     data.drawing_enabled = enabled;
     drop(data);
 
-    if enabled {
-        if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.set_always_on_top(enabled);
+        if enabled {
             #[cfg(target_os = "macos")]
             let _ = window.hide();
             #[cfg(target_os = "windows")]
@@ -1148,6 +1150,10 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 let mut data = data.lock().unwrap();
                 data.drawing_enabled = false;
                 drop(data);
+                #[cfg(not(target_os = "macos"))]
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_always_on_top(false);
+                }
                 if let Err(e) = app.emit("core_drawing_disabled", &()) {
                     log::error!("forward_core_events: failed to emit core_drawing_disabled: {e:?}");
                 }

@@ -11,6 +11,7 @@ use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
 use winit::event::WindowEvent;
+use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -31,6 +32,10 @@ pub fn drawing_window_attributes() -> WindowAttributes {
         .with_decorations(false)
         .with_transparent(true)
         .with_content_protected(true)
+        .with_inner_size(LogicalSize::new(
+            1.0,
+            1.0,
+        ))
         .with_window_level(WindowLevel::AlwaysOnTop);
 
     #[cfg(target_os = "macos")]
@@ -166,7 +171,6 @@ impl DrawingWindow {
         log::info!("DrawingWindow::new");
 
         let mut window_attributes = drawing_window_attributes();
-        window_attributes = window_attributes.with_maximized(true);
         if let Some(pos) = position {
             window_attributes = window_attributes.with_position(pos);
         }
@@ -177,6 +181,7 @@ impl DrawingWindow {
         })?;
         let window = Arc::new(window);
 
+        window.set_maximized(true);
         window.focus_window();
 
         #[cfg(target_os = "macos")]
@@ -229,26 +234,32 @@ impl DrawingWindow {
         );
         let clipboard = Clipboard::connect(window.clone());
 
-        let px = (drawing_helpers::CURSOR_LOGICAL_SIZE * 4.0).round() as u32;
-        let (pencil_rgba, ew, eh) =
-            drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_PENCIL, px);
-
         #[cfg(target_os = "macos")]
-        let ns_cursor_pencil = drawing_helpers::create_macos_cursor(
-            &pencil_rgba,
-            ew,
-            eh,
-            drawing_helpers::CURSOR_LOGICAL_SIZE,
-            drawing_helpers::CURSOR_LOGICAL_SIZE,
-            2.0,
-            29.0,
-        );
+        let ns_cursor_pencil = {
+            let px = (drawing_helpers::CURSOR_LOGICAL_SIZE * 4.0).round() as u32;
+            let (pencil_rgba, ew, eh) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_PENCIL, px);
+            drawing_helpers::create_macos_cursor(
+                &pencil_rgba,
+                ew,
+                eh,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
+                drawing_helpers::CURSOR_LOGICAL_SIZE,
+                2.0,
+                29.0,
+            )
+        };
 
         #[cfg(not(target_os = "macos"))]
-        let custom_cursor_pencil = event_loop.create_custom_cursor(
-            winit::window::CustomCursor::from_rgba(pencil_rgba, ew as u16, eh as u16, 2, 29)
-                .expect("create pencil cursor"),
-        );
+        let custom_cursor_pencil = {
+            let px = drawing_helpers::CURSOR_LOGICAL_SIZE as u32;
+            let (pencil_rgba, ew, eh) =
+                drawing_helpers::rasterize_svg_to_rgba(drawing_helpers::CURSOR_ICON_PENCIL, px);
+            event_loop.create_custom_cursor(
+                winit::window::CustomCursor::from_rgba(pencil_rgba, ew as u16, eh as u16, 2, 29)
+                    .expect("create pencil cursor"),
+            )
+        };
 
         let mut participants_manager = ParticipantsManager::new();
         if let Err(e) = participants_manager.add_participant(
