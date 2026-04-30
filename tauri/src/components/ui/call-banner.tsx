@@ -56,11 +56,12 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         console.log("Received call_tokens", data);
         tokensReceived = true;
         sounds.callAccepted.play();
+        const settings = await tauriUtils.getUserSettings();
         setCallTokens({
           ...data.payload,
           timeStarted: new Date(),
-          hasAudioEnabled: true,
-          hasCameraEnabled: false,
+          hasAudioEnabled: settings.start_mic_on_call,
+          hasCameraEnabled: settings.start_camera_on_call,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           participants: [],

@@ -913,12 +913,39 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         audio_processor: processor,
                         noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
                         start_mic_on_call: start_mic_on_call,
+                        start_camera_on_call: start_camera_on_call,
                     }) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
                                 error!("user_event: Error sending CallStartResult ack: {e:?}");
                             }
                             self.start_camera_on_call = start_camera_on_call;
+
+                            // Open camera window immediately for snappiness
+                            if start_camera_on_call && self.camera_window.is_none() {
+                                let participants = room_service.participants();
+                                self.join_camera_redraw_thread();
+                                match CameraWindow::new(
+                                    self.context_manager.as_ref().unwrap(),
+                                    event_loop,
+                                    participants,
+                                    self.event_loop_proxy.clone(),
+                                    self.audio_capturer
+                                        .active_device_name()
+                                        .map(|s| s.to_string()),
+                                ) {
+                                    Ok(mut cam) => {
+                                        log::info!(
+                                            "user_event: CallStart: camera window opened early"
+                                        );
+                                        cam.set_screensharing_active(self.screensharing_active);
+                                        self.camera_window = Some(cam);
+                                    }
+                                    Err(e) => log::error!(
+                                        "Failed to open camera window in CallStart: {e:?}"
+                                    ),
+                                }
+                            }
                         }
                         Err(e) => {
                             log::error!("user_event: Failed to dispatch create room: {e:?}");
@@ -1468,10 +1495,28 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
 
-                // Add timing print
-                // TODO: Make this first start window for snapiness, then continue with capturing.
+                // Open camera window first for snappiness
+                if self.camera_window.is_none() {
+                    let participants = room_service.participants();
+                    match CameraWindow::new(
+                        self.context_manager.as_ref().unwrap(),
+                        event_loop,
+                        participants,
+                        self.event_loop_proxy.clone(),
+                        self.audio_capturer
+                            .active_device_name()
+                            .map(|s| s.to_string()),
+                    ) {
+                        Ok(mut cam) => {
+                            log::info!("user_event: Camera window opened for local camera");
+                            cam.set_screensharing_active(self.screensharing_active);
+                            self.camera_window = Some(cam);
+                        }
+                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
+                    }
+                }
+
                 log::info!("user_event: StartCamera: starting capture");
-                let start_time = std::time::Instant::now();
                 let capture_result = {
                     let mut capturer = self.camera_capturer.lock().unwrap();
                     capturer.start_capture(
@@ -1481,10 +1526,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         buffer_source,
                     )
                 };
-                log::info!(
-                    "user_event: StartCamera: end capture took {:?}",
-                    start_time.elapsed().as_millis()
-                );
 
                 if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
@@ -1509,32 +1550,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 // Unmute camera track (fire-and-forget)
                 room_service.unmute_camera_track();
-
-                // Open camera window if needed
-                if self.camera_window.is_none() {
-                    let participants = room_service.participants();
-                    let start_time = std::time::Instant::now();
-                    match CameraWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        participants,
-                        self.event_loop_proxy.clone(),
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    ) {
-                        Ok(mut cam) => {
-                            log::info!("user_event: Camera window opened for local camera");
-                            cam.set_screensharing_active(self.screensharing_active);
-                            self.camera_window = Some(cam);
-                        }
-                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                    }
-                    log::info!(
-                        "user_event: Camera window opened for local camera took {:?}",
-                        start_time.elapsed().as_millis()
-                    );
-                }
 
                 let actual_name = {
                     let capturer = self.camera_capturer.lock().unwrap();

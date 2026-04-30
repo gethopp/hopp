@@ -335,6 +335,15 @@ const createFeedbackWindow = async (teamId: string, roomId: string, participantI
   }
 };
 
+const getUserSettings = async () => {
+  return await invoke<{
+    call_feedback_popup: boolean;
+    show_dock_icon_in_call: boolean;
+    start_camera_on_call: boolean;
+    start_mic_on_call: boolean;
+  }>("get_user_settings");
+};
+
 const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, participantId: string): Promise<void> => {
   if (!isTauri) return;
 
@@ -393,4 +402,5 @@ export const tauriUtils = {
   openSettingsWindow,
   createFeedbackWindow,
   showFeedbackWindowIfEnabled,
+  getUserSettings,
 };

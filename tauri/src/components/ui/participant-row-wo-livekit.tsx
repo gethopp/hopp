@@ -147,11 +147,12 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
+          const settings = await tauriUtils.getUserSettings();
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
-            hasAudioEnabled: true,
-            hasCameraEnabled: false,
+            hasAudioEnabled: settings.start_mic_on_call,
+            hasCameraEnabled: settings.start_camera_on_call,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
             participants: [],

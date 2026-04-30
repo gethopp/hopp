@@ -50,6 +50,7 @@ pub struct CreateRoomParams {
     pub audio_processor: SharedProcessor,
     pub noise_cancellation_enabled: Arc<AtomicBool>,
     pub start_mic_on_call: bool,
+    pub start_camera_on_call: bool,
 }
 
 enum RoomServiceCommand {
@@ -817,6 +818,7 @@ async fn room_service_commands(
                 audio_processor,
                 noise_cancellation_enabled,
                 start_mic_on_call,
+                start_camera_on_call,
             }) => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
@@ -1084,8 +1086,11 @@ async fn room_service_commands(
                     let mut participants = inner.participants.write().unwrap();
                     participants.insert(
                         "local".to_string(),
-                        ParticipantInfo::new(user_name, start_mic_on_call, false),
+                        ParticipantInfo::new(user_name, !start_mic_on_call, false),
                     );
+                    if let Some(info) = participants.get_mut("local") {
+                        info.camera_buffers().set_inactive(!start_camera_on_call);
+                    }
                 }
                 log::info!(
                     "room_service_commands: Inserted local participant into participants map"
