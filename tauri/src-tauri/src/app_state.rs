@@ -431,16 +431,16 @@ impl AppState {
     /// Gets the user settings, returning defaults if not yet stored.
     pub fn user_settings(&self) -> UserSettings {
         let _lock = self.lock.lock().unwrap();
-        self.state
-            .user_settings
-            .clone()
-            .unwrap_or_default()
+        self.state.user_settings.clone().unwrap_or_default()
     }
 
     /// Updates a single user setting field and saves to disk.
     pub fn update_user_setting(&mut self, f: impl FnOnce(&mut UserSettings)) {
         let _lock = self.lock.lock().unwrap();
-        let settings = self.state.user_settings.get_or_insert_with(UserSettings::default);
+        let settings = self
+            .state
+            .user_settings
+            .get_or_insert_with(UserSettings::default);
         f(settings);
         if !self.save() {
             log::error!("update_user_setting: Failed to save app state");
