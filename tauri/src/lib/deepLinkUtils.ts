@@ -110,11 +110,12 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
     const data: components["schemas"]["SessionTokensResponse"] = await response.json();
 
     // Set up the call with the tokens
+    const settings = await tauriUtils.getUserSettings();
     setCallTokens({
       ...data,
       timeStarted: new Date(),
-      hasAudioEnabled: true,
-      hasCameraEnabled: false,
+      hasAudioEnabled: settings.start_mic_on_call,
+      hasCameraEnabled: settings.start_camera_on_call,
       role: ParticipantRole.NONE,
       isRemoteControlEnabled: true,
       isRoomCall: true,

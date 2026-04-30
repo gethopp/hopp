@@ -67,7 +67,7 @@ const getAvailableTabs = (
           key: "login",
         } as const,
       ]
-    : [
+      : [
         {
           label: "User List",
           icon: <HiOutlineUsers className="size-4 stroke-[1.5]" />,
@@ -123,7 +123,7 @@ const DownloadNewVersionButton = () => {
         >
           {updateInProgress ?
             <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+            : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
@@ -258,6 +258,7 @@ export const Sidebar = () => {
               <DropdownMenuContent className="w-[200px]" side="top" align="start">
                 <DropdownMenuItem onClick={() => openUrl("https://pair.gethopp.app")}>Profile</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setTab("debug")}>Debug</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => tauriUtils.openSettingsWindow()}>Settings</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={async () => {

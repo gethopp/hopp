@@ -164,6 +164,7 @@ export const Rooms = () => {
     queryHash: `rooms-${authToken}`,
     // Avoid refetching on tab change
     staleTime: 30_000,
+    select: (data) => data.sort((a, b) => a.name.localeCompare(b.name)),
   });
 
   // Poll for room presence every 10 seconds
@@ -294,12 +295,13 @@ export const Rooms = () => {
         }
 
         sounds.callAccepted.play();
+        const settings = await tauriUtils.getUserSettings();
         setCallTokens({
           ...tokens,
           isRoomCall: true,
           timeStarted: new Date(),
-          hasAudioEnabled: true,
-          hasCameraEnabled: false,
+          hasAudioEnabled: settings.start_mic_on_call,
+          hasCameraEnabled: settings.start_camera_on_call,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           room: room,

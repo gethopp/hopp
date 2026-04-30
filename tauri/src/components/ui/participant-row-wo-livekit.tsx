@@ -107,7 +107,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       if (!isCalling) return;
 
       switch (data.type) {
-        case "call_reject":
+        case "call_reject": {
           const { payload } = data as TRejectCallMessage;
           if (payload.reject_reason == "in-call") {
             toast.error(`${props.user.first_name} is already in a call`, {
@@ -127,6 +127,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           sounds.ringing.stop();
           sounds.unavailable.play();
           break;
+        }
         case "callee_offline":
           toast.error(`${props.user.first_name} appears to be offline`, {
             duration: 2500,
@@ -141,17 +142,26 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             duration: 1500,
           });
           break;
-        case "call_tokens":
+        case "call_tokens": {
           callResolvedRef.current = true;
           setCalling(null);
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
+          let startMic = false;
+          let startCamera = false;
+          try {
+            const settings = await tauriUtils.getUserSettings();
+            startMic = settings.start_mic_on_call;
+            startCamera = settings.start_camera_on_call;
+          } catch {
+            // fall back to safe defaults
+          }
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
-            hasAudioEnabled: true,
-            hasCameraEnabled: false,
+            hasAudioEnabled: startMic,
+            hasCameraEnabled: startCamera,
             role: ParticipantRole.NONE,
             isRemoteControlEnabled: true,
             participants: [],
@@ -164,6 +174,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             setCallTokens(null);
           }
           break;
+        }
       }
     });
 

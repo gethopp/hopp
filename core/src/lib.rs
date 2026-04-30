@@ -249,6 +249,7 @@ pub struct Application<'a> {
     camera_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
+    start_camera_on_call: bool,
 }
 
 #[derive(Error, Debug)]
@@ -328,6 +329,7 @@ impl<'a> Application<'a> {
             camera_redraw_thread: None,
             stats_window: None,
             hang_protection_counter,
+            start_camera_on_call: false,
         })
     }
 
@@ -865,6 +867,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallStart(call_start) => {
                 log::info!("user_event: CallStart");
+                let start_camera_on_call = call_start.start_camera_on_call.unwrap_or(false);
                 if let Err(e) = self.audio_player.start() {
                     log::error!("Failed to start audio player: {e}");
                     sentry_utils::upload_logs_event(format!("Failed to start audio player: {e}"));
@@ -900,6 +903,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
                 if let Some(room_service) = self.room_service.as_ref() {
+                    let start_mic_on_call = call_start.start_mic_on_call.unwrap_or(true);
                     match room_service.create_room(room_service::CreateRoomParams {
                         token: call_start.audio_token,
                         video_token: call_start.video_token,
@@ -909,10 +913,39 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sample_rx,
                         audio_processor: processor,
                         noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
+                        start_mic_on_call,
+                        start_camera_on_call,
                     }) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
                                 error!("user_event: Error sending CallStartResult ack: {e:?}");
+                            }
+                            self.start_camera_on_call = start_camera_on_call;
+
+                            // Open camera window immediately for snappiness
+                            if start_camera_on_call && self.camera_window.is_none() {
+                                let participants = room_service.participants();
+                                self.join_camera_redraw_thread();
+                                match CameraWindow::new(
+                                    self.context_manager.as_ref().unwrap(),
+                                    event_loop,
+                                    participants,
+                                    self.event_loop_proxy.clone(),
+                                    self.audio_capturer
+                                        .active_device_name()
+                                        .map(|s| s.to_string()),
+                                ) {
+                                    Ok(mut cam) => {
+                                        log::info!(
+                                            "user_event: CallStart: camera window opened early"
+                                        );
+                                        cam.set_screensharing_active(self.screensharing_active);
+                                        self.camera_window = Some(cam);
+                                    }
+                                    Err(e) => log::error!(
+                                        "Failed to open camera window in CallStart: {e:?}"
+                                    ),
+                                }
                             }
                         }
                         Err(e) => {
@@ -943,11 +976,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 match result {
                     Ok(snapshot) => {
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
+                        if self.start_camera_on_call {
+                            self.start_camera_on_call = false;
+                            let res = self.event_loop_proxy.send_event(UserEvent::StartCamera {
+                                msg: CameraStartMessage { device_name: None },
+                                from_socket: false,
+                            });
+                            if res.is_err() {
+                                log::error!("user_event: CreateRoomResult failed to queue StartCamera: {res:?}");
+                            }
+                        }
                     }
                     Err(ref reason) => {
                         log::error!("user_event: Room creation failed: {reason}");
                         self.stop_mic();
                         self.audio_player.stop();
+                        self.close_camera_window();
                         if let Err(e) = self
                             .socket
                             .send(Message::RoomConnectionFailed(reason.clone()))
@@ -1453,41 +1497,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 };
 
-                let capture_result = {
-                    let mut capturer = self.camera_capturer.lock().unwrap();
-                    capturer.start_capture(
-                        device_name.as_deref(),
-                        self.socket.clone(),
-                        room_service.local_camera_buffer_manager(),
-                        buffer_source,
-                    )
-                };
-
-                if let Err(ref e) = capture_result {
-                    log::error!("user_event: StartCamera failed: {e}");
-                    if let Some(cam) = &mut self.camera_window {
-                        cam.show_error_toast("Failed to start camera");
-                    }
-                    if from_socket {
-                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
-                        {
-                            error!("user_event: Error sending StartCameraResult: {e:?}");
-                        }
-                    }
-                    return;
-                }
-
-                // Send success result via socket
-                if from_socket {
-                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
-                        error!("user_event: Error sending StartCameraResult: {e:?}");
-                    }
-                }
-
-                // Unmute camera track (fire-and-forget)
-                room_service.unmute_camera_track();
-
-                // Open camera window if needed
+                // Open camera window first for snappiness
                 if self.camera_window.is_none() {
                     let participants = room_service.participants();
                     match CameraWindow::new(
@@ -1507,6 +1517,43 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         Err(e) => log::error!("Failed to open camera window: {e:?}"),
                     }
                 }
+
+                log::info!("user_event: StartCamera: starting capture");
+                let capture_result = {
+                    let mut capturer = self.camera_capturer.lock().unwrap();
+                    capturer.start_capture(
+                        device_name.as_deref(),
+                        self.socket.clone(),
+                        room_service.local_camera_buffer_manager(),
+                        buffer_source,
+                    )
+                };
+
+                if let Err(ref e) = capture_result {
+                    log::error!("user_event: StartCamera failed: {e}");
+                    room_service.mute_camera_track();
+                    if let Some(cam) = &mut self.camera_window {
+                        cam.show_error_toast("Failed to start camera");
+                    }
+                    if from_socket {
+                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
+                        {
+                            error!("user_event: Error sending StartCameraResult: {e:?}");
+                        }
+                    }
+                    room_service.send_participants_snapshot();
+                    return;
+                }
+
+                // Send success result via socket
+                if from_socket {
+                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
+                        error!("user_event: Error sending StartCameraResult: {e:?}");
+                    }
+                }
+
+                // Unmute camera track (fire-and-forget)
+                room_service.unmute_camera_track();
 
                 let actual_name = {
                     let capturer = self.camera_capturer.lock().unwrap();

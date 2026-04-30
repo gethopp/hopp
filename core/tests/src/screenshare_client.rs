@@ -46,6 +46,8 @@ pub fn call_start_with_name(
         audio_token,
         video_token,
         audio_device_name: String::new(),
+        start_mic_on_call: None,
+        start_camera_on_call: None,
     }))?;
     match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Message::CallStartResult(Ok(()))) => Ok(()),

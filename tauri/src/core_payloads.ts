@@ -112,6 +112,13 @@ export interface CoreParticipantState {
   is_screensharing: boolean;
 }
 
+export interface UserSettings {
+  call_feedback_popup: boolean;
+  show_dock_icon_in_call: boolean;
+  start_camera_on_call: boolean;
+  start_mic_on_call: boolean;
+}
+
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
 
 export interface CoreRoleEvent {
@@ -194,6 +201,7 @@ export interface CommandMap {
   create_camera_window: { args: { cameraToken: string }; return: void };
   create_content_picker_window: { args: void; return: void };
   create_feedback_window: { args: { teamId: string; roomId: string; participantId: string }; return: void };
+  create_settings_window: { args: void; return: void };
 
   // Sentry
   set_sentry_metadata: { args: { userEmail: string; appVersion: string }; return: void };
@@ -207,9 +215,12 @@ export interface CommandMap {
   get_hopp_server_url: { args: void; return: string | null };
   set_hopp_server_url: { args: { url: string | null }; return: void };
 
-  // Feedback
-  get_feedback_disabled: { args: void; return: boolean };
-  set_feedback_disabled: { args: { disabled: boolean }; return: void };
+  // User settings (Settings window)
+  get_user_settings: { args: void; return: UserSettings };
+  set_call_feedback_popup: { args: { enabled: boolean }; return: void };
+  set_show_dock_icon_in_call: { args: { enabled: boolean }; return: void };
+  set_start_camera_on_call: { args: { enabled: boolean }; return: void };
+  set_start_mic_on_call: { args: { enabled: boolean }; return: void };
 
   // Core socket messages — audio
   mute_mic: { args: void; return: void };

@@ -43,7 +43,7 @@ function FeedbackWindow() {
 
   const handleClose = async () => {
     if (neverShowAgain) {
-      await tauriUtils.setFeedbackDisabled(true);
+      await tauriUtils.setCallFeedbackPopup(false);
     }
     await getCurrentWebviewWindow().close();
   };
