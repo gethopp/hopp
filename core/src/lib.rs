@@ -990,6 +990,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         log::error!("user_event: Room creation failed: {reason}");
                         self.stop_mic();
                         self.audio_player.stop();
+                        self.close_camera_window();
                         if let Err(e) = self
                             .socket
                             .send(Message::RoomConnectionFailed(reason.clone()))
@@ -1529,6 +1530,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
+                    room_service.mute_camera_track();
                     if let Some(cam) = &mut self.camera_window {
                         cam.show_error_toast("Failed to start camera");
                     }
