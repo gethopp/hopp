@@ -912,8 +912,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sample_rx,
                         audio_processor: processor,
                         noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
-                        start_mic_on_call: start_mic_on_call,
-                        start_camera_on_call: start_camera_on_call,
+                        start_mic_on_call,
+                        start_camera_on_call,
                     }) {
                         Ok(_) => {
                             if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
