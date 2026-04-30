@@ -1540,6 +1540,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             error!("user_event: Error sending StartCameraResult: {e:?}");
                         }
                     }
+                    room_service.send_participants_snapshot();
                     return;
                 }
 
