@@ -293,11 +293,19 @@ impl YuvPipeline {
         let buf_idx = state.active_buffer;
         state.active_buffer = 1 - buf_idx;
 
-        // --- Y plane ---
+        // --- Batch map_async for all 3 planes, then single poll ---
         state.y_staging_buf[buf_idx]
             .slice(..)
             .map_async(wgpu::MapMode::Write, |_| {});
+        state.u_staging_buf[buf_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, |_| {});
+        state.v_staging_buf[buf_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Write, |_| {});
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
+
+        // --- Y plane ---
         {
             let mut view = state.y_staging_buf[buf_idx]
                 .slice(..)
@@ -307,10 +315,6 @@ impl YuvPipeline {
         state.y_staging_buf[buf_idx].unmap();
 
         // --- U plane ---
-        state.u_staging_buf[buf_idx]
-            .slice(..)
-            .map_async(wgpu::MapMode::Write, |_| {});
-        device.poll(wgpu::PollType::wait_indefinitely()).ok();
         {
             let mut view = state.u_staging_buf[buf_idx]
                 .slice(..)
@@ -320,10 +324,6 @@ impl YuvPipeline {
         state.u_staging_buf[buf_idx].unmap();
 
         // --- V plane ---
-        state.v_staging_buf[buf_idx]
-            .slice(..)
-            .map_async(wgpu::MapMode::Write, |_| {});
-        device.poll(wgpu::PollType::wait_indefinitely()).ok();
         {
             let mut view = state.v_staging_buf[buf_idx]
                 .slice(..)
