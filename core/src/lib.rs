@@ -34,7 +34,6 @@ pub mod capture {
 pub mod graphics {
     pub mod graphics_context;
     pub mod graphics_window_context;
-    pub mod yuv_buffer;
     pub mod yuv_renderer;
 }
 
@@ -102,7 +101,7 @@ const PROCESS_EXIT_CODE_ERROR: i32 = 1;
 #[cfg(debug_assertions)]
 const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
 #[cfg(not(debug_assertions))]
-const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
+const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 300;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
