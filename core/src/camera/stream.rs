@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const CAMERA_STREAM_WIDTH_HIGH: u32 = 1920;
-pub const CAMERA_STREAM_HEIGHT_HIGH: u32 = 1080;
+pub const CAMERA_STREAM_WIDTH_HIGH: u32 = 1280;
+pub const CAMERA_STREAM_HEIGHT_HIGH: u32 = 720;
 pub const CAMERA_STREAM_FPS_HIGH: u32 = 30;
 
 pub const CAMERA_STREAM_WIDTH_LOW: u32 = 640;
