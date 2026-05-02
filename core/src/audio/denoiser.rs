@@ -8,7 +8,6 @@ use tract_onnx::prelude::*;
 const BLOCK_LEN: usize = 512;
 const BLOCK_SHIFT: usize = 128;
 const FFT_OUT_SIZE: usize = BLOCK_LEN / 2 + 1;
-const MEMORY_ELEMENTS: usize = 2 * BLOCK_SHIFT * 2;
 
 const SPECTRAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_1.onnx");
 const SIGNAL_MODEL_BYTES: &[u8] = include_bytes!("../../resources/models/dtln_model_2.onnx");
@@ -29,11 +28,14 @@ struct DtlnEngine {
     in_magnitude: [f32; FFT_OUT_SIZE],
     in_phase: [f32; FFT_OUT_SIZE],
 
-    spectral_memory: Vec<f32>,
-    signal_memory: Vec<f32>,
-
     in_buffer: [f32; BLOCK_LEN],
     out_buffer: [f32; BLOCK_LEN],
+
+    // Memory state tensors recycled from previous inference output to avoid
+    // per-frame allocations.  Stored as owned Tensor (Send-safe) instead of
+    // TValue (contains Rc, not Send).
+    spectral_mem: Option<Tensor>,
+    signal_mem: Option<Tensor>,
 }
 
 impl DtlnEngine {
@@ -77,10 +79,12 @@ impl DtlnEngine {
             signal_buf: vec![0f32; BLOCK_LEN],
             in_magnitude: [0f32; FFT_OUT_SIZE],
             in_phase: [0f32; FFT_OUT_SIZE],
-            spectral_memory: vec![0f32; MEMORY_ELEMENTS],
-            signal_memory: vec![0f32; MEMORY_ELEMENTS],
             in_buffer: [0f32; BLOCK_LEN],
             out_buffer: [0f32; BLOCK_LEN],
+            spectral_mem: Some(
+                Array::<f32, _>::zeros(IxDyn(&[1, 2, BLOCK_SHIFT, 2])).into_tensor(),
+            ),
+            signal_mem: Some(Array::<f32, _>::zeros(IxDyn(&[1, 2, BLOCK_SHIFT, 2])).into_tensor()),
         })
     }
 
@@ -106,14 +110,18 @@ impl DtlnEngine {
             let mag =
                 Array::from_shape_vec(IxDyn(&[1, 1, FFT_OUT_SIZE]), self.in_magnitude.to_vec())
                     .map_err(|e| format!("Failed to create magnitude array: {e}"))?;
-            let mem =
-                Array::from_shape_vec(IxDyn(&[1, 2, BLOCK_SHIFT, 2]), self.spectral_memory.clone())
-                    .map_err(|e| format!("Failed to create spectral memory array: {e}"))?;
 
-            let outputs = self
+            let spec_mem = self.spectral_mem.take().unwrap_or_else(|| {
+                Array::<f32, _>::zeros(IxDyn(&[1, 2, BLOCK_SHIFT, 2])).into_tensor()
+            });
+
+            let mut outputs = self
                 .spectral_model
-                .run(tvec![mag.into_tensor().into(), mem.into_tensor().into()])
+                .run(tvec![mag.into_tensor().into(), spec_mem.into()])
                 .map_err(|e| format!("Spectral model inference failed: {e}"))?;
+
+            // Recycle memory tensor for next frame (O(1) Rc::try_unwrap, no allocation).
+            self.spectral_mem = Some(outputs.remove(1).into_tensor());
 
             let mask = outputs[0]
                 .to_array_view::<f32>()
@@ -131,15 +139,6 @@ impl DtlnEngine {
             let last = FFT_OUT_SIZE - 1;
             self.masked_spectrum[last] =
                 Complex::new(self.in_magnitude[last] * mask_flat[last], 0.0);
-
-            let new_mem = outputs[1]
-                .to_array_view::<f32>()
-                .map_err(|e| format!("Failed to extract spectral memory: {e}"))?;
-            if let Some(mem_slice) = new_mem.as_slice() {
-                self.spectral_memory.copy_from_slice(mem_slice);
-            } else {
-                log::error!("Failed to get contiguous memory for spectral model");
-            }
         }
 
         // Inverse FFT
@@ -158,14 +157,18 @@ impl DtlnEngine {
         {
             let sig = Array::from_shape_vec(IxDyn(&[1, 1, BLOCK_LEN]), self.signal_buf.clone())
                 .map_err(|e| format!("Failed to create signal array: {e}"))?;
-            let mem =
-                Array::from_shape_vec(IxDyn(&[1, 2, BLOCK_SHIFT, 2]), self.signal_memory.clone())
-                    .map_err(|e| format!("Failed to create signal memory array: {e}"))?;
 
-            let outputs = self
+            let sig_mem = self.signal_mem.take().unwrap_or_else(|| {
+                Array::<f32, _>::zeros(IxDyn(&[1, 2, BLOCK_SHIFT, 2])).into_tensor()
+            });
+
+            let mut outputs = self
                 .signal_model
-                .run(tvec![sig.into_tensor().into(), mem.into_tensor().into()])
+                .run(tvec![sig.into_tensor().into(), sig_mem.into()])
                 .map_err(|e| format!("Signal model inference failed: {e}"))?;
+
+            // Recycle memory tensor for next frame (O(1) Rc::try_unwrap, no allocation).
+            self.signal_mem = Some(outputs.remove(1).into_tensor());
 
             let out_view = outputs[0]
                 .to_array_view::<f32>()
@@ -179,15 +182,6 @@ impl DtlnEngine {
             self.out_buffer[BLOCK_LEN - BLOCK_SHIFT..].fill(0f32);
             for (a, b) in self.out_buffer.iter_mut().zip(out_slice.iter()) {
                 *a += b;
-            }
-
-            let new_mem = outputs[1]
-                .to_array_view::<f32>()
-                .map_err(|e| format!("Failed to extract signal memory: {e}"))?;
-            if let Some(mem_slice) = new_mem.as_slice() {
-                self.signal_memory.copy_from_slice(mem_slice);
-            } else {
-                log::error!("Failed to get contiguous memory for signal model");
             }
         }
 

@@ -196,7 +196,7 @@ fn open_output_stream(
 impl MixerHandle {
     pub fn new() -> Result<(Self, SharedProcessor), String> {
         let apm = Arc::new(Mutex::new(AudioProcessingModule::new(
-            true, true, false, true,
+            true, true, false, false,
         )));
         let _ = apm.lock().set_stream_delay_ms(50);
         let mixer = Arc::new(Mutex::new(AudioMixer::new()));

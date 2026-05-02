@@ -324,7 +324,7 @@ pub fn test_call(
         let available_content = screenshare_client::get_available_content(&sender, &event_socket)?;
         match available_content {
             Message::AvailableContent(content_msg) => {
-                if let Some(capture_content) = content_msg.content.first() {
+                if let Some(capture_content) = content_msg.content.last() {
                     println!("Using display: {}", capture_content.content.id);
 
                     // Use default resolution for screenshare
