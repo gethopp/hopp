@@ -17,10 +17,58 @@ on:
         required: false
         default: "main"
         type: string
+      from_ref:
+        description: "Previous release tag/SHA to diff from (auto-detected if empty)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
+  prepare-notes:
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.collect.outputs.notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve git-cliff args
+        id: cliff_args
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.from_ref }}" ]]; then
+            echo "args=--tag ${{ github.event.inputs.version }} --strip header ${{ github.event.inputs.from_ref }}..HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--unreleased --tag ${{ github.event.inputs.version }} --strip header" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog
+        id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: ${{ steps.cliff_args.outputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTPUT: CHANGES.md
+
+      - name: Expose notes as job output
+        id: collect
+        shell: bash
+        run: |
+          {
+            echo "notes<<HOPP_EOF"
+            cat "${{ steps.cliff.outputs.changelog }}"
+            echo "HOPP_EOF"
+          } >> "$GITHUB_OUTPUT"
+
   # Build for all platforms using matrix strategy
   build-release:
+    needs: prepare-notes
     permissions:
       contents: write
     environment: Release
@@ -188,10 +236,7 @@ jobs:
           args: ${{ matrix.args }}
           tagName: ${{ github.event.inputs.version }}
           releaseName: "${{ github.event.inputs.release_name }} ${{ github.event.inputs.version }}"
-          releaseBody: |
-            ## Added
-            ## Fixed
-            ## Removed
+          releaseBody: ${{ needs.prepare-notes.outputs.notes }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
