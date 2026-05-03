@@ -242,3 +242,15 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: false
           updaterJsonKeepUniversal: false
+
+      - name: Zip Windows MSI for browser-safe download
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $msi = Get-ChildItem -Path "tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "hopp_*_x64_en-US.msi" | Select-Object -First 1
+          if (-not $msi) { throw "MSI not found" }
+          $zip = Join-Path $env:RUNNER_TEMP "hopp_x64_en-US.msi.zip"
+          Compress-Archive -Path $msi.FullName -DestinationPath $zip -Force
+          gh release upload "${{ github.event.inputs.version }}" $zip --clobber --repo "$env:GITHUB_REPOSITORY"
