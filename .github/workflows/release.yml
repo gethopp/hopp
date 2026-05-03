@@ -1,0 +1,256 @@
+name: "Build Hopp Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v0.0.33)"
+        required: true
+        type: string
+      release_name:
+        description: "Release name"
+        required: false
+        default: "Hopp Release"
+        type: string
+      branch:
+        description: "Branch to build from"
+        required: false
+        default: "main"
+        type: string
+      from_ref:
+        description: "Previous release tag/SHA to diff from (auto-detected if empty)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  prepare-notes:
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.collect.outputs.notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve git-cliff args
+        id: cliff_args
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.from_ref }}" ]]; then
+            echo "args=--tag ${{ github.event.inputs.version }} --strip header ${{ github.event.inputs.from_ref }}..HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--unreleased --tag ${{ github.event.inputs.version }} --strip header" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog
+        id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: ${{ steps.cliff_args.outputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTPUT: CHANGES.md
+
+      - name: Expose notes as job output
+        id: collect
+        shell: bash
+        run: |
+          {
+            echo "notes<<HOPP_EOF"
+            cat "${{ steps.cliff.outputs.changelog }}"
+            echo "HOPP_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # Build for all platforms using matrix strategy
+  build-release:
+    needs: prepare-notes
+    permissions:
+      contents: write
+    environment: Release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target x86_64-apple-darwin --config src-tauri/tauri.conf.rel.json"
+            target: "x86_64-apple-darwin"
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin --config src-tauri/tauri.conf.rel.json"
+            target: "aarch64-apple-darwin"
+          - platform: "windows-latest"
+            args: "--target x86_64-pc-windows-msvc --config src-tauri/tauri.conf.rel.json"
+            target: "x86_64-pc-windows-msvc"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Set XCode
+        if: matrix.platform == 'macos-latest'
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_16.2.app"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "yarn"
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install Yarn
+        run: corepack prepare yarn@stable --activate
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Task (go-task)
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install go-task/tap/go-task
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            choco install go-task
+          else
+            # Linux
+            sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+          fi
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        shell: bash
+        run: |
+          yarn install
+
+      - name: Map target to OS/ARCH for Task
+        shell: bash
+        id: task_vars
+        run: |
+          # Map from Rust target triple to task format
+          case "${{ matrix.target }}" in
+            "aarch64-apple-darwin")
+              echo "task_os=mac" >> $GITHUB_OUTPUT
+              echo "task_arch=arm64" >> $GITHUB_OUTPUT
+              ;;
+            "x86_64-apple-darwin")
+              echo "task_os=mac" >> $GITHUB_OUTPUT
+              echo "task_arch=x64" >> $GITHUB_OUTPUT
+              ;;
+            "x86_64-pc-windows-msvc")
+              echo "task_os=win" >> $GITHUB_OUTPUT
+              echo "task_arch=x64" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "task_os=linux" >> $GITHUB_OUTPUT
+              echo "task_arch=x64" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Import Apple Developer Certificate
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Verify certificate and set signing identity
+        if: matrix.platform == 'macos-latest'
+        run: |
+          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
+          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+          echo "Certificate imported: $CERT_ID"
+
+      - name: Run core:release task
+        shell: bash
+        run: |
+          cd core
+          task release OS=${{ steps.task_vars.outputs.task_os }} ARCH=${{ steps.task_vars.outputs.task_arch }}
+
+      - name: Set Vite environment variables
+        shell: bash
+        id: vite_vars
+        run: |
+          # Set VITE_BOTTOM_ARROW based on platform (true for Windows, false for others)
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            echo "vite_bottom_arrow=true" >> $GITHUB_OUTPUT
+            echo "vite_os=windows" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.target }}" == *"linux"* ]]; then
+            echo "vite_bottom_arrow=false" >> $GITHUB_OUTPUT
+            echo "vite_os=linux" >> $GITHUB_OUTPUT
+          else
+            echo "vite_bottom_arrow=false" >> $GITHUB_OUTPUT
+            echo "vite_os=macos" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          VITE_BOTTOM_ARROW: ${{ steps.vite_vars.outputs.vite_bottom_arrow }}
+          VITE_OS: ${{ steps.vite_vars.outputs.vite_os }}
+          SENTRY_DSN_RUST: ${{ secrets.SENTRY_DSN_RUST }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          VITE_SENTRY_DSN_JS: ${{ secrets.VITE_SENTRY_DSN_JS }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_POSTHOG_API_KEY: ${{ secrets.VITE_POSTHOG_API_KEY }}
+          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+        with:
+          projectPath: tauri
+          args: ${{ matrix.args }}
+          tagName: ${{ github.event.inputs.version }}
+          releaseName: "${{ github.event.inputs.release_name }} ${{ github.event.inputs.version }}"
+          releaseBody: ${{ needs.prepare-notes.outputs.notes }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: false
+          updaterJsonKeepUniversal: false
+
+      - name: Zip Windows MSI for browser-safe download
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $msi = Get-ChildItem -Path "tauri/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "hopp_*_x64_en-US.msi" | Select-Object -First 1
+          if (-not $msi) { throw "MSI not found" }
+          $zip = Join-Path $env:RUNNER_TEMP "hopp_x64_en-US.msi.zip"
+          Compress-Archive -Path $msi.FullName -DestinationPath $zip -Force
+          gh release upload "${{ github.event.inputs.version }}" $zip --clobber --repo "$env:GITHUB_REPOSITORY"

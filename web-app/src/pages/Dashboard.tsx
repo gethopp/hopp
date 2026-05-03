@@ -56,7 +56,7 @@ const ReleaseLinkNotFound = ({ toastId }: { toastId: string }) => (
     <Button
       variant="outline"
       onClick={() => {
-        window.open("https://github.com/gethopp/hopp-releases/releases", "_blank");
+        window.open("https://github.com/gethopp/hopp/releases", "_blank");
         toast.dismiss(toastId);
       }}
     >
@@ -153,7 +153,7 @@ export function Dashboard() {
   useEffect(() => {
     const fetchLatestRelease = async () => {
       try {
-        const response = await fetch("https://api.github.com/repos/gethopp/hopp-releases/releases/latest");
+        const response = await fetch("https://api.github.com/repos/gethopp/hopp/releases/latest");
         if (!response.ok) throw new Error("Failed to fetch latest release");
         const data = await response.json();
         setLatestRelease(data);
@@ -164,18 +164,15 @@ export function Dashboard() {
           assets: [
             {
               name: "hopp_x64.dmg",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp.app.x64.tar.gz",
+              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp.app.x64.tar.gz",
             },
             {
               name: "hopp_aarch64.dmg",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp.app.aarch64.tar.gz",
+              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp.app.aarch64.tar.gz",
             },
             {
               name: "hopp.msi.zip",
-              browser_download_url:
-                "https://github.com/gethopp/hopp-releases/releases/latest/download/hopp_x64_en-US.msi.zip",
+              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp_x64_en-US.msi.zip",
             },
           ],
         };
