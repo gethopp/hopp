@@ -5,10 +5,9 @@ Run your own Hopp server. Includes PostgreSQL, Redis, LiveKit (WebRTC), and Cadd
 ## Prerequisites
 
 - A server with Docker and Docker Compose installed
-- A domain name pointing to your server's IP (e.g. `hopp.example.com`)
-  - DNS A records for both your apex domain (`hopp.example.com`) and the
-    `livekit.` subdomain (`livekit.hopp.example.com`) → server IP. A wildcard
-    record (`*.hopp.example.com`) also works.
+- A public hostname for your server. Either:
+  - **A real domain** with A records for `<DOMAIN>` and `livekit.<DOMAIN>` (or wildcard `*.<DOMAIN>`) pointing to your server's IP.
+  - **Or `sslip.io`** for quick testing — use `<your-ip>.sslip.io` as `DOMAIN` (e.g. `51.15.42.10.sslip.io`). Resolves automatically, no DNS setup. Subdomains work (`livekit.<your-ip>.sslip.io`). Real domain recommended for production.
 - Open firewall ports (see [Firewall](#firewall) below)
 
 ## Quickstart (6 steps)
@@ -68,7 +67,11 @@ account becomes the workspace owner.
 
 ## Firewall
 
-Open these ports on your server:
+Many cloud providers (Scaleway DEV, Hetzner Cloud, basic DigitalOcean droplets) do **not** apply a firewall by default — these ports will already be reachable. Skip this section unless your provider has a security group, network ACL, or you've enabled `ufw`/`firewalld` on the host.
+
+> AWS, GCP, Azure, and Scaleway PRO/PROD instances typically need explicit security-group rules.
+
+Open these ports if your provider applies a firewall:
 
 | Port        | Protocol | Purpose              |
 | ----------- | -------- | -------------------- |
@@ -85,7 +88,7 @@ Email is disabled by default. Set `RESEND_API_KEY` in `.env` to enable password 
 
 Generic SMTP support is [a good first issue](https://github.com/gethopp/hopp/issues) — contributions welcome.
 
-## Web app
+## Web app and desktop
 
 The web app served by your backend works without a rebuild — it derives the
 API URL from `window.location` at runtime.
@@ -119,7 +122,7 @@ Copy `compose.override.example.yml` to `compose.override.yml` and adjust port ma
 If you already run nginx/traefik/caddy, skip the bundled Caddy:
 
 1. Remove the `caddy` service from `compose.yml` (or use an override)
-2. Point your proxy to `backend:1926` and `livekit:7880`
+2. Point your proxy to `backend:1926` (Docker DNS) and `127.0.0.1:7880` (LiveKit on host networking)
 3. Set `USE_TLS=false` (already the default)
 4. Set `LIVEKIT_SERVER_URL=wss://livekit.yourdomain.com` in `.env`
 
