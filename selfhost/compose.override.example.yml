@@ -1,0 +1,38 @@
+# Example compose override — customize ports, volumes, etc.
+#
+# Usage:
+#   cp compose.override.example.yml compose.override.yml
+#   # edit compose.override.yml
+#   docker compose up -d
+#
+# NOTE: Docker Compose merges list fields (ports, volumes) *additively* by
+# default. To *replace* a list from the base compose.yml, use the `!reset` tag
+# followed by the new list. See https://docs.docker.com/compose/compose-file/
+# for details.
+
+services:
+  # Narrow LiveKit UDP port range for local dev (avoids macOS port conflicts)
+  # livekit:
+  #   ports: !reset []
+  #   ports:
+  #     - "7880:7880"
+  #     - "7881:7881"
+  #     - "50000-50100:50000-50100/udp"
+  #   volumes: !override
+  #     - ./livekit.dev.yaml:/etc/livekit.yaml:ro
+
+  # Example: bind backend to a different internal port
+  # backend:
+  #   ports:
+  #     - "8080:1926"
+
+  # Example: custom Caddy ports
+  # caddy:
+  #   ports:
+  #     - "8080:80"
+  #     - "8443:443"
+
+  # Example: custom PostgreSQL port
+  # db:
+  #   ports:
+  #     - "5433:5432"

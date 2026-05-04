@@ -1,0 +1,93 @@
+# Hopp self-hosted server
+# Single compose file: backend + PostgreSQL + Redis + LiveKit + Caddy (TLS)
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hopp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hopp_local_pass}
+      POSTGRES_DB: hopp
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - cache_data:/data
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
+    ports:
+      - "7880:7880" # LiveKit signaling
+      - "7881:7881" # LiveKit TCP fallback
+      - "50000-60000:50000-60000/udp" # WebRTC media
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - cache
+
+  backend:
+    image: gethopp/hopp-backend:${HOPP_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      SERVER_HOST: 0.0.0.0
+      DEPLOY_DOMAIN: ${DOMAIN}
+      SESSION_SECRET: ${SESSION_SECRET}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_SERVER_URL: ${LIVEKIT_SERVER_URL:-wss://livekit.${DOMAIN}}
+      DATABASE_DSN: postgres://hopp:${POSTGRES_PASSWORD:-hopp_local_pass}@db:5432/hopp?sslmode=disable
+      REDIS_URI: redis://cache:6379/0?protocol=3
+      USE_TLS: "false"
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_DEFAULT_SENDER: ${RESEND_DEFAULT_SENDER:-noreply@${DOMAIN}}
+      GOOGLE_KEY: ${GOOGLE_KEY:-}
+      GOOGLE_SECRET: ${GOOGLE_SECRET:-}
+      SLACK_KEY: ${SLACK_KEY:-}
+      SLACK_SECRET: ${SLACK_SECRET:-}
+      GITHUB_KEY: ${GITHUB_KEY:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PAID_PRICE_ID: ${STRIPE_PAID_PRICE_ID:-}
+      STRIPE_PAID_YEARLY_PRICE_ID: ${STRIPE_PAID_YEARLY_PRICE_ID:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      SLACK_APP_CLIENT_ID: ${SLACK_APP_CLIENT_ID:-}
+      SLACK_APP_CLIENT_SECRET: ${SLACK_APP_CLIENT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_TOKEN_ENCRYPTION_KEY: ${SLACK_TOKEN_ENCRYPTION_KEY:-}
+    depends_on:
+      - db
+      - cache
+      - livekit
+    ports:
+      - "127.0.0.1:1926:1926"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
+  cache_data:
+  caddy_data:
+  caddy_config:

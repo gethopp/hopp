@@ -32,7 +32,7 @@ tasks:
   compose-up:
     desc: Start the development databases and related services (local Go server for faster dev)
     cmds:
-      - docker compose -f docker-files/docker-compose.yml up -d
+      - docker compose -f dev-compose.yml up -d
 
   build:
     cmds:
@@ -50,14 +50,6 @@ tasks:
     desc: Run the Docker image locally
     cmds:
       - docker run -p 1926:1926 --env-file env-files/.env.local --network host --name hopp-backend hopp-backend
-
-  fullstack-up:
-    desc: Build and run the fullstack setup with Redis and backend
-    cmds:
-      # - task: build-image
-      - docker compose -f docker-files/fullstack-compose.yml up -d
-    env:
-      ENV_STACK: local
 
   install-reload-tools:
     desc: Install required development tools (maybe you will need to install manually)

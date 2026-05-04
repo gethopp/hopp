@@ -1,0 +1,15 @@
+# Hopp Caddyfile — auto-TLS reverse proxy
+#
+# Routes:
+#   https://{DOMAIN}         → backend :1926
+#   wss://livekit.{DOMAIN}   → livekit :7880
+#
+# Caddy automatically obtains and renews Let's Encrypt certificates.
+
+{$DOMAIN} {
+    reverse_proxy backend:1926
+}
+
+livekit.{$DOMAIN} {
+    reverse_proxy livekit:7880
+}

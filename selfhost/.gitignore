@@ -1,0 +1,19 @@
+# Environment files (contains secrets)
+.env
+
+# Docker data volumes
+*.data
+*.volume
+
+# Caddy TLS certificates and data
+caddy_data/
+caddy_config/
+*.pem
+*.key
+*.crt
+
+# Docker Compose local overrides (use .example files as templates)
+compose.override.yml
+
+# OS files
+.DS_Store
