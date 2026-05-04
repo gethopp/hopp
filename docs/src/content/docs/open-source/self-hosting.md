@@ -55,7 +55,7 @@ curl https://hopp.example.com/api/health
 
 ### 5. Create the first account
 
-Open `https://{DOMAIN}` in a browser and sign up. The first registered account becomes the team admin owner.
+Open `https://hopp.example.com` in a browser and sign up. The first registered account becomes the team admin owner.
 
 ## Firewall
 
