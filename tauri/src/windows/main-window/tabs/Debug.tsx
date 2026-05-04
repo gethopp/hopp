@@ -8,21 +8,16 @@ import { useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { soundUtils } from "@/lib/sound_utils";
 import { validateAndSetAuthToken } from "@/lib/authUtils";
-import { URLS } from "@/constants";
-import { tauriUtils } from "@/windows/window-utils";
-import { usePostHog } from "posthog-js/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import { typedInvoke } from "@/core_payloads";
 
 export const Debug = () => {
-  const { callTokens, setCallTokens, authToken, customServerUrl, setCustomServerUrl } = useStore();
+  const { callTokens, setCallTokens, authToken } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [localServerUrl, setLocalServerUrl] = useState<string>(customServerUrl || "");
   const [trayNotification, setTrayNotification] = useState(false);
   const [noiseCancellation, setNoiseCancellation] = useState(true);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
-  const posthog = usePostHog();
 
   const { refetch, data, isLoading, isFetching } = useQuery({
     queryKey: ["list_cameras"],
@@ -88,26 +83,6 @@ export const Debug = () => {
             onChange={async (e) => {
               const newToken = e.target.value;
               await validateAndSetAuthToken(newToken);
-            }}
-          />
-        </div>
-
-        <div className="grid w-full max-w-sm items-center gap-1.5">
-          <Label htmlFor="customServerUrl">Custom Backend URL</Label>
-          <span className="muted">
-            Override the default backend URL. Leave empty to use default ({URLS.API_BASE_URL}).
-          </span>
-          <Input
-            type="text"
-            placeholder={URLS.API_BASE_URL}
-            value={localServerUrl}
-            onChange={async (e) => {
-              const newUrl = e.target.value;
-              setLocalServerUrl(newUrl);
-              const urlToSet = newUrl.trim() || null;
-              setCustomServerUrl(urlToSet);
-              await tauriUtils.setHoppServerUrl(urlToSet);
-              posthog.capture("custom_backend_url_changed");
             }}
           />
         </div>

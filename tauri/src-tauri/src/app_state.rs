@@ -9,6 +9,7 @@ pub struct UserSettings {
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
+    pub hopp_server_url: Option<String>,
 }
 
 impl Default for UserSettings {
@@ -18,6 +19,7 @@ impl Default for UserSettings {
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
             start_mic_on_call: false,
+            hopp_server_url: None,
         }
     }
 }
@@ -67,9 +69,6 @@ struct AppStateInternal {
     /// User JWT
     pub user_jwt: Option<String>,
 
-    /// Hopp server URL
-    pub hopp_server_url: Option<String>,
-
     /// The user's preferred interaction mode for screen sharing sessions
     pub last_mode: Option<StoredMode>,
 
@@ -117,7 +116,6 @@ impl Default for AppStateInternal {
             last_used_camera: None,
             first_run: true,
             user_jwt: None,
-            hopp_server_url: None,
             last_mode: None,
             sharer_draw_persist: None,
             controller_draw_persist: None,
@@ -345,22 +343,6 @@ impl AppState {
         self.state.user_jwt = jwt;
         if !self.save() {
             log::error!("set_user_jwt: Failed to save app state");
-        }
-    }
-
-    /// Gets the hopp server URL override.
-    pub fn hopp_server_url(&self) -> Option<String> {
-        let _lock = self.lock.lock().unwrap();
-        self.state.hopp_server_url.clone()
-    }
-
-    /// Updates the hopp server URL override and saves to disk.
-    pub fn set_hopp_server_url(&mut self, url: Option<String>) {
-        log::info!("set_hopp_server_url: {url:?}");
-        let _lock = self.lock.lock().unwrap();
-        self.state.hopp_server_url = url;
-        if !self.save() {
-            log::error!("set_hopp_server_url: Failed to save app state");
         }
     }
 

@@ -333,6 +333,15 @@ function App() {
       return unlistenFn;
     };
 
+    // Update custom server URL when it changes in the backend
+    const setupServerUrlChangedListener = async () => {
+      const unlistenFn = await listen<string | null>("hopp_server_url_changed", (event) => {
+        useStore.getState().setCustomServerUrl(event.payload);
+      });
+
+      return unlistenFn;
+    };
+
     let unlisten: (() => void) | undefined;
     setupCoreProcessCrashedListener().then((fn) => {
       unlisten = fn;
@@ -343,9 +352,15 @@ function App() {
       unlistenChangeToken = fn;
     });
 
+    let unlistenServerUrl: (() => void) | undefined;
+    setupServerUrlChangedListener().then((fn) => {
+      unlistenServerUrl = fn;
+    });
+
     return () => {
       if (unlisten) unlisten();
       if (unlistenChangeToken) unlistenChangeToken();
+      if (unlistenServerUrl) unlistenServerUrl();
     };
   }, []);
 
@@ -359,7 +374,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("ping", () => { });
+      const unlistenFn = await listen("ping", () => {});
 
       return unlistenFn;
     };

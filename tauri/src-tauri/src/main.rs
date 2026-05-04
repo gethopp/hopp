@@ -731,7 +731,7 @@ fn get_hopp_server_url(app: tauri::AppHandle) -> Option<String> {
     log::info!("get_hopp_server_url");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    let url = data.app_state.hopp_server_url();
+    let url = data.app_state.user_settings().hopp_server_url;
     log::debug!("get_hopp_server_url: {url:?}");
     url
 }
@@ -741,7 +741,9 @@ fn set_hopp_server_url(app: tauri::AppHandle, url: Option<String>) {
     log::info!("set_hopp_server_url: {url:?}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_hopp_server_url(url);
+    data.app_state
+        .update_user_setting(|s| s.hopp_server_url = url.clone());
+    let _ = app.emit("hopp_server_url_changed", &url);
 }
 
 #[tauri::command(async)]
@@ -786,8 +788,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 520.0,
-            height: 400.0,
+            width: 580.0,
+            height: 510.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
