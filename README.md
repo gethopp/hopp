@@ -21,6 +21,10 @@ Open source screen sharing built for developers. Pair program with sub-100ms lat
   <img src="./docs/src/assets/demo.gif" alt="Hopp pair programming demo" width="800" />
 </p>
 
+<p align="center">
+  <img src="./docs/src/assets/view.png" alt="Hopp screen sharing quality" width="800" />
+</p>
+
 Hopp is an open source pair programming app and screen sharing tool built for developers. Whether you're looking for a Tuple alternative for remote pair programming, a self-hosted solution for your team, or an open source Pop / Drovio / Coscreen alternative — Hopp delivers sub-100ms latency with native desktop performance. Built on Tauri and Rust, with WebRTC infrastructure powered by [LiveKit](https://livekit.io).
 
 ## Try Hopp
