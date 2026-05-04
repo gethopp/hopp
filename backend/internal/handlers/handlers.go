@@ -587,7 +587,7 @@ func (h *AuthHandler) User(c echo.Context) error {
 	}
 
 	// We need additional payload for subscription information
-	userWithSubscription, err := models.GetUserWithSubscription(h.DB, user)
+	userWithSubscription, err := models.GetUserWithSubscription(h.DB, user, h.Config.IsStripeEnabled())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -1025,7 +1025,7 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	}
 
 	// Check if caller has access (paid or active trial)
-	hasAccess, err := checkUserHasAccess(h.DB, user)
+	hasAccess, err := checkUserHasAccess(h.DB, user, h.Config.IsStripeEnabled())
 	if err != nil {
 		c.Logger().Error("Error getting user subscription: ", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")

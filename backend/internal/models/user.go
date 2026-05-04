@@ -268,11 +268,17 @@ type UserWithSubscription struct {
 	TrialEndsAt *time.Time `json:"trial_ends_at,omitempty"`
 }
 
-// GetUserWithSubscription returns a user with subscription information
+// GetUserWithSubscription returns a user with subscription information.
+// When stripeEnabled is false (self-hosted deployments without Stripe), every
+// user is treated as Pro and the trial is bypassed.
 // 1. Check if team is manually upgraded, if so return true to `is_pro`
 // 2. Fetch if any sub for their team exists and if its active
 // 3. If no sub, return `IsTrial` and `TrialEndsAt`
-func GetUserWithSubscription(db *gorm.DB, user *User) (*UserWithSubscription, error) {
+func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*UserWithSubscription, error) {
+	if !stripeEnabled {
+		return &UserWithSubscription{User: *user, IsPro: true}, nil
+	}
+
 	team, err := GetTeamByID(db, strconv.Itoa(int(*user.TeamID)))
 	if err != nil {
 		return nil, err

@@ -183,3 +183,10 @@ func Load() (*Config, error) {
 
 	return c, nil
 }
+
+// IsStripeEnabled reports whether Stripe billing is configured. Self-hosted
+// deployments without STRIPE_SECRET_KEY bypass the trial guard and are treated
+// as Pro.
+func (c *Config) IsStripeEnabled() bool {
+	return c.Stripe.SecretKey != ""
+}

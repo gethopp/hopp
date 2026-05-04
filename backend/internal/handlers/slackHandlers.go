@@ -559,7 +559,7 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 	}
 
 	// Check if user has access (paid or active trial)
-	hasAccess, err := checkUserHasAccess(h.DB, user)
+	hasAccess, err := checkUserHasAccess(h.DB, user, h.Config.IsStripeEnabled())
 	if err != nil {
 		c.Logger().Error("Error getting user subscription: ", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")
