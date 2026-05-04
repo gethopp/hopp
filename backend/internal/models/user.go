@@ -291,8 +291,13 @@ func GetUserWithSubscription(db *gorm.DB, user *User) (*UserWithSubscription, er
 		return &UserWithSubscription{User: *user, IsPro: true}, nil
 	}
 
-	// Trial will be team creation + 30 days
-	trialEndsAt := team.CreatedAt.AddDate(0, 0, 30)
+	// Teams created before 2026-05-04 keep legacy 30-day trial; new teams get 14 days.
+	trialCutoff := time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC)
+	trialDays := 14
+	if team.CreatedAt.Before(trialCutoff) {
+		trialDays = 30
+	}
+	trialEndsAt := team.CreatedAt.AddDate(0, 0, trialDays)
 	return &UserWithSubscription{
 		User:        *user,
 		IsTrial:     true,

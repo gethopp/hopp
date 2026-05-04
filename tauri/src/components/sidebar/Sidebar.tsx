@@ -67,7 +67,7 @@ const getAvailableTabs = (
           key: "login",
         } as const,
       ]
-      : [
+    : [
         {
           label: "User List",
           icon: <HiOutlineUsers className="size-4 stroke-[1.5]" />,
@@ -123,7 +123,7 @@ const DownloadNewVersionButton = () => {
         >
           {updateInProgress ?
             <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-            : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
@@ -137,8 +137,6 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
     return null;
   }
 
-  console.log("user", user);
-
   // Uncomment and modify value to test visual changes
   // const end = "2025-10-05T17:20:32.677+02:00";
   // const trialEndDate = parseISO(end);
@@ -151,23 +149,31 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
     return null;
   }
 
-  // Calculate percentage based on days remaining (max 30 days trial)
-  const maxTrialDays = 30;
-  const percentage = Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100)); // Min 5% to always be visible
+  // teams created before 2026-05-04 keep 30-day trial; new teams get 14.
+  const TRIAL_GRANDFATHER_CUTOFF = new Date("2026-05-04T00:00:00Z");
+  const userCreatedAt = user.created_at ? parseISO(user.created_at) : new Date();
+  const maxTrialDays = userCreatedAt < TRIAL_GRANDFATHER_CUTOFF ? 30 : 14;
+  const percentage = Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100));
 
-  // Color intensity based on urgency
+  // Thresholds scale with maxTrialDays so bar starts green for both 14- and 30-day trials.
+  // 30-day: yellow ≤14, orange ≤7, red ≤3 (matches prior behavior).
+  // 14-day: yellow ≤7,  orange ≤3, red ≤1.
+  const yellowAt = Math.ceil(maxTrialDays / 2);
+  const orangeAt = Math.ceil(maxTrialDays / 4);
+  const redAt = Math.max(3, Math.floor(maxTrialDays / 10));
+
   const getTextColor = (days: number) => {
-    if (days <= 3) return "text-red-800";
-    if (days <= 7) return "text-orange-800";
-    if (days <= 14) return "text-yellow-800";
+    if (days <= redAt) return "text-red-800";
+    if (days <= orangeAt) return "text-orange-800";
+    if (days <= yellowAt) return "text-yellow-800";
     return "text-green-800";
   };
 
   const getBackgroundColor = (days: number) => {
-    if (days <= 3) return "#fca5a5"; // red-300
-    if (days <= 7) return "#fdba74"; // orange-300
-    if (days <= 14) return "#fde047"; // yellow-300
-    return "#86efac"; // green-300
+    if (days <= redAt) return "#fca5a5";
+    if (days <= orangeAt) return "#fdba74";
+    if (days <= yellowAt) return "#fde047";
+    return "#86efac";
   };
 
   return (
