@@ -13,4 +13,4 @@ rtc:
   use_external_ip: true
 
 redis:
-  address: cache:6379
+  address: 127.0.0.1:6379
