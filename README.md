@@ -6,7 +6,7 @@ Open source screen sharing built for developers. Pair program with sub-100ms lat
 
 <img src="./docs/src/assets/banner.png" alt="Hopp" />
 
-[Website](https://gethopp.app) · [Download](https://gethopp.app) · [Sign up](https://gethopp.app) · [Docs](https://docs.gethopp.app) · [Self-host](#self-host) · [Discord](https://discord.gg/TKRpS3aMn9) · [Twitter](https://x.com/gethopp_app)
+[Website](https://gethopp.app) · [Download](https://github.com/gethopp/hopp/releases/latest) · [Sign up](https://gethopp.app) · [Docs](https://docs.gethopp.app) · [Self-host](#self-host) · [Discord](https://discord.gg/TKRpS3aMn9) · [Twitter](https://x.com/gethopp_app)
 
 [![Discord](https://img.shields.io/discord/1348693269013467167?color=7289da&label=Discord&logo=discord&logoColor=ffffff)](https://discord.gg/TKRpS3aMn9)
 [![License](https://img.shields.io/github/license/gethopp/hopp)](https://github.com/gethopp/hopp/blob/main/LICENSE.md)
@@ -16,7 +16,6 @@ Open source screen sharing built for developers. Pair program with sub-100ms lat
 
 </div>
 
-<!-- TODO: replace with actual demo GIF -->
 <p align="center">
   <img src="./docs/src/assets/demo.gif" alt="Hopp pair programming demo" width="800" />
 </p>
@@ -29,11 +28,11 @@ Hopp is an open source pair programming app and screen sharing tool built for de
 
 ## Try Hopp
 
-1. **Download the desktop app** — [macOS (stable)](https://gethopp.app) or [Windows (alpha)](https://gethopp.app)
-2. **Sign up at [gethopp.app](https://gethopp.app)** — it's free
+1. **Download the desktop app** — [macOS (stable)](https://github.com/gethopp/hopp/releases/latest) or [Windows (alpha)](https://github.com/gethopp/hopp/releases/latest)
+2. **Pick your backend**:
+   - **Managed cloud** — [sign up at gethopp.app](https://gethopp.app) (14 days free trial) 
+   - **Self-host** — run your own backend, no sign up needed, see [Self-host](#self-host) below
 3. **Click your teammate and start pairing** — no link sharing, no setup
-
-Signing up is free. The managed cloud at gethopp.app has a paid plan that funds ongoing development — see [Paid Cloud](#paid-cloud-supports-development) below.
 
 ## Why Hopp
 
@@ -49,7 +48,7 @@ Signing up is free. The managed cloud at gethopp.app has a paid plan that funds 
 git clone https://github.com/gethopp/hopp.git
 cd hopp/selfhost
 cp .env.example .env   # edit DOMAIN + secrets
-docker compose up -d
+docker compose up -d   # for localhost see full guide in selfhost/README.md
 ```
 
 Includes Postgres, Redis, LiveKit, and Caddy auto-TLS. Full guide: [`selfhost/README.md`](./selfhost/README.md).
@@ -64,7 +63,7 @@ Hopp is independent and funded by Cloud subscribers. The managed plan at [gethop
 
 ## Roadmap
 
-- [ ] Move WebRTC from WebKit to Rust backend (in progress)
+- [x] Move WebRTC from WebKit to Rust backend (in progress)
 - [ ] Dynamic codec selection + adaptive streaming resolution
 - [ ] Key bindings
 - [ ] Linux support
