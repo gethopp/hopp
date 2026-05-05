@@ -536,7 +536,8 @@ impl ScreensharingWindow {
             Size::new(physical_size.width.max(1), physical_size.height.max(1)),
             window.scale_factor() as f32,
         );
-        let clipboard = Clipboard::connect(window.clone());
+        let mut clipboard = Clipboard::connect(window.clone());
+        clipboard.write(Kind::Standard, String::new());
 
         #[cfg(target_os = "macos")]
         super::vibrancy::apply_macos_vibrancy(&window, 8.0);
