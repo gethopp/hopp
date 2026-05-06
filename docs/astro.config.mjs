@@ -37,13 +37,14 @@ export default defineConfig({
           label: "Open Source",
           items: [
             { label: "Contribute", slug: "open-source/contribute" },
-            { label: "Self-Hosting & Publishing", slug: "open-source/self-hosting" },
+            { label: "Self-Hosting", slug: "open-source/self-hosting" },
           ],
         },
         {
           label: "Features",
           items: [
             { label: "Terminologies", slug: "features/terminologies" },
+            { label: "Settings", slug: "features/settings" },
             { label: "Screen Sharing", slug: "features/screen-sharing" },
             { label: "Rooms", slug: "features/rooms" },
             { label: "Remote Control", slug: "features/remote-control" },

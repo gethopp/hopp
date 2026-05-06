@@ -200,13 +200,13 @@ func extractUserIDFromIdentity(identity string) (string, error) {
 // checkUserHasAccess checks if a user has an active subscription or trial.
 // Returns true if the user is a Pro subscriber or has an active trial, false otherwise.
 // Returns an error if the subscription check fails.
-func checkUserHasAccess(db *gorm.DB, user *models.User) (bool, error) {
+func checkUserHasAccess(db *gorm.DB, user *models.User, stripeEnabled bool) (bool, error) {
 	// If user has no team, they have no subscription or trial access
 	if user.TeamID == nil {
 		return false, nil
 	}
 
-	userWithSub, err := models.GetUserWithSubscription(db, user)
+	userWithSub, err := models.GetUserWithSubscription(db, user, stripeEnabled)
 	if err != nil {
 		return false, fmt.Errorf("failed to get user subscription: %w", err)
 	}

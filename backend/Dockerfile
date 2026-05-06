@@ -1,13 +1,19 @@
-FROM debian:bookworm-slim
+# syntax=docker/dockerfile:1.7
 
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w" -o /out/server ./main.go
+
+FROM gcr.io/distroless/static-debian12
 WORKDIR /app
-
-# Copy the pre-compiled binary
-COPY bin/server .
+COPY --from=builder /out/server .
 COPY web ./web
-
-# Set environment variable to disable TLS
 ENV USE_TLS=false
-
-# Run the binary
+EXPOSE 1926
 CMD ["./server"]

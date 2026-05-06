@@ -1,71 +1,98 @@
 <div align="center">
-<h1>Hopp - Open Source pair programming app</h1>
+
+# Hopp
+
+Open source screen sharing built for developers. Pair program with sub-100ms latency. The OSS Tuple alternative.
 
 <img src="./docs/src/assets/banner.png" alt="Hopp" />
 
+[Website](https://gethopp.app) · [Download](https://github.com/gethopp/hopp/releases/latest) · [Sign up](https://pair.gethopp.app/login) · [Docs](https://docs.gethopp.app) · [Self-host](#self-host) · [Discord](https://discord.gg/TKRpS3aMn9) · [Twitter](https://x.com/gethopp_app)
+
 [![Discord](https://img.shields.io/discord/1348693269013467167?color=7289da&label=Discord&logo=discord&logoColor=ffffff)](https://discord.gg/TKRpS3aMn9)
-![Powered by LiveKit](https://img.shields.io/badge/powered-by%20LiveKit-blue.svg?labelColor=212121&logo=data:image/svg%2bxml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGcgY2xpcC1wYXRoPSJ1cmwoI2NsaXAwXzQyODRfMzM1ODUpIj4KPHBhdGggZD0iTTE0LjQwMDQgOS41OTk2MUg5LjU5OTYxVjE0LjQwMDRIMTQuNDAwNFY5LjU5OTYxWiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTE5LjIwMTEgNC44MDA3OEgxNC40MDA0VjkuNjAxNTNIMTkuMjAxMVY0LjgwMDc4WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTE5LjIwMTEgMTQuNDAwNEgxNC40MDA0VjE5LjIwMTFIMTkuMjAxMVYxNC40MDA0WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTI0IDBIMTkuMTk5MlY0LjgwMDc1SDI0VjBaIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNMjQgMTkuMTk5MkgxOS4xOTkyVjI0SDI0VjE5LjE5OTJaIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNNC44MDA3NSAxOS4xOTkyVjE0LjQwMDRWOS41OTk2MlY0LjgwMDc1VjBIMFY0LjgwMDc1VjkuNTk5NjJWMTQuNDAwNFYxOS4xOTkyVjI0SDQuODAwNzVIOS41OTk2M0gxNC40MDA0VjE5LjE5OTJIOS41OTk2M0g0LjgwMDc1WiIgZmlsbD0id2hpdGUiLz4KPC9nPgo8ZGVmcz4KPGNsaXBQYXRoIGlkPSJjbGlwMF80Mjg0XzMzNTg1Ij4KPHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSJ3aGl0ZSIvPgo8L2NsaXBQYXRoPgo8L2RlZnM+Cjwvc3ZnPgo=)
 [![License](https://img.shields.io/github/license/gethopp/hopp)](https://github.com/gethopp/hopp/blob/main/LICENSE.md)
+![Powered by LiveKit](https://img.shields.io/badge/powered-by%20LiveKit-blue.svg?labelColor=212121&logo=data:image/svg%2bxml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGcgY2xpcC1wYXRoPSJ1cmwoI2NsaXAwXzQyODRfMzM1ODUpIj4KPHBhdGggZD0iTTE0LjQwMDQgOS41OTk2MUg5LjU5OTYxVjE0LjQwMDRIMTQuNDAwNFY5LjU5OTYxWiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTE5LjIwMTEgNC44MDA3OEgxNC40MDA0VjkuNjAxNTNIMTkuMjAxMVY0LjgwMDc4WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTE5LjIwMTEgMTQuNDAwNEgxNC40MDA0VjE5LjIwMTFIMTkuMjAxMVYxNC40MDA0WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTI0IDBIMTkuMTk5MlY0LjgwMDc1SDI0VjBaIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNMjQgMTkuMTk5MkgxOS4xOTkyVjI0SDI0VjE5LjE5OTJaIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNNC44MDA3NSAxOS4xOTkyVjE0LjQwMDRWOS41OTk2MlY0LjgwMDc1VjBIMFY0LjgwMDc1VjkuNTk5NjJWMTQuNDAwNFYxOS4xOTkyVjI0SDQuODAwNzVIOS41OTk2M0gxNC40MDA0VjE5LjE5OTJIOS41OTk2M0g0LjgwMDc1WiIgZmlsbD0id2hpdGUiLz4KPC9nPgo8ZGVmcz4KPGNsaXBQYXRoIGlkPSJjbGlwMF80Mjg0XzMzNTg1Ij4KPHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiBmaWxsPSJ3aGl0ZSIvPgo8L2NsaXBQYXRoPgo8L2RlZnM+Cjwvc3ZnPgo=)
 [![Pairing with Hopp](https://gethopp.app/git/hopp-shield.svg?ref=hopp-repo)](https://gethopp.app)
 
 </div>
 
-Hopp is an open source pair programming app that allows you to pair program with your teammates. The app is built with Tauri, and the WebRTC infrastructure is powered by [LiveKit](https://livekit.io).
+<p align="center">
+  <img src="./docs/src/assets/demo.gif" alt="Hopp pair programming demo" width="800" />
+</p>
 
-## Features
+<p align="center">
+  <img src="./docs/src/assets/view.png" alt="Hopp screen sharing quality" width="800" />
+</p>
 
-- **⚡ Super high quality screen sharing**
-  - [We optimised WebRTC](https://gethopp.app/blog/latency-exploration) to get the best quality screen sharing
-  - [Rely on LiveKit's network](https://docs.livekit.io/home/cloud/architecture/#distributed-mesh-architecture) for low latency at scale
-- **👥👥 Mob programming**
-  - Join a room and start pairing immediately with up to 10 teammates
-- **🔗 One click pairing**
-  - No more sharing links with your teammates on chat
-- **🪟 Built in the open**
-  - We want to build Hopp with the OSS community
-  - This comes with benefits as self-hosting, and innovation from the community
+Hopp is an open source pair programming app and screen sharing tool built for developers. Whether you're looking for a Tuple alternative for remote pair programming, a self-hosted solution for your team, or an open source Pop / Drovio / Coscreen alternative — Hopp delivers sub-100ms latency with native desktop performance. Built on Tauri and Rust, with WebRTC infrastructure powered by [LiveKit](https://livekit.io).
+
+## Try Hopp
+
+1. **Download the desktop app** — [macOS (stable)](https://github.com/gethopp/hopp/releases/latest) or [Windows (alpha)](https://github.com/gethopp/hopp/releases/latest)
+2. **Pick your backend**:
+   - **Managed cloud** — [sign up at gethopp.app](https://gethopp.app) (14 days free trial)
+   - **Self-host** — run your own backend, no sign up needed, see [Self-host](#self-host) below
+3. **Click your teammate and start pairing** — no link sharing, no setup
+
+## Why Hopp
+
+- ⚡ **Latency-tuned WebRTC** — [We optimised WebRTC](https://gethopp.app/blog/latency-exploration) for the best screen sharing experience
+- 👥 **Mob programming up to 10** — join a room and start pairing instantly
+- 🔗 **One-click pairing** — no more sharing links over chat
+- 🖥️ **Native desktop** — Tauri + Rust, low CPU overhead
+- 🪟 **Open source + self-hostable** — full source, run it on your own infra
+
+## Self-host
+
+```bash
+git clone https://github.com/gethopp/hopp.git
+cd hopp/selfhost
+cp .env.example .env   # edit DOMAIN + secrets
+docker compose up -d   # for localhost see full guide in selfhost/README.md
+```
+
+Includes Postgres, Redis, LiveKit, and Caddy auto-TLS. Full guide: [docs.gethopp.app/open-source/self-hosting](https://docs.gethopp.app/open-source/self-hosting/).
+
+## Paid Cloud supports development
+
+Hopp is independent and funded by Cloud subscribers. The managed plan at [gethopp.app](https://gethopp.app) gives you Hopp without the ops, and every subscription pays for further development of the OSS app you're reading about.
 
 ## Supported Platforms
 
-- **macOS** - Fully supported
-- **Windows** - Alpha (compiles but expect some bugs)
+**macOS** (stable) · **Windows** (alpha) · **Linux** (planned)
 
 ## Roadmap
 
-- [ ] Move everything WebRTC related from WebKit to our Rust backend (currently in progress)
-- [ ] Implement dynamic codec selection and adaptive streaming resolution
-- [ ] Add key bindings
-- [ ] Support Linux
-- [ ] Re-introduce Windows as fully supported
+- [ ] Dynamic codec selection + adaptive streaming resolution
+- [ ] Key bindings
+- [ ] Linux support
+- [ ] Windows full support
 
-## 🛠️ Tech Stack
+## Repo map
 
-### Backend
+| Path | What |
+| --- | --- |
+| `tauri/` | Desktop app shell (Tauri + React/TS) |
+| `core/` | Screen capture + WebRTC engine (Rust, `hopp_core`) |
+| `backend/` | API server (Go + Postgres + Redis) |
+| `web-app/` | Web dashboard (React/Vite) |
+| `livekit-local-server/` | Dev LiveKit config |
+| `selfhost/` | Docker Compose self-host stack |
 
-- [Go](https://go.dev/) - API server
-- [PostgreSQL](https://www.postgresql.org/) - Data storage
-
-### Frontend
-
-- [React](https://react.dev/) with [TypeScript](https://www.typescriptlang.org/) - Web app and Desktop app
-- [TailwindCSS](https://tailwindcss.com/) - Styling
-
-### Desktop App
-
-- [Tauri](https://tauri.app/) - Desktop app
-- [Rust](https://www.rust-lang.org/) - Desktop app (core process)
+Built on Tauri (Rust) + React/TS desktop, Go backend, LiveKit WebRTC.
 
 ## 📚 Documentation
 
 - [Official Documentation](https://docs.gethopp.app)
 - [Core process docs](/core/README.md)
-
-## 💻 Local development
-
-- [Prerequisites](https://docs.gethopp.app/quick-start/local-development/prerequisites/)
-- [Development workflow](https://docs.gethopp.app/quick-start/local-development/development-workflow/)
+- [Local development guide](https://docs.gethopp.app/quick-start/local-development/prerequisites/)
 
 ## 🌐 Community & Support
 
 - Join our [Discord community](https://discord.gg/TKRpS3aMn9)
 - Follow us on [Twitter](https://x.com/gethopp_app)
+
+---
+
+⭐ **Star us if you'd like Hopp to keep growing!**
+
+Licensed under [LICENSE.md](https://github.com/gethopp/hopp/blob/main/LICENSE.md).

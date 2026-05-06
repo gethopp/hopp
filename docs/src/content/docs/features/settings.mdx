@@ -1,0 +1,29 @@
+---
+title: Settings
+description: A reference for all settings in the Hopp desktop app.
+---
+
+import { Image } from "astro:assets";
+import settings from "../../../assets/settings.png";
+
+The Hopp desktop app provides a Settings panel to customize your call, camera, audio, and miscellaneous preferences.
+
+<Image src={settings} class="rounded-md" alt="Hopp settings panel" />
+
+## Call
+
+**Call feedback popup** — Show a feedback popup when a call ends. Default: on.
+
+**Show dock icon when in call** (`show_dock_icon_in_call`) — Keep the dock icon visible during a call. Default: on.
+
+## Camera
+
+**Start camera on call start** — Automatically open the camera when a call starts. Default: off.
+
+## Audio
+
+**Start microphone on call start** (`start_mic_on_call`) — Automatically unmute the microphone when a call starts. Default: off.
+
+## Miscellaneous
+
+**Custom Backend URL** — Override the default backend server. Leave empty to use the default Hopp backend. This is useful for [self-hosted Hopp instances](/open-source/self-hosting).

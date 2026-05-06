@@ -117,6 +117,7 @@ export interface UserSettings {
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
+  hopp_server_url: string | null;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";

@@ -272,7 +272,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	}
 
 	// Check if caller has access (paid or active trial)
-	hasAccess, err := checkUserHasAccess(s.DB, caller)
+	hasAccess, err := checkUserHasAccess(s.DB, caller, s.Config.IsStripeEnabled())
 	if err != nil {
 		ctx.Logger().Error("Error getting caller subscription: ", err)
 		sendWSErrorMessage(ws, "Failed to check subscription status")

@@ -1,0 +1,16 @@
+# LiveKit production configuration
+#
+# API keys are passed via the LIVEKIT_KEYS environment variable
+# (set in compose.yml from your .env file).
+
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: true
+
+redis:
+  address: 127.0.0.1:6379
