@@ -207,10 +207,14 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                             }
                         } else if code == 3 {
                             crash_msg = "Core process terminated because the event loop stopped responding, please restart the app".to_string();
+                            sentry_utils::upload_logs_event(
+                                "Hang protection triggered".to_string(),
+                            );
                         }
                     }
                     None => {
                         crash_msg = "Core process terminated because of an unknown error. Please restart the app, please submit a bug report".to_string();
+                        sentry_utils::upload_logs_event("?Unknown crash".to_string());
                     }
                 }
                 break;

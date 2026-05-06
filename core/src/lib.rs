@@ -2474,7 +2474,6 @@ impl RenderEventLoop {
                 let current_count = hang_protection_counter_clone.load(Ordering::Relaxed);
                 if current_count == last_count {
                     log::error!("Hang protection: event loop is not responding, killing process");
-                    sentry_utils::upload_logs_event("Hang protection triggered".to_string());
                     std::process::exit(HANG_PROTECTION_EXIT_CODE);
                 }
                 last_count = current_count;
