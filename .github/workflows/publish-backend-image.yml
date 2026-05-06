@@ -56,7 +56,7 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
-          echo "tags=gethopp/hopp-backend:${TAG},gethopp/hopp-backend:latest" >> "$GITHUB_OUTPUT"
+          echo "tags=iparaskev/hopp-backend:${TAG},iparaskev/hopp-backend:latest" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
