@@ -18,7 +18,7 @@ impl Default for UserSettings {
             call_feedback_popup: true,
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
-            start_mic_on_call: false,
+            start_mic_on_call: true,
             hopp_server_url: None,
         }
     }
