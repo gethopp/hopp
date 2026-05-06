@@ -14,7 +14,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: Configure Backend image
+    environment: Backend image
     permissions:
       contents: read
     steps:
