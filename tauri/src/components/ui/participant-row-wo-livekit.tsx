@@ -117,6 +117,10 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             toast.error(`Trial has expired, contact us if you want to extend it`, {
               duration: 2500,
             });
+          } else if (payload.reject_reason === "already-calling") {
+            toast.error(`Already calling ${props.user.first_name}, please wait`, {
+              duration: 2500,
+            });
           } else {
             toast.error(`${props.user.first_name} rejected your call`, {
               duration: 2500,
