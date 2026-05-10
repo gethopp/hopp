@@ -140,7 +140,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				case parsedMessage.CallEnd != nil:
 					// Handle call end
 					c.Logger().Info("Ending call")
-					endCall(c, server, *parsedMessage.CallEnd)
+					endCall(c, server, user.ID, *parsedMessage.CallEnd)
 				case parsedMessage.Ping != nil:
 					// Handle ping message
 					c.Logger().Debug("Received ping")
@@ -463,7 +463,10 @@ func sendCommonErrorMessage(s *common.ServerState, err string, userIDs ...string
 	}
 }
 
-func endCall(ctx echo.Context, s *common.ServerState, message messages.CallEndMessage) {
+func endCall(ctx echo.Context, s *common.ServerState, userID string, message messages.CallEndMessage) {
+	// Release the dedupe lock so either party can call again immediately.
+	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
+
 	// Publish a message to the other participant
 	payloadJSON, err := json.Marshal(message)
 	if err != nil {
