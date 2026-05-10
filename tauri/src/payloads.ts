@@ -235,7 +235,7 @@ export const PRejectCallMessage = z.object({
   type: z.literal("call_reject"),
   payload: z.object({
     caller_id: z.string(),
-    reject_reason: z.enum(["in-call", "rejected", "trial-ended"]).optional(),
+    reject_reason: z.enum(["in-call", "rejected", "trial-ended", "already-calling"]).optional(),
   }),
 });
 

@@ -9,6 +9,7 @@ import (
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -135,11 +136,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				case parsedMessage.RejectCallMessage != nil:
 					// Handle call end
 					c.Logger().Info("Rejecting call")
-					rejectCall(c, server, *parsedMessage.RejectCallMessage)
+					rejectCall(c, server, user.ID, *parsedMessage.RejectCallMessage)
 				case parsedMessage.CallEnd != nil:
 					// Handle call end
 					c.Logger().Info("Ending call")
-					endCall(c, server, *parsedMessage.CallEnd)
+					endCall(c, server, user.ID, *parsedMessage.CallEnd)
 				case parsedMessage.Ping != nil:
 					// Handle ping message
 					c.Logger().Debug("Received ping")
@@ -259,14 +260,42 @@ func sendWSErrorMessage(ws *websocket.Conn, message string) {
 	ws.WriteMessage(websocket.TextMessage, msgJSON)
 }
 
+func dedupeCallKey(a, b string) string {
+	if a < b {
+		return "call:pending:" + a + ":" + b
+	}
+	return "call:pending:" + b + ":" + a
+}
+
 func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, rdb *redis.PubSub, callerId, calleeID string) {
 	rdbCtx := context.Background()
 	calleeChannelID := common.GetUserChannel(calleeID)
+	dedupeKey := dedupeCallKey(callerId, calleeID)
+
+	// Dedupe: prevent duplicate/glare call requests within ringing window.
+	// Symmetric key: pending A->B also blocks B->A.
+	const callDedupeTTL = 30 * time.Second
+	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, "1", callDedupeTTL).Result()
+	if err != nil {
+		// Fail open — do not block legit calls on Redis hiccup.
+		ctx.Logger().Error("dedupe SETNX error: ", err)
+	} else if !acquired {
+		ctx.Logger().Warn("Duplicate call dropped: ", callerId, " -> ", calleeID)
+		msg := messages.NewRejectCallMessage(calleeID, "already-calling")
+		msgJSON, mErr := json.Marshal(msg)
+		if mErr != nil {
+			ctx.Logger().Error(mErr)
+			return
+		}
+		ws.WriteMessage(websocket.TextMessage, msgJSON)
+		return
+	}
 
 	// Check if the caller's team is in trial or paid tier
 	caller, err := models.GetUserByID(s.DB, callerId)
 	if err != nil {
 		ctx.Logger().Error("Error getting caller: ", err)
+		s.Redis.Del(rdbCtx, dedupeKey)
 		sendWSErrorMessage(ws, "Failed to get caller information")
 		return
 	}
@@ -275,12 +304,14 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	hasAccess, err := checkUserHasAccess(s.DB, caller, s.Config.IsStripeEnabled())
 	if err != nil {
 		ctx.Logger().Error("Error getting caller subscription: ", err)
+		s.Redis.Del(rdbCtx, dedupeKey)
 		sendWSErrorMessage(ws, "Failed to check subscription status")
 		return
 	}
 
 	if !hasAccess {
 		ctx.Logger().Warn("Caller does not have active subscription or trial: ", callerId)
+		s.Redis.Del(rdbCtx, dedupeKey)
 		msg := messages.NewRejectCallMessage(calleeID, "trial-ended")
 		msgJSON, err := json.Marshal(msg)
 		if err != nil {
@@ -296,10 +327,12 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	channels, err := s.Redis.PubSubChannels(rdbCtx, calleeChannelID).Result()
 	if err != nil {
 		ctx.Logger().Error("Error getting channels: %v", err)
+		s.Redis.Del(rdbCtx, dedupeKey)
 		return
 	}
 
 	if len(channels) == 0 {
+		s.Redis.Del(rdbCtx, dedupeKey)
 		msg := messages.NewCalleeOfflineMessage(calleeID)
 		msgJSON, err := json.Marshal(msg)
 		if err != nil {
@@ -324,7 +357,10 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 // TODO: Add a method that "forwards" messages from WS (client 1) -> Redis -> WS (client 2)
 // that all it does is serialise the message and publish to the destination user's channel
-func rejectCall(ctx echo.Context, s *common.ServerState, message messages.RejectCallMessage) {
+func rejectCall(ctx echo.Context, s *common.ServerState, rejecterID string, message messages.RejectCallMessage) {
+	// Release the dedupe slot so caller can retry without waiting for TTL.
+	s.Redis.Del(context.Background(), dedupeCallKey(message.Payload.CallerID, rejecterID))
+
 	// Publish a message to the caller
 	payloadJSON, err := json.Marshal(message)
 	if err != nil {
@@ -336,6 +372,9 @@ func rejectCall(ctx echo.Context, s *common.ServerState, message messages.Reject
 }
 
 func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, message messages.AcceptCallMessage) {
+	// Release the dedupe slot — call moving from "pending" to "in progress".
+	s.Redis.Del(context.Background(), dedupeCallKey(message.Payload.CallerID, calleeID))
+
 	// Publish a message to the caller for acceptance
 	payloadJSON, err := json.Marshal(message)
 	if err != nil {
@@ -424,7 +463,10 @@ func sendCommonErrorMessage(s *common.ServerState, err string, userIDs ...string
 	}
 }
 
-func endCall(ctx echo.Context, s *common.ServerState, message messages.CallEndMessage) {
+func endCall(ctx echo.Context, s *common.ServerState, userID string, message messages.CallEndMessage) {
+	// Release the dedupe lock so either party can call again immediately.
+	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
+
 	// Publish a message to the other participant
 	payloadJSON, err := json.Marshal(message)
 	if err != nil {

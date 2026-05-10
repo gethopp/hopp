@@ -3,12 +3,15 @@ import toast from "react-hot-toast";
 import { HiMiniPhoneArrowDownLeft, HiMiniPhoneXMark } from "react-icons/hi2";
 import { Button } from "./button";
 import useStore, { ParticipantRole } from "@/store/store";
-import { useCallback, useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { socketService } from "@/services/socket";
 import { TWebSocketMessage } from "@/payloads";
 import { sounds } from "@/constants/sounds";
 import { HoppAvatar } from "./hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
+import throttle from "lodash/throttle";
+
+const ACTION_THROTTLE_MS = 6000;
 
 export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: string }) => {
   let caller = useStore((state) => state?.teammates?.find((user) => user.id === callerId));
@@ -28,83 +31,93 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
 
   const { setCallTokens } = useStore();
 
-  const handleReject = useCallback(() => {
-    sounds.incomingCall.stop();
-    socketService.send({
-      type: "call_reject",
-      payload: {
-        caller_id: callerId,
-      },
-    });
-    toast.dismiss(toastId);
-  }, [callerId, toastId]);
+  const handleReject = useMemo(
+    () =>
+      throttle(
+        () => {
+          sounds.incomingCall.stop();
+          socketService.send({
+            type: "call_reject",
+            payload: {
+              caller_id: callerId,
+            },
+          });
+          toast.dismiss(toastId);
+        },
+        ACTION_THROTTLE_MS,
+        { leading: true, trailing: false },
+      ),
+    [callerId, toastId],
+  );
 
-  const handleAnswer = useCallback(() => {
-    sounds.incomingCall.stop();
+  const handleAnswer = useMemo(
+    () =>
+      throttle(
+        () => {
+          sounds.incomingCall.stop();
 
-    // Add a websocket listener for getting the call tokens
-    // If this will not be resolved in 5 seconds we make
-    // the assumption that the back-end failed to send the call tokens
-    // and we reject the call with an error banner
-    // We have a generic listener for call_tokens_callback
-    // that will be used to store the tokens and handle the call setup
-    // for users that are not with a call-banner (the callers)
-    let tokensReceived = false;
+          // Add a websocket listener for getting the call tokens
+          // If this will not be resolved in 5 seconds we make
+          // the assumption that the back-end failed to send the call tokens
+          // and we reject the call with an error banner
+          // We have a generic listener for call_tokens_callback
+          // that will be used to store the tokens and handle the call setup
+          // for users that are not with a call-banner (the callers)
+          let tokensReceived = false;
 
-    const handleCallTokens = async (data: TWebSocketMessage) => {
-      if (data.type === "call_tokens") {
-        console.log("Received call_tokens", data);
-        tokensReceived = true;
-        sounds.callAccepted.play();
-        const settings = await tauriUtils.getUserSettings();
-        setCallTokens({
-          ...data.payload,
-          timeStarted: new Date(),
-          hasAudioEnabled: settings.start_mic_on_call,
-          hasCameraEnabled: settings.start_camera_on_call,
-          role: ParticipantRole.NONE,
-          isRemoteControlEnabled: true,
-          participants: [],
-          isInitialisingCall: true,
-          micLevel: 0,
-        });
-        try {
-          await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-        } catch {
-          setCallTokens(null);
-        }
+          const handleCallTokens = async (data: TWebSocketMessage) => {
+            if (data.type === "call_tokens") {
+              console.log("Received call_tokens", data);
+              tokensReceived = true;
+              sounds.callAccepted.play();
+              const settings = await tauriUtils.getUserSettings();
+              setCallTokens({
+                ...data.payload,
+                timeStarted: new Date(),
+                hasAudioEnabled: settings.start_mic_on_call,
+                hasCameraEnabled: settings.start_camera_on_call,
+                role: ParticipantRole.NONE,
+                isRemoteControlEnabled: true,
+                participants: [],
+                isInitialisingCall: true,
+                micLevel: 0,
+              });
+              try {
+                await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+              } catch {
+                setCallTokens(null);
+              }
 
-        toast.dismiss(toastId);
-      }
-    };
+              toast.dismiss(toastId);
+            }
+          };
 
-    socketService.on("call_tokens_callback", handleCallTokens);
+          socketService.on("call_tokens_callback", handleCallTokens);
 
-    socketService.send({
-      type: "call_accept",
-      payload: {
-        caller_id: callerId,
-      },
-    } as TWebSocketMessage);
+          socketService.send({
+            type: "call_accept",
+            payload: {
+              caller_id: callerId,
+            },
+          } as TWebSocketMessage);
 
-    // Wait 5 seconds for tokens, otherwise show error and reject
-    const timeoutId = setTimeout(() => {
-      if (!tokensReceived) {
-        toast.error("Failed to establish call. Please try again.", {
-          duration: 4_000,
-        });
-        handleReject();
-      }
-      // Clean up the socket listener after timeout regardless of success/failure
-      socketService.removeHandler("call_tokens_callback");
-    }, 5000);
-
-    // Return cleanup function
-    return () => {
-      clearTimeout(timeoutId);
-      socketService.removeHandler("call_tokens_callback");
-    };
-  }, [callerId, toastId, handleReject]);
+          // Wait 5 seconds for tokens, otherwise show error and reject
+          setTimeout(() => {
+            if (!tokensReceived) {
+              toast.error("Failed to establish call. Please try again.", {
+                duration: 4_000,
+              });
+              handleReject();
+            }
+            // Clean up the socket listener after timeout regardless of success/failure
+            socketService.removeHandler("call_tokens_callback");
+          }, 5000);
+        },
+        ACTION_THROTTLE_MS,
+        { leading: true, trailing: false },
+      ),
+    [callerId, toastId, setCallTokens, handleReject],
+  );
 
   useEffect(() => {
     sounds.incomingCall.play();
@@ -119,6 +132,13 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
       clearTimeout(timeoutId);
     };
   }, [callerId, toastId]);
+
+  useEffect(() => {
+    return () => {
+      handleReject.cancel();
+      handleAnswer.cancel();
+    };
+  }, [handleReject, handleAnswer]);
 
   return (
     <div className="flex flex-col items-start justify-center gap-2">
