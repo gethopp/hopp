@@ -34,6 +34,15 @@ pub enum MouseObserverError {
     CreateRunloopSource,
 }
 
+/// Owns the macOS event-tap thread that calls into `SharerCursor` from CGEventTap
+/// callbacks. A clone of the `Arc<Mutex<SharerCursor>>` is moved into the tap closure
+/// (see `MouseObserver::new`).
+///
+/// LOCK ORDER (enforced from the tap thread): `sharer_cursor` is locked BEFORE
+/// `controllers_cursors`. Any other thread that needs both MUST follow the same order
+/// — i.e. release `CursorController::controllers_cursors` before locking
+/// `sharer_cursor`. Violating this order deadlocks (ABBA) under simultaneous local
+/// (hardware) + remote (room-event) scroll or click.
 pub struct MouseObserver {
     event_tap_thread: Option<JoinHandle<()>>,
     shutdown_tx: std::sync::mpsc::Sender<()>,

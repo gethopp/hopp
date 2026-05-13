@@ -508,7 +508,14 @@ impl SharerCursor {
 }
 
 struct RemoteControl {
-    /// Cursor that is shown when the sharer looses control
+    /// Cursor that is shown when the sharer looses control.
+    ///
+    /// LOCK ORDER: `sharer_cursor` MUST be locked BEFORE `CursorController::controllers_cursors`.
+    /// Equivalently: before locking `sharer_cursor`, any held `controllers_cursors` guard
+    /// must be released. The macOS event-tap thread always acquires `sharer_cursor` first
+    /// (see `mouse_macos.rs` `MouseObserver`), and `SharerCursor::hide(true)` then acquires
+    /// `controllers_cursors` while still holding `sharer_cursor`. Violating this order
+    /// deadlocks (ABBA) under simultaneous local + remote scroll/click. See repro logs.
     sharer_cursor: Arc<Mutex<SharerCursor>>,
     /// Object that is used to simulate mouse events
     cursor_simulator: Arc<Mutex<CursorSimulator>>,
@@ -542,7 +549,13 @@ pub struct CursorController {
     /// Objects that are used for remote control. When accessibility permission is not granted,
     /// this is None.
     remote_control: Option<RemoteControl>,
-    /// Cursors for the remote controllers
+    /// Cursors for the remote controllers.
+    ///
+    /// LOCK ORDER: this mutex MUST NOT be held when locking
+    /// `RemoteControl::sharer_cursor`. Canonical order is `sharer_cursor` first, then
+    /// `controllers_cursors`. If you need both, finish all work on
+    /// `controllers_cursors` and `drop` its guard before acquiring `sharer_cursor`.
+    /// See `RemoteControl::sharer_cursor` for full rationale.
     controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
     /// Controllers' cursors enabled by the shared
     controllers_cursors_enabled: bool,
@@ -810,6 +823,10 @@ impl CursorController {
             }
         }
 
+        // Release controllers_cursors before locking sharer_cursor to avoid ABBA
+        // deadlock against the event-tap thread (sharer -> ctrls order).
+        drop(controllers_cursors);
+
         /* Show the sharer cursor. */
         let mut sharer_cursor = self
             .remote_control
@@ -890,6 +907,10 @@ impl CursorController {
             }
         }
 
+        // Release controllers_cursors before locking sharer_cursor to avoid ABBA
+        // deadlock against the event-tap thread (sharer -> ctrls order).
+        drop(controllers_cursors);
+
         /* Show the sharer cursor. */
         let mut sharer_cursor = self
             .remote_control
@@ -929,33 +950,39 @@ impl CursorController {
             return;
         }
 
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        self.controllers_cursors_enabled = enabled;
+        let any_had_control = {
+            let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+            self.controllers_cursors_enabled = enabled;
 
-        for controller in controllers_cursors.iter_mut() {
-            if enabled {
-                if controller.pointer_mode() {
-                    controller.set_mode(CursorMode::Pointer);
+            let mut any_had_control = false;
+            for controller in controllers_cursors.iter_mut() {
+                if enabled {
+                    if controller.pointer_mode() {
+                        controller.set_mode(CursorMode::Pointer);
+                    } else {
+                        controller.set_mode(CursorMode::Normal);
+                    }
                 } else {
-                    controller.set_mode(CursorMode::Normal);
+                    controller.set_mode(CursorMode::Pointer);
                 }
-            } else {
-                controller.set_mode(CursorMode::Pointer);
-            }
 
-            if controller.has_control() {
-                controller.show();
-                let mut sharer_cursor = self
-                    .remote_control
-                    .as_ref()
-                    .unwrap()
-                    .sharer_cursor
-                    .lock()
-                    .unwrap();
-                // We are setting show_controller to false because we have the controllers_cursors locked.
-                // If we set it to true, it will deadlock.
-                sharer_cursor.hide(false);
+                if controller.has_control() {
+                    controller.show();
+                    any_had_control = true;
+                }
             }
+            any_had_control
+        };
+
+        if any_had_control {
+            let mut sharer_cursor = self
+                .remote_control
+                .as_ref()
+                .unwrap()
+                .sharer_cursor
+                .lock()
+                .unwrap();
+            sharer_cursor.hide(false);
         }
     }
 
@@ -967,29 +994,35 @@ impl CursorController {
     pub fn set_controller_pointer(&mut self, enabled: bool, identity: &str) {
         log::info!("set_controller_pointer: {identity} {enabled}");
 
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            if controller.identity != identity {
-                continue;
-            }
+        let had_control = {
+            let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+            let mut had_control = false;
+            for controller in controllers_cursors.iter_mut() {
+                if controller.identity != identity {
+                    continue;
+                }
 
-            if controller.has_control() {
-                log::info!("set_controller_pointer: controller {identity} has control, give control back to sharer.");
-                controller.show();
-                let mut sharer_cursor = self
-                    .remote_control
-                    .as_ref()
-                    .unwrap()
-                    .sharer_cursor
-                    .lock()
-                    .unwrap();
-                // We are setting show_controller to false because we have the controllers_cursors locked.
-                // If we set it to true, it will deadlock.
-                sharer_cursor.hide(false);
-            }
+                if controller.has_control() {
+                    log::info!("set_controller_pointer: controller {identity} has control, give control back to sharer.");
+                    controller.show();
+                    had_control = true;
+                }
 
-            controller.set_pointer_mode(enabled, self.controllers_cursors_enabled);
-            break;
+                controller.set_pointer_mode(enabled, self.controllers_cursors_enabled);
+                break;
+            }
+            had_control
+        };
+
+        if had_control {
+            let mut sharer_cursor = self
+                .remote_control
+                .as_ref()
+                .unwrap()
+                .sharer_cursor
+                .lock()
+                .unwrap();
+            sharer_cursor.hide(false);
         }
     }
 
@@ -1055,9 +1088,11 @@ impl CursorController {
     /// when it was last shown, and cursors exceeding the timeout are
     /// automatically hidden.
     pub fn hide_inactive_cursors(&mut self) {
-        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-        for controller in controllers_cursors.iter_mut() {
-            controller.hide_if_expired();
+        {
+            let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+            for controller in controllers_cursors.iter_mut() {
+                controller.hide_if_expired();
+            }
         }
 
         if let Some(remote_control) = &self.remote_control {
