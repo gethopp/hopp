@@ -1353,12 +1353,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ListAudioDevices => {
                 log::debug!("user_event: ListAudioDevices");
-                let devices: Vec<socket_lib::AudioDevice> = self
-                    .audio_capturer
-                    .list_sources()
-                    .into_iter()
-                    .map(|(name, default)| socket_lib::AudioDevice { name, default })
-                    .collect();
+                let devices = self.audio_capturer.list_sources();
                 if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
                     error!("user_event: Error sending audio device list: {e:?}");
                 }
