@@ -1,6 +1,7 @@
 use livekit::webrtc::native::audio_resampler::AudioResampler;
 use rodio::microphone::{self, Input, MicrophoneBuilder};
 use rodio::Source;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,16 +12,44 @@ const TARGET_SAMPLE_RATE: u32 = 16000;
 const TARGET_CHANNELS: u16 = 1;
 pub const SAMPLES_DIVIDER: u32 = 100;
 
-/// List audio input devices (sorted by name). First entry is marked default for UI selection.
-pub fn list_audio_inputs() -> Vec<(String, bool)> {
+/// Suffix duplicate names with `(2)`, `(3)`, ..., skipping suffixes that collide
+/// with existing raw names.
+fn assign_ui_names(raw: &[String]) -> Vec<String> {
+    let mut taken: HashSet<String> = raw.iter().cloned().collect();
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    let mut emitted_count: HashMap<&str, u32> = HashMap::new();
+    for name in raw {
+        let count = emitted_count.entry(name.as_str()).or_insert(0);
+        if *count == 0 {
+            out.push(name.clone());
+        } else {
+            let mut n = *count + 1;
+            loop {
+                let candidate = format!("{name} ({n})");
+                if !taken.contains(&candidate) {
+                    taken.insert(candidate.clone());
+                    out.push(candidate);
+                    break;
+                }
+                n += 1;
+            }
+        }
+        *count += 1;
+    }
+    out
+}
+
+pub fn list_audio_inputs() -> Vec<socket_lib::AudioDevice> {
     match microphone::available_inputs() {
         Ok(mics) => {
-            let mut devices: Vec<_> = mics.iter().map(|input| input.to_string()).collect();
-            devices.sort();
-            devices
-                .into_iter()
+            let raw: Vec<String> = mics.iter().map(|m| m.to_string()).collect();
+            let ui = assign_ui_names(&raw);
+            ui.into_iter()
                 .enumerate()
-                .map(|(i, name)| (name, i == 0))
+                .map(|(i, name)| socket_lib::AudioDevice {
+                    name,
+                    default: i == 0,
+                })
                 .collect()
         }
         Err(e) => {
@@ -30,7 +59,10 @@ pub fn list_audio_inputs() -> Vec<(String, bool)> {
     }
 }
 
+#[derive(Debug)]
 struct AudioDevice {
+    name: String,
+    ui_name: String,
     input: Input,
 }
 
@@ -115,22 +147,36 @@ impl Capturer {
         }
     }
 
-    pub fn list_sources(&mut self) -> Vec<(String, bool)> {
-        let devices = match microphone::available_inputs() {
-            Ok(mics) => mics
-                .into_iter()
-                .map(|input| AudioDevice { input })
-                .collect(),
-            Err(_) => vec![],
-        };
-        self.available_devices = devices;
+    pub fn list_sources(&mut self) -> Vec<socket_lib::AudioDevice> {
+        let mics = microphone::available_inputs().unwrap_or_default();
+        let raw_names: Vec<String> = mics.iter().map(|m| m.to_string()).collect();
+        let ui_names = assign_ui_names(&raw_names);
+        self.available_devices = mics
+            .into_iter()
+            .zip(raw_names)
+            .zip(ui_names)
+            .map(|((input, name), ui_name)| AudioDevice {
+                name,
+                ui_name,
+                input,
+            })
+            .collect();
         self.available_devices
             .iter()
             .enumerate()
-            .map(|(i, dev)| (dev.input.to_string(), i == 0))
+            .map(|(i, dev)| socket_lib::AudioDevice {
+                name: dev.ui_name.clone(),
+                default: i == 0,
+            })
             .collect()
     }
 
+    // Instead of reporting the device name to the frontend we are
+    // sending a custom name we create which handles conflicts. For example
+    // if we have two mics with name Mic, the first will be Mic and the second will
+    // be Mic 2. We are making the assumption that during a session if the mics are not
+    // plugged/unplugged will keep their relative order. Then we are using this name to match
+    // with our internal vector which has stored the actual mic devices.
     pub fn start_capture(
         &mut self,
         device_name: Option<&str>,
@@ -143,36 +189,33 @@ impl Capturer {
 
         let builder = MicrophoneBuilder::new();
 
-        // Set up the device
         let mut fell_back_to_default = false;
-        let builder = if let Some(name) = device_name {
-            let device = self
-                .available_devices
+        let chosen: Option<&AudioDevice> = device_name.and_then(|name| {
+            self.available_devices
                 .iter()
-                .find(|dev| dev.input.to_string() == name);
-
-            match device {
-                Some(device) => match builder.device(device.input.clone()) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log::warn!("Failed to set device: {}, falling back to default", e);
-                        builder
-                            .default_device()
-                            .map_err(|e| format!("Failed to get default device: {}", e))?
-                    }
-                },
-                None => {
-                    log::warn!("Device not found: {}, falling back to default", name);
+                .find(|d| d.ui_name == name)
+                .or_else(|| self.available_devices.iter().find(|d| d.name == name))
+        });
+        let builder = match chosen {
+            Some(device) => match builder.device(device.input.clone()) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::warn!("Failed to set device: {}, falling back to default", e);
                     fell_back_to_default = true;
                     builder
                         .default_device()
                         .map_err(|e| format!("Failed to get default device: {}", e))?
                 }
+            },
+            None => {
+                if let Some(name) = device_name {
+                    log::warn!("Device not found: {}, falling back to default", name);
+                    fell_back_to_default = true;
+                }
+                builder
+                    .default_device()
+                    .map_err(|e| format!("Failed to get default device: {}", e))?
             }
-        } else {
-            builder
-                .default_device()
-                .map_err(|e| format!("Failed to get default device: {}", e))?
         };
 
         // Try to configure for 16kHz mono, fall back to default if not supported
@@ -222,11 +265,18 @@ impl Capturer {
         self.active_device_name = if device_name.is_none() || fell_back_to_default {
             use cpal::traits::{DeviceTrait, HostTrait};
             #[allow(deprecated)]
-            cpal::default_host()
+            let cpal_raw = cpal::default_host()
                 .default_input_device()
-                .and_then(|d| d.name().ok())
+                .and_then(|d| d.name().ok());
+            cpal_raw.map(|raw| {
+                self.available_devices
+                    .iter()
+                    .find(|d| d.name == raw)
+                    .map(|d| d.ui_name.clone())
+                    .unwrap_or(raw)
+            })
         } else {
-            device_name.map(|s| s.to_string())
+            chosen.map(|d| d.ui_name.clone())
         };
         self.sample_tx = Some(sample_tx.clone());
 
@@ -333,7 +383,7 @@ impl Capturer {
                     }
                 } else {
                     let available = self.list_sources();
-                    if !available.iter().any(|d| d.0 == name) {
+                    if !available.iter().any(|d| d.name == name) {
                         log::info!("Active mic '{name}' removed, switching to default");
                         if let Err(e) = self.switch_device(None) {
                             log::error!("Failed to switch mic to default: {e}");

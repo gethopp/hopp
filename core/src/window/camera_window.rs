@@ -173,7 +173,7 @@ struct CameraState {
     available_cameras: Vec<socket_lib::CameraDevice>,
     selected_camera_name: Option<String>,
     mic_dropdown_open: bool,
-    available_mics: Vec<(String, bool)>,
+    available_mics: Vec<socket_lib::AudioDevice>,
     selected_mic_name: Option<String>,
 }
 
@@ -721,13 +721,13 @@ impl CameraWindow {
                 let items: Vec<SplitButtonItem> = state
                     .available_mics
                     .iter()
-                    .map(|(name, is_default)| {
+                    .map(|dev| {
                         let is_selected = match &state.selected_mic_name {
-                            Some(sel) => sel == name,
-                            None => *is_default,
+                            Some(sel) => sel == &dev.name,
+                            None => dev.default,
                         };
                         SplitButtonItem {
-                            label: name.clone(),
+                            label: dev.name.clone(),
                             selected: is_selected,
                         }
                     })
@@ -737,7 +737,7 @@ impl CameraWindow {
                     base_inner.into(),
                     &items,
                     CameraMessage::MicDropdownDismiss,
-                    |i| CameraMessage::SelectMic(state.available_mics[i].0.clone()),
+                    |i| CameraMessage::SelectMic(state.available_mics[i].name.clone()),
                     HEADER_HEIGHT + 2.0,
                     state.viewport_size.width / 2.0 + 44.0,
                 )
