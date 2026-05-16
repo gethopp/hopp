@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo } from "react";
+import throttle from "lodash/throttle";
+import toast from "react-hot-toast";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { HiArrowDownTray, HiOutlineUsers, HiOutlineLockOpen, HiOutlineUserPlus, HiOutlineMinus } from "react-icons/hi2";
 import { CgSpinner } from "react-icons/cg";
@@ -19,7 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { Constants, OS } from "@/constants";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { downloadAndRelaunch } from "@/update";
 import { LuCircleFadingArrowUp } from "react-icons/lu";
@@ -133,8 +134,6 @@ const DownloadNewVersionButton = () => {
 };
 
 const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["PrivateUser"] }) => {
-  const [showAdminDialog, setShowAdminDialog] = useState(false);
-
   // Only show if user is in trial
   if (!user.is_trial || !user.trial_ends_at) {
     return null;
@@ -179,57 +178,52 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   const textColor = isExpired ? "text-red-800" : getTextColor(daysRemaining);
   const bgColor = isExpired ? "#fca5a5" : getBackgroundColor(daysRemaining);
 
-  const handleClick = () => {
-    if (user.is_admin) {
-      void openUrl(Constants.webAppUrl + "/subscription");
-    } else {
-      setShowAdminDialog(true);
-    }
-  };
+  const handleClick = useMemo(
+    () =>
+      throttle(
+        () => {
+          if (user.is_admin) {
+            void openUrl(Constants.webAppUrl + "/subscription");
+          } else {
+            toast("Contact your admin to manage your team's subscription.", { duration: 3000 });
+          }
+        },
+        2000,
+        { leading: true, trailing: false },
+      ),
+    [user.is_admin],
+  );
 
   return (
-    <>
-      <div className="flex flex-col items-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
+    <div className="flex flex-col items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            className={clsx(
+              "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
+              textColor,
+            )}
+            onClick={handleClick}
+          >
+            {/* Background fill from bottom */}
             <div
-              className={clsx(
-                "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
-                textColor,
-              )}
-              onClick={handleClick}
-            >
-              {/* Background fill from bottom */}
-              <div
-                className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
-                style={{
-                  height: `${percentage}%`,
-                  backgroundColor: bgColor,
-                }}
-              />
-              {/* Content */}
-              <span className="relative z-10">{displayDays}</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {isExpired ?
-              "Trial expired, click to manage subscription"
-            : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
-          </TooltipContent>
-        </Tooltip>
-      </div>
-
-      <Dialog open={showAdminDialog} onOpenChange={setShowAdminDialog}>
-        <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
-          <DialogHeader>
-            <DialogTitle>Manage subscription</DialogTitle>
-            <DialogDescription>
-              Only team admins can manage the subscription. Contact your admin to upgrade your team.
-            </DialogDescription>
-          </DialogHeader>
-        </DialogContent>
-      </Dialog>
-    </>
+              className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
+              style={{
+                height: `${percentage}%`,
+                backgroundColor: bgColor,
+              }}
+            />
+            {/* Content */}
+            <span className="relative z-10">{displayDays}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {isExpired ?
+            "Trial expired, click to manage subscription"
+          : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 };
 
