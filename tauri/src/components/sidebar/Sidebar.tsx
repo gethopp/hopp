@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { HiArrowDownTray, HiOutlineUsers, HiOutlineLockOpen, HiOutlineUserPlus, HiOutlineMinus } from "react-icons/hi2";
 import { CgSpinner } from "react-icons/cg";
@@ -18,7 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
-import { OS } from "@/constants";
+import { Constants, OS } from "@/constants";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { downloadAndRelaunch } from "@/update";
 import { LuCircleFadingArrowUp } from "react-icons/lu";
@@ -132,6 +133,8 @@ const DownloadNewVersionButton = () => {
 };
 
 const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["PrivateUser"] }) => {
+  const [showAdminDialog, setShowAdminDialog] = useState(false);
+
   // Only show if user is in trial
   if (!user.is_trial || !user.trial_ends_at) {
     return null;
@@ -143,17 +146,14 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   const trialEndDate = parseISO(user.trial_ends_at);
   const currentDate = new Date();
   const daysRemaining = differenceInDays(trialEndDate, currentDate);
-
-  // Don't show if trial has expired
-  if (daysRemaining <= 0) {
-    return null;
-  }
+  const isExpired = daysRemaining <= 0;
+  const displayDays = Math.max(0, daysRemaining);
 
   // teams created before 2026-05-04 keep 30-day trial; new teams get 14.
   const TRIAL_GRANDFATHER_CUTOFF = new Date("2026-05-04T00:00:00Z");
   const userCreatedAt = user.created_at ? parseISO(user.created_at) : new Date();
   const maxTrialDays = userCreatedAt < TRIAL_GRANDFATHER_CUTOFF ? 30 : 14;
-  const percentage = Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100));
+  const percentage = isExpired ? 100 : Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100));
 
   // Thresholds scale with maxTrialDays so bar starts green for both 14- and 30-day trials.
   // 30-day: yellow ≤14, orange ≤7, red ≤3 (matches prior behavior).
@@ -176,33 +176,60 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
     return "#86efac";
   };
 
+  const textColor = isExpired ? "text-red-800" : getTextColor(daysRemaining);
+  const bgColor = isExpired ? "#fca5a5" : getBackgroundColor(daysRemaining);
+
+  const handleClick = () => {
+    if (user.is_admin) {
+      void openUrl(Constants.webAppUrl + "/subscription");
+    } else {
+      setShowAdminDialog(true);
+    }
+  };
+
   return (
-    <div className="flex flex-col items-center">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div
-            className={clsx(
-              "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
-              getTextColor(daysRemaining),
-            )}
-          >
-            {/* Background fill from bottom */}
+    <>
+      <div className="flex flex-col items-center">
+        <Tooltip>
+          <TooltipTrigger asChild>
             <div
-              className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
-              style={{
-                height: `${percentage}%`,
-                backgroundColor: getBackgroundColor(daysRemaining),
-              }}
-            />
-            {/* Content */}
-            <span className="relative z-10">{daysRemaining}</span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="right">
-          Trial expires in {daysRemaining} day{daysRemaining !== 1 ? "s" : ""}
-        </TooltipContent>
-      </Tooltip>
-    </div>
+              className={clsx(
+                "relative flex items-center size-9 justify-center rounded-md bg-white text-sm font-semibold shadow-xs cursor-pointer overflow-hidden",
+                textColor,
+              )}
+              onClick={handleClick}
+            >
+              {/* Background fill from bottom */}
+              <div
+                className="absolute bottom-0 left-0 right-0 rounded-b-md transition-all duration-300"
+                style={{
+                  height: `${percentage}%`,
+                  backgroundColor: bgColor,
+                }}
+              />
+              {/* Content */}
+              <span className="relative z-10">{displayDays}</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {isExpired ?
+              "Trial expired, click to manage subscription"
+            : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+
+      <Dialog open={showAdminDialog} onOpenChange={setShowAdminDialog}>
+        <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
+          <DialogHeader>
+            <DialogTitle>Manage subscription</DialogTitle>
+            <DialogDescription>
+              Only team admins can manage the subscription. Contact your admin to upgrade your team.
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 
