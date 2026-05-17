@@ -43,6 +43,12 @@ export function CallCenter() {
   const [controllerCursorState, setControllerCursorState] = useState(true);
   const [accessibilityPermission, setAccessibilityPermission] = useState(true);
 
+  const { data: userSettings } = useQuery({
+    queryKey: ["user-settings"],
+    queryFn: () => typedInvoke("get_user_settings"),
+    refetchOnWindowFocus: true,
+  });
+
   const handleEndCall = useEndCall();
   const handleEndCallRef = useRef(handleEndCall);
   handleEndCallRef.current = handleEndCall;
@@ -162,7 +168,11 @@ export function CallCenter() {
         )}
         <div className="flex flex-col gap-2 items-center col-span-9">
           <div className="flex flex-row gap-1 w-full">
-            <MediaDevicesSettings />
+            <MediaDevicesSettings
+              micShortcut={userSettings?.shortcut_toggle_mic}
+              cameraShortcut={userSettings?.shortcut_toggle_camera}
+              screenShareShortcut={userSettings?.shortcut_toggle_screenshare}
+            />
           </div>
           <div className="flex flex-col gap-2 w-full">
             {callTokens?.role === ParticipantRole.CONTROLLER && (
@@ -220,14 +230,25 @@ export function CallCenter() {
                 </TooltipProvider>
               )}
               {callTokens?.role === ParticipantRole.SHARER && <DrawingEnableButton />}
-              <Button
-                className="w-full border-red-500 text-red-600 flex flex-row gap-2"
-                variant="gradient-white"
-                onClick={handleEndCall}
-              >
-                <HiOutlinePhoneXMark className="size-4" />
-                End call
-              </Button>
+              <TooltipProvider>
+                <Tooltip delayDuration={100}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      className="w-full border-red-500 text-red-600 flex flex-row gap-2"
+                      variant="gradient-white"
+                      onClick={handleEndCall}
+                    >
+                      <HiOutlinePhoneXMark className="size-4" />
+                      End call
+                    </Button>
+                  </TooltipTrigger>
+                  {userSettings?.shortcut_end_call && (
+                    <TooltipContent side="bottom" variant="light">
+                      <span className="font-mono text-xs">{userSettings.shortcut_end_call}</span>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
             </div>
           </div>
         </div>
@@ -385,7 +406,7 @@ function DrawingEnableButton() {
 /**
  * MicrophoneIcon — uses typedInvoke to list/select microphones and toggle mute via core.
  */
-function MicrophoneIcon() {
+function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
   const { updateCallTokens, callTokens } = useStore();
   const hasAudioEnabled = callTokens?.hasAudioEnabled || false;
 
@@ -446,54 +467,69 @@ function MicrophoneIcon() {
   );
 
   return (
-    <ToggleIconButton
-      onClick={handleMicToggle}
-      icon={
-        <div className="relative flex items-center justify-center">
-          {hasAudioEnabled ?
-            <CustomIcons.MicWithLevel
-              level={callTokens?.micLevel ?? 0}
-              className={`size-4 ${Colors.mic.icon} relative z-10`}
-            />
-          : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
-        </div>
-      }
-      state={hasAudioEnabled ? "active" : "neutral"}
-      size="unsized"
-      className={clsx("flex-1 min-w-0", {
-        [Colors.deactivatedText]: !hasAudioEnabled,
-        [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
-      })}
-      cornerIcon={
-        <Select value={activeMicId} onValueChange={handleMicrophoneChange} onOpenChange={handleDropdownOpenChange}>
-          <SelectTrigger
-            iconClassName={clsx({
-              [Colors.mic.text]: hasAudioEnabled,
-              [Colors.deactivatedIcon]: !hasAudioEnabled,
+    <TooltipProvider>
+      <Tooltip delayDuration={100}>
+        <TooltipTrigger asChild>
+          <ToggleIconButton
+            onClick={handleMicToggle}
+            icon={
+              <div className="relative flex items-center justify-center">
+                {hasAudioEnabled ?
+                  <CustomIcons.MicWithLevel
+                    level={callTokens?.micLevel ?? 0}
+                    className={`size-4 ${Colors.mic.icon} relative z-10`}
+                  />
+                : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
+              </div>
+            }
+            state={hasAudioEnabled ? "active" : "neutral"}
+            size="unsized"
+            className={clsx("flex-1 min-w-0", {
+              [Colors.deactivatedText]: !hasAudioEnabled,
+              [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
             })}
-            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
-          />
-          <SelectPortal container={document.getElementsByClassName("container")[0]}>
-            <SelectContent align="center">
-              {microphoneDevices.map(
-                (device) =>
-                  device.name !== "" && (
-                    <SelectItem key={device.name} value={device.name}>
-                      <span className="text-xs truncate">{device.name}</span>
-                    </SelectItem>
-                  ),
-              )}
-            </SelectContent>
-          </SelectPortal>
-        </Select>
-      }
-    >
-      {hasAudioEnabled ? "Mute me" : "Open mic"}
-    </ToggleIconButton>
+            cornerIcon={
+              <Select
+                value={activeMicId}
+                onValueChange={handleMicrophoneChange}
+                onOpenChange={handleDropdownOpenChange}
+              >
+                <SelectTrigger
+                  iconClassName={clsx({
+                    [Colors.mic.text]: hasAudioEnabled,
+                    [Colors.deactivatedIcon]: !hasAudioEnabled,
+                  })}
+                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+                />
+                <SelectPortal container={document.getElementsByClassName("container")[0]}>
+                  <SelectContent align="center">
+                    {microphoneDevices.map(
+                      (device) =>
+                        device.name !== "" && (
+                          <SelectItem key={device.name} value={device.name}>
+                            <span className="text-xs truncate">{device.name}</span>
+                          </SelectItem>
+                        ),
+                    )}
+                  </SelectContent>
+                </SelectPortal>
+              </Select>
+            }
+          >
+            {hasAudioEnabled ? "Mute me" : "Open mic"}
+          </ToggleIconButton>
+        </TooltipTrigger>
+        {shortcut && (
+          <TooltipContent side="bottom" variant="light">
+            <span className="font-mono text-xs">{shortcut}</span>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
-function ScreenShareIcon({ callTokens }: { callTokens: CallState | null }) {
+function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | null; shortcut?: string }) {
   const { setCallTokens } = useStore();
 
   const toggleScreenShare = useCallback(async () => {
@@ -517,41 +553,52 @@ function ScreenShareIcon({ callTokens }: { callTokens: CallState | null }) {
   }, [callTokens]);
 
   return (
-    <ToggleIconButton
-      onClick={toggleScreenShare}
-      icon={
-        callTokens?.role === ParticipantRole.SHARER ?
-          <LuScreenShareOff className={`size-4 ${Colors.screen.icon}`} />
-        : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
-      }
-      state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
-      size="unsized"
-      className={clsx("flex-1 min-w-0", {
-        [Colors.deactivatedText]: !(callTokens?.role === ParticipantRole.SHARER),
-        [`${Colors.screen.text} ${Colors.screen.ring}`]: callTokens?.role === ParticipantRole.SHARER,
-      })}
-      cornerIcon={
-        callTokens?.role === ParticipantRole.SHARER && (
-          <button
-            onClick={changeScreenShare}
-            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+    <TooltipProvider>
+      <Tooltip delayDuration={100}>
+        <TooltipTrigger asChild>
+          <ToggleIconButton
+            onClick={toggleScreenShare}
+            icon={
+              callTokens?.role === ParticipantRole.SHARER ?
+                <LuScreenShareOff className={`size-4 ${Colors.screen.icon}`} />
+              : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
+            }
+            state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
+            size="unsized"
+            className={clsx("flex-1 min-w-0", {
+              [Colors.deactivatedText]: !(callTokens?.role === ParticipantRole.SHARER),
+              [`${Colors.screen.text} ${Colors.screen.ring}`]: callTokens?.role === ParticipantRole.SHARER,
+            })}
+            cornerIcon={
+              callTokens?.role === ParticipantRole.SHARER && (
+                <button
+                  onClick={changeScreenShare}
+                  className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+                >
+                  <ChevronDownIcon
+                    className={clsx("size-4", {
+                      [Colors.screen.icon]: callTokens?.role === ParticipantRole.SHARER,
+                      [Colors.deactivatedIcon]: !(callTokens?.role === ParticipantRole.SHARER),
+                    })}
+                  />
+                </button>
+              )
+            }
           >
-            <ChevronDownIcon
-              className={clsx("size-4", {
-                [Colors.screen.icon]: callTokens?.role === ParticipantRole.SHARER,
-                [Colors.deactivatedIcon]: !(callTokens?.role === ParticipantRole.SHARER),
-              })}
-            />
-          </button>
-        )
-      }
-    >
-      {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
-    </ToggleIconButton>
+            {callTokens?.role === ParticipantRole.SHARER ? "Stop sharing" : "Share screen"}
+          </ToggleIconButton>
+        </TooltipTrigger>
+        {shortcut && (
+          <TooltipContent side="bottom" variant="light">
+            <span className="font-mono text-xs">{shortcut}</span>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
-function CameraIcon() {
+function CameraIcon({ shortcut }: { shortcut?: string }) {
   const { updateCallTokens, callTokens } = useStore();
   const cameraEnabled = callTokens?.hasCameraEnabled || false;
 
@@ -629,56 +676,75 @@ function CameraIcon() {
   );
 
   return (
-    <ToggleIconButton
-      onClick={handleCameraToggle}
-      icon={
-        cameraEnabled ?
-          <LuVideo className={`size-4 ${Colors.camera.icon}`} />
-        : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
-      }
-      state={cameraEnabled ? "active" : "neutral"}
-      size="unsized"
-      className={clsx("flex-1 min-w-0", {
-        [Colors.deactivatedText]: !cameraEnabled,
-        [`${Colors.camera.text} ${Colors.camera.ring}`]: cameraEnabled,
-      })}
-      cornerIcon={
-        <Select value={activeCamera} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
-          <SelectTrigger
-            iconClassName={clsx({
-              [Colors.camera.text]: cameraEnabled,
-              [Colors.deactivatedIcon]: !cameraEnabled,
+    <TooltipProvider>
+      <Tooltip delayDuration={100}>
+        <TooltipTrigger asChild>
+          <ToggleIconButton
+            onClick={handleCameraToggle}
+            icon={
+              cameraEnabled ?
+                <LuVideo className={`size-4 ${Colors.camera.icon}`} />
+              : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
+            }
+            state={cameraEnabled ? "active" : "neutral"}
+            size="unsized"
+            className={clsx("flex-1 min-w-0", {
+              [Colors.deactivatedText]: !cameraEnabled,
+              [`${Colors.camera.text} ${Colors.camera.ring}`]: cameraEnabled,
             })}
-            className="hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
-          />
-          <SelectPortal container={document.getElementsByClassName("container")[0]}>
-            <SelectContent align="center">
-              {cameraDevices.map(
-                (device) =>
-                  device.name !== "" && (
-                    <SelectItem key={device.name} value={device.name}>
-                      <span className="text-xs truncate">{device.name}</span>
-                    </SelectItem>
-                  ),
-              )}
-            </SelectContent>
-          </SelectPortal>
-        </Select>
-      }
-    >
-      {cameraEnabled ? "Stop sharing" : "Share cam"}
-    </ToggleIconButton>
+            cornerIcon={
+              <Select value={activeCamera} onValueChange={handleCameraChange} onOpenChange={handleDropdownOpenChange}>
+                <SelectTrigger
+                  iconClassName={clsx({
+                    [Colors.camera.text]: cameraEnabled,
+                    [Colors.deactivatedIcon]: !cameraEnabled,
+                  })}
+                  className="hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs"
+                />
+                <SelectPortal container={document.getElementsByClassName("container")[0]}>
+                  <SelectContent align="center">
+                    {cameraDevices.map(
+                      (device) =>
+                        device.name !== "" && (
+                          <SelectItem key={device.name} value={device.name}>
+                            <span className="text-xs truncate">{device.name}</span>
+                          </SelectItem>
+                        ),
+                    )}
+                  </SelectContent>
+                </SelectPortal>
+              </Select>
+            }
+          >
+            {cameraEnabled ? "Stop sharing" : "Share cam"}
+          </ToggleIconButton>
+        </TooltipTrigger>
+        {shortcut && (
+          <TooltipContent side="bottom" variant="light">
+            <span className="font-mono text-xs">{shortcut}</span>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
-function MediaDevicesSettings() {
+function MediaDevicesSettings({
+  micShortcut,
+  cameraShortcut,
+  screenShareShortcut,
+}: {
+  micShortcut?: string;
+  cameraShortcut?: string;
+  screenShareShortcut?: string;
+}) {
   const { callTokens } = useStore();
 
   return (
     <div className="flex flex-row gap-1 w-full">
-      <MicrophoneIcon />
-      <CameraIcon />
-      <ScreenShareIcon callTokens={callTokens} />
+      <MicrophoneIcon shortcut={micShortcut} />
+      <CameraIcon shortcut={cameraShortcut} />
+      <ScreenShareIcon callTokens={callTokens} shortcut={screenShareShortcut} />
     </div>
   );
 }
