@@ -130,6 +130,100 @@ pub fn upload_logs_event(failure_reason: String) {
     client.send_envelope(envelope);
 }
 
+#[cfg(target_os = "macos")]
+fn diagnostic_reports_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|mut path| {
+        path.push("Library/Logs/DiagnosticReports");
+        path
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn scan_and_load_hopp_crashes(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("scan_and_load_hopp_crashes: read_dir failed: {e}");
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !name_str.to_ascii_lowercase().starts_with("hopp") || !name_str.ends_with(".ips") {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::read(&path) {
+            Ok(bytes) => out.push((path, bytes)),
+            Err(e) => log::warn!("scan_and_load_hopp_crashes: read {path:?} failed: {e}"),
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn pick_newest_by_filename(candidates: Vec<(PathBuf, Vec<u8>)>) -> Option<(PathBuf, Vec<u8>)> {
+    candidates
+        .into_iter()
+        .max_by(|a, b| a.0.file_name().cmp(&b.0.file_name()))
+}
+
+pub fn upload_latest_crash() {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(dir) = diagnostic_reports_dir() else {
+            log::warn!("upload_latest_crash: no DiagnosticReports dir");
+            return;
+        };
+        let candidates = scan_and_load_hopp_crashes(&dir);
+        if candidates.is_empty() {
+            log::info!("upload_latest_crash: no hopp crash reports found");
+            return;
+        }
+        let Some((path, bytes)) = pick_newest_by_filename(candidates) else {
+            return;
+        };
+
+        let client = match sentry::Hub::current().client() {
+            Some(c) => c,
+            None => {
+                log::warn!("upload_latest_crash: no Sentry client");
+                return;
+            }
+        };
+
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("crash.ips")
+            .to_string();
+
+        let attachment = Attachment {
+            buffer: bytes,
+            filename: filename.clone(),
+            content_type: Some("text/plain".to_string()),
+            ..Default::default()
+        };
+
+        let event = Event {
+            event_id: random_uuid(),
+            message: Some(format!("Hopp native crash: {filename}")),
+            level: Level::Error,
+            tags: get_system_tags(),
+            ..Default::default()
+        };
+
+        let mut envelope: Envelope = event.into();
+        envelope.add_item(attachment);
+        client.send_envelope(envelope);
+        log::info!("upload_latest_crash: sent {filename}");
+    }
+}
+
 pub fn simple_event(message: String) {
     let client = match sentry::Hub::current().client() {
         Some(client) => client,

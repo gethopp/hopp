@@ -1328,6 +1328,7 @@ fn main() {
                 ])
                 .level(LevelFilter::Warn)
                 .level_for("hopp", log_level)
+                .level_for("sentry_utils", log_level)
                 .max_file_size(50 * 1024 * 1024) // We are emptying them on startup
                 .build(),
         )
@@ -1370,6 +1371,10 @@ fn main() {
             let event_app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 forward_core_events(core_events_rx, event_app_handle);
+            });
+
+            std::thread::spawn(|| {
+                sentry_utils::upload_latest_crash();
             });
 
             let quit = MenuItemBuilder::new("Quit")
