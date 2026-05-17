@@ -23,6 +23,7 @@ use hopp::{
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
     recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
 };
+mod shortcuts;
 #[cfg(target_os = "macos")]
 use hopp::{disable_app_nap, set_window_corner_radius_and_decorations, CORNER_RADIUS};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -702,7 +703,7 @@ fn call_started(
         log::error!("call_started: failed to send: {e:?}");
         return Err("Failed to send message to hopp_core".to_string());
     }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let result = match recv_expected_response(&data.event_socket, |msg| match msg {
         Message::CallStartResult(r) => Ok(r),
         other => Err(other),
     }) {
@@ -711,7 +712,14 @@ fn call_started(
             log::error!("call_started: recv failed: {e:?}");
             Err("Failed to receive message from hopp_core".to_string())
         }
+    };
+    if result.is_ok() {
+        data.call_active = true;
+        data.is_camera_on = false;
+        data.is_screensharing = false;
+        shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
     }
+    result
 }
 
 /// When enabled=true, shows the notification variant of the icon.
@@ -788,8 +796,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 660.0,
-            height: 720.0,
+            width: 680.0,
+            height: 740.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -800,6 +808,17 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             background_color: None,
         },
     )
+}
+
+fn resolved_call_shortcuts(app_state: &hopp::app_state::AppState) -> shortcuts::CallShortcuts {
+    let mut settings = app_state.user_settings();
+    settings.resolve_shortcuts();
+    shortcuts::CallShortcuts {
+        mic: settings.shortcut_toggle_mic.unwrap_or_default(),
+        camera: settings.shortcut_toggle_camera.unwrap_or_default(),
+        screenshare: settings.shortcut_toggle_screenshare.unwrap_or_default(),
+        end_call: settings.shortcut_end_call.unwrap_or_default(),
+    }
 }
 
 #[tauri::command(async)]
@@ -820,6 +839,10 @@ fn set_shortcut_toggle_mic(app: tauri::AppHandle, accel: String) {
     let value = if accel.is_empty() { None } else { Some(accel) };
     data.app_state
         .update_user_setting(|s| s.shortcut_toggle_mic = value);
+    if data.call_active {
+        shortcuts::unregister_call_shortcuts(&app);
+        shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
+    }
 }
 
 #[tauri::command(async)]
@@ -830,6 +853,10 @@ fn set_shortcut_toggle_camera(app: tauri::AppHandle, accel: String) {
     let value = if accel.is_empty() { None } else { Some(accel) };
     data.app_state
         .update_user_setting(|s| s.shortcut_toggle_camera = value);
+    if data.call_active {
+        shortcuts::unregister_call_shortcuts(&app);
+        shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
+    }
 }
 
 #[tauri::command(async)]
@@ -840,6 +867,38 @@ fn set_shortcut_toggle_screenshare(app: tauri::AppHandle, accel: String) {
     let value = if accel.is_empty() { None } else { Some(accel) };
     data.app_state
         .update_user_setting(|s| s.shortcut_toggle_screenshare = value);
+    if data.call_active {
+        shortcuts::unregister_call_shortcuts(&app);
+        shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
+    }
+}
+
+#[tauri::command(async)]
+fn set_shortcut_end_call(app: tauri::AppHandle, accel: String) {
+    log::info!("set_shortcut_end_call: {accel}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let value = if accel.is_empty() { None } else { Some(accel) };
+    data.app_state
+        .update_user_setting(|s| s.shortcut_end_call = value);
+    if data.call_active {
+        shortcuts::unregister_call_shortcuts(&app);
+        shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
+    }
+}
+
+#[tauri::command(async)]
+fn set_is_camera_on(app: tauri::AppHandle, value: bool) {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.is_camera_on = value;
+}
+
+#[tauri::command(async)]
+fn set_is_screensharing(app: tauri::AppHandle, value: bool) {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.is_screensharing = value;
 }
 
 #[tauri::command(async)]
@@ -1069,12 +1128,15 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
 
 #[tauri::command(async)]
 fn end_call(app: tauri::AppHandle) {
-    let data = app.state::<Mutex<AppData>>();
+    let state = app.state::<Mutex<AppData>>();
     #[allow(unused_mut)]
-    let mut data = data.lock().unwrap();
+    let mut data = state.lock().unwrap();
     if let Err(e) = data.sender.send(Message::CallEnd) {
         log::error!("end_call: failed to send: {e:?}");
     }
+    data.call_active = false;
+    data.is_camera_on = false;
+    data.is_screensharing = false;
     #[cfg(target_os = "macos")]
     {
         data.sleep_prevention.disable();
@@ -1087,6 +1149,7 @@ fn end_call(app: tauri::AppHandle) {
             suppress.store(false, Ordering::Relaxed);
         });
     }
+    shortcuts::unregister_call_shortcuts(&app);
 }
 
 #[tauri::command(async)]
@@ -1137,11 +1200,14 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 if let Err(e) = app.emit("core_call_ended", &()) {
                     log::error!("forward_core_events: failed to emit call ended: {e:?}");
                 }
+                let data = app.state::<Mutex<AppData>>();
+                let mut data = data.lock().unwrap();
+                data.call_active = false;
+                data.is_camera_on = false;
+                data.is_screensharing = false;
                 #[cfg(target_os = "macos")]
                 {
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    let data = app.state::<Mutex<AppData>>();
-                    let mut data = data.lock().unwrap();
                     data.sleep_prevention.disable();
                     data.activation_policy_regular = false;
                     let suppress = data.suppress_hide_on_call_end.clone();
@@ -1152,6 +1218,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                         suppress.store(false, Ordering::Relaxed);
                     });
                 }
+                shortcuts::unregister_call_shortcuts(&app);
             }
             Message::ControllerDrawPersistChanged(persist) => {
                 log::info!("forward_core_events: controller draw persist changed: {persist}");
@@ -1687,6 +1754,9 @@ fn main() {
             set_shortcut_toggle_mic,
             set_shortcut_toggle_camera,
             set_shortcut_toggle_screenshare,
+            set_shortcut_end_call,
+            set_is_camera_on,
+            set_is_screensharing,
             mute_mic,
             unmute_mic,
             toggle_mic,

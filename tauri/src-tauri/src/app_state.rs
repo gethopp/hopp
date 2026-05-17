@@ -13,6 +13,7 @@ pub struct UserSettings {
     pub shortcut_toggle_mic: Option<String>,
     pub shortcut_toggle_camera: Option<String>,
     pub shortcut_toggle_screenshare: Option<String>,
+    pub shortcut_end_call: Option<String>,
 }
 
 impl Default for UserSettings {
@@ -26,6 +27,7 @@ impl Default for UserSettings {
             shortcut_toggle_mic: None,
             shortcut_toggle_camera: None,
             shortcut_toggle_screenshare: None,
+            shortcut_end_call: None,
         }
     }
 }
@@ -45,6 +47,11 @@ const DEFAULT_SHORTCUT_SCREENSHARE: &str = "Cmd+Shift+S";
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_SHORTCUT_SCREENSHARE: &str = "Ctrl+Shift+S";
 
+#[cfg(target_os = "macos")]
+const DEFAULT_SHORTCUT_END_CALL: &str = "Cmd+Shift+W";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_SHORTCUT_END_CALL: &str = "Alt+Q";
+
 impl UserSettings {
     pub fn resolve_shortcuts(&mut self) {
         if self.shortcut_toggle_mic.is_none() {
@@ -55,6 +62,9 @@ impl UserSettings {
         }
         if self.shortcut_toggle_screenshare.is_none() {
             self.shortcut_toggle_screenshare = Some(DEFAULT_SHORTCUT_SCREENSHARE.to_string());
+        }
+        if self.shortcut_end_call.is_none() {
+            self.shortcut_end_call = Some(DEFAULT_SHORTCUT_END_CALL.to_string());
         }
     }
 }

@@ -121,6 +121,7 @@ export interface UserSettings {
   shortcut_toggle_mic: string;
   shortcut_toggle_camera: string;
   shortcut_toggle_screenshare: string;
+  shortcut_end_call: string;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -228,6 +229,9 @@ export interface CommandMap {
   set_shortcut_toggle_mic: { args: { accel: string }; return: void };
   set_shortcut_toggle_camera: { args: { accel: string }; return: void };
   set_shortcut_toggle_screenshare: { args: { accel: string }; return: void };
+  set_shortcut_end_call: { args: { accel: string }; return: void };
+  set_is_camera_on: { args: { value: boolean }; return: void };
+  set_is_screensharing: { args: { value: boolean }; return: void };
 
   // Core socket messages — audio
   mute_mic: { args: void; return: void };

@@ -149,20 +149,22 @@ function SettingsWindow() {
     }
   }, [settings]);
 
-  async function commitShortcut(which: "mic" | "camera" | "screenshare", accel: string) {
+  async function commitShortcut(which: "mic" | "camera" | "screenshare" | "end_call", accel: string) {
     const setters = {
       mic: "set_shortcut_toggle_mic",
       camera: "set_shortcut_toggle_camera",
       screenshare: "set_shortcut_toggle_screenshare",
+      end_call: "set_shortcut_end_call",
     } as const;
 
     if (settings) {
-      const others = (["mic", "camera", "screenshare"] as const).filter((k) => k !== which);
+      const others = (["mic", "camera", "screenshare", "end_call"] as const).filter((k) => k !== which);
       for (const other of others) {
         const otherVal =
           other === "mic" ? settings.shortcut_toggle_mic
           : other === "camera" ? settings.shortcut_toggle_camera
-          : settings.shortcut_toggle_screenshare;
+          : other === "screenshare" ? settings.shortcut_toggle_screenshare
+          : settings.shortcut_end_call;
         if (otherVal === accel) {
           await typedInvoke(setters[other], { accel: "" });
         }
@@ -259,6 +261,12 @@ function SettingsWindow() {
                 description="Start or stop screen sharing"
                 value={settings.shortcut_toggle_screenshare}
                 onCommit={(accel) => commitShortcut("screenshare", accel)}
+              />
+              <ShortcutRow
+                title="End call"
+                description="Leave the current call"
+                value={settings.shortcut_end_call}
+                onCommit={(accel) => commitShortcut("end_call", accel)}
               />
             </div>
           </div>

@@ -272,6 +272,9 @@ listen<CoreParticipantState[]>("core_participants_snapshot", (event) => {
         const someoneElseSharing = event.payload.some((p) => p.is_screensharing && !p.identity.includes(user.id));
         updates.role = someoneElseSharing ? ParticipantRole.CONTROLLER : ParticipantRole.NONE;
       }
+
+      invoke("set_is_camera_on", { value: !!localParticipant.has_camera });
+      invoke("set_is_screensharing", { value: !!localParticipant.is_screensharing });
     }
   }
 
