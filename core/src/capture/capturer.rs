@@ -589,6 +589,7 @@ impl Capturer {
                 if failures_count > MAX_STREAM_FAILURES_BEFORE_EXIT {
                     log::error!("restart_stream: Too many failures, killing the process");
                     sentry_utils::upload_logs_event("Stream failed".to_string());
+                    sentry_utils::flush(std::time::Duration::from_secs(2));
                     std::process::exit(STREAM_FAILURE_EXIT_CODE);
                 }
 
@@ -597,6 +598,7 @@ impl Capturer {
                     Err(_) => {
                         log::error!("restart_stream: Failed to copy stream");
                         sentry_utils::upload_logs_event("Stream copy failed".to_string());
+                        sentry_utils::flush(std::time::Duration::from_secs(2));
                         std::process::exit(STREAM_FAILURE_EXIT_CODE);
                     }
                 };
@@ -627,6 +629,7 @@ impl Capturer {
                         Err(_) => {
                             log::error!("restart_stream: Failed to copy stream");
                             sentry_utils::upload_logs_event("Stream copy failed".to_string());
+                            sentry_utils::flush(std::time::Duration::from_secs(2));
                             std::process::exit(STREAM_FAILURE_EXIT_CODE);
                         }
                     };
@@ -643,6 +646,7 @@ impl Capturer {
                     }
                     log::error!("restart_stream: Failed to start capture after 10 retries {res:?}");
                     sentry_utils::upload_logs_event("Stream start capture failed".to_string());
+                    sentry_utils::flush(std::time::Duration::from_secs(2));
                     std::process::exit(STREAM_FAILURE_EXIT_CODE);
                 }
 
