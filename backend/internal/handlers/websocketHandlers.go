@@ -90,7 +90,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				}
 				if len(channels) > 0 {
 					c.Logger().Info("Notify teammate: ", teammate.ID, " that user: ", user.ID, " is online")
-					publishTeammateOnlineMessage(c, server, user.ID, teammate.ID)
+					publishTeammateOnlineMessage(c, server, user, teammate.ID)
 				}
 			}
 		}
@@ -158,7 +158,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				case parsedMessage.TeammateOnlineMessage != nil:
 					// Handle user online message
 					c.Logger().Info("Received user online message ", parsedMessage.TeammateOnlineMessage.Payload.TeammateID, " ", user.ID)
-					publishTeammateOnlineMessage(c, server, user.ID, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
+					publishTeammateOnlineMessage(c, server, user, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -477,9 +477,9 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.ParticipantID), payloadJSON)
 }
 
-func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userID, teammateID string) {
+func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, user *models.User, teammateID string) {
 	// Ping the teammate that user is online
-	msg := messages.NewTeammateOnlineMessage(userID)
+	msg := messages.NewTeammateOnlineMessageWithInfo(user.ID, user.FirstName, user.LastName, user.Email, user.AvatarURL)
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		ctx.Logger().Error(err)

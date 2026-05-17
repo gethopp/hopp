@@ -162,6 +162,10 @@ type CalleeOfflineMessage struct {
 // UserOnlinePayload represents the payload for user online messages
 type TeammateOnlinePayload struct {
 	TeammateID string `json:"teammate_id"`
+	FirstName  string `json:"first_name,omitempty"`
+	LastName   string `json:"last_name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	AvatarURL  string `json:"avatar_url,omitempty"`
 }
 
 // UserOnlineMessage is the message to notify that a user has come online
@@ -343,6 +347,19 @@ func NewTeammateOnlineMessage(teammateID string) TeammateOnlineMessage {
 		Type: MessageTypeTeammateOnline,
 		Payload: TeammateOnlinePayload{
 			TeammateID: teammateID,
+		},
+	}
+}
+
+func NewTeammateOnlineMessageWithInfo(teammateID, firstName, lastName, email, avatarURL string) TeammateOnlineMessage {
+	return TeammateOnlineMessage{
+		Type: MessageTypeTeammateOnline,
+		Payload: TeammateOnlinePayload{
+			TeammateID: teammateID,
+			FirstName:  firstName,
+			LastName:   lastName,
+			Email:      email,
+			AvatarURL:  avatarURL,
 		},
 	}
 }
