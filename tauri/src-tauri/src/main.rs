@@ -788,8 +788,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 580.0,
-            height: 510.0,
+            width: 660.0,
+            height: 720.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -807,7 +807,39 @@ fn get_user_settings(app: tauri::AppHandle) -> UserSettings {
     log::info!("get_user_settings");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    data.app_state.user_settings()
+    let mut settings = data.app_state.user_settings();
+    settings.resolve_shortcuts();
+    settings
+}
+
+#[tauri::command(async)]
+fn set_shortcut_toggle_mic(app: tauri::AppHandle, accel: String) {
+    log::info!("set_shortcut_toggle_mic: {accel}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let value = if accel.is_empty() { None } else { Some(accel) };
+    data.app_state
+        .update_user_setting(|s| s.shortcut_toggle_mic = value);
+}
+
+#[tauri::command(async)]
+fn set_shortcut_toggle_camera(app: tauri::AppHandle, accel: String) {
+    log::info!("set_shortcut_toggle_camera: {accel}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let value = if accel.is_empty() { None } else { Some(accel) };
+    data.app_state
+        .update_user_setting(|s| s.shortcut_toggle_camera = value);
+}
+
+#[tauri::command(async)]
+fn set_shortcut_toggle_screenshare(app: tauri::AppHandle, accel: String) {
+    log::info!("set_shortcut_toggle_screenshare: {accel}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let value = if accel.is_empty() { None } else { Some(accel) };
+    data.app_state
+        .update_user_setting(|s| s.shortcut_toggle_screenshare = value);
 }
 
 #[tauri::command(async)]
@@ -1652,6 +1684,9 @@ fn main() {
             set_show_dock_icon_in_call,
             set_start_camera_on_call,
             set_start_mic_on_call,
+            set_shortcut_toggle_mic,
+            set_shortcut_toggle_camera,
+            set_shortcut_toggle_screenshare,
             mute_mic,
             unmute_mic,
             toggle_mic,

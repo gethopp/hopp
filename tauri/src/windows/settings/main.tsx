@@ -1,13 +1,14 @@
 import "../../App.css";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { typedInvoke } from "@/core_payloads";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { tauriUtils } from "@/windows/window-utils";
-import { URLS } from "@/constants";
+import { OS, URLS } from "@/constants";
 import posthog from "posthog-js";
 
 const queryClient = new QueryClient();
@@ -46,6 +47,89 @@ function CheckboxRow({
   );
 }
 
+function formatAccel(accel: string): string {
+  return accel;
+}
+
+function ShortcutRow({
+  title,
+  description,
+  value,
+  onCommit,
+}: {
+  title: string;
+  description: string;
+  value: string;
+  onCommit: (accel: string) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const listenerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+
+  const startRecording = () => {
+    setRecording(true);
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        stopRecording();
+        return;
+      }
+
+      if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+
+      const hasModifier = e.metaKey || e.ctrlKey || e.altKey;
+      if (!hasModifier) return;
+
+      const parts: string[] = [];
+      if (OS === "macos") {
+        if (e.metaKey) parts.push("Cmd");
+        if (e.ctrlKey) parts.push("Ctrl");
+        if (e.altKey) parts.push("Alt");
+        if (e.shiftKey) parts.push("Shift");
+      } else {
+        if (e.ctrlKey) parts.push("Ctrl");
+        if (e.altKey) parts.push("Alt");
+        if (e.shiftKey) parts.push("Shift");
+      }
+      parts.push(e.key.toUpperCase());
+      const accel = parts.join("+");
+
+      stopRecording();
+      onCommit(accel);
+    };
+
+    listenerRef.current = handler;
+    window.addEventListener("keydown", handler, true);
+  };
+
+  const stopRecording = () => {
+    setRecording(false);
+    if (listenerRef.current) {
+      window.removeEventListener("keydown", listenerRef.current, true);
+      listenerRef.current = null;
+    }
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div className="flex flex-col">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">{description}</span>
+      </div>
+      <Button
+        variant="outline"
+        className="w-[180px] font-mono text-sm justify-start shrink-0"
+        onClick={() => (recording ? stopRecording() : startRecording())}
+      >
+        {recording ?
+          <span className="text-gray-400 dark:text-gray-500 text-xs">Recording...</span>
+        : <span className="text-gray-600 dark:text-gray-400 text-s">{formatAccel(value)}</span>}
+      </Button>
+    </div>
+  );
+}
+
 function SettingsWindow() {
   useDisableNativeContextMenu();
   useSystemTheme();
@@ -64,6 +148,30 @@ function SettingsWindow() {
       setServerUrl(settings.hopp_server_url ?? "");
     }
   }, [settings]);
+
+  async function commitShortcut(which: "mic" | "camera" | "screenshare", accel: string) {
+    const setters = {
+      mic: "set_shortcut_toggle_mic",
+      camera: "set_shortcut_toggle_camera",
+      screenshare: "set_shortcut_toggle_screenshare",
+    } as const;
+
+    if (settings) {
+      const others = (["mic", "camera", "screenshare"] as const).filter((k) => k !== which);
+      for (const other of others) {
+        const otherVal =
+          other === "mic" ? settings.shortcut_toggle_mic
+          : other === "camera" ? settings.shortcut_toggle_camera
+          : settings.shortcut_toggle_screenshare;
+        if (otherVal === accel) {
+          await typedInvoke(setters[other], { accel: "" });
+        }
+      }
+    }
+
+    await typedInvoke(setters[which], { accel });
+    refetchSettings();
+  }
 
   if (!settings) return null;
 
@@ -125,6 +233,32 @@ function SettingsWindow() {
                 onCheckedChange={(v) => {
                   typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
                 }}
+              />
+            </div>
+          </div>
+
+          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
+            <h3 className="text-base font-medium text-black dark:text-white">Shortcuts</h3>
+            <div className="flex flex-col gap-3">
+              <ShortcutRow
+                title="Mute / unmute mic"
+                description="Toggle microphone during call"
+                value={settings.shortcut_toggle_mic}
+                onCommit={(accel) => commitShortcut("mic", accel)}
+              />
+              <ShortcutRow
+                title="Toggle camera"
+                description="Turn camera on or off during call"
+                value={settings.shortcut_toggle_camera}
+                onCommit={(accel) => commitShortcut("camera", accel)}
+              />
+              <ShortcutRow
+                title="Toggle screen share"
+                description="Start or stop screen sharing"
+                value={settings.shortcut_toggle_screenshare}
+                onCommit={(accel) => commitShortcut("screenshare", accel)}
               />
             </div>
           </div>

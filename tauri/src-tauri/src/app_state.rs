@@ -10,6 +10,9 @@ pub struct UserSettings {
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
     pub hopp_server_url: Option<String>,
+    pub shortcut_toggle_mic: Option<String>,
+    pub shortcut_toggle_camera: Option<String>,
+    pub shortcut_toggle_screenshare: Option<String>,
 }
 
 impl Default for UserSettings {
@@ -20,6 +23,38 @@ impl Default for UserSettings {
             start_camera_on_call: false,
             start_mic_on_call: true,
             hopp_server_url: None,
+            shortcut_toggle_mic: None,
+            shortcut_toggle_camera: None,
+            shortcut_toggle_screenshare: None,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+const DEFAULT_SHORTCUT_MIC: &str = "Cmd+Shift+A";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_SHORTCUT_MIC: &str = "Ctrl+Shift+A";
+
+#[cfg(target_os = "macos")]
+const DEFAULT_SHORTCUT_CAMERA: &str = "Cmd+Shift+V";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_SHORTCUT_CAMERA: &str = "Ctrl+Shift+V";
+
+#[cfg(target_os = "macos")]
+const DEFAULT_SHORTCUT_SCREENSHARE: &str = "Cmd+Shift+S";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_SHORTCUT_SCREENSHARE: &str = "Ctrl+Shift+S";
+
+impl UserSettings {
+    pub fn resolve_shortcuts(&mut self) {
+        if self.shortcut_toggle_mic.is_none() {
+            self.shortcut_toggle_mic = Some(DEFAULT_SHORTCUT_MIC.to_string());
+        }
+        if self.shortcut_toggle_camera.is_none() {
+            self.shortcut_toggle_camera = Some(DEFAULT_SHORTCUT_CAMERA.to_string());
+        }
+        if self.shortcut_toggle_screenshare.is_none() {
+            self.shortcut_toggle_screenshare = Some(DEFAULT_SHORTCUT_SCREENSHARE.to_string());
         }
     }
 }
