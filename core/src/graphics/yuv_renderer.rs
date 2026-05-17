@@ -115,7 +115,8 @@ impl YuvPipeline {
             // For R8Unorm textures, bytes_per_row = texture_width (1 byte per pixel).
             // So we align the texture width to 256.
             let y_tex_w = align_to(width, 256);
-            let uv_tex_w = align_to(width / 2, 256);
+            let uv_tex_w = align_to(width.div_ceil(2), 256);
+            let uv_h = height.div_ceil(2);
 
             let y_tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("YUV Y texture"),
@@ -136,7 +137,7 @@ impl YuvPipeline {
                 label: Some("YUV U texture"),
                 size: wgpu::Extent3d {
                     width: uv_tex_w,
-                    height: height / 2,
+                    height: uv_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -151,7 +152,7 @@ impl YuvPipeline {
                 label: Some("YUV V texture"),
                 size: wgpu::Extent3d {
                     width: uv_tex_w,
-                    height: height / 2,
+                    height: uv_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -241,8 +242,8 @@ impl YuvPipeline {
         };
 
         let y_tex_w = align_to(frame.width, 256);
-        let uv_tex_w = align_to(frame.width / 2, 256);
-        let uv_h = frame.height / 2;
+        let uv_tex_w = align_to(frame.width.div_ceil(2), 256);
+        let uv_h = frame.height.div_ceil(2);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("YUV upload encoder"),
