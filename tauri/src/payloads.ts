@@ -261,7 +261,13 @@ export const PCalleeOfflineMessage = z.object({
 
 export const PTeammateOnlineMessage = z.object({
   type: z.literal("teammate_online"),
-  payload: z.object({ teammate_id: z.string() }),
+  payload: z.object({
+    teammate_id: z.string(),
+    first_name: z.string().optional(),
+    last_name: z.string().optional(),
+    email: z.string().optional(),
+    avatar_url: z.string().optional(),
+  }),
 });
 
 // Export types for all messages
