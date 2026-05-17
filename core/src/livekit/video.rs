@@ -40,7 +40,7 @@ impl VideoBuffer {
 
             // GPU-aligned strides (wgpu requires bytes_per_row multiple of 256)
             let y_stride = align_to(width, 256);
-            let uv_stride = align_to(width / 2, 256);
+            let uv_stride = align_to(width.div_ceil(2), 256);
             self.stride_y = y_stride;
             self.stride_u = uv_stride;
             self.stride_v = uv_stride;
@@ -67,7 +67,7 @@ impl VideoBuffer {
                 .copy_from_slice(&dy[src_start..src_start + width as usize]);
         }
 
-        let uv_w = (width / 2) as usize;
+        let uv_w = width.div_ceil(2) as usize;
         for row in 0..chroma_height as usize {
             let src_start = row * src_stride_u as usize;
             let dst_start = row * uv_stride as usize;
