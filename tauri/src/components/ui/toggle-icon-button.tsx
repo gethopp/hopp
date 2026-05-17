@@ -12,7 +12,7 @@ type ToggleIconButtonProps = React.PropsWithChildren<
 >;
 
 export const ToggleIconButton = React.forwardRef<HTMLButtonElement, ToggleIconButtonProps>(
-  ({ icon, children, state = "neutral", cornerIcon, className = {}, size = "default", ...props }, ref) => {
+  ({ icon, children, state = "neutral", cornerIcon, className = "", size = "default", ...props }, ref) => {
     return (
       <button
         ref={ref}
