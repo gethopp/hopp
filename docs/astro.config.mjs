@@ -45,6 +45,7 @@ export default defineConfig({
           items: [
             { label: "Terminologies", slug: "features/terminologies" },
             { label: "Settings", slug: "features/settings" },
+            { label: "Keyboard navigation", slug: "features/keyboard-navigation" },
             { label: "Screen Sharing", slug: "features/screen-sharing" },
             { label: "Rooms", slug: "features/rooms" },
             { label: "Remote Control", slug: "features/remote-control" },
