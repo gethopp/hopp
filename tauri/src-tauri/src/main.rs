@@ -1677,6 +1677,8 @@ fn main() {
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {
             log::info!("Exit requested");
+            sentry_utils::upload_logs_event("Tauri app quit".to_string());
+            sentry_utils::flush(std::time::Duration::from_secs(2));
         }
         tauri::RunEvent::WindowEvent {
             label,

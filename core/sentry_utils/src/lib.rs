@@ -150,6 +150,12 @@ pub fn simple_event(message: String) {
     client.send_envelope(envelope);
 }
 
+pub fn flush(timeout: std::time::Duration) {
+    if let Some(client) = sentry::Hub::current().client() {
+        let _ = client.flush(Some(timeout));
+    }
+}
+
 pub fn init_sentry(failure_reason: String, dsn: Option<String>) -> Option<ClientInitGuard> {
     if dsn.is_none() {
         log::warn!("init_sentry: No DSN provided");
