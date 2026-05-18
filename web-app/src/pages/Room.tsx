@@ -11,6 +11,7 @@ import {
   TrackReference,
   StartAudio,
   useDataChannel,
+  useIsMuted,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { HiMiniUser } from "react-icons/hi2";
@@ -19,6 +20,7 @@ import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff }
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import clsx from "clsx";
 import { VideoPresets, Track, LocalTrack, Participant, ParticipantEvent, LocalTrackPublication } from "livekit-client";
 import { useAPI } from "@/hooks/useQueryClients";
@@ -259,20 +261,44 @@ function ParticipantsGrid() {
   }, [visibleCameraTracks, visibleAudioTracks, remoteParticipants, localParticipant]);
 
   // Get screen share tracks (including local) - don't filter by participant name for screen shares
-  const activeScreenShare = useMemo(() => {
-    // Screen shares might come from any participant, don't filter them
+  const screenShareTrack = useMemo(() => {
     return screenShareTracks.length > 0 ? screenShareTracks[0] : null;
   }, [screenShareTracks]);
 
   // Get the user's display name for local participant
   const localUserName = user ? `${user.first_name} ${user.last_name}` : "You";
 
-  // If there's a screen share, show focus layout (screen share center, participants on side)
-  if (activeScreenShare) {
+  return (
+    <ParticipantsLayout
+      participants={participants}
+      screenShareTrack={screenShareTrack}
+      localUserName={localUserName}
+      localParticipant={localParticipant}
+    />
+  );
+}
+
+function ParticipantsLayout({
+  participants,
+  screenShareTrack,
+  localUserName,
+  localParticipant,
+}: {
+  participants: Array<{ participant: Participant; cameraTrack?: TrackReference; isLocal: boolean }>;
+  screenShareTrack: TrackReference | null;
+  localUserName: string;
+  localParticipant: any;
+}) {
+  const isScreenShareMuted = useIsMuted(
+    screenShareTrack ?? { participant: localParticipant, source: Track.Source.ScreenShare },
+  );
+  const hasActiveScreenShare = !!screenShareTrack && !isScreenShareMuted;
+
+  if (hasActiveScreenShare) {
     const screenShareOwnerName =
-      activeScreenShare.participant.identity === localParticipant?.identity ?
+      screenShareTrack.participant.identity === localParticipant?.identity ?
         localUserName
-      : cleanParticipantName(activeScreenShare.participant.name || activeScreenShare.participant.identity);
+      : cleanParticipantName(screenShareTrack.participant.name || screenShareTrack.participant.identity);
 
     return (
       <div className="flex flex-row gap-4 h-full">
@@ -290,7 +316,7 @@ function ParticipantsGrid() {
           ))}
         </aside>
         {/* Screen share takes focus with cursor overlay */}
-        <ScreenShareView screenShareTrack={activeScreenShare} ownerName={screenShareOwnerName} />
+        <ScreenShareView screenShareTrack={screenShareTrack} ownerName={screenShareOwnerName} />
       </div>
     );
   }
@@ -499,8 +525,9 @@ function ParticipantCard({
   const rawParticipantName = participant.name || participant.identity || "Unknown";
   const participantName = isLocal ? localUserName : cleanParticipantName(rawParticipantName);
 
-  // Check if participant is muted
-  const isMicMuted = !participant.isMicrophoneEnabled;
+  // Use LiveKit hooks for reactive muted state
+  const isCameraMuted = useIsMuted(cameraTrack ?? { participant, source: Track.Source.Camera });
+  const isMicMuted = useIsMuted({ participant, source: Track.Source.Microphone });
 
   return (
     <div
@@ -508,23 +535,14 @@ function ParticipantCard({
         "outline-2 outline-green-500 -outline-offset-1": participant.isSpeaking,
       })}
     >
-      {cameraTrack ?
+      {cameraTrack && !isCameraMuted ?
         <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover" />
       : <div className="w-full h-full flex items-center justify-center bg-slate-600">
           <HiMiniUser className="size-10 text-white/80" />
         </div>
       }
       {/* Audio playback for remote participants */}
-      {!isLocal && participant.audioTrackPublications.size > 0 && (
-        <AudioTrack
-          trackRef={{
-            participant,
-            source: Track.Source.Microphone,
-            publication: Array.from(participant.audioTrackPublications.values())[0],
-          }}
-          volume={1.0}
-        />
-      )}
+      {!isLocal && <RemoteAudio participant={participant} />}
       {/* Participant metadata bar */}
       <div className="absolute bottom-0 left-0 right-0 bg-linear-to-t from-black/80 to-transparent p-2">
         <div className="flex items-center justify-between">
@@ -538,6 +556,24 @@ function ParticipantCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function RemoteAudio({ participant }: { participant: Participant }) {
+  const isMicMuted = useIsMuted({ participant, source: Track.Source.Microphone });
+  const audioPub = Array.from(participant.audioTrackPublications.values())[0];
+
+  if (!audioPub || isMicMuted) return null;
+
+  return (
+    <AudioTrack
+      trackRef={{
+        participant,
+        source: Track.Source.Microphone,
+        publication: audioPub,
+      }}
+      volume={1.0}
+    />
   );
 }
 
@@ -586,24 +622,27 @@ function AudioButton({
         [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
       })}
       cornerIcon={
-        <select
-          value={activeMicrophoneDeviceId}
-          onChange={(e) => handleMicrophoneChange(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx(
-            "hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs text-xs",
-            {
+        <Select value={activeMicrophoneDeviceId} onValueChange={handleMicrophoneChange}>
+          <SelectTrigger
+            iconClassName={clsx({
               [Colors.mic.text]: hasAudioEnabled,
               [Colors.deactivatedIcon]: !hasAudioEnabled,
-            },
-          )}
-        >
-          {microphoneDevices.map((device) => (
-            <option key={device.deviceId} value={device.deviceId}>
-              {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
-            </option>
-          ))}
-        </select>
+            })}
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+          />
+          <SelectContent align="center">
+            {microphoneDevices.map(
+              (device) =>
+                device.deviceId !== "" && (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    <span className="text-xs truncate">
+                      {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
+                    </span>
+                  </SelectItem>
+                ),
+            )}
+          </SelectContent>
+        </Select>
       }
     >
       {hasAudioEnabled ? "Mute me" : "Open mic"}
@@ -663,27 +702,27 @@ function CameraButton({
         [`${Colors.camera.text} ${Colors.camera.ring}`]: hasCameraEnabled,
       })}
       cornerIcon={
-        <select
-          value={activeCameraDeviceId}
-          onChange={(e) => handleCameraChange(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx(
-            "hover:outline hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-sm p-0 border-0 shadow-none hover:shadow-xs text-xs",
-            {
+        <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} disabled={isDisabled}>
+          <SelectTrigger
+            iconClassName={clsx({
               [Colors.camera.text]: hasCameraEnabled,
               [Colors.deactivatedIcon]: !hasCameraEnabled,
-            },
-          )}
-        >
-          {cameraDevices.map(
-            (device) =>
-              device.deviceId !== "" && (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Camera ${device.deviceId.slice(0, 8)}...`}
-                </option>
-              ),
-          )}
-        </select>
+            })}
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+          />
+          <SelectContent align="center">
+            {cameraDevices.map(
+              (device) =>
+                device.deviceId !== "" && (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    <span className="text-xs truncate">
+                      {device.label || `Camera ${device.deviceId.slice(0, 8)}...`}
+                    </span>
+                  </SelectItem>
+                ),
+            )}
+          </SelectContent>
+        </Select>
       }
     >
       {hasCameraEnabled ? "Stop sharing" : "Share cam"}
@@ -739,56 +778,68 @@ function MediaControls({
   useEffect(() => {
     if (!localParticipant) return;
 
-    // Handle microphone - unpublish when disabled to fully release the device
+    // Handle microphone - mute when disabled to keep track published
     if (hasAudioEnabled) {
-      localParticipant.setMicrophoneEnabled(true);
+      const micTrack = localParticipant
+        .getTrackPublications()
+        .find((track) => track.source === Track.Source.Microphone);
+      if (micTrack && micTrack.track instanceof LocalTrack) {
+        micTrack.track.unmute();
+      } else {
+        localParticipant.setMicrophoneEnabled(true);
+      }
     } else {
       const micTrack = localParticipant
         .getTrackPublications()
         .find((track) => track.source === Track.Source.Microphone);
-      if (micTrack && micTrack.track && micTrack.track instanceof LocalTrack) {
-        localParticipant.unpublishTrack(micTrack.track);
+      if (micTrack && micTrack.track instanceof LocalTrack) {
+        micTrack.track.mute();
       }
     }
 
-    // Handle camera - unpublish when disabled to fully release the device
+    // Handle camera - mute when disabled to keep track published
     if (hasCameraEnabled) {
-      localParticipant.setCameraEnabled(
-        hasCameraEnabled,
-        {
-          resolution: VideoPresets.h720.resolution,
-        },
-        {
-          videoCodec: "h264",
-          simulcast: true,
-          videoEncoding: {
-            maxBitrate: 1_300_000,
+      const cameraTrack = localParticipant.getTrackPublications().find((track) => track.source === Track.Source.Camera);
+      if (cameraTrack && cameraTrack.track instanceof LocalTrack) {
+        cameraTrack.track.unmute();
+      } else {
+        localParticipant.setCameraEnabled(
+          true,
+          {
+            resolution: VideoPresets.h720.resolution,
           },
-          videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
-        },
-      );
+          {
+            videoCodec: "h264",
+            simulcast: true,
+            videoEncoding: {
+              maxBitrate: 1_300_000,
+            },
+            videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h216],
+          },
+        );
+      }
     } else {
       const cameraTrack = localParticipant.getTrackPublications().find((track) => track.source === Track.Source.Camera);
-      if (cameraTrack && cameraTrack.track && cameraTrack.track instanceof LocalTrack) {
-        localParticipant.unpublishTrack(cameraTrack.track);
+      if (cameraTrack && cameraTrack.track instanceof LocalTrack) {
+        cameraTrack.track.mute();
       }
     }
 
-    // Handle screen sharing
+    // Handle screen sharing - publish/unpublish (getDisplayMedia tracks can't be reused after stop)
     if (isScreenSharing) {
       localParticipant.setScreenShareEnabled(true);
     } else {
       localParticipant.setScreenShareEnabled(false);
-
       const screenShareTrack = localParticipant
         .getTrackPublications()
         .find((track) => track.source === Track.Source.ScreenShare);
-      if (screenShareTrack && screenShareTrack.track && screenShareTrack.track instanceof LocalTrack) {
+      if (screenShareTrack && screenShareTrack.track instanceof LocalTrack) {
         localParticipant.unpublishTrack(screenShareTrack.track);
       }
     }
   }, [localParticipant, hasAudioEnabled, hasCameraEnabled, isScreenSharing, setIsScreenSharing]);
 
+  // Sync UI state when browser ends screen share via system dialog
   useEffect(() => {
     if (!localParticipant) return;
 
@@ -803,7 +854,7 @@ function MediaControls({
     return () => {
       localParticipant.off(ParticipantEvent.LocalTrackUnpublished, onLocalTrackUnpublished);
     };
-  }, [localParticipant]);
+  }, [localParticipant, setIsScreenSharing]);
 
   return (
     <div className="flex flex-row gap-2 justify-center items-center flex-wrap">
