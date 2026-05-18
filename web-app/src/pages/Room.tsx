@@ -20,6 +20,7 @@ import { LuMic, LuMicOff, LuVideo, LuVideoOff, LuScreenShare, LuScreenShareOff }
 import { HiOutlinePhoneXMark } from "react-icons/hi2";
 import { ToggleIconButton } from "@/components/ui/toggle-icon-button";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import clsx from "clsx";
 import { VideoPresets, Track, LocalTrack, Participant, ParticipantEvent, LocalTrackPublication } from "livekit-client";
 import { useAPI } from "@/hooks/useQueryClients";
@@ -621,30 +622,27 @@ function AudioButton({
         [`${Colors.mic.text} ${Colors.mic.ring}`]: hasAudioEnabled,
       })}
       cornerIcon={
-        <select
-          value={activeMicrophoneDeviceId}
-          onChange={(e) => handleMicrophoneChange(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx(
-            "hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs text-[0px] w-4 appearance-none bg-no-repeat bg-right cursor-pointer block leading-none align-middle",
-            {
+        <Select value={activeMicrophoneDeviceId} onValueChange={handleMicrophoneChange}>
+          <SelectTrigger
+            iconClassName={clsx({
               [Colors.mic.text]: hasAudioEnabled,
               [Colors.deactivatedIcon]: !hasAudioEnabled,
-            },
-          )}
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-            backgroundPosition: "right 2px center",
-            backgroundRepeat: "no-repeat",
-            backgroundSize: "12px",
-          }}
-        >
-          {microphoneDevices.map((device) => (
-            <option key={device.deviceId} value={device.deviceId}>
-              {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
-            </option>
-          ))}
-        </select>
+            })}
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+          />
+          <SelectContent align="center">
+            {microphoneDevices.map(
+              (device) =>
+                device.deviceId !== "" && (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    <span className="text-xs truncate">
+                      {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
+                    </span>
+                  </SelectItem>
+                ),
+            )}
+          </SelectContent>
+        </Select>
       }
     >
       {hasAudioEnabled ? "Mute me" : "Open mic"}
@@ -704,33 +702,27 @@ function CameraButton({
         [`${Colors.camera.text} ${Colors.camera.ring}`]: hasCameraEnabled,
       })}
       cornerIcon={
-        <select
-          value={activeCameraDeviceId}
-          onChange={(e) => handleCameraChange(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx(
-            "hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs text-[0px] w-4 appearance-none bg-no-repeat bg-right cursor-pointer block leading-none align-middle",
-            {
+        <Select value={activeCameraDeviceId} onValueChange={handleCameraChange} disabled={isDisabled}>
+          <SelectTrigger
+            iconClassName={clsx({
               [Colors.camera.text]: hasCameraEnabled,
               [Colors.deactivatedIcon]: !hasCameraEnabled,
-            },
-          )}
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-            backgroundPosition: "right 2px center",
-            backgroundRepeat: "no-repeat",
-            backgroundSize: "12px",
-          }}
-        >
-          {cameraDevices.map(
-            (device) =>
-              device.deviceId !== "" && (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Camera ${device.deviceId.slice(0, 8)}...`}
-                </option>
-              ),
-          )}
-        </select>
+            })}
+            className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs"
+          />
+          <SelectContent align="center">
+            {cameraDevices.map(
+              (device) =>
+                device.deviceId !== "" && (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    <span className="text-xs truncate">
+                      {device.label || `Camera ${device.deviceId.slice(0, 8)}...`}
+                    </span>
+                  </SelectItem>
+                ),
+            )}
+          </SelectContent>
+        </Select>
       }
     >
       {hasCameraEnabled ? "Stop sharing" : "Share cam"}
