@@ -157,8 +157,12 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					}
 				case parsedMessage.TeammateOnlineMessage != nil:
 					// Handle user online message
-					c.Logger().Info("Received user online message ", parsedMessage.TeammateOnlineMessage.Payload.TeammateID, " ", user.ID)
-					publishTeammateOnlineMessage(c, server, user, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
+					teammateID := parsedMessage.TeammateOnlineMessage.Payload.TeammateID
+					c.Logger().Info("Received user online message ", teammateID, " ", user.ID)
+					if !canNotifyTeammate(c, server, user, teammateID) {
+						continue
+					}
+					publishTeammateOnlineMessage(c, server, user, teammateID)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -487,4 +491,27 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, user 
 	}
 
 	s.Redis.Publish(context.Background(), common.GetUserChannel(teammateID), msgJSON)
+}
+
+func canNotifyTeammate(ctx echo.Context, s *common.ServerState, user *models.User, teammateID string) bool {
+	if user.TeamID == nil || teammateID == "" || teammateID == user.ID {
+		ctx.Logger().Warn("Dropping unauthorized teammate_online message: ", user.ID, " -> ", teammateID)
+		return false
+	}
+
+	var count int64
+	err := s.DB.Model(&models.User{}).
+		Where("id = ? AND team_id = ?", teammateID, *user.TeamID).
+		Count(&count).Error
+	if err != nil {
+		ctx.Logger().Error("Failed to verify teammate_online recipient: ", err)
+		return false
+	}
+
+	if count == 0 {
+		ctx.Logger().Warn("Dropping teammate_online message for non-teammate: ", user.ID, " -> ", teammateID)
+		return false
+	}
+
+	return true
 }
