@@ -89,6 +89,15 @@ pub struct AppData {
     /// Whether drawing mode is currently enabled (runtime state).
     pub drawing_enabled: bool,
 
+    /// Whether a call is currently active.
+    pub call_active: bool,
+
+    /// Whether the local camera is currently on (pushed from frontend snapshots).
+    pub is_camera_on: bool,
+
+    /// Whether the local participant is currently screensharing (pushed from frontend snapshots).
+    pub is_screensharing: bool,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -125,6 +134,9 @@ impl AppData {
             suppress_hide_on_call_end,
             noise_cancellation_enabled: true,
             drawing_enabled: false,
+            call_active: false,
+            is_camera_on: false,
+            is_screensharing: false,
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }

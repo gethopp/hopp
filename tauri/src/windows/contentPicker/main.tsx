@@ -61,6 +61,8 @@ async function screenshare(
   return true;
 }
 
+const COLS = 2;
+
 function Window() {
   useDisableNativeContextMenu();
   useSystemTheme();
@@ -70,6 +72,9 @@ function Window() {
   const [accessibilityPermission, setAccessibilityPermission] = useState(false);
   const hasClickedRef = useRef(false);
   const [hasClicked, setHasClicked] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [usingKeyboard, setUsingKeyboard] = useState(false);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -87,6 +92,18 @@ function Window() {
 
     fetchAccessibilityPermission();
   }, [hasFetched]);
+
+  useEffect(() => {
+    itemRefs.current = itemRefs.current.slice(0, content.length);
+    if (content.length > 0 && !hasClicked) {
+      setSelectedIndex(0);
+      itemRefs.current[0]?.focus();
+    }
+  }, [content.length, hasClicked]);
+
+  useEffect(() => {
+    itemRefs.current[selectedIndex]?.focus();
+  }, [selectedIndex]);
 
   const handleItemClick = async (content: CaptureContent["content"]) => {
     // TODO make this faster
@@ -124,6 +141,41 @@ function Window() {
   const [resolution, setResolution] = useState<ResolutionKey>("4K");
   const updateResolution = (value: string) => {
     setResolution(value as ResolutionKey);
+  };
+
+  const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (hasClicked || hasEmptyContentFromBackend || content.length === 0) return;
+
+    switch (e.key) {
+      case "ArrowRight":
+        e.preventDefault();
+        setUsingKeyboard(true);
+        setSelectedIndex((i) => Math.min(i + 1, content.length - 1));
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        setUsingKeyboard(true);
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        setUsingKeyboard(true);
+        setSelectedIndex((i) => Math.min(i + COLS, content.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setUsingKeyboard(true);
+        setSelectedIndex((i) => Math.max(i - COLS, 0));
+        break;
+      case "Enter": {
+        e.preventDefault();
+        const selected = content[selectedIndex];
+        if (selected) {
+          handleItemClick(selected.content);
+        }
+        break;
+      }
+    }
   };
 
   const grantAccessibilityPermission = () => {
@@ -176,10 +228,11 @@ function Window() {
         </Select>
       </div>
       <div
-        className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4", {
+        className={clsx("content px-4 pb-4 pt-[10px] overflow-auto gap-4 outline-none", {
           "h-full flex flex-col justify-center": hasClicked,
           "grid grid-cols-2 h-full items-start": !hasClicked,
         })}
+        onKeyDown={handleGridKeyDown}
       >
         {hasEmptyContentFromBackend ?
           <div className="col-span-2 flex justify-center">
@@ -199,11 +252,28 @@ function Window() {
               <CgSpinner className="animate-spin text-black/80 dark:text-white/80 h-6 w-6" />
             </div>
           </div>
-        : content.map((item) => (
+        : content.map((item, idx) => (
             <div
               key={item.content.id}
-              className="flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 hover:bg-slate-300 dark:hover:bg-slate-500 p-2 rounded-md"
+              ref={(el) => {
+                itemRefs.current[idx] = el;
+              }}
+              tabIndex={0}
+              className={clsx(
+                "flex flex-col group items-start gap-3 cursor-pointer transition-all duration-300 focus:bg-slate-300 dark:focus:bg-slate-500 focus:outline-none p-2 rounded-md",
+                !usingKeyboard && "hover:bg-slate-300 dark:hover:bg-slate-500",
+              )}
               onClick={() => handleItemClick(item.content)}
+              onFocus={() => setSelectedIndex(idx)}
+              onMouseEnter={() => {
+                if (!usingKeyboard) setSelectedIndex(idx);
+              }}
+              onMouseMove={() => {
+                if (usingKeyboard) {
+                  setUsingKeyboard(false);
+                  setSelectedIndex(idx);
+                }
+              }}
             >
               <AspectRatio ratio={16 / 9}>
                 <img
