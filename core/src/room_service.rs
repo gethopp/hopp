@@ -596,7 +596,6 @@ impl RoomService {
         {
             let mut participants = self.inner.participants.write().unwrap();
             if let Some(info) = participants.get_mut("local") {
-                log::info!("local_participant: {:?}", info);
                 info.set_is_screensharing(true);
             }
         }
@@ -2662,9 +2661,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     *connection_quality.lock().unwrap() = Some(quality);
                 }
             }
-            _ => {
-                log::info!("message: {:?}", msg);
-            }
+            _ => {}
         }
     }
     log::info!("handle_room_events: ended")

@@ -971,7 +971,22 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::CreateRoomResult(result) => {
-                log::info!("user_event: CreateRoomResult: {result:?}");
+                match &result {
+                    Ok(snapshot) => {
+                        let summary = snapshot
+                            .iter()
+                            .map(|p| {
+                                format!(
+                                    "{{ identity: {:?}, connected: {}, muted: {}, has_camera: {}, is_screensharing: {} }}",
+                                    p.identity, p.connected, p.muted, p.has_camera, p.is_screensharing
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        log::info!("user_event: CreateRoomResult: Ok([{summary}])");
+                    }
+                    Err(e) => log::info!("user_event: CreateRoomResult: Err({e})"),
+                }
                 match result {
                     Ok(snapshot) => {
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
