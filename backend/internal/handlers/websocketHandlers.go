@@ -359,7 +359,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	// User is online ping the callee
 	// Publish a message to the callee channel
-	msg := messages.NewIncomingCallMessage(callerId)
+	msg := messages.NewIncomingCallMessage(callerId, time.Now().Unix())
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		ctx.Logger().Error(err)

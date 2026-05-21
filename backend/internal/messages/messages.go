@@ -81,7 +81,8 @@ type CallEndMessage struct {
 
 // IncomingCallPayload represents the payload for an incoming call by another user
 type IncomingCallPayload struct {
-	CallerID string `json:"caller_id" validate:"required"`
+	CallerID    string `json:"caller_id" validate:"required"`
+	InitiatedAt *int64 `json:"initiated_at,omitempty"`
 }
 
 // IncomingCallMessage is a complete call request message
@@ -297,11 +298,12 @@ func NewCallEndMessage(callID string) CallEndMessage {
 	}
 }
 
-func NewIncomingCallMessage(callerID string) IncomingCallMessage {
+func NewIncomingCallMessage(callerID string, initiatedAt int64) IncomingCallMessage {
 	return IncomingCallMessage{
 		Type: MessageTypeIncomingCall,
 		Payload: IncomingCallPayload{
-			CallerID: callerID,
+			CallerID:    callerID,
+			InitiatedAt: &initiatedAt,
 		},
 	}
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { differenceInSeconds, fromUnixTime } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { checkForUpdates } from "@/update.ts";
@@ -201,6 +202,18 @@ function App() {
       if (data.type !== "incoming_call") {
         return;
       }
+
+      const MAX_CALL_AGE_S = 5;
+      const incomingMsg = data as TIncomingCallMessage;
+      const initiatedAt = incomingMsg.payload.initiated_at;
+      if (initiatedAt != null) {
+        const ageSeconds = differenceInSeconds(new Date(), fromUnixTime(initiatedAt));
+        if (ageSeconds > MAX_CALL_AGE_S) {
+          console.warn(`Dropping stale incoming call (age: ${ageSeconds}s)`);
+          return;
+        }
+      }
+
       // Check that there is no ongoing call
       // If there is, reject the call
       const { callTokens } = useStore.getState();
