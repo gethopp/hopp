@@ -283,8 +283,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	// Dedupe: prevent duplicate/glare call requests within ringing window.
 	// Symmetric key: pending A->B also blocks B->A.
-	// const callDedupeTTL = 30 * time.Second
-	const callDedupeTTL = 5 * time.Second
+	const callDedupeTTL = 30 * time.Second
 	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, "1", callDedupeTTL).Result()
 	if err != nil {
 		// Fail open — do not block legit calls on Redis hiccup.
