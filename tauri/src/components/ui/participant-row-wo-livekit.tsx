@@ -185,6 +185,24 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       }
     });
 
+    const timeoutId =
+      isCalling ?
+        setTimeout(
+          () => {
+            callResolvedRef.current = true;
+            sounds.ringing.stop();
+            setCalling(null);
+            socketService.send({
+              type: "call_end",
+              payload: { participant_id: props.user.id },
+            });
+            toast.error(`${props.user.first_name} didn't answer`, { duration: 1500 });
+          },
+          // 5 secs more from auto-reject from callee's timeout
+          65_000,
+        )
+      : undefined;
+
     return () => {
       if (!isCalling) return;
       console.debug("Unsubscribing from call response for user:", props.user.id);
@@ -199,6 +217,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           payload: { participant_id: props.user.id },
         });
       }
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [isCalling]);
 
