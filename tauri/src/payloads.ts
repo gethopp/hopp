@@ -213,7 +213,10 @@ export const PCallEndMessage = z.object({
 
 export const PIncomingCallMessage = z.object({
   type: z.literal("incoming_call"),
-  payload: z.object({ caller_id: z.string() }),
+  payload: z.object({
+    caller_id: z.string(),
+    initiated_at: z.number().optional(),
+  }),
 });
 
 export const PAcceptCallMessage = z.object({

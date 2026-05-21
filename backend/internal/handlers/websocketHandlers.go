@@ -38,6 +38,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 		}
 		defer ws.Close()
 
+		// Kill the connections after 2 heartbeats (30 seconds for old apps)
+		// TODO: Modify after most users are upgraded to >1.0.15
+		const wsReadTimeout = 65 * time.Second
+		_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
+
 		// Get user from context
 		email, err := server.JwtIssuer.GetUserEmail(c)
 		if err != nil {
@@ -107,7 +112,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNoStatusReceived) {
 						c.Logger().Debug("WebSocket connection closed normally")
 					} else {
-						c.Logger().Error("WebSocket read error: ", err)
+						c.Logger().Errorf("WebSocket read error: %v (user: %s)", err, user.ID)
 					}
 					done <- struct{}{}
 					return
@@ -143,7 +148,9 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					endCall(c, server, user.ID, *parsedMessage.CallEnd)
 				case parsedMessage.Ping != nil:
 					// Handle ping message
-					c.Logger().Debug("Received ping")
+					// Reset the read deadline
+					_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
+					c.Logger().Debugf("Received ping from user: %s", user.ID)
 					pong := messages.NewPongMessage()
 					pongJSON, err := json.Marshal(pong)
 					if err != nil {
@@ -345,7 +352,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	// User is online ping the callee
 	// Publish a message to the callee channel
-	msg := messages.NewIncomingCallMessage(callerId)
+	msg := messages.NewIncomingCallMessage(callerId, time.Now().Unix())
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		ctx.Logger().Error(err)

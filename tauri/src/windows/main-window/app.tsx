@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { differenceInSeconds, fromUnixTime } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { checkForUpdates } from "@/update.ts";
@@ -40,6 +41,7 @@ function App() {
     setTeammates,
     setAuthToken,
     setLivekitUrl,
+    setIncomingCallCallerId,
   } = useStore();
 
   const coreProcessCrashedRef = useRef(false);
@@ -47,7 +49,6 @@ function App() {
 
   const { useQuery } = useAPI();
 
-  const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null);
   const sentryMetadataRef = useRef<boolean>(false);
 
   const { error: userError } = useQuery("get", "/api/auth/user", undefined, {
@@ -168,17 +169,19 @@ function App() {
   }, []);
 
   const handleReject = (isInCall?: boolean) => {
-    if (!incomingCallerId && !isInCall) return;
+    const { incomingCallCallerId } = useStore.getState();
+    if (!incomingCallCallerId && !isInCall) return;
     if (!isInCall) {
       sounds.incomingCall.stop();
     }
     socketService.send({
       type: "call_reject",
       payload: {
-        caller_id: incomingCallerId,
+        caller_id: incomingCallCallerId,
         reject_reason: "rejected",
       },
     } as TRejectCallMessage);
+    setIncomingCallCallerId(null);
   };
 
   const handleInCallRejection = (callerID: string) => {
@@ -199,6 +202,18 @@ function App() {
       if (data.type !== "incoming_call") {
         return;
       }
+
+      const MAX_CALL_AGE_S = 60;
+      const incomingMsg = data as TIncomingCallMessage;
+      const initiatedAt = incomingMsg.payload.initiated_at;
+      if (initiatedAt != null) {
+        const ageSeconds = differenceInSeconds(new Date(), fromUnixTime(initiatedAt));
+        if (ageSeconds > MAX_CALL_AGE_S) {
+          console.warn(`Dropping stale incoming call (age: ${ageSeconds}s)`);
+          return;
+        }
+      }
+
       // Check that there is no ongoing call
       // If there is, reject the call
       const { callTokens } = useStore.getState();
@@ -222,7 +237,7 @@ function App() {
       }
 
       if (data.type === "incoming_call") {
-        setIncomingCallerId(data.payload.caller_id);
+        setIncomingCallCallerId(data.payload.caller_id);
 
         /* Reject call if update in progress */
         if (updateInProgress) {
@@ -250,6 +265,7 @@ function App() {
       if (data.type === "call_end") {
         // Get call info before clearing tokens
         toast.dismiss("call-banner");
+        setIncomingCallCallerId(null);
 
         const { callTokens: currentCallTokens, user } = useStore.getState();
         const participantId = currentCallTokens?.participant || "";

@@ -56,11 +56,14 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   const isCalling = useStore((state) => state.calling === props.user.id);
   const { setCalling, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
+  const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
 
   const callUser = useCallback(() => {
+    if (hasIncomingCall) return;
+
     posthog.capture("user_call_request", {
       user_id: props.user.id,
       user_name: props.user.first_name,
@@ -97,7 +100,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
         callee_id: props.user.id,
       },
     } as TCallRequestMessage);
-  }, [props.user]);
+  }, [props.user, hasIncomingCall]);
 
   // Add a useEffect to listen for call responses
   // that will unsubscribe from the socket when the component unmounts
@@ -182,6 +185,24 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       }
     });
 
+    const timeoutId =
+      isCalling ?
+        setTimeout(
+          () => {
+            callResolvedRef.current = true;
+            sounds.ringing.stop();
+            setCalling(null);
+            socketService.send({
+              type: "call_end",
+              payload: { participant_id: props.user.id },
+            });
+            toast.error(`${props.user.first_name} didn't answer`, { duration: 1500 });
+          },
+          // 5 secs more from auto-reject from callee's timeout
+          65_000,
+        )
+      : undefined;
+
     return () => {
       if (!isCalling) return;
       console.debug("Unsubscribing from call response for user:", props.user.id);
@@ -196,6 +217,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
           payload: { participant_id: props.user.id },
         });
       }
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [isCalling]);
 
@@ -230,7 +252,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
               callUser();
             }
           }}
-          disabled={inACall}
+          disabled={inACall || hasIncomingCall}
           className={clsx(
             "px-2 w-auto h-7 flex flex-row items-center gap-1",
             !isCalling && "text-slate-600",
