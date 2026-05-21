@@ -38,6 +38,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 		}
 		defer ws.Close()
 
+		// Kill the connections after 2 heartbeats (30 seconds for old apps)
+		// TODO: Modify after most users are upgraded to >1.0.15
+		const wsReadTimeout = 65 * time.Second
+		_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
+
 		// Get user from context
 		email, err := server.JwtIssuer.GetUserEmail(c)
 		if err != nil {
@@ -107,7 +112,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNoStatusReceived) {
 						c.Logger().Debug("WebSocket connection closed normally")
 					} else {
-						c.Logger().Error("WebSocket read error: ", err)
+						c.Logger().Errorf("WebSocket read error: %v (user: %s)", err, user.ID)
 					}
 					done <- struct{}{}
 					return
@@ -143,7 +148,9 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					endCall(c, server, user.ID, *parsedMessage.CallEnd)
 				case parsedMessage.Ping != nil:
 					// Handle ping message
-					c.Logger().Debug("Received ping")
+					// Reset the read deadline
+					_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
+					c.Logger().Debugf("Received ping from user: %s (email: %s)", user.ID, user.Email)
 					pong := messages.NewPongMessage()
 					pongJSON, err := json.Marshal(pong)
 					if err != nil {
@@ -206,10 +213,12 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					switch {
 					case parsedMessage.IncomingCall != nil:
 						// Forward incoming call message to the callee
+						c.Logger().Debugf("Forwarding incoming call message")
 						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 						if err != nil {
 							c.Logger().Error(err)
 						}
+						c.Logger().Debugf("Forwarded")
 					case parsedMessage.RejectCallMessage != nil:
 						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 						if err != nil {
@@ -274,7 +283,8 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	// Dedupe: prevent duplicate/glare call requests within ringing window.
 	// Symmetric key: pending A->B also blocks B->A.
-	const callDedupeTTL = 30 * time.Second
+	// const callDedupeTTL = 30 * time.Second
+	const callDedupeTTL = 5 * time.Second
 	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, "1", callDedupeTTL).Result()
 	if err != nil {
 		// Fail open — do not block legit calls on Redis hiccup.
@@ -342,6 +352,11 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 		ws.WriteMessage(websocket.TextMessage, msgJSON)
 		return
 	}
+
+	// User has established WS connection, the computer may
+	// though still be sleeping.
+	// We need to ACK the call request from the callee to the caller to avoid
+	// the caller from thinking the callee is actually online.
 
 	// User is online ping the callee
 	// Publish a message to the callee channel

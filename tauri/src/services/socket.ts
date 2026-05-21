@@ -105,7 +105,7 @@ class SocketService {
           },
         });
       }
-    }, 30_000); // Send ping every 30 seconds
+    }, 15_000); // Send ping every 15 seconds
   }
 
   private stopHeartbeat() {
