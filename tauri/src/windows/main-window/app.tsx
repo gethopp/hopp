@@ -203,7 +203,7 @@ function App() {
         return;
       }
 
-      const MAX_CALL_AGE_S = 5;
+      const MAX_CALL_AGE_S = 60;
       const incomingMsg = data as TIncomingCallMessage;
       const initiatedAt = incomingMsg.payload.initiated_at;
       if (initiatedAt != null) {

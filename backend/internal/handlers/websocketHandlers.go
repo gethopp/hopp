@@ -150,7 +150,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					// Handle ping message
 					// Reset the read deadline
 					_ = ws.SetReadDeadline(time.Now().Add(wsReadTimeout))
-					c.Logger().Debugf("Received ping from user: %s (email: %s)", user.ID, user.Email)
+					c.Logger().Debugf("Received ping from user: %s", user.ID)
 					pong := messages.NewPongMessage()
 					pongJSON, err := json.Marshal(pong)
 					if err != nil {
@@ -213,12 +213,10 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					switch {
 					case parsedMessage.IncomingCall != nil:
 						// Forward incoming call message to the callee
-						c.Logger().Debugf("Forwarding incoming call message")
 						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 						if err != nil {
 							c.Logger().Error(err)
 						}
-						c.Logger().Debugf("Forwarded")
 					case parsedMessage.RejectCallMessage != nil:
 						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 						if err != nil {
