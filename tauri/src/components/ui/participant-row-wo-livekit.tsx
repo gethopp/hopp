@@ -56,11 +56,14 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   const isCalling = useStore((state) => state.calling === props.user.id);
   const { setCalling, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
+  const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
 
   const callUser = useCallback(() => {
+    if (hasIncomingCall) return;
+
     posthog.capture("user_call_request", {
       user_id: props.user.id,
       user_name: props.user.first_name,
@@ -97,7 +100,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
         callee_id: props.user.id,
       },
     } as TCallRequestMessage);
-  }, [props.user]);
+  }, [props.user, hasIncomingCall]);
 
   // Add a useEffect to listen for call responses
   // that will unsubscribe from the socket when the component unmounts
@@ -230,7 +233,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
               callUser();
             }
           }}
-          disabled={inACall}
+          disabled={inACall || hasIncomingCall}
           className={clsx(
             "px-2 w-auto h-7 flex flex-row items-center gap-1",
             !isCalling && "text-slate-600",

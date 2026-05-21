@@ -29,7 +29,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
     };
   }
 
-  const { setCallTokens } = useStore();
+  const { setCallTokens, setIncomingCallCallerId } = useStore();
 
   const handleReject = useMemo(
     () =>
@@ -43,11 +43,12 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
             },
           });
           toast.dismiss(toastId);
+          setIncomingCallCallerId(null);
         },
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [callerId, toastId],
+    [callerId, toastId, setIncomingCallCallerId],
   );
 
   const handleAnswer = useMemo(
@@ -89,6 +90,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
               }
 
               toast.dismiss(toastId);
+              setIncomingCallCallerId(null);
             }
           };
 
@@ -116,7 +118,7 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [callerId, toastId, setCallTokens, handleReject],
+    [callerId, toastId, setCallTokens, setIncomingCallCallerId, handleReject],
   );
 
   useEffect(() => {

@@ -43,6 +43,8 @@ type State = {
   teammates: components["schemas"]["BaseUser"][] | null;
   // The targeted user id (callee)
   calling: string | null;
+  // Caller id while incoming call banner is visible
+  incomingCallCallerId: string | null;
   // Call tokens for LiveKit
   callTokens: CallState | null;
   customServerUrl: string | null;
@@ -60,6 +62,7 @@ type Actions = {
   getStoredToken: () => Promise<string | null>;
   reset: () => void;
   setCalling: (calling: string | null) => void;
+  setIncomingCallCallerId: (callerId: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
   // TODO(@konsalex): Rename `xxCallToken` as its not
   // representative anymore or the actual state it holds.
@@ -77,6 +80,7 @@ const initialState: State = {
   user: null,
   teammates: null,
   calling: null,
+  incomingCallCallerId: null,
   callTokens: null,
   customServerUrl: null,
   livekitUrl: null,
@@ -117,6 +121,10 @@ const useStore = create<State & Actions>()(
     setCalling: (calling) =>
       set((state) => {
         state.calling = calling;
+      }),
+    setIncomingCallCallerId: (callerId) =>
+      set((state) => {
+        state.incomingCallCallerId = callerId;
       }),
     setCallTokens: (tokens) =>
       set((state) => {
