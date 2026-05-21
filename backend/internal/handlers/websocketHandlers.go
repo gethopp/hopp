@@ -352,11 +352,6 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 		return
 	}
 
-	// User has established WS connection, the computer may
-	// though still be sleeping.
-	// We need to ACK the call request from the callee to the caller to avoid
-	// the caller from thinking the callee is actually online.
-
 	// User is online ping the callee
 	// Publish a message to the callee channel
 	msg := messages.NewIncomingCallMessage(callerId, time.Now().Unix())
