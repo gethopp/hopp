@@ -23,8 +23,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import clsx from "clsx";
 import { VideoPresets, Track, LocalTrack, Participant, ParticipantEvent, LocalTrackPublication } from "livekit-client";
-import { useAPI } from "@/hooks/useQueryClients";
+import { useAPI, isFetchError } from "@/hooks/useQueryClients";
 import { useHoppStore } from "@/store/store";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertTriangle } from "lucide-react";
 
 // HACK: Import shared components from tauri app for cursor rendering
 // These files use relative imports so they work across projects
@@ -68,6 +70,68 @@ function getGridCols(count: number): string {
   if (count <= 4) return "grid-cols-2";
   if (count <= 6) return "grid-cols-3";
   return "grid-cols-4";
+}
+
+function RoomJoinError({ error, onGoToDashboard }: { error: unknown; onGoToDashboard: () => void }) {
+  if (isFetchError(error)) {
+    const status = error.response.status;
+
+    if (status === 403) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center max-w-md">
+            <div className="text-4xl mb-4">🔒</div>
+            <h1 className="text-2xl font-semibold mb-2">Access Denied</h1>
+            <p className="text-gray-600 mb-4">You don't have access to this room.</p>
+            <Alert className="mb-4 text-left">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Why can't I join?</AlertTitle>
+              <AlertDescription>
+                This room belongs to a different team. Ask a member of that team to invite you, so you can join.
+              </AlertDescription>
+            </Alert>
+            <Button onClick={onGoToDashboard}>Go to Dashboard</Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (status === 404) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center max-w-md">
+            <h1 className="text-2xl font-semibold mb-2">Room Not Found</h1>
+            <p className="text-gray-600 mb-4">This room doesn't exist or may have been deleted.</p>
+            <Button onClick={onGoToDashboard}>Go to Dashboard</Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (status === 402) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center max-w-md">
+            <h1 className="text-2xl font-semibold mb-2">Trial Expired</h1>
+            <p className="text-gray-600 mb-4">Your team's trial has ended. Contact us if you want to extend it.</p>
+            <Button onClick={onGoToDashboard}>Go to Dashboard</Button>
+          </div>
+        </div>
+      );
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-center max-w-md">
+        <h1 className="text-2xl font-semibold mb-2">Unable to Join Room</h1>
+        <p className="text-gray-600 mb-4">
+          {error ? "You don't have access to this room or the room doesn't exist." : "Failed to get room access."}
+        </p>
+        <Button onClick={onGoToDashboard}>Go to Dashboard</Button>
+      </div>
+    </div>
+  );
 }
 
 export function Room() {
@@ -125,17 +189,7 @@ export function Room() {
   }
 
   if (error || !roomTokens || !livekitServer) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold mb-2">Unable to Join Room</h1>
-          <p className="text-gray-600 mb-4">
-            {error ? "You don't have access to this room or the room doesn't exist." : "Failed to get room access."}
-          </p>
-          <Button onClick={() => navigate("/dashboard")}>Go to Dashboard</Button>
-        </div>
-      </div>
-    );
+    return <RoomJoinError error={tokensError ?? error} onGoToDashboard={() => navigate("/dashboard")} />;
   }
 
   return (
@@ -502,7 +556,7 @@ function ScreenShareView({ screenShareTrack, ownerName }: { screenShareTrack: Tr
         {/* Screen share label */}
         <div className="absolute bottom-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded flex items-center gap-2">
           <LuScreenShare className="size-3" />
-          <span>{ownerName}&apos;s screen</span>
+          <span>{ownerName}'s screen</span>
         </div>
       </div>
     </div>
