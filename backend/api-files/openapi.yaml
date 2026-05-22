@@ -810,6 +810,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionTokensResponse"
+        "402":
+          description: Trial or subscription expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: trial-ended
+        "403":
+          description: User does not belong to the room's team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Room not found
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Room not found
 
     put:
       summary: Update room details

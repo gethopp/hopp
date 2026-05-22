@@ -1019,9 +1019,9 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 		return c.String(http.StatusNotFound, "Room not found")
 	}
 
-	// Check if user can access the room
-	if user.Team != room.Team {
-		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	// Check if user can access the room (same team)
+	if room.TeamID == nil || user.TeamID == nil || *room.TeamID != *user.TeamID {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have access to this room")
 	}
 
 	// Check if caller has access (paid or active trial)

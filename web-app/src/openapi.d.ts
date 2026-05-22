@@ -1077,6 +1077,36 @@ export interface paths {
             "application/json": components["schemas"]["SessionTokensResponse"];
           };
         };
+        /** @description Trial or subscription expired */
+        402: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @example trial-ended */
+              error?: string;
+            };
+          };
+        };
+        /** @description User does not belong to the room's team */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Room not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "text/plain": string;
+          };
+        };
       };
     };
     /** Update room details */
