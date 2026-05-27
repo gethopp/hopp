@@ -19,8 +19,8 @@ import { getRewardfulReferral } from "@/lib/rewardful";
 
 type SubscriptionResponse = components["schemas"]["SubscriptionResponse"];
 
-const MONTHLY_PRICE = 8;
-const YEARLY_PRICE = 80; // 10 months for the price of 12
+const MONTHLY_PRICE = 15;
+const YEARLY_PRICE = 150; // 10 months for the price of 12
 const YEARLY_PER_MONTH = +(YEARLY_PRICE / 12).toFixed(2);
 
 const features = [
