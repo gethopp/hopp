@@ -157,9 +157,11 @@ const useStore = create<State & Actions>()(
     reset: () =>
       set((state) => {
         // First clear the auth token to prevent re-fetching
-        // Then reset all other state properties
+        // Then reset all other state properties, but preserve customServerUrl
+        const preservedCustomServerUrl = state.customServerUrl;
         Object.assign(state, {
           ...initialState,
+          customServerUrl: preservedCustomServerUrl,
         });
       }),
   })),
