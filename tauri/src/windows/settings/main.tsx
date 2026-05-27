@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { tauriUtils } from "@/windows/window-utils";
 import { OS, URLS } from "@/constants";
 import posthog from "posthog-js";
+import useStore from "@/store/store";
 
 const queryClient = new QueryClient();
 
@@ -290,6 +291,7 @@ function SettingsWindow() {
                     if (e.key === "Enter") {
                       const trimmed = serverUrl.trim() || null;
                       await tauriUtils.setHoppServerUrl(trimmed);
+                      useStore.getState().setCustomServerUrl(trimmed);
                       posthog.capture("custom_backend_url_changed");
                       refetchSettings();
                     }
@@ -298,6 +300,7 @@ function SettingsWindow() {
                     const trimmed = serverUrl.trim() || null;
                     if (trimmed !== settings.hopp_server_url) {
                       await tauriUtils.setHoppServerUrl(trimmed);
+                      useStore.getState().setCustomServerUrl(trimmed);
                       posthog.capture("custom_backend_url_changed");
                       refetchSettings();
                     }
