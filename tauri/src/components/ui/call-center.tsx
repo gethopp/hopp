@@ -418,6 +418,12 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
   });
 
   const [activeMicId, setActiveMicId] = useState<string>("");
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const selectOpenRef = useRef(false);
+  const handleTooltipOpenChange = useCallback((open: boolean) => {
+    if (open && selectOpenRef.current) return;
+    setTooltipOpen(open);
+  }, []);
 
   useEffect(() => {
     if (!microphoneDevices.length) return;
@@ -461,14 +467,18 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
 
   const handleDropdownOpenChange = useCallback(
     (open: boolean) => {
-      if (open) refetchMics();
+      selectOpenRef.current = open;
+      if (open) {
+        setTooltipOpen(false);
+        refetchMics();
+      }
     },
     [refetchMics],
   );
 
   return (
     <TooltipProvider>
-      <Tooltip delayDuration={100}>
+      <Tooltip delayDuration={100} open={tooltipOpen} onOpenChange={handleTooltipOpenChange}>
         <TooltipTrigger asChild>
           <ToggleIconButton
             onClick={handleMicToggle}
@@ -609,6 +619,12 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
   });
 
   const [activeCamera, setActiveCamera] = useState<string>("");
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const selectOpenRef = useRef(false);
+  const handleTooltipOpenChange = useCallback((open: boolean) => {
+    if (open && selectOpenRef.current) return;
+    setTooltipOpen(open);
+  }, []);
 
   useEffect(() => {
     if (!cameraDevices.length) return;
@@ -670,14 +686,18 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
 
   const handleDropdownOpenChange = useCallback(
     (open: boolean) => {
-      if (open) refetchCameras();
+      selectOpenRef.current = open;
+      if (open) {
+        setTooltipOpen(false);
+        refetchCameras();
+      }
     },
     [refetchCameras],
   );
 
   return (
     <TooltipProvider>
-      <Tooltip delayDuration={100}>
+      <Tooltip delayDuration={100} open={tooltipOpen} onOpenChange={handleTooltipOpenChange}>
         <TooltipTrigger asChild>
           <ToggleIconButton
             onClick={handleCameraToggle}
