@@ -418,6 +418,22 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
   });
 
   const [activeMicId, setActiveMicId] = useState<string>("");
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [selectOpen, setSelectOpen] = useState(false);
+  const suppressTooltipRef = useRef(false);
+
+  const handleTooltipOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setTooltipOpen(false);
+        return;
+      }
+
+      if (selectOpen || suppressTooltipRef.current) return;
+      setTooltipOpen(true);
+    },
+    [selectOpen],
+  );
 
   useEffect(() => {
     if (!microphoneDevices.length) return;
@@ -461,16 +477,29 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
 
   const handleDropdownOpenChange = useCallback(
     (open: boolean) => {
-      if (open) refetchMics();
+      setSelectOpen(open);
+      if (open) {
+        setTooltipOpen(false);
+        suppressTooltipRef.current = false;
+        refetchMics();
+      } else {
+        suppressTooltipRef.current = true;
+        setTooltipOpen(false);
+      }
     },
     [refetchMics],
   );
 
   return (
     <TooltipProvider>
-      <Tooltip delayDuration={100}>
+      <Tooltip delayDuration={100} open={tooltipOpen} onOpenChange={handleTooltipOpenChange}>
         <TooltipTrigger asChild>
           <ToggleIconButton
+            onPointerEnter={() => {
+              if (!selectOpen) {
+                suppressTooltipRef.current = false;
+              }
+            }}
             onClick={handleMicToggle}
             icon={
               <div className="relative flex items-center justify-center">
@@ -609,6 +638,22 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
   });
 
   const [activeCamera, setActiveCamera] = useState<string>("");
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [selectOpen, setSelectOpen] = useState(false);
+  const suppressTooltipRef = useRef(false);
+
+  const handleTooltipOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setTooltipOpen(false);
+        return;
+      }
+
+      if (selectOpen || suppressTooltipRef.current) return;
+      setTooltipOpen(true);
+    },
+    [selectOpen],
+  );
 
   useEffect(() => {
     if (!cameraDevices.length) return;
@@ -670,16 +715,29 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
 
   const handleDropdownOpenChange = useCallback(
     (open: boolean) => {
-      if (open) refetchCameras();
+      setSelectOpen(open);
+      if (open) {
+        setTooltipOpen(false);
+        suppressTooltipRef.current = false;
+        refetchCameras();
+      } else {
+        suppressTooltipRef.current = true;
+        setTooltipOpen(false);
+      }
     },
     [refetchCameras],
   );
 
   return (
     <TooltipProvider>
-      <Tooltip delayDuration={100}>
+      <Tooltip delayDuration={100} open={tooltipOpen} onOpenChange={handleTooltipOpenChange}>
         <TooltipTrigger asChild>
           <ToggleIconButton
+            onPointerEnter={() => {
+              if (!selectOpen) {
+                suppressTooltipRef.current = false;
+              }
+            }}
             onClick={handleCameraToggle}
             icon={
               cameraEnabled ?
