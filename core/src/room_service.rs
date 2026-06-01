@@ -1098,8 +1098,9 @@ async fn room_service_commands(
                 populate_participants_from_room(&room, &inner.participants);
 
                 // Handle video room result — optional, failure is non-fatal.
+                let mut video_rx_opt: Option<mpsc::UnboundedReceiver<RoomEvent>> = None;
                 let video_participant_identity = match video_result {
-                    Ok(Ok((video_room, _video_rx))) => {
+                    Ok(Ok((video_room, video_rx))) => {
                         log::info!(
                             "room_service_commands: Video room connected in {}ms (total {}ms)",
                             connect_start.elapsed().as_millis(),
@@ -1112,6 +1113,7 @@ async fn room_service_commands(
                             .to_string();
                         let mut inner_video_room = inner.video_room.lock().await;
                         *inner_video_room = Some(video_room);
+                        video_rx_opt = Some(video_rx);
                         identity
                     }
                     Ok(Err(e)) => {
@@ -1154,6 +1156,10 @@ async fn room_service_commands(
                     audio_handle: audio_handle.clone(),
                 }));
                 log::info!("room_service_commands: Spawned handle_room_events");
+                if let Some(video_rx) = video_rx_opt {
+                    tokio::spawn(drain_video_room_events(video_rx));
+                    log::info!("room_service_commands: Spawned video_room event drainer");
+                }
                 let mut inner_room = inner.room.lock().await;
                 *inner_room = Some(room);
             }
@@ -1997,6 +2003,11 @@ struct RoomEventContext {
     audio_handle: TokioHandle,
 }
 
+async fn drain_video_room_events(mut receiver: mpsc::UnboundedReceiver<RoomEvent>) {
+    while receiver.recv().await.is_some() {}
+    log::info!("drain_video_room_events: video_room event channel closed");
+}
+
 async fn handle_room_events(ctx: RoomEventContext) {
     let RoomEventContext {
         mut receiver,
@@ -2636,21 +2647,6 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     publication.name(),
                     publication.kind()
                 );
-
-                // if publication.kind() == livekit::track::TrackKind::Video
-                //     && publication.name() == CAMERA_TRACK_NAME
-                // {
-                //     let participant_sid = participant.sid().as_str().to_string();
-                //     log::info!(
-                //         "handle_room_events: Clearing camera buffers for participant: {}",
-                //         participant_sid
-                //     );
-
-                //     let mut participants_guard = participants.lock().unwrap();
-                //     if let Some(info) = participants_guard.get_mut(&participant_sid) {
-                //         info.clear_camera_buffers();
-                //     }
-                // }
             }
             RoomEvent::ConnectionQualityChanged {
                 quality,
