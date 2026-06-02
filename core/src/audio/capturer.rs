@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use tokio::sync::mpsc;
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
@@ -111,14 +110,9 @@ impl LevelEmitter {
 
 pub struct Capturer {
     available_devices: Vec<AudioDevice>,
-    capture_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
     sample_tx: Option<mpsc::UnboundedSender<Vec<i16>>>,
     active_device_name: Option<String>,
-    /// Threads that were asked to stop but may still be blocked in `source.next()`.
-    /// We try-join them on each `stop_thread` call; they'll eventually exit when
-    /// the device errors out or the process ends.
-    orphaned_threads: Vec<JoinHandle<()>>,
     _device_monitor: super::device_monitor::DeviceMonitor,
     socket: socket_lib::SocketSender,
     proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>,
@@ -132,11 +126,9 @@ impl Capturer {
         let proxy_for_monitor = proxy.clone();
         Self {
             available_devices: vec![],
-            capture_thread: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
             sample_tx: None,
             active_device_name: None,
-            orphaned_threads: Vec::new(),
             _device_monitor: super::device_monitor::DeviceMonitor::new(
                 super::device_monitor::DeviceKind::Input,
                 proxy_for_monitor,
@@ -182,8 +174,8 @@ impl Capturer {
         device_name: Option<&str>,
         sample_tx: mpsc::UnboundedSender<Vec<i16>>,
     ) -> Result<u32, String> {
-        // Stop any existing capture thread before spawning a new one
-        if self.capture_thread.is_some() {
+        // Stop any existing capture before spawning a new one
+        if self.sample_tx.is_some() {
             self.stop_thread();
         }
 
@@ -283,7 +275,7 @@ impl Capturer {
         let socket_for_level = self.socket.clone();
         let proxy_for_thread = self.proxy.clone();
 
-        let handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let mut mic = mic;
             let mut resampler = AudioResampler::default();
             let mut level = LevelEmitter::new(socket_for_level.clone());
@@ -338,12 +330,11 @@ impl Capturer {
             }
         });
 
-        self.capture_thread = Some(handle);
         Ok(TARGET_SAMPLE_RATE)
     }
 
     pub fn is_capturing(&self) -> bool {
-        self.capture_thread.is_some()
+        self.sample_tx.is_some()
     }
 
     pub fn switch_device(&mut self, device_name: Option<&str>) -> Result<u32, String> {
@@ -396,38 +387,12 @@ impl Capturer {
 
     fn stop_thread(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.capture_thread.take() {
-            if handle.is_finished() {
-                let _ = handle.join();
-            } else {
-                log::warn!("Capture thread still running, orphaning it");
-                self.orphaned_threads.push(handle);
-            }
-        }
-        // Sweep orphaned threads that have since finished
-        let mut still_running = Vec::new();
-        for handle in self.orphaned_threads.drain(..) {
-            if handle.is_finished() {
-                let _ = handle.join();
-                log::info!("Orphaned capture thread finished");
-            } else {
-                still_running.push(handle);
-            }
-        }
-        self.orphaned_threads = still_running;
-        if !self.orphaned_threads.is_empty() {
-            log::warn!(
-                "{} orphaned capture thread(s) still running",
-                self.orphaned_threads.len()
-            );
-        }
-        // Allocate a fresh stop flag for the next capture thread
+        self.sample_tx = None;
         self.stop_flag = Arc::new(AtomicBool::new(false));
     }
 
     pub fn stop_capture(&mut self) {
         self.stop_thread();
-        self.sample_tx = None;
         self.active_device_name = None;
     }
 }

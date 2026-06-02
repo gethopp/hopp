@@ -363,12 +363,12 @@ impl CameraWindow {
         self.window.request_redraw();
     }
 
-    /// Take ownership of the redraw thread handle for later joining.
-    pub fn take_redraw_thread(&mut self) -> Option<JoinHandle<()>> {
+    /// Stop the redraw thread by sending Stop and dropping the handle (detach).
+    pub fn stop_redraw_thread(&mut self) {
         if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
-            log::error!("CameraWindow::take_redraw_thread: failed to send Stop: {e:?}");
+            log::error!("CameraWindow::stop_redraw_thread: failed to send Stop: {e:?}");
         }
-        self.redraw_thread.take()
+        self.redraw_thread.take();
     }
 
     /// Update the redraw interval based on screensharing state.

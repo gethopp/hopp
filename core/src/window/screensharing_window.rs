@@ -800,13 +800,13 @@ impl ScreensharingWindow {
 
     /// Update the window for a new sharer: refresh the display name and swap
     /// the redraw channel so the newly spawned `process_video_stream` can
-    /// drive redraws. Returns the old redraw thread handle for deferred join.
+    /// drive redraws.
     pub fn update_window_with_new_sharer(
         &mut self,
         participants: &[(String, String, bool)],
         new_rx: std::sync::mpsc::Receiver<RedrawCommand>,
         new_tx: std::sync::mpsc::Sender<RedrawCommand>,
-    ) -> Option<std::thread::JoinHandle<()>> {
+    ) {
         let sharer_first_name = participants
             .iter()
             .find(|(_, _, is_screensharing)| *is_screensharing)
@@ -829,7 +829,7 @@ impl ScreensharingWindow {
         self.local_participant_in_control = false;
 
         // Reset redraw thread
-        let old_handle = self.take_redraw_thread();
+        self.stop_redraw_thread();
         self.redraw_thread = Some(spawn_redraw_thread(
             new_rx,
             Arc::clone(&self.redraw_in_progress),
@@ -837,8 +837,6 @@ impl ScreensharingWindow {
         ));
         self.redraw_tx = new_tx;
         self.last_rendered_frame_id = 0;
-
-        old_handle
     }
 
     /// Update local control ownership and refresh cursor. When true, control tab uses OS cursor.
@@ -2004,26 +2002,18 @@ impl ScreensharingWindow {
 }
 
 impl ScreensharingWindow {
-    /// Sends the Stop command and extracts the redraw thread handle so it can
-    /// be joined later (outside the main thread's event-loop turn) instead of
-    /// in `Drop`, which would deadlock because `request_redraw()` blocks on the
-    /// main thread.
-    pub fn take_redraw_thread(&mut self) -> Option<std::thread::JoinHandle<()>> {
+    /// Sends the Stop command and drops the redraw thread handle (detach).
+    pub fn stop_redraw_thread(&mut self) {
         if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
-            log::error!("ScreensharingWindow::take_redraw_thread: failed to send Stop: {e:?}");
+            log::error!("ScreensharingWindow::stop_redraw_thread: failed to send Stop: {e:?}");
         }
-        self.redraw_thread.take()
+        self.redraw_thread.take();
     }
 }
 
 impl Drop for ScreensharingWindow {
     fn drop(&mut self) {
-        // If the thread wasn't already taken via take_redraw_thread(), send
-        // Stop and detach — joining here would deadlock.
-        if self.redraw_thread.is_some() {
-            let _ = self.redraw_tx.send(RedrawCommand::Stop);
-            log::warn!("ScreensharingWindow::drop: redraw thread not taken, detaching");
-            drop(self.redraw_thread.take());
-        }
+        let _ = self.redraw_tx.send(RedrawCommand::Stop);
+        self.redraw_thread.take();
     }
 }

@@ -74,7 +74,6 @@ use socket_lib::{
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use window::camera_window::CameraWindow;
@@ -191,7 +190,6 @@ impl<'a> RemoteControl<'a> {
 /// * `remote_control` - Optional active remote control session (None when not sharing)
 /// * `textures_path` - Path to texture resources for cursor and UI rendering
 /// * `screen_capturer` - Thread-safe screen capture system wrapped in Arc<Mutex>
-/// * `_screen_capturer_events` - Handle to the screen capture event polling thread
 /// * `socket` - Local socket for communication with the main tauri app
 /// * `room_service` - object for interacting with the livekit room and its async thread
 /// * `event_loop_proxy` - Proxy for sending events to the main event loop
@@ -224,7 +222,6 @@ pub struct Application<'a> {
     // thread that checks if the stream has failed.
     //screen_capturer: Arc<Mutex<ScreenCapturer>>,
     screen_capturer: Arc<Mutex<Capturer>>,
-    _screen_capturer_events: Option<JoinHandle<()>>,
     socket: SocketSender,
     socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
     room_service: Option<RoomService>,
@@ -237,15 +234,11 @@ pub struct Application<'a> {
     audio_player: audio::player::Player,
     noise_cancellation_enabled: Arc<AtomicBool>,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
-    _camera_capturer_events: Option<JoinHandle<()>>,
     screensharing_active: bool,
     context_manager: Option<ContextManager>,
     camera_window: Option<CameraWindow>,
     screensharing_window: Option<ScreensharingWindow>,
     drawing_window: Option<DrawingWindow>,
-    drawing_redraw_thread: Option<JoinHandle<()>>,
-    screensharing_redraw_thread: Option<JoinHandle<()>>,
-    camera_redraw_thread: Option<JoinHandle<()>>,
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
@@ -298,11 +291,14 @@ impl<'a> Application<'a> {
         let camera_capturer = Arc::new(Mutex::new(CameraCapturer::new()));
         let camera_capturer_clone = camera_capturer.clone();
 
+        let screencapturer_for_poll = screencapturer.clone();
+        std::thread::spawn(move || poll_stream(screencapturer_for_poll));
+        std::thread::spawn(move || poll_camera_stream(camera_capturer_clone));
+
         Ok(Self {
             remote_control: None,
             textures_path: input.textures_path,
-            screen_capturer: screencapturer.clone(),
-            _screen_capturer_events: Some(std::thread::spawn(move || poll_stream(screencapturer))),
+            screen_capturer: screencapturer,
             socket,
             socket_responses,
             room_service: None,
@@ -315,17 +311,11 @@ impl<'a> Application<'a> {
             audio_player,
             noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
             camera_capturer: camera_capturer.clone(),
-            _camera_capturer_events: Some(std::thread::spawn(move || {
-                poll_camera_stream(camera_capturer_clone)
-            })),
             screensharing_active: false,
             context_manager: None,
             camera_window: None,
             screensharing_window: None,
             drawing_window: None,
-            drawing_redraw_thread: None,
-            screensharing_redraw_thread: None,
-            camera_redraw_thread: None,
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
@@ -497,11 +487,6 @@ impl<'a> Application<'a> {
         redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
         redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     ) {
-        // Join any previous redraw thread before creating a new window.
-        // By now the old window is gone and request_redraw() has returned,
-        // so join() won't deadlock.
-        self.join_screensharing_redraw_thread();
-
         let (redraw_rx, redraw_tx) = redraw_rx.zip(redraw_tx).unwrap_or_else(|| {
             let (tx, rx) =
                 std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
@@ -527,28 +512,10 @@ impl<'a> Application<'a> {
         }
     }
 
-    fn join_screensharing_redraw_thread(&mut self) {
-        if let Some(handle) = self.screensharing_redraw_thread.take() {
-            let _ = handle.join();
-        }
-    }
-
-    fn join_camera_redraw_thread(&mut self) {
-        if let Some(handle) = self.camera_redraw_thread.take() {
-            let _ = handle.join();
-        }
-    }
-
-    fn join_drawing_redraw_thread(&mut self) {
-        if let Some(handle) = self.drawing_redraw_thread.take() {
-            let _ = handle.join();
-        }
-    }
-
     fn close_camera_window(&mut self) {
         log::info!("close_camera_window");
         if let Some(mut cam) = self.camera_window.take() {
-            self.camera_redraw_thread = cam.take_redraw_thread();
+            cam.stop_redraw_thread();
         }
     }
 
@@ -556,7 +523,7 @@ impl<'a> Application<'a> {
         log::info!("close_screensharing_window");
         if let Some(mut window) = self.screensharing_window.take() {
             window.hide();
-            self.screensharing_redraw_thread = window.take_redraw_thread();
+            window.stop_redraw_thread();
         }
     }
 
@@ -564,7 +531,7 @@ impl<'a> Application<'a> {
         log::info!("close_drawing_window");
         if let Some(mut window) = self.drawing_window.take() {
             window.hide();
-            self.drawing_redraw_thread = window.take_redraw_thread();
+            window.stop_redraw_thread();
         }
         if let Err(e) = self.socket.send(Message::DrawingDisabled) {
             log::error!("Failed to send DrawingDisabled: {e:?}");
@@ -743,9 +710,6 @@ impl Drop for Application<'_> {
         let mut screen_capturer = screen_capturer.unwrap();
         screen_capturer.stop_capture();
         screen_capturer.stop_runtime_stream_handler();
-        if let Some(screen_capturer_events) = self._screen_capturer_events.take() {
-            screen_capturer_events.join().unwrap();
-        }
     }
 }
 
@@ -924,7 +888,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             // Open camera window immediately for snappiness
                             if start_camera_on_call && self.camera_window.is_none() {
                                 let participants = room_service.participants();
-                                self.join_camera_redraw_thread();
                                 match CameraWindow::new(
                                     self.context_manager.as_ref().unwrap(),
                                     event_loop,
@@ -1034,9 +997,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     self.screen_capturer =
                         Arc::new(Mutex::new(Capturer::new(self.event_loop_proxy.clone())));
                     let screen_capturer_clone = self.screen_capturer.clone();
-                    self._screen_capturer_events = Some(std::thread::spawn(move || {
-                        poll_stream(screen_capturer_clone)
-                    }));
+                    std::thread::spawn(move || poll_stream(screen_capturer_clone));
                 }
 
                 if let Some(room_service) = self.room_service.as_mut() {
@@ -1454,9 +1415,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::StartCamera { msg, from_socket } => {
-                if self.camera_window.is_none() {
-                    self.join_camera_redraw_thread();
-                }
                 let device_name = if msg.device_name.is_some() {
                     msg.device_name
                 } else if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
@@ -1608,7 +1566,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::info!("user_event: Camera window already exists, skipping");
                     return;
                 }
-                self.join_camera_redraw_thread();
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
                     match CameraWindow::new(
@@ -1650,8 +1607,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                     if let Some((rx, tx)) = redraw_rx.zip(redraw_tx) {
-                        self.screensharing_redraw_thread = screensharing_window
-                            .update_window_with_new_sharer(&participants, rx, tx);
+                        screensharing_window.update_window_with_new_sharer(&participants, rx, tx);
                     }
                     screensharing_window.focus_window();
                 } else {
@@ -1820,8 +1776,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .window_manager
                         .as_ref()
                         .and_then(|wm| wm.active_window_position());
-
-                    self.join_drawing_redraw_thread();
 
                     match DrawingWindow::new(
                         self.context_manager.as_ref().unwrap(),

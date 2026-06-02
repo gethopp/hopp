@@ -8,10 +8,7 @@ use livekit::webrtc::{
     prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
-use std::{
-    sync::{mpsc, Arc, Mutex},
-    thread::JoinHandle,
-};
+use std::sync::{mpsc, Arc, Mutex};
 
 use super::CapturerError;
 
@@ -262,12 +259,6 @@ pub struct Stream {
     /// the capture worker thread that continuously captures frames.
     capturer: Arc<Mutex<DesktopCapturer>>,
 
-    /// Handle to the background thread that performs continuous frame capturing.
-    ///
-    /// This thread runs the capture loop at regular intervals. When `None`,
-    /// the capture thread is not running.
-    capture_frame_handle: Option<JoinHandle<()>>,
-
     /// Channel sender for controlling the capture thread lifecycle.
     ///
     /// Used to send stop messages to the capture worker thread. When `None`,
@@ -360,7 +351,6 @@ impl Stream {
         capturer.set_excluded_applications(apps_to_exclude);
         Ok(Stream {
             capturer: Arc::new(Mutex::new(capturer)),
-            capture_frame_handle: None,
             tx: None,
             permanent_error_tx: tx,
             stream_buffer,
@@ -416,24 +406,16 @@ impl Stream {
         capturer.start_capture(Some(source), callback);
         let (tx, rx) = mpsc::channel();
         let capturer_clone = self.capturer.clone();
-        self.capture_frame_handle = Some(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             run_capture_frame(rx, capturer_clone);
-        }));
+        });
         self.tx = Some(tx);
         Ok(())
     }
 
-    /// Stops the capture process and terminates the worker thread.
-    ///
-    /// # Behavior
-    /// - Sends a stop message to the capture worker thread
-    /// - Waits for the worker thread to terminate gracefully
-    /// - Cleans up thread handles and communication channels
-    /// - Safe to call multiple times (no-op if already stopped)
-    ///
-    /// # Notes
-    /// This method blocks until the capture thread has fully terminated.
-    /// After calling this method, `start_capture()` can be called again to resume.
+    /// Signals the capture worker thread to stop and drops the command channel.
+    /// The thread is detached and will exit on its own.
+    /// Safe to call multiple times (no-op if already stopped).
     pub fn stop_capture(&mut self) {
         if self.tx.is_none() {
             log::warn!("stop_capture: Stream is not running");
@@ -445,13 +427,6 @@ impl Stream {
             .unwrap()
             .send(StreamRuntimeMessage::StopCapture);
         self.tx.take();
-        let handle = self.capture_frame_handle.take();
-        if let Some(handle) = handle {
-            let res = handle.join();
-            if let Err(e) = res {
-                log::error!("stop_capture: error joining thread: {e:?}");
-            }
-        }
     }
 
     /// Creates a new stream instance that shares buffers with the current stream.
@@ -472,7 +447,7 @@ impl Stream {
     /// encounters permanent errors and needs to be restarted while maintaining
     /// the same buffer references and configuration.
     pub fn copy(mut self) -> Result<Self, ()> {
-        if self.capture_frame_handle.is_some() {
+        if self.tx.is_some() {
             log::warn!("Stream::copy: Stream is running, stopping it");
             self.stop_capture();
         }
@@ -495,7 +470,6 @@ impl Stream {
 
         let new_stream = Stream {
             capturer: Arc::new(Mutex::new(capturer)),
-            capture_frame_handle: None,
             tx: None,
             permanent_error_tx: self.permanent_error_tx.clone(),
             stream_buffer: self.stream_buffer.clone(),

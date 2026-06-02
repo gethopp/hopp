@@ -292,7 +292,6 @@ impl SocketSender {
 pub struct EventSocket {
     pub events: mpsc::Receiver<Message>,
     pub responses: mpsc::Receiver<Message>,
-    reader_thread: Option<std::thread::JoinHandle<()>>,
     stream: Stream,
 }
 
@@ -302,7 +301,7 @@ impl EventSocket {
         let (response_tx, response_rx) = mpsc::channel();
 
         log::info!("EventSocket: spawning background reader thread");
-        let reader_thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let _ = read_stream.set_read_timeout(Some(Duration::from_secs(1)));
             loop {
                 match Self::read_message(&mut read_stream) {
@@ -334,7 +333,6 @@ impl EventSocket {
         Self {
             events: event_rx,
             responses: response_rx,
-            reader_thread: Some(reader_thread),
             stream: shutdown_stream,
         }
     }
@@ -370,9 +368,6 @@ impl Drop for EventSocket {
         log::info!("EventSocket: shutting down");
         use std::net::Shutdown;
         let _ = self.stream.shutdown(Shutdown::Both);
-        if let Some(handle) = self.reader_thread.take() {
-            let _ = handle.join();
-        }
         log::info!("EventSocket: shutdown complete");
     }
 }

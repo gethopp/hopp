@@ -9,7 +9,6 @@ use nokhwa::utils::{
 };
 use nokhwa::Camera;
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::livekit::video::VideoBufferManager;
@@ -22,7 +21,6 @@ const CAMERA_CAPTURE_HEIGHT: u32 = 1080;
 use super::{CameraStreamConfig, CameraStreamMessage};
 
 pub struct CameraStream {
-    capture_thread: Option<JoinHandle<()>>,
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffer_source: NativeVideoSource,
@@ -88,7 +86,6 @@ impl CameraStream {
         );
 
         let mut stream = Self {
-            capture_thread: None,
             tx: None,
             error_tx,
             buffer_source: buffer_source.clone(),
@@ -137,7 +134,7 @@ impl CameraStream {
         let height = self.height;
         let buffer_source = self.buffer_source.clone();
 
-        let handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let mut prev_stream_w: u32 = 0;
             let mut prev_stream_h: u32 = 0;
             let mut stream_frame = VideoFrame {
@@ -274,30 +271,12 @@ impl CameraStream {
             log::info!("CameraStream: capture thread exiting");
         });
 
-        self.capture_thread = Some(handle);
         Ok(())
     }
 
     pub fn stop_capture(&mut self) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CameraStreamMessage::StopCapture);
-        }
-        if let Some(handle) = self.capture_thread.take() {
-            // Work around to camera.frame() blocking indefinitely.
-            // we should fix it in nokhwa instead.
-            for _ in 0..200 {
-                if handle.is_finished() {
-                    let _ = handle.join();
-                    log::info!("CameraStream::stop_capture: thread joined");
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            log::warn!("CameraStream::stop_capture: thread did not finish in 2000ms, orphaning it");
-            sentry_utils::upload_logs_event(
-                "CameraStream::stop_capture: thread did not finish in 2000ms, orphaning it"
-                    .to_string(),
-            );
         }
     }
 
@@ -333,7 +312,6 @@ impl CameraStream {
             })?;
 
         let mut new_stream = Self {
-            capture_thread: None,
             tx: None,
             error_tx: self.error_tx.clone(),
             buffer_source: self.buffer_source.clone(),

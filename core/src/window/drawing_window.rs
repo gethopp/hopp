@@ -306,11 +306,11 @@ impl DrawingWindow {
         let _ = self.redraw_tx.send(RedrawCommand::Activity);
     }
 
-    pub fn take_redraw_thread(&mut self) -> Option<std::thread::JoinHandle<()>> {
+    pub fn stop_redraw_thread(&mut self) {
         if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
-            log::error!("DrawingWindow::take_redraw_thread: failed to send Stop: {e:?}");
+            log::error!("DrawingWindow::stop_redraw_thread: failed to send Stop: {e:?}");
         }
-        self.redraw_thread.take()
+        self.redraw_thread.take();
     }
 
     pub fn hide(&self) {
