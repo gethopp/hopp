@@ -25,14 +25,12 @@ import { Label } from "@/components/ui/label";
 import { RoomButton } from "@/components/ui/room-button";
 import useStore, { ParticipantRole } from "@/store/store";
 import { tauriUtils } from "@/windows/window-utils";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import toast from "react-hot-toast";
-import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { Button } from "@/components/ui/button";
 import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
-import { LuMicOff } from "react-icons/lu";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Constants } from "@/constants";
 import { useState } from "react";
@@ -534,9 +532,7 @@ const EmptyRoomsState = ({
 };
 
 const SelectedRoom = ({ room }: { room: Room }) => {
-  const { teammates, user, callTokens } = useStore();
-  const coreParticipants = callTokens?.participants ?? [];
-  const prevCountRef = useRef(coreParticipants.length);
+  const { callTokens } = useStore();
 
   const handleCopyRoomLink = async () => {
     const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
@@ -544,66 +540,11 @@ const SelectedRoom = ({ room }: { room: Room }) => {
     toast.success("Room link copied to clipboard");
   };
 
-  // Play sound when a new participant connects (count increases)
-  useEffect(() => {
-    // Check with 0 to avoid double join sound
-    if (coreParticipants.length > prevCountRef.current && prevCountRef.current !== 0) {
-      sounds.callAccepted.play();
-    }
-    prevCountRef.current = coreParticipants.length;
-  }, [coreParticipants.length]);
-
-  const participantList = useMemo(() => {
-    // Parse identity: format is "room:roomname:participantId:tracktype"
-    const extractUserId = (identity: string): string => {
-      const parts = identity.split(":");
-      return parts.length >= 4 ? (parts[2] ?? identity) : identity;
-    };
-
-    const findUser = (participantId: string) => {
-      if (user && user.id === participantId) return user;
-      return teammates?.find((t) => t.id === participantId) ?? null;
-    };
-
-    // Local user always appears first
-    const localEntry =
-      user ?
-        {
-          id: "local",
-          participantId: user.id,
-          user: user,
-          isLocal: true,
-          isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
-        }
-      : null;
-
-    const remoteEntries = coreParticipants
-      .filter((p) => p.connected)
-      .filter((p) => {
-        if (p.identity === "local") return false;
-        const pid = extractUserId(p.identity);
-        return pid !== user?.id;
-      })
-      .map((p) => {
-        const participantId = extractUserId(p.identity);
-        return {
-          id: p.identity,
-          participantId,
-          user: findUser(participantId),
-          isLocal: false,
-          isMicrophoneEnabled: !p.muted,
-        };
-      });
-
-    return localEntry ? [localEntry, ...remoteEntries] : remoteEntries;
-  }, [coreParticipants, teammates, user, callTokens?.hasAudioEnabled]);
-
   return (
     <div className="flex flex-col w-full">
       <div className="flex flex-row gap-2 justify-between items-center mb-4">
         <div>
           <h3 className="small">{room.name}</h3>
-          <span className="text-xs font-medium text-slate-600 mb-2">Participants ({participantList.length})</span>
         </div>
         <div className="flex flex-row gap-2">
           <Button variant="outline" size="icon-sm" onClick={handleCopyRoomLink}>
@@ -619,47 +560,6 @@ const SelectedRoom = ({ room }: { room: Room }) => {
               </Tooltip>
             </TooltipProvider>
           </Button>
-        </div>
-      </div>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-3">
-          {participantList.map((participant) => (
-            <div key={participant.id} className="flex items-center gap-3">
-              {participant.user ?
-                <>
-                  <HoppAvatar
-                    src={participant.user.avatar_url || undefined}
-                    firstName={participant.user.first_name}
-                    lastName={participant.user.last_name}
-                    status="online"
-                  />
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">
-                      {participant.user.first_name} {participant.user.last_name}
-                      {participant.isLocal && " (You)"}
-                    </span>
-                    {!participant.isMicrophoneEnabled && (
-                      <span className="flex items-center gap-1 text-xs font-medium text-orange-500">
-                        <LuMicOff className="size-3" />
-                        <span className="mt-0.5">Muted</span>
-                      </span>
-                    )}
-                  </div>
-                </>
-              : <>
-                  <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-                    <span className="text-xs font-medium text-slate-600">?</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-slate-600">
-                      Unknown user
-                      {participant.isLocal && " (You)"}
-                    </span>
-                  </div>
-                </>
-              }
-            </div>
-          ))}
         </div>
       </div>
     </div>
