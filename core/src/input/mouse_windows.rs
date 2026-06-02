@@ -1,9 +1,6 @@
-use std::{
-    sync::{
-        mpsc::{self, Sender},
-        Arc, Mutex,
-    },
-    thread::JoinHandle,
+use std::sync::{
+    mpsc::{self, Sender},
+    Arc, Mutex,
 };
 
 use crate::{utils::geometry::Position, MouseClickData, ScrollDelta};
@@ -156,7 +153,6 @@ pub enum MouseObserverError {
 }
 
 pub struct MouseObserver {
-    hook_thread: Option<JoinHandle<()>>,
     tx_shutdown: Sender<EventProcessingCommand>,
 }
 
@@ -165,7 +161,7 @@ impl MouseObserver {
         /* Run the event callback in a separate thread. */
         let (hook_sender, hook_receiver) = std::sync::mpsc::channel();
         let (tx_shutdown, rx_shutdown) = std::sync::mpsc::channel();
-        let hook_thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let (sender, receiver) = std::sync::mpsc::channel();
             let sender_clone = sender.clone();
             let sharer_cursor_clone = sharer_cursor.clone();
@@ -242,10 +238,7 @@ impl MouseObserver {
         });
 
         match hook_receiver.recv() {
-            Ok(Ok(())) => Ok(Self {
-                hook_thread: Some(hook_thread),
-                tx_shutdown,
-            }),
+            Ok(Ok(())) => Ok(Self { tx_shutdown }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(MouseObserverError::SetMouseHook),
         }
@@ -254,11 +247,8 @@ impl MouseObserver {
 
 impl Drop for MouseObserver {
     fn drop(&mut self) {
-        if let Some(handle) = self.hook_thread.take() {
-            if self.tx_shutdown.send(EventProcessingCommand::Stop).is_err() {
-                log::error!("Faled to send stop event to hook thread");
-            }
-            let _ = handle.join();
+        if self.tx_shutdown.send(EventProcessingCommand::Stop).is_err() {
+            log::error!("Failed to send stop event to hook thread");
         }
         log::info!("terminated mouse observer");
     }
@@ -300,7 +290,6 @@ pub struct CursorSimulator {
     last_wheel_event: std::time::Instant,
     skipped_wheel_events: u32,
     tx: mpsc::Sender<SendInputMessage>,
-    send_input_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Default for CursorSimulator {
@@ -312,15 +301,14 @@ impl Default for CursorSimulator {
 impl CursorSimulator {
     pub fn new() -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
-        let send_input_handle = Some(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             send_input_thread(rx);
-        }));
+        });
 
         Self {
             last_wheel_event: std::time::Instant::now(),
             skipped_wheel_events: 0,
             tx,
-            send_input_handle,
         }
     }
 }
@@ -328,9 +316,6 @@ impl CursorSimulator {
 impl Drop for CursorSimulator {
     fn drop(&mut self) {
         let _ = self.tx.send(SendInputMessage::Stop);
-        if let Some(handle) = self.send_input_handle.take() {
-            let _ = handle.join();
-        }
     }
 }
 

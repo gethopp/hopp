@@ -12,7 +12,6 @@ use std::sync::{
     mpsc::{Receiver, Sender},
     Arc,
 };
-use std::thread::JoinHandle;
 use std::time::Instant;
 use thiserror::Error;
 use winit::event_loop::EventLoopProxy;
@@ -153,8 +152,6 @@ pub struct GraphicsContext<'a> {
     /// Manager for participant state (drawings and cursors)
     participants_manager: ParticipantsManager,
 
-    /// Thread that controls rendering cadence
-    redraw_thread: Option<JoinHandle<()>>,
     /// Sender for triggering redraws and animations
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Clock for time tracking
@@ -233,9 +230,9 @@ impl<'a> GraphicsContext<'a> {
         let iced_renderer = IcedRenderer::new(context_manager, &window_arc, &texture_path);
 
         let (sender, receiver) = std::sync::mpsc::channel();
-        let redraw_thread = Some(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             redraw_thread(event_loop_proxy, receiver);
-        }));
+        });
 
         Ok(Self {
             surface,
@@ -245,7 +242,6 @@ impl<'a> GraphicsContext<'a> {
             click_animation_renderer,
             iced_renderer,
             participants_manager: ParticipantsManager::default(),
-            redraw_thread,
             redraw_thread_sender: sender,
             clock,
         })
@@ -450,11 +446,8 @@ impl<'a> GraphicsContext<'a> {
 
 impl Drop for GraphicsContext<'_> {
     fn drop(&mut self) {
-        // Stop the redraw thread
-        if let Some(handle) = self.redraw_thread.take() {
-            let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
-            let _ = handle.join();
-        }
+        // Stop the redraw thread (detach, don't join)
+        let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
 
         // Clear the framebuffer before the window is hidden so stale overlay
         // content is not visible when a new surface is created on top of it.

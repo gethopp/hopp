@@ -7,6 +7,7 @@ pub static SOCKET_PATH: OnceLock<String> = OnceLock::new();
 mod audio_capture;
 mod camera;
 mod events;
+mod hang_repro;
 mod livekit_utils;
 mod local_drawing;
 mod remote_clipboard;
@@ -104,6 +105,8 @@ enum Commands {
         #[arg(long)]
         screenshare: bool,
     },
+    /// Reproduce screenshare deadlock hang
+    HangRepro,
 }
 
 #[derive(Clone, ValueEnum, Debug)]
@@ -458,6 +461,11 @@ async fn main() -> io::Result<()> {
                 screenshare,
             )?;
             println!("Call test finished.");
+        }
+        Commands::HangRepro => {
+            println!("Running screenshare deadlock hang reproduction test...");
+            hang_repro::test_screenshare_reconnect_hang().await?;
+            println!("Hang reproduction test finished.");
         }
         Commands::LocalDrawing { test_type } => {
             match test_type {

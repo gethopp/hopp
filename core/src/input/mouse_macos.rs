@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{input::mouse::SharerCursor, utils::geometry::Position, MouseClickData, ScrollDelta};
 
@@ -44,7 +41,6 @@ pub enum MouseObserverError {
 /// `sharer_cursor`. Violating this order deadlocks (ABBA) under simultaneous local
 /// (hardware) + remote (room-event) scroll or click.
 pub struct MouseObserver {
-    event_tap_thread: Option<JoinHandle<()>>,
     shutdown_tx: std::sync::mpsc::Sender<()>,
 }
 
@@ -59,7 +55,7 @@ impl MouseObserver {
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
         /* We run the event tap in separate thread to avoid blocking and getting blocked by the main thread. */
-        let event_tap_thread = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let tap_disabled = Arc::new(Mutex::new(false));
             let tap_disabled_clone = tap_disabled.clone();
             let mouse_tap = CGEventTap::new(
@@ -243,19 +239,13 @@ impl MouseObserver {
             }
         };
 
-        Ok(Self {
-            event_tap_thread: Some(event_tap_thread),
-            shutdown_tx,
-        })
+        Ok(Self { shutdown_tx })
     }
 }
 
 impl Drop for MouseObserver {
     fn drop(&mut self) {
-        if let Some(event_tap_thread) = self.event_tap_thread.take() {
-            let _ = self.shutdown_tx.send(());
-            let _ = event_tap_thread.join();
-        }
+        let _ = self.shutdown_tx.send(());
     }
 }
 

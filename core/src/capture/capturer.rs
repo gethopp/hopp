@@ -534,18 +534,9 @@ impl Capturer {
         Ok(())
     }
 
-    /// Stops the currently active capture stream.
-    ///
-    /// # Behavior
-    /// - Terminates the capture worker thread gracefully
-    /// - Cleans up stream resources and buffers
-    /// - Resets the capturer to idle state
-    /// - Safe to call when no stream is active (no-op)
-    ///
-    /// # Notes
-    /// This method blocks until the capture thread has fully terminated.
-    /// After calling this method, `start_capture()` can be called to begin
-    /// capturing from a new or different source.
+    /// Signals the capture thread to stop and releases the active stream.
+    /// The thread is detached and will exit on its own.
+    /// Safe to call when no stream is active (no-op).
     pub fn stop_capture(&mut self) {
         log::info!("stop_capture");
         if self.active_stream.is_none() {
