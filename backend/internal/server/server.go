@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/email"
@@ -98,6 +99,10 @@ func (s *Server) Initialize() error {
 	s.setupDatabase()
 
 	s.setupRedis()
+
+	if s.Redis != nil {
+		s.CallState = callstate.NewTracker(s.Redis)
+	}
 
 	// Initialize JWT
 	s.JwtIssuer = handlers.NewJwtAuth(s.Config.Auth.SessionSecret)

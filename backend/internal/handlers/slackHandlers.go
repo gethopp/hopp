@@ -604,6 +604,13 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 		h.DB.Save(room)
 	}
 
+	if h.CallState != nil {
+		h.logger.Infof("callstate: AddRoomParticipant userID=%s roomID=%s", user.ID, room.ID)
+		if err := h.CallState.AddRoomParticipant(c.Request().Context(), room.ID, user.ID); err != nil {
+			h.logger.Warnf("callstate.AddRoomParticipant error: %v", err)
+		}
+	}
+
 	c.Logger().Infof("Generated tokens for user %s joining session %s", user.ID, sessionID)
 
 	return c.JSON(http.StatusOK, tokens)
@@ -786,6 +793,13 @@ func (h *SlackHandler) LeaveRoom(c echo.Context) error {
 			}()
 		} else {
 			h.logger.Warnf("Failed to get Slack metadata for participant removal for team %s", user.Team)
+		}
+	}
+
+	if h.CallState != nil {
+		h.logger.Infof("callstate: RemoveRoomParticipant userID=%s roomID=%s", user.ID, roomID)
+		if err := h.CallState.RemoveRoomParticipant(c.Request().Context(), roomID, user.ID); err != nil {
+			h.logger.Warnf("callstate.RemoveRoomParticipant error: %v", err)
 		}
 	}
 

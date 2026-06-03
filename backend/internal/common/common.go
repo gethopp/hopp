@@ -3,6 +3,7 @@ package common
 import (
 	"net/http"
 
+	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/email"
 
@@ -56,4 +57,5 @@ type ServerState struct {
 	JwtIssuer   JWTIssuer
 	Redis       *redis.Client
 	EmailClient email.EmailClient
+	CallState   *callstate.Tracker
 }

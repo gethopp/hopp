@@ -254,6 +254,25 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 
 		// Wait for connection to close
 		<-done
+
+		if server.CallState != nil {
+			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cleanCancel()
+			c.Logger().Infof("callstate: CleanupUser userID=%s", user.ID)
+			peer, room := server.CallState.CleanupUser(cleanCtx, user.ID)
+			if peer != "" {
+				c.Logger().Infof("callstate: disconnect mid-call userID=%s peer=%s — notifying peer", user.ID, peer)
+				endMsg := messages.NewCallEndMessage(user.ID)
+				endMsgJSON, mErr := json.Marshal(endMsg)
+				if mErr == nil {
+					server.Redis.Publish(context.Background(), common.GetUserChannel(peer), endMsgJSON)
+				}
+			}
+			if room != "" {
+				c.Logger().Infof("callstate: removed userID=%s from room=%s on disconnect", user.ID, room)
+			}
+		}
+
 		return nil
 	}
 }
@@ -456,6 +475,13 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
 	s.Redis.Publish(context.Background(), common.GetUserChannel(calleeID), calleeMsgJSON)
 
+	if s.CallState != nil {
+		ctx.Logger().Infof("callstate: SetCallActive callerID=%s calleeID=%s room=%s", callerID, calleeID, roomName)
+		if err := s.CallState.SetCallActive(context.Background(), callerID, calleeID, roomName); err != nil {
+			ctx.Logger().Warnf("callstate.SetCallActive error: %v", err)
+		}
+	}
+
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("Call started: %s -> %s", caller.ID, callee.ID), s.Config)
 }
 
@@ -473,6 +499,13 @@ func sendCommonErrorMessage(s *common.ServerState, err string, userIDs ...string
 func endCall(ctx echo.Context, s *common.ServerState, userID string, message messages.CallEndMessage) {
 	// Release the dedupe lock so either party can call again immediately.
 	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
+
+	if s.CallState != nil {
+		ctx.Logger().Infof("callstate: RemoveCall userID=%s peerID=%s", userID, message.Payload.ParticipantID)
+		if err := s.CallState.RemoveCall(context.Background(), userID, message.Payload.ParticipantID); err != nil {
+			ctx.Logger().Warnf("callstate.RemoveCall error: %v", err)
+		}
+	}
 
 	// Publish a message to the other participant
 	payloadJSON, err := json.Marshal(message)

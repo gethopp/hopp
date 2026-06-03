@@ -1043,6 +1043,13 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	}
 	tokens.Participant = user.ID
 
+	if h.CallState != nil {
+		c.Logger().Infof("callstate: AddRoomParticipant userID=%s roomID=%s", user.ID, room.ID)
+		if err := h.CallState.AddRoomParticipant(c.Request().Context(), room.ID, user.ID); err != nil {
+			c.Logger().Warnf("callstate.AddRoomParticipant error: %v", err)
+		}
+	}
+
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
