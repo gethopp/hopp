@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type Tracker struct {
@@ -62,13 +63,13 @@ func (t *Tracker) RemoveRoomParticipant(ctx context.Context, roomID, userID stri
 }
 
 type CallPresence struct {
-	InCall bool   `json:"inCall"`
-	PeerID string `json:"peerId,omitempty"`
-	RoomID string `json:"roomId,omitempty"`
+	InCall   bool   `json:"inCall"`
+	PeerID   string `json:"peerId,omitempty"`
+	RoomName string `json:"roomName,omitempty"`
 }
 
 // GetCallStates fetches call/room presence for a batch of users in a single Redis round-trip.
-func (t *Tracker) GetCallStates(ctx context.Context, userIDs []string) (map[string]CallPresence, error) {
+func (t *Tracker) GetCallStates(ctx context.Context, db *gorm.DB, userIDs []string) (map[string]CallPresence, error) {
 	if len(userIDs) == 0 {
 		return map[string]CallPresence{}, nil
 	}
@@ -93,10 +94,22 @@ func (t *Tracker) GetCallStates(ctx context.Context, userIDs []string) (map[stri
 		}
 		roomID, err := roomCmds[i].Result()
 		if err == nil && roomID != "" {
-			result[id] = CallPresence{InCall: true, RoomID: roomID}
+			roomName := roomID
+			if db != nil {
+				if room, lookupErr := lookupRoomName(db, roomID); lookupErr == nil && room != "" {
+					roomName = room
+				}
+			}
+			result[id] = CallPresence{InCall: true, RoomName: roomName}
 		}
 	}
 	return result, nil
+}
+
+func lookupRoomName(db *gorm.DB, roomID string) (string, error) {
+	var name string
+	err := db.Table("rooms").Select("name").Where("id = ?", roomID).Scan(&name).Error
+	return name, err
 }
 
 // CleanupUser removes all call/room state for a user (called on WS disconnect).

@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { Button } from "./button";
 import { HiPhone, HiPhoneArrowUpRight } from "react-icons/hi2";
 import { socketService } from "@/services/socket";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
 import { TRejectCallMessage, TCallRequestMessage, TWebSocketMessage } from "@/payloads";
@@ -57,6 +57,17 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
   const { setCalling, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
   const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
+  const callsPresence = useStore((state) => state.callsPresence);
+  const teammates = useStore((state) => state.teammates);
+  const currentUser = useStore((state) => state.user);
+
+  const userPresence = callsPresence?.[props.user.id];
+
+  const callPeer = useMemo(() => {
+    if (!userPresence?.peerId) return null;
+    if (currentUser?.id === userPresence.peerId) return currentUser;
+    return teammates?.find((t) => t.id === userPresence.peerId) ?? null;
+  }, [userPresence?.peerId, teammates, currentUser]);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
@@ -227,13 +238,29 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
         src={props.user.avatar_url || undefined}
         firstName={props.user.first_name}
         lastName={props.user.last_name}
-        status={props.user.is_active ? "online" : "offline"}
+        status={
+          userPresence?.inCall ? undefined
+          : props.user.is_active ?
+            "online"
+          : "offline"
+        }
+        callPeerAvatarUrl={callPeer?.avatar_url || undefined}
+        callPeerFirstName={callPeer?.first_name}
+        callPeerLastName={callPeer?.last_name}
       />
 
       <div className="flex flex-col justify-center h-10 overflow-hidden">
         <TruncatedName text={`${props.user.first_name} ${props.user.last_name}`} className="medium" />
 
-        <div className="muted truncate text-xs text-slate-500">{props.user.is_active ? "Online" : "Offline"}</div>
+        <div className="muted truncate text-xs text-slate-500">
+          {userPresence?.inCall ?
+            userPresence.roomName ?
+              `In ${userPresence.roomName}`
+            : "In a call"
+          : props.user.is_active ?
+            "Online"
+          : "Offline"}
+        </div>
       </div>
 
       <div className="mr-4">

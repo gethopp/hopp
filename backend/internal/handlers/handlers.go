@@ -1418,7 +1418,7 @@ func (h *AuthHandler) GetCallsPresence(c echo.Context) error {
 		userIDs = append(userIDs, t.ID)
 	}
 
-	presence, err := h.CallState.GetCallStates(c.Request().Context(), userIDs)
+	presence, err := h.CallState.GetCallStates(c.Request().Context(), h.DB, userIDs)
 	if err != nil {
 		c.Logger().Errorf("GetCallStates error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get call presence")

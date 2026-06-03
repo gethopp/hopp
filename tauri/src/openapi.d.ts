@@ -2442,8 +2442,8 @@ export interface components {
       inCall: boolean;
       /** @description Peer user ID (for 1:1 calls) */
       peerId?: string;
-      /** @description Room ID (for room calls) */
-      roomId?: string;
+      /** @description Room name (for room calls) */
+      roomName?: string;
     };
     CallsPresenceResponse: {
       /** @description Map of user IDs to their call presence state */

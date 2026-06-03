@@ -117,9 +117,9 @@ components:
         peerId:
           type: string
           description: Peer user ID (for 1:1 calls)
-        roomId:
+        roomName:
           type: string
-          description: Room ID (for room calls)
+          description: Room name (for room calls)
 
     CallsPresenceResponse:
       type: object
