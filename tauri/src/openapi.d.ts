@@ -2440,8 +2440,8 @@ export interface components {
     };
     CallPresence: {
       inCall: boolean;
-      /** @description Peer user ID (for 1:1 calls) */
-      peerId?: string;
+      /** @description Peer user IDs in the call */
+      peerIds?: string[];
       /** @description Room name (for room calls) */
       roomName?: string;
     };

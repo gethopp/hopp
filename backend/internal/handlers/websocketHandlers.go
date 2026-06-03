@@ -259,8 +259,9 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cleanCancel()
 			c.Logger().Infof("callstate: CleanupUser userID=%s", user.ID)
-			peer, room := server.CallState.CleanupUser(cleanCtx, user.ID)
-			if peer != "" {
+			peers, room := server.CallState.CleanupUser(cleanCtx, user.ID)
+			if len(peers) == 1 {
+				peer := peers[0]
 				c.Logger().Infof("callstate: disconnect mid-call userID=%s peer=%s — notifying peer", user.ID, peer)
 				endMsg := messages.NewCallEndMessage(user.ID)
 				endMsgJSON, mErr := json.Marshal(endMsg)

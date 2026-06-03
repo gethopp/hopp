@@ -63,11 +63,16 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
 
   const userPresence = callsPresence?.[props.user.id];
 
-  const callPeer = useMemo(() => {
-    if (!userPresence?.peerId) return null;
-    if (currentUser?.id === userPresence.peerId) return currentUser;
-    return teammates?.find((t) => t.id === userPresence.peerId) ?? null;
-  }, [userPresence?.peerId, teammates, currentUser]);
+  const callPeers = useMemo(() => {
+    const ids = userPresence?.peerIds;
+    if (!ids || ids.length === 0) return [];
+    return ids
+      .map((id) => {
+        if (currentUser?.id === id) return currentUser;
+        return teammates?.find((t) => t.id === id) ?? null;
+      })
+      .filter(Boolean);
+  }, [userPresence?.peerIds, teammates, currentUser]);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
@@ -244,9 +249,11 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
             "online"
           : "offline"
         }
-        callPeerAvatarUrl={callPeer?.avatar_url || undefined}
-        callPeerFirstName={callPeer?.first_name}
-        callPeerLastName={callPeer?.last_name}
+        callPeers={callPeers.map((p) => ({
+          avatarUrl: p?.avatar_url || undefined,
+          firstName: p?.first_name ?? "",
+          lastName: p?.last_name ?? "",
+        }))}
       />
 
       <div className="flex flex-col justify-center h-10 overflow-hidden">

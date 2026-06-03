@@ -18,8 +18,19 @@ func NewTracker(r *redis.Client) *Tracker {
 }
 
 type callEntry struct {
-	Peer string `json:"peer"`
-	Room string `json:"room"`
+	Peers []string `json:"peers,omitempty"`
+	Peer  string   `json:"peer,omitempty"` // legacy field for reading old Redis entries
+	Room  string   `json:"room"`
+}
+
+func (e callEntry) GetPeers() []string {
+	if len(e.Peers) > 0 {
+		return e.Peers
+	}
+	if e.Peer != "" {
+		return []string{e.Peer}
+	}
+	return nil
 }
 
 func callKey(userID string) string {
@@ -31,11 +42,11 @@ func userRoomKey(userID string) string {
 }
 
 func (t *Tracker) SetCallActive(ctx context.Context, userA, userB, roomName string) error {
-	aVal, err := json.Marshal(callEntry{Peer: userB, Room: roomName})
+	aVal, err := json.Marshal(callEntry{Peers: []string{userB}, Room: roomName})
 	if err != nil {
 		return err
 	}
-	bVal, err := json.Marshal(callEntry{Peer: userA, Room: roomName})
+	bVal, err := json.Marshal(callEntry{Peers: []string{userA}, Room: roomName})
 	if err != nil {
 		return err
 	}
@@ -63,9 +74,9 @@ func (t *Tracker) RemoveRoomParticipant(ctx context.Context, roomID, userID stri
 }
 
 type CallPresence struct {
-	InCall   bool   `json:"inCall"`
-	PeerID   string `json:"peerId,omitempty"`
-	RoomName string `json:"roomName,omitempty"`
+	InCall   bool     `json:"inCall"`
+	PeerIDs  []string `json:"peerIds,omitempty"`
+	RoomName string   `json:"roomName,omitempty"`
 }
 
 // GetCallStates fetches call/room presence for a batch of users in a single Redis round-trip.
@@ -88,7 +99,7 @@ func (t *Tracker) GetCallStates(ctx context.Context, db *gorm.DB, userIDs []stri
 		if err == nil {
 			var entry callEntry
 			if json.Unmarshal([]byte(raw), &entry) == nil {
-				result[id] = CallPresence{InCall: true, PeerID: entry.Peer}
+				result[id] = CallPresence{InCall: true, PeerIDs: entry.GetPeers()}
 				continue
 			}
 		}
@@ -113,21 +124,23 @@ func lookupRoomName(db *gorm.DB, roomID string) (string, error) {
 }
 
 // CleanupUser removes all call/room state for a user (called on WS disconnect).
-// Returns the peer's userID if the user was in a 1:1 call.
-func (t *Tracker) CleanupUser(ctx context.Context, userID string) (callPeer string, room string) {
+// Returns peer userIDs if the user was in a call.
+func (t *Tracker) CleanupUser(ctx context.Context, userID string) (callPeers []string, room string) {
 	raw, getErr := t.redis.Get(ctx, callKey(userID)).Result()
 	if getErr == nil {
 		var entry callEntry
 		if jsonErr := json.Unmarshal([]byte(raw), &entry); jsonErr == nil {
-			callPeer = entry.Peer
+			callPeers = entry.GetPeers()
 			pipe := t.redis.Pipeline()
 			pipe.Del(ctx, callKey(userID))
-			pipe.Del(ctx, callKey(entry.Peer))
+			for _, peer := range callPeers {
+				pipe.Del(ctx, callKey(peer))
+			}
 			pipe.Exec(ctx)
 		}
 	}
 
 	room, _ = t.redis.GetDel(ctx, userRoomKey(userID)).Result()
 
-	return callPeer, room
+	return callPeers, room
 }

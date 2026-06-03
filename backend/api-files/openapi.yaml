@@ -114,9 +114,11 @@ components:
       properties:
         inCall:
           type: boolean
-        peerId:
-          type: string
-          description: Peer user ID (for 1:1 calls)
+        peerIds:
+          type: array
+          items:
+            type: string
+          description: Peer user IDs in the call
         roomName:
           type: string
           description: Room name (for room calls)
