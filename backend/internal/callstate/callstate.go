@@ -61,6 +61,44 @@ func (t *Tracker) RemoveRoomParticipant(ctx context.Context, roomID, userID stri
 	return t.redis.Del(ctx, userRoomKey(userID)).Err()
 }
 
+type CallPresence struct {
+	InCall bool   `json:"inCall"`
+	PeerID string `json:"peerId,omitempty"`
+	RoomID string `json:"roomId,omitempty"`
+}
+
+// GetCallStates fetches call/room presence for a batch of users in a single Redis round-trip.
+func (t *Tracker) GetCallStates(ctx context.Context, userIDs []string) (map[string]CallPresence, error) {
+	if len(userIDs) == 0 {
+		return map[string]CallPresence{}, nil
+	}
+	pipe := t.redis.Pipeline()
+	callCmds := make([]*redis.StringCmd, len(userIDs))
+	roomCmds := make([]*redis.StringCmd, len(userIDs))
+	for i, id := range userIDs {
+		callCmds[i] = pipe.Get(ctx, callKey(id))
+		roomCmds[i] = pipe.Get(ctx, userRoomKey(id))
+	}
+	pipe.Exec(ctx) //nolint:errcheck — individual cmd errors checked below
+
+	result := make(map[string]CallPresence, len(userIDs))
+	for i, id := range userIDs {
+		raw, err := callCmds[i].Result()
+		if err == nil {
+			var entry callEntry
+			if json.Unmarshal([]byte(raw), &entry) == nil {
+				result[id] = CallPresence{InCall: true, PeerID: entry.Peer}
+				continue
+			}
+		}
+		roomID, err := roomCmds[i].Result()
+		if err == nil && roomID != "" {
+			result[id] = CallPresence{InCall: true, RoomID: roomID}
+		}
+	}
+	return result, nil
+}
+
 // CleanupUser removes all call/room state for a user (called on WS disconnect).
 // Returns the peer's userID if the user was in a 1:1 call.
 func (t *Tracker) CleanupUser(ctx context.Context, userID string) (callPeer string, room string) {

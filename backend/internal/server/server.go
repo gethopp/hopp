@@ -314,6 +314,8 @@ func (s *Server) setupRoutes() {
 
 	// Set the EmailClient field directly
 	auth.EmailClient = s.EmailClient
+	auth.CallState = s.CallState
+	slackHndlr.CallState = s.CallState
 
 	// Start the background Slack room cleanup goroutine
 	// This runs every 5 seconds and cleans up empty Slack rooms
@@ -374,6 +376,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/room/:id", auth.GetRoom)
 	protectedAPI.GET("/rooms", auth.GetRooms)
 	protectedAPI.GET("/rooms/presence", auth.GetRoomsPresence)
+	protectedAPI.GET("/calls/presence", auth.GetCallsPresence)
 	protectedAPI.POST("/room/:id/leave", slackHndlr.LeaveRoom)
 
 	// LiveKit server endpoint

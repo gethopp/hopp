@@ -79,6 +79,19 @@ function App() {
     },
   });
 
+  // Poll call presence every 10 seconds
+  useQuery("get", "/api/auth/calls/presence", undefined, {
+    enabled: !!authToken,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+    retry: true,
+    queryHash: `calls-presence-${authToken}`,
+    select: (data) => {
+      console.log("calls/presence", data.presence);
+      return data.presence;
+    },
+  });
+
   // Get LiveKit server URL and send to Tauri backend
   const { data: livekitUrlData } = useQuery("get", "/api/auth/livekit/server-url", undefined, {
     enabled: !!authToken,

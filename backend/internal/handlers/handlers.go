@@ -1396,3 +1396,33 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 		"rooms": roomsPresence,
 	})
 }
+
+func (h *AuthHandler) GetCallsPresence(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	if h.CallState == nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{"presence": map[string]interface{}{}})
+	}
+
+	teammates, err := user.GetTeammates(h.DB)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get teammates")
+	}
+
+	userIDs := make([]string, 0, len(teammates)+1)
+	userIDs = append(userIDs, user.ID)
+	for _, t := range teammates {
+		userIDs = append(userIDs, t.ID)
+	}
+
+	presence, err := h.CallState.GetCallStates(c.Request().Context(), userIDs)
+	if err != nil {
+		c.Logger().Errorf("GetCallStates error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get call presence")
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"presence": presence})
+}

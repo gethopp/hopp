@@ -1048,6 +1048,63 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/calls/presence": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get call presence for user and teammates
+     * @description Returns which users are currently in a 1:1 call or room call
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Call presence data retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["CallsPresenceResponse"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/room/{id}": {
     parameters: {
       query?: never;
@@ -2379,6 +2436,19 @@ export interface components {
       /** @description Map of room IDs to arrays of participant user IDs */
       rooms: {
         [key: string]: string[];
+      };
+    };
+    CallPresence: {
+      inCall: boolean;
+      /** @description Peer user ID (for 1:1 calls) */
+      peerId?: string;
+      /** @description Room ID (for room calls) */
+      roomId?: string;
+    };
+    CallsPresenceResponse: {
+      /** @description Map of user IDs to their call presence state */
+      presence: {
+        [key: string]: components["schemas"]["CallPresence"];
       };
     };
     Error: {

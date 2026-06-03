@@ -107,6 +107,31 @@ components:
               type: string
               description: User ID of a participant in the room
 
+    CallPresence:
+      type: object
+      required:
+        - inCall
+      properties:
+        inCall:
+          type: boolean
+        peerId:
+          type: string
+          description: Peer user ID (for 1:1 calls)
+        roomId:
+          type: string
+          description: Room ID (for room calls)
+
+    CallsPresenceResponse:
+      type: object
+      required:
+        - presence
+      properties:
+        presence:
+          type: object
+          description: Map of user IDs to their call presence state
+          additionalProperties:
+            $ref: "#/components/schemas/CallPresence"
+
     Error:
       type: object
       properties:
@@ -777,6 +802,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RoomsPresenceResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/calls/presence:
+    get:
+      summary: Get call presence for user and teammates
+      description: Returns which users are currently in a 1:1 call or room call
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Call presence data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallsPresenceResponse"
         "401":
           description: Unauthorized
           content:
