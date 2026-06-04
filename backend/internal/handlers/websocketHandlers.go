@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/messages"
 	"hopp-backend/internal/models"
@@ -166,6 +168,10 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					// Handle user online message
 					c.Logger().Info("Received user online message ", parsedMessage.TeammateOnlineMessage.Payload.TeammateID, " ", user.ID)
 					publishTeammateOnlineMessage(c, server, user.ID, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
+				case parsedMessage.JoinCallMessage != nil:
+					// Handle join call request
+					c.Logger().Info("Received join call request")
+					joinCall(c, server, ws, user.ID, parsedMessage.JoinCallMessage.Payload.UserID)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -258,19 +264,30 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 		if server.CallState != nil {
 			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cleanCancel()
-			c.Logger().Infof("callstate: CleanupUser userID=%s", user.ID)
-			peers, room := server.CallState.CleanupUser(cleanCtx, user.ID)
-			if len(peers) == 1 {
-				peer := peers[0]
-				c.Logger().Infof("callstate: disconnect mid-call userID=%s peer=%s — notifying peer", user.ID, peer)
+
+			_, remainingPeers, leaveErr := server.CallState.LeaveCall(cleanCtx, user.ID)
+			if leaveErr != nil {
+				if errors.Is(leaveErr, callstate.ErrCallEnded) {
+					c.Logger().Debugf("callstate: LeaveCall ErrCallEnded on disconnect userID=%s (call already ended)", user.ID)
+				} else {
+					c.Logger().Warnf("callstate.LeaveCall error on disconnect: %v", leaveErr)
+				}
+			}
+
+			// Also clean up the user:room: key (for 1:1 calls that use room tracking)
+			server.CallState.RemoveRoomParticipant(cleanCtx, "", user.ID)
+
+			// Notify remaining peer only if exactly one is left (last two in the call)
+			// Also clean up the last peer's call entry since the call is fully over.
+			if len(remainingPeers) == 1 {
+				server.CallState.RemoveCallEntry(context.Background(), remainingPeers[0])
+				server.CallState.RemoveRoomParticipant(context.Background(), "", remainingPeers[0])
+				c.Logger().Infof("callstate: disconnect mid-call userID=%s peer=%s — notifying peer", user.ID, remainingPeers[0])
 				endMsg := messages.NewCallEndMessage(user.ID)
 				endMsgJSON, mErr := json.Marshal(endMsg)
 				if mErr == nil {
-					server.Redis.Publish(context.Background(), common.GetUserChannel(peer), endMsgJSON)
+					server.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
 				}
-			}
-			if room != "" {
-				c.Logger().Infof("callstate: removed userID=%s from room=%s on disconnect", user.ID, room)
 			}
 		}
 
@@ -502,20 +519,29 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
 
 	if s.CallState != nil {
-		ctx.Logger().Infof("callstate: RemoveCall userID=%s peerID=%s", userID, message.Payload.ParticipantID)
-		if err := s.CallState.RemoveCall(context.Background(), userID, message.Payload.ParticipantID); err != nil {
-			ctx.Logger().Warnf("callstate.RemoveCall error: %v", err)
+		ctx.Logger().Infof("callstate: LeaveCall userID=%s", userID)
+		roomName, remainingPeers, err := s.CallState.LeaveCall(context.Background(), userID)
+		if err != nil {
+			if errors.Is(err, callstate.ErrCallEnded) {
+				ctx.Logger().Debugf("callstate: LeaveCall ErrCallEnded userID=%s (call already ended)", userID)
+			} else {
+				ctx.Logger().Warnf("callstate.LeaveCall error: %v", err)
+			}
+		}
+		ctx.Logger().Infof("callstate: LeaveCall room=%s remainingPeers=%v", roomName, remainingPeers)
+
+		// Only notify when exactly one peer remains (last two in the call)
+		// Also clean up the last peer's call entry since the call is fully over.
+		if len(remainingPeers) == 1 {
+			s.CallState.RemoveCallEntry(context.Background(), remainingPeers[0])
+			s.CallState.RemoveRoomParticipant(context.Background(), "", remainingPeers[0])
+			endMsg := messages.NewCallEndMessage(userID)
+			endMsgJSON, mErr := json.Marshal(endMsg)
+			if mErr == nil {
+				s.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
+			}
 		}
 	}
-
-	// Publish a message to the other participant
-	payloadJSON, err := json.Marshal(message)
-	if err != nil {
-		ctx.Logger().Error(err)
-		return
-	}
-
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.ParticipantID), payloadJSON)
 }
 
 func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userID, teammateID string) {
@@ -528,4 +554,110 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userI
 	}
 
 	s.Redis.Publish(context.Background(), common.GetUserChannel(teammateID), msgJSON)
+}
+
+func joinCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, joinerID, targetUserID string) {
+	if s.CallState == nil {
+		sendWSErrorMessage(ws, "Call state service not available")
+		return
+	}
+
+	bgCtx := context.Background()
+
+	// Get joiner and target users
+	joiner, err := models.GetUserByID(s.DB, joinerID)
+	if err != nil {
+		ctx.Logger().Error("Error getting joiner: ", err)
+		sendWSErrorMessage(ws, "Failed to get joiner information")
+		return
+	}
+
+	target, err := models.GetUserByID(s.DB, targetUserID)
+	if err != nil {
+		ctx.Logger().Error("Error getting target: ", err)
+		sendWSErrorMessage(ws, "Failed to get target user information")
+		return
+	}
+
+	// Verify joiner and target are teammates (same non-nil TeamID)
+	if joiner.TeamID == nil || target.TeamID == nil || *joiner.TeamID != *target.TeamID {
+		ctx.Logger().Warn("Joiner and target are not teammates: joiner=", joinerID, " target=", targetUserID)
+		sendWSErrorMessage(ws, "You can only join calls with teammates")
+		return
+	}
+
+	// Check if joiner has access (paid or active trial)
+	hasAccess, err := checkUserHasAccess(s.DB, joiner, s.Config.IsStripeEnabled())
+	if err != nil {
+		ctx.Logger().Error("Error checking joiner subscription: ", err)
+		sendWSErrorMessage(ws, "Failed to check subscription status")
+		return
+	}
+
+	if !hasAccess {
+		ctx.Logger().Warn("Joiner does not have active subscription or trial: ", joinerID)
+		msg := messages.NewErrorMessage("Your trial has ended or you need an active subscription to join calls")
+		msgJSON, err := json.Marshal(msg)
+		if err != nil {
+			ctx.Logger().Error("Error marshalling error message: ", err)
+			return
+		}
+		ws.WriteMessage(websocket.TextMessage, msgJSON)
+		return
+	}
+
+	// Atomically check target is in call and add joiner under one lock
+	roomName, _, err := s.CallState.JoinCall(bgCtx, joinerID, targetUserID)
+	if err != nil {
+		if errors.Is(err, callstate.ErrCallEnded) {
+			ctx.Logger().Info("Target's call ended while joiner was joining: joiner=", joinerID, " target=", targetUserID)
+			msg := messages.NewErrorMessage("The call has ended")
+			msgJSON, err := json.Marshal(msg)
+			if err != nil {
+				ctx.Logger().Error("Error marshalling error message: ", err)
+				return
+			}
+			ws.WriteMessage(websocket.TextMessage, msgJSON)
+			return
+		}
+		ctx.Logger().Error("Error joining call: ", err)
+		sendWSErrorMessage(ws, "Failed to join call")
+		return
+	}
+
+	if roomName == "" {
+		ctx.Logger().Info("Target user is not in a call: ", targetUserID)
+		msg := messages.NewErrorMessage("Target user is not in a call")
+		msgJSON, err := json.Marshal(msg)
+		if err != nil {
+			ctx.Logger().Error("Error marshalling error message: ", err)
+			return
+		}
+		ws.WriteMessage(websocket.TextMessage, msgJSON)
+		return
+	}
+
+	// Generate LiveKit tokens for the joiner
+	tokens, err := generateLiveKitTokens(s, roomName, joiner)
+	if err != nil {
+		ctx.Logger().Error("Error generating tokens for joiner: ", err)
+		sendWSErrorMessage(ws, "Failed to generate call tokens")
+		return
+	}
+
+	// Publish CallTokensMessage to joiner's Redis channel
+	joinerTokensMsg := messages.NewCallTokens(common.LivekitTokenSet{
+		AudioToken:  tokens.AudioToken,
+		VideoToken:  tokens.VideoToken,
+		CameraToken: tokens.CameraToken,
+		Participant: targetUserID,
+	})
+	joinerTokensJSON, err := json.Marshal(joinerTokensMsg)
+	if err != nil {
+		ctx.Logger().Error("Error marshalling joiner tokens: ", err)
+		return
+	}
+	s.Redis.Publish(bgCtx, common.GetUserChannel(joinerID), joinerTokensJSON)
+
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", joiner.ID, target.ID), s.Config)
 }

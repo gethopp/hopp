@@ -37,6 +37,9 @@ const (
 
 	// Client -> Server and Server -> Client: User has become online
 	MessageTypeTeammateOnline MessageType = "teammate_online"
+
+	// Client -> Server: Join an ongoing call by target user ID
+	MessageTypeJoinCall MessageType = "join_call"
 )
 
 // BaseMessage represents the common structure of all WebSocket messages
@@ -160,6 +163,17 @@ type CalleeOfflineMessage struct {
 	Payload CalleeOfflinePayload `json:"payload"`
 }
 
+// JoinCallPayload represents the payload for joining an ongoing call
+type JoinCallPayload struct {
+	UserID string `json:"user_id" validate:"required"`
+}
+
+// JoinCallMessage is the message to join an ongoing call
+type JoinCallMessage struct {
+	Type    MessageType     `json:"type"`
+	Payload JoinCallPayload `json:"payload"`
+}
+
 // UserOnlinePayload represents the payload for user online messages
 type TeammateOnlinePayload struct {
 	TeammateID string `json:"teammate_id"`
@@ -194,6 +208,7 @@ type ParsedMessage struct {
 	RejectCallMessage     *RejectCallMessage
 	CallTokensMessage     *CallTokensMessage
 	TeammateOnlineMessage *TeammateOnlineMessage
+	JoinCallMessage       *JoinCallMessage
 	Error                 *ErrorMessage
 }
 
@@ -261,6 +276,12 @@ func ParseMessage(data []byte) (*ParsedMessage, error) {
 			return nil, err
 		}
 		parsed.TeammateOnlineMessage = &msg
+	case MessageTypeJoinCall:
+		var msg JoinCallMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.JoinCallMessage = &msg
 	}
 
 	return parsed, nil
@@ -359,6 +380,16 @@ func NewRejectCallMessage(calleeID, reason string) RejectCallMessage {
 		}{
 			CallerID:     calleeID,
 			RejectReason: reason,
+		},
+	}
+}
+
+// NewJoinCallMessage creates a new join call message
+func NewJoinCallMessage(targetUserID string) JoinCallMessage {
+	return JoinCallMessage{
+		Type: MessageTypeJoinCall,
+		Payload: JoinCallPayload{
+			UserID: targetUserID,
 		},
 	}
 }
