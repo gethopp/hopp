@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/models"
@@ -1051,6 +1052,62 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	}
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
+
+	return c.JSON(http.StatusOK, tokens)
+}
+
+func (h *AuthHandler) JoinCall(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	targetUserID := c.Param("userId")
+
+	target, err := models.GetUserByID(h.DB, targetUserID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Target user not found")
+	}
+
+	if user.TeamID == nil || target.TeamID == nil || *user.TeamID != *target.TeamID {
+		return echo.NewHTTPError(http.StatusForbidden, "You can only join calls with teammates")
+	}
+
+	hasAccess, err := checkUserHasAccess(h.DB, user, h.Config.IsStripeEnabled())
+	if err != nil {
+		c.Logger().Error("Error checking subscription: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")
+	}
+	if !hasAccess {
+		_ = notifications.SendTelegramNotification(fmt.Sprintf("Unsubscribed user %s tried to join call with %s", user.ID, target.ID), h.Config)
+		return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "trial-ended"})
+	}
+
+	if h.CallState == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Call state service not available")
+	}
+
+	roomName, _, err := h.CallState.JoinCall(c.Request().Context(), user.ID, targetUserID)
+	if err != nil {
+		if errors.Is(err, callstate.ErrCallEnded) {
+			return echo.NewHTTPError(http.StatusConflict, "The call has ended")
+		}
+		c.Logger().Error("Error joining call: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to join call")
+	}
+
+	if roomName == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "Target user is not in a call")
+	}
+
+	tokens, err := generateLiveKitTokens(&h.ServerState, roomName, user)
+	if err != nil {
+		c.Logger().Error("Failed to generate call tokens: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
+	}
+	tokens.Participant = targetUserID
+
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", user.ID, target.ID), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
 }

@@ -377,6 +377,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/rooms", auth.GetRooms)
 	protectedAPI.GET("/rooms/presence", auth.GetRoomsPresence)
 	protectedAPI.GET("/calls/presence", auth.GetCallsPresence)
+	protectedAPI.POST("/call/join/:userId", auth.JoinCall)
 	protectedAPI.POST("/room/:id/leave", slackHndlr.LeaveRoom)
 
 	// LiveKit server endpoint

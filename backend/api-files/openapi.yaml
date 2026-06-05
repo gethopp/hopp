@@ -843,6 +843,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/auth/call/join/{userId}:
+    post:
+      summary: Join an ongoing call with a teammate
+      description: Join an existing 1:1 call that a teammate is currently in. Returns LiveKit tokens for the call room.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: The user ID of the teammate whose call to join
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LiveKit tokens for the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionTokensResponse"
+        "402":
+          description: Trial or subscription expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: trial-ended
+        "403":
+          description: Target user is not a teammate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Target user is not in a call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Call ended while joining
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/room/{id}:
     get:
       summary: Get LiveKit tokens for joining the team's selected room
