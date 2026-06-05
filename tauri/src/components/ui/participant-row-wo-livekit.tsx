@@ -300,12 +300,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
         src={props.user.avatar_url || undefined}
         firstName={props.user.first_name}
         lastName={props.user.last_name}
-        status={
-          userPresence?.inCall ? undefined
-          : props.user.is_active ?
-            "online"
-          : "offline"
-        }
+        status={props.user.is_active ? "online" : "offline"}
         callPeers={callPeers.map((p) => ({
           avatarUrl: p?.avatar_url || undefined,
           firstName: p?.first_name ?? "",
@@ -328,7 +323,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       </div>
 
       <div className="mr-4">
-        {userPresence?.inCall && !inACall ?
+        {userPresence?.inCall && !userPresence.roomName && !inACall ?
           <Button
             variant="gradient-white"
             onClick={joinCall}
@@ -353,7 +348,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
                 callUser();
               }
             }}
-            disabled={inACall || hasIncomingCall}
+            disabled={inACall || hasIncomingCall || !!userPresence?.inCall}
             className={clsx(
               "px-2 w-auto h-7 flex flex-row items-center gap-1",
               !isCalling && "text-slate-600",
