@@ -20,6 +20,34 @@ func NewTracker(r *redis.Client) *Tracker {
 	return &Tracker{redis: r}
 }
 
+func (t *Tracker) ResetAllCallState(ctx context.Context) error {
+	patterns := []string{
+		"user:call:*",
+		"user:room:*",
+		"lock:call:*",
+		"call:pending:*",
+	}
+	for _, pattern := range patterns {
+		var cursor uint64
+		for {
+			keys, next, err := t.redis.Scan(ctx, cursor, pattern, 100).Result()
+			if err != nil {
+				return fmt.Errorf("scan %q: %w", pattern, err)
+			}
+			if len(keys) > 0 {
+				if err := t.redis.Del(ctx, keys...).Err(); err != nil {
+					return fmt.Errorf("del %q keys: %w", pattern, err)
+				}
+			}
+			cursor = next
+			if cursor == 0 {
+				break
+			}
+		}
+	}
+	return nil
+}
+
 // ErrCallEnded is returned when a call ends while a user is in the process of joining.
 var ErrCallEnded = errors.New("call has ended")
 

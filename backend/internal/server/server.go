@@ -102,6 +102,9 @@ func (s *Server) Initialize() error {
 
 	if s.Redis != nil {
 		s.CallState = callstate.NewTracker(s.Redis)
+		if err := s.CallState.ResetAllCallState(context.Background()); err != nil {
+			s.Echo.Logger.Warnf("Failed to reset call state: %v", err)
+		}
 	}
 
 	// Initialize JWT
