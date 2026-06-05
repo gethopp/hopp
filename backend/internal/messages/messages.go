@@ -37,6 +37,9 @@ const (
 
 	// Client -> Server and Server -> Client: User has become online
 	MessageTypeTeammateOnline MessageType = "teammate_online"
+
+	// Server -> Client: Presence state changed (call/room join/leave)
+	MessageTypePresenceChanged MessageType = "presence_changed"
 )
 
 // BaseMessage represents the common structure of all WebSocket messages
@@ -181,6 +184,17 @@ func NewCalleeOfflineMessage(calleeID string) *CalleeOfflineMessage {
 	}
 }
 
+// PresenceChangedMessage notifies clients that call/room presence has changed
+type PresenceChangedMessage struct {
+	Type    MessageType `json:"type"`
+	Payload struct{}    `json:"payload"`
+}
+
+// NewPresenceChangedMessage creates a new presence changed message
+func NewPresenceChangedMessage() PresenceChangedMessage {
+	return PresenceChangedMessage{Type: MessageTypePresenceChanged}
+}
+
 // ParsedMessage is a union type of all possible message types
 type ParsedMessage struct {
 	Success               *SuccessMessage
@@ -194,6 +208,7 @@ type ParsedMessage struct {
 	RejectCallMessage     *RejectCallMessage
 	CallTokensMessage     *CallTokensMessage
 	TeammateOnlineMessage *TeammateOnlineMessage
+	PresenceChanged       *PresenceChangedMessage
 	Error                 *ErrorMessage
 }
 
@@ -261,6 +276,12 @@ func ParseMessage(data []byte) (*ParsedMessage, error) {
 			return nil, err
 		}
 		parsed.TeammateOnlineMessage = &msg
+	case MessageTypePresenceChanged:
+		var msg PresenceChangedMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.PresenceChanged = &msg
 	}
 
 	return parsed, nil

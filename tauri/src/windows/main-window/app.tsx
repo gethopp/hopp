@@ -93,11 +93,6 @@ function App() {
     },
   });
 
-  const inACall = callTokens !== null;
-  useEffect(() => {
-    if (authToken) refetchCallsPresence();
-  }, [inACall]);
-
   // Get LiveKit server URL and send to Tauri backend
   const { data: livekitUrlData } = useQuery("get", "/api/auth/livekit/server-url", undefined, {
     enabled: !!authToken,
@@ -310,6 +305,12 @@ function App() {
             refetchTeammates();
           }
         }
+      }
+    });
+
+    socketService.on("presence_changed", (data: TWebSocketMessage) => {
+      if (data.type === "presence_changed") {
+        refetchCallsPresence();
       }
     });
   }, []);

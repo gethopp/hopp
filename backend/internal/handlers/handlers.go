@@ -1051,6 +1051,8 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 		}
 	}
 
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
+
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
@@ -1106,6 +1108,8 @@ func (h *AuthHandler) JoinCall(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
 	}
 	tokens.Participant = targetUserID
+
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", user.ID, target.ID), h.Config)
 

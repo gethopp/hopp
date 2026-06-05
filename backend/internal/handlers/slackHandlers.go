@@ -803,6 +803,8 @@ func (h *SlackHandler) LeaveRoom(c echo.Context) error {
 		}
 	}
 
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
+
 	// Update LastParticipantLeftAt
 	now := time.Now()
 	room.LastParticipantLeftAt = &now

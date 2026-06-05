@@ -191,6 +191,7 @@ export const MessageType = z.enum([
   "ping",
   "pong",
   "teammate_online",
+  "presence_changed",
 ]);
 
 export type TMessageType = z.infer<typeof MessageType>;
@@ -267,6 +268,11 @@ export const PTeammateOnlineMessage = z.object({
   payload: z.object({ teammate_id: z.string() }),
 });
 
+export const PPresenceChangedMessage = z.object({
+  type: z.literal("presence_changed"),
+  payload: z.object({}),
+});
+
 // Export types for all messages
 export type TSuccessMessage = z.infer<typeof PSuccessMessage>;
 export type TCallRequestMessage = z.infer<typeof PCallRequestMessage>;
@@ -280,6 +286,7 @@ export type TPingMessage = z.infer<typeof PPingMessage>;
 export type TPongMessage = z.infer<typeof PPongMessage>;
 export type TCalleeOfflineMessage = z.infer<typeof PCalleeOfflineMessage>;
 export type TTeammateOnlineMessage = z.infer<typeof PTeammateOnlineMessage>;
+export type TPresenceChangedMessage = z.infer<typeof PPresenceChangedMessage>;
 
 // Union type for all possible messages
 export const PWebSocketMessage = z.discriminatedUnion("type", [
@@ -295,6 +302,7 @@ export const PWebSocketMessage = z.discriminatedUnion("type", [
   PPongMessage,
   PCalleeOfflineMessage,
   PTeammateOnlineMessage,
+  PPresenceChangedMessage,
 ]);
 
 export type TWebSocketMessage = z.infer<typeof PWebSocketMessage>;

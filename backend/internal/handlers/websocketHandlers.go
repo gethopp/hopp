@@ -247,6 +247,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 						if err != nil {
 							c.Logger().Error(err)
 						}
+					case parsedMessage.PresenceChanged != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
 					default:
 						c.Logger().Warn("Unknown message type")
 					}
@@ -285,6 +290,8 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					server.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
 				}
 			}
+
+			broadcastPresenceChanged(c, server, user.ID)
 		}
 
 		return nil
@@ -496,6 +503,8 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		}
 	}
 
+	broadcastPresenceChanged(ctx, s, callerID)
+
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("Call started: %s -> %s", caller.ID, callee.ID), s.Config)
 }
 
@@ -536,6 +545,44 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 			if mErr == nil {
 				s.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
 			}
+		}
+	}
+
+	broadcastPresenceChanged(ctx, s, userID)
+}
+
+func broadcastPresenceChanged(ctx echo.Context, s *common.ServerState, userID string) {
+	bgCtx := context.Background()
+
+	user, err := models.GetUserByID(s.DB, userID)
+	if err != nil {
+		ctx.Logger().Warnf("broadcastPresenceChanged: failed to get user %s: %v", userID, err)
+		return
+	}
+
+	teammates, err := user.GetTeammates(s.DB)
+	if err != nil {
+		ctx.Logger().Warnf("broadcastPresenceChanged: failed to get teammates for %s: %v", userID, err)
+		return
+	}
+
+	msg := messages.NewPresenceChangedMessage()
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+
+	s.Redis.Publish(bgCtx, common.GetUserChannel(userID), msgJSON)
+
+	for _, teammate := range teammates {
+		channels, chErr := s.Redis.PubSubChannels(bgCtx, common.GetUserChannel(teammate.ID)).Result()
+		if chErr != nil {
+			ctx.Logger().Warnf("broadcastPresenceChanged: PubSubChannels error for %s: %v", teammate.ID, chErr)
+			continue
+		}
+		if len(channels) > 0 {
+			s.Redis.Publish(bgCtx, common.GetUserChannel(teammate.ID), msgJSON)
 		}
 	}
 }
