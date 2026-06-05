@@ -1,7 +1,7 @@
 import { components } from "@/openapi";
 import clsx from "clsx";
 import { Button } from "./button";
-import { HiPhone, HiPhoneArrowUpRight } from "react-icons/hi2";
+import { HiPhone, HiPhoneArrowDownLeft, HiPhoneArrowUpRight } from "react-icons/hi2";
 import { socketService } from "@/services/socket";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
@@ -13,6 +13,7 @@ import { usePostHog } from "posthog-js/react";
 import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAPI } from "@/services/query";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -74,8 +75,64 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       .filter(Boolean);
   }, [userPresence?.peerIds, teammates, currentUser]);
 
+  const { useMutation } = useAPI();
+  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
+
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
+
+  const joinCall = useCallback(async () => {
+    if (inACall || hasIncomingCall) return;
+
+    posthog.capture("user_join_call", {
+      user_id: props.user.id,
+      user_name: props.user.first_name,
+    });
+
+    try {
+      const tokens = await joinCallRequest({ params: { path: { userId: props.user.id } } });
+
+      if (!tokens) {
+        toast.error("Error joining call");
+        return;
+      }
+
+      sounds.callAccepted.play();
+      let startMic = false;
+      let startCamera = false;
+      try {
+        const settings = await tauriUtils.getUserSettings();
+        startMic = settings.start_mic_on_call;
+        startCamera = settings.start_camera_on_call;
+      } catch {
+        // fall back to safe defaults
+      }
+      setCallTokens({
+        ...tokens,
+        timeStarted: new Date(),
+        hasAudioEnabled: startMic,
+        hasCameraEnabled: startCamera,
+        role: ParticipantRole.NONE,
+        isRemoteControlEnabled: true,
+        participants: [],
+        isInitialisingCall: true,
+        micLevel: 0,
+      });
+      try {
+        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+      } catch {
+        setCallTokens(null);
+        return;
+      }
+      tauriUtils.showWindow("main");
+    } catch (error: any) {
+      if (error?.error === "trial-ended") {
+        toast.error("Trial has expired, contact us if you want to extend it");
+      } else {
+        toast.error("Error joining call");
+      }
+    }
+  }, [props.user, inACall, hasIncomingCall, joinCallRequest, setCallTokens]);
 
   const callUser = useCallback(() => {
     if (hasIncomingCall) return;
@@ -271,39 +328,50 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       </div>
 
       <div className="mr-4">
-        <Button
-          variant="gradient-white"
-          onClick={() => {
-            if (isCalling) {
-              callResolvedRef.current = true;
-              sounds.ringing.stop();
-              setCalling(null);
-              socketService.send({
-                type: "call_end",
-                payload: { participant_id: props.user.id },
-              });
-            } else {
-              callUser();
+        {userPresence?.inCall && !inACall ?
+          <Button
+            variant="gradient-white"
+            onClick={joinCall}
+            disabled={hasIncomingCall}
+            className="px-2 w-auto h-7 flex flex-row items-center gap-1 text-slate-600"
+          >
+            <HiPhoneArrowDownLeft className="size-3" />
+            Join
+          </Button>
+        : <Button
+            variant="gradient-white"
+            onClick={() => {
+              if (isCalling) {
+                callResolvedRef.current = true;
+                sounds.ringing.stop();
+                setCalling(null);
+                socketService.send({
+                  type: "call_end",
+                  payload: { participant_id: props.user.id },
+                });
+              } else {
+                callUser();
+              }
+            }}
+            disabled={inACall || hasIncomingCall}
+            className={clsx(
+              "px-2 w-auto h-7 flex flex-row items-center gap-1",
+              !isCalling && "text-slate-600",
+              isCalling && "text-red-500",
+            )}
+          >
+            {isCalling ?
+              <>
+                <HiPhoneArrowUpRight className="size-3 animate-oscillate" />
+                End
+              </>
+            : <>
+                <HiPhone className="size-3" />
+                Call
+              </>
             }
-          }}
-          disabled={inACall || hasIncomingCall}
-          className={clsx(
-            "px-2 w-auto h-7 flex flex-row items-center gap-1",
-            !isCalling && "text-slate-600",
-            isCalling && "text-red-500",
-          )}
-        >
-          {isCalling ?
-            <>
-              <HiPhoneArrowUpRight className="size-3 animate-oscillate" />
-              End
-            </>
-          : <>
-              <HiPhone className="size-3" />
-              Call
-            </>
-          }
-        </Button>
+          </Button>
+        }
       </div>
     </div>
   );
