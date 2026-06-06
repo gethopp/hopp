@@ -51,11 +51,10 @@ func (t *Tracker) ResetAllCallState(ctx context.Context) error {
 // ErrCallEnded is returned when a call ends while a user is in the process of joining.
 var ErrCallEnded = errors.New("call has ended")
 
-const lockTTL = 3 * time.Second
-const lockMaxRetries = 80 // ~4s total (80 * 50ms), exceeds lockTTL to ensure we wait for expiry
-
 // acquireLock blocks until the lock is acquired or retries are exhausted.
 func (t *Tracker) acquireLock(ctx context.Context, lockKey, holderID string) error {
+	const lockTTL = 3 * time.Second
+	const lockMaxRetries = 80 // ~4s total (80 * 50ms), exceeds lockTTL to ensure we wait for expiry
 	for range lockMaxRetries {
 		acquired, err := t.redis.SetNX(ctx, lockKey, holderID, lockTTL).Result()
 		if err != nil {
@@ -77,18 +76,11 @@ func (t *Tracker) acquireLock(ctx context.Context, lockKey, holderID string) err
 
 type callEntry struct {
 	Peers []string `json:"peers,omitempty"`
-	Peer  string   `json:"peer,omitempty"` // legacy field for reading old Redis entries
 	Room  string   `json:"room"`
 }
 
 func (e callEntry) GetPeers() []string {
-	if len(e.Peers) > 0 {
-		return e.Peers
-	}
-	if e.Peer != "" {
-		return []string{e.Peer}
-	}
-	return nil
+	return e.Peers
 }
 
 func callKey(userID string) string {
@@ -100,26 +92,18 @@ func userRoomKey(userID string) string {
 }
 
 func (t *Tracker) SetCallActive(ctx context.Context, userA, userB, roomName string) error {
-	aVal, err := json.Marshal(callEntry{Peers: []string{userB}, Room: roomName})
+	userAEntry, err := json.Marshal(callEntry{Peers: []string{userB}, Room: roomName})
 	if err != nil {
 		return err
 	}
-	bVal, err := json.Marshal(callEntry{Peers: []string{userA}, Room: roomName})
+	userBEntry, err := json.Marshal(callEntry{Peers: []string{userA}, Room: roomName})
 	if err != nil {
 		return err
 	}
 	pipe := t.redis.Pipeline()
-	pipe.Set(ctx, callKey(userA), aVal, 0)
-	pipe.Set(ctx, callKey(userB), bVal, 0)
+	pipe.Set(ctx, callKey(userA), userAEntry, 0)
+	pipe.Set(ctx, callKey(userB), userBEntry, 0)
 	_, err = pipe.Exec(ctx)
-	return err
-}
-
-func (t *Tracker) RemoveCall(ctx context.Context, userA, userB string) error {
-	pipe := t.redis.Pipeline()
-	pipe.Del(ctx, callKey(userA))
-	pipe.Del(ctx, callKey(userB))
-	_, err := pipe.Exec(ctx)
 	return err
 }
 
@@ -211,8 +195,27 @@ func (t *Tracker) CleanupUser(ctx context.Context, userID string) (callPeers []s
 
 			pipe := t.redis.Pipeline()
 			pipe.Del(ctx, callKey(userID))
-			for _, peer := range callPeers {
-				pipe.Del(ctx, callKey(peer))
+			for _, peerID := range callPeers {
+				peerRaw, err := t.redis.Get(ctx, callKey(peerID)).Result()
+				if err != nil {
+					continue
+				}
+				var peerEntry callEntry
+				if err := json.Unmarshal([]byte(peerRaw), &peerEntry); err != nil {
+					continue
+				}
+				peerEntry.Peers = slices.DeleteFunc(peerEntry.Peers, func(p string) bool {
+					return p == userID
+				})
+				if len(peerEntry.Peers) == 0 {
+					pipe.Del(ctx, callKey(peerID))
+				} else {
+					peerVal, err := json.Marshal(peerEntry)
+					if err != nil {
+						continue
+					}
+					pipe.Set(ctx, callKey(peerID), peerVal, 0)
+				}
 			}
 			pipe.Exec(ctx)
 		}
@@ -355,11 +358,15 @@ func (t *Tracker) LeaveCall(ctx context.Context, userID string) (roomName string
 			return p == userID
 		})
 
-		peerVal, marshalErr := json.Marshal(peerEntry)
-		if marshalErr != nil {
-			continue
+		if len(peerEntry.Peers) == 0 {
+			pipe.Del(ctx, callKey(peerID))
+		} else {
+			peerVal, marshalErr := json.Marshal(peerEntry)
+			if marshalErr != nil {
+				continue
+			}
+			pipe.Set(ctx, callKey(peerID), peerVal, 0)
 		}
-		pipe.Set(ctx, callKey(peerID), peerVal, 0)
 	}
 
 	if _, err = pipe.Exec(ctx); err != nil {
