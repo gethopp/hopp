@@ -29,7 +29,7 @@ const PeerBadge = ({ peer }: { peer: CallPeer }) => (
         {peer.lastName[0]}
       </AvatarFallback>
     </Avatar>
-    <div className="pointer-events-none absolute bottom-full right-0 mb-1 hidden group-hover:flex size-8 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200 shadow-md">
+    <div className="absolute bottom-full left-0 mb-1 hidden group-hover:flex size-6 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200 shadow-md">
       <Avatar className="size-full">
         <AvatarImage className="object-cover h-full" src={peer.avatarUrl || ""} />
         <AvatarFallback className="text-xs">
@@ -45,7 +45,7 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
   const peers = callPeers ?? [];
 
   return (
-    <div className="relative">
+    <div className="relative overflow-visible">
       <Avatar
         className={clsx(
           "size-10 shrink-0 rounded-md bg-emerald-200 flex justify-center items-center overflow-hidden",
@@ -68,11 +68,11 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         <PeerBadge peer={peers[0]} />
       : peers.length === 2 ?
         <div className="group absolute bottom-0 right-0 flex overflow-visible">
-          <div className="pointer-events-none absolute bottom-full right-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-1">
+          <div className="absolute bottom-full left-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-0.5">
             {[peers[1], peers[0]].map((peer, i) => (
               <div
                 key={i}
-                className="size-8 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
+                className="size-6 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
               >
                 <Avatar className="size-full">
                   <AvatarImage className="object-cover h-full" src={peer.avatarUrl || ""} />
@@ -105,11 +105,11 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         </div>
       : peers.length >= 3 ?
         <div className="group absolute bottom-0 right-0 flex overflow-visible">
-          <div className="pointer-events-none absolute bottom-full right-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-1">
+          <div className="absolute bottom-full left-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-0.5">
             {peers.map((peer, i) => (
               <div
                 key={i}
-                className="size-8 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
+                className="size-6 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
               >
                 <Avatar className="size-full">
                   <AvatarImage className="object-cover h-full" src={peer.avatarUrl || ""} />
