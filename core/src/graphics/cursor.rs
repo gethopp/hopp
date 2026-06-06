@@ -10,6 +10,9 @@ use iced::widget::canvas::Frame;
 use iced::Rectangle;
 use std::time::{Duration, Instant};
 
+const PENCIL_BADGE_LOGICAL_HEIGHT: f32 = 75.0;
+const PENCIL_TIP_LOGICAL: (f32, f32) = (1.2, 13.5);
+
 /// Cursor display mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorMode {
@@ -32,6 +35,8 @@ pub struct Cursor {
     pointer_cursor: (iced_core::image::Handle, (f32, f32)),
     /// (handle, (width, height)) for pencil cursor
     pencil_cursor: (iced_core::image::Handle, (f32, f32)),
+    /// Offset from the pencil badge top-left to the visible pencil tip
+    pencil_hotspot: (f32, f32),
     /// Current position of the cursor
     position: Option<Position>,
     /// Current cursor display mode
@@ -78,12 +83,18 @@ impl Cursor {
                 pencil_dims.height() as f32 / 2.5,
             ),
         );
+        let pencil_scale = pencil_cursor.1 .1 / PENCIL_BADGE_LOGICAL_HEIGHT;
+        let pencil_hotspot = (
+            PENCIL_TIP_LOGICAL.0 * pencil_scale,
+            PENCIL_TIP_LOGICAL.1 * pencil_scale,
+        );
 
         Ok(Self {
             visible_name: name.to_string(),
             normal_cursor,
             pointer_cursor,
             pencil_cursor,
+            pencil_hotspot,
             position: None,
             mode: CursorMode::Normal,
             last_update: None,
@@ -131,13 +142,17 @@ impl Cursor {
             CursorMode::Pencil => &self.pencil_cursor,
             CursorMode::Normal => &self.normal_cursor,
         };
+        let (hotspot_x, hotspot_y) = match self.mode {
+            CursorMode::Pencil => self.pencil_hotspot,
+            _ => (0.0, 0.0),
+        };
 
         let image = iced_core::image::Image::new(handle.clone());
         let position = translate(self.position.unwrap());
         frame.draw_image(
             Rectangle {
-                x: position.x as f32,
-                y: position.y as f32,
+                x: position.x as f32 - hotspot_x,
+                y: position.y as f32 - hotspot_y,
                 width: *width,
                 height: *height,
             },
