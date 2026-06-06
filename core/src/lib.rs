@@ -1212,21 +1212,26 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
                 if let Some(remote_control) = &mut self.remote_control {
-                    let visual_mode = match &drawing_mode {
-                        DrawingMode::Draw(_) => Some(CursorMode::Pencil),
-                        DrawingMode::ClickAnimation => Some(CursorMode::Pointer),
-                        DrawingMode::Disabled | DrawingMode::Any => None,
-                    };
                     let cursor_controller = &mut remote_control.cursor_controller;
                     match &drawing_mode {
+                        DrawingMode::Draw(_) => {
+                            cursor_controller.set_controller_pointer(true, sid.as_str());
+                            cursor_controller
+                                .set_controller_visual_mode(sid.as_str(), Some(CursorMode::Pencil));
+                        }
+                        DrawingMode::ClickAnimation => {
+                            cursor_controller.set_controller_pointer(true, sid.as_str());
+                            cursor_controller.set_controller_visual_mode(
+                                sid.as_str(),
+                                Some(CursorMode::Pointer),
+                            );
+                        }
                         DrawingMode::Disabled => {
                             cursor_controller.set_controller_pointer(false, sid.as_str());
+                            cursor_controller.set_controller_visual_mode(sid.as_str(), None);
                         }
-                        _ => {
-                            cursor_controller.set_controller_pointer(true, sid.as_str());
-                        }
+                        DrawingMode::Any => {}
                     }
-                    cursor_controller.set_controller_visual_mode(sid.as_str(), visual_mode);
                     remote_control
                         .gfx
                         .set_drawing_mode(sid.as_str(), drawing_mode.clone());
