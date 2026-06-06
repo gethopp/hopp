@@ -248,7 +248,15 @@ impl ParticipantsManager {
             mode
         );
         if let Some(participant) = self.participants.get_mut(identity) {
-            participant.draw_mut().set_mode(mode);
+            participant.draw_mut().set_mode(mode.clone());
+            match mode {
+                DrawingMode::Draw(_) => participant.cursor_mut().set_mode(CursorMode::Pencil),
+                DrawingMode::ClickAnimation => {
+                    participant.cursor_mut().set_mode(CursorMode::Pointer)
+                }
+                DrawingMode::Disabled => participant.cursor_mut().set_mode(CursorMode::Normal),
+                DrawingMode::Any => {}
+            }
         } else {
             log::warn!(
                 "ParticipantsManager::set_drawing_mode: participant {} not found",
