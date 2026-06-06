@@ -78,6 +78,7 @@ enum RoomServiceCommand {
     PublishWheelEvent(WheelDelta),
     PublishAddToClipboard(AddToClipboardData),
     PublishPasteFromClipboard(PasteFromClipboardData),
+    PublishClipboardData(ClipboardDataPayload),
     PublishClickAnimation(ClientPoint),
 }
 
@@ -112,6 +113,7 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::PublishWheelEvent(..) => write!(f, "PublishWheelEvent"),
             Self::PublishAddToClipboard(..) => write!(f, "PublishAddToClipboard"),
             Self::PublishPasteFromClipboard(..) => write!(f, "PublishPasteFromClipboard"),
+            Self::PublishClipboardData(..) => write!(f, "PublishClipboardData"),
             Self::PublishClickAnimation(..) => write!(f, "PublishClickAnimation"),
         }
     }
@@ -657,6 +659,17 @@ impl RoomService {
             .send(RoomServiceCommand::PublishPasteFromClipboard(data));
         if let Err(e) = res {
             log::error!("publish_paste_from_clipboard: Failed to send command: {e:?}");
+        }
+    }
+
+    /// Publishes clipboard data from sharer back to the requesting controller.
+    pub fn publish_clipboard_data(&self, data: ClipboardDataPayload) {
+        log::debug!("publish_clipboard_data");
+        let res = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishClipboardData(data));
+        if let Err(e) = res {
+            log::error!("publish_clipboard_data: Failed to send command: {e:?}");
         }
     }
 
@@ -1616,6 +1629,32 @@ async fn room_service_commands(
                     );
                 }
             }
+            RoomServiceCommand::PublishClipboardData(data) => {
+                let inner_room = inner.room.lock().await;
+                if inner_room.is_none() {
+                    log::warn!(
+                        "room_service_commands: Room doesn't exist for PublishClipboardData"
+                    );
+                    continue;
+                }
+                let room = inner_room.as_ref().unwrap();
+                let local_participant = room.local_participant();
+
+                let event = ClientEvent::ClipboardData(data);
+                let payload = serde_json::to_vec(&event).unwrap();
+                let res = local_participant
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: None,
+                        ..Default::default()
+                    })
+                    .await;
+
+                if let Err(e) = res {
+                    log::error!("room_service_commands: Failed to publish clipboard data: {e:?}");
+                }
+            }
             RoomServiceCommand::PublishClickAnimation(point) => {
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
@@ -1772,6 +1811,13 @@ pub struct PasteFromClipboardData {
     pub data: Option<ClipboardPayload>,
 }
 
+/// Clipboard data sent from sharer back to the requesting controller.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClipboardDataPayload {
+    pub requester_sid: String,
+    pub data: Option<ClipboardPayload>,
+}
+
 /// Settings specific to the Draw mode.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct DrawSettings {
@@ -1820,6 +1866,8 @@ pub enum ClientEvent {
     AddToClipboard(AddToClipboardData),
     /// Paste command from a remote controller
     PasteFromClipboard(PasteFromClipboardData),
+    /// Clipboard data sent from sharer back to the requesting controller
+    ClipboardData(ClipboardDataPayload),
     /// Drawing mode change event (disabled, draw, or click animation)
     DrawingMode(DrawingMode),
     /// Drawing started at a point with a path identifier
@@ -2075,7 +2123,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         }
                     }
                     ClientEvent::AddToClipboard(add_to_clipboard_data) => event_loop_proxy
-                        .send_event(UserEvent::AddToClipboard(add_to_clipboard_data)),
+                        .send_event(UserEvent::AddToClipboard(add_to_clipboard_data, identity)),
                     ClientEvent::PasteFromClipboard(paste_from_clipboard_data) => event_loop_proxy
                         .send_event(UserEvent::PasteFromClipboard(paste_from_clipboard_data)),
                     ClientEvent::DrawingMode(drawing_mode) => {
@@ -2104,6 +2152,13 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         .send_event(UserEvent::ClickAnimationFromParticipant(point, identity)),
                     ClientEvent::RemoteControlEnabled(data) => {
                         event_loop_proxy.send_event(UserEvent::SharerControlEnabled(data.enabled))
+                    }
+                    ClientEvent::ClipboardData(payload) => {
+                        if payload.requester_sid == user_identity {
+                            event_loop_proxy.send_event(UserEvent::SetClipboard(payload))
+                        } else {
+                            Ok(())
+                        }
                     }
                     _ => Ok(()),
                 };

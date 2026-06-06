@@ -149,7 +149,6 @@ struct RemoteControl<'a> {
     gfx: GraphicsContext<'a>,
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
-    clipboard_controller: Option<ClipboardController>,
 }
 
 impl<'a> RemoteControl<'a> {
@@ -242,6 +241,7 @@ pub struct Application<'a> {
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
+    clipboard_controller: Option<ClipboardController>,
 }
 
 #[derive(Error, Debug)]
@@ -295,6 +295,14 @@ impl<'a> Application<'a> {
         std::thread::spawn(move || poll_stream(screencapturer_for_poll));
         std::thread::spawn(move || poll_camera_stream(camera_capturer_clone));
 
+        let clipboard_controller = match ClipboardController::new() {
+            Ok(controller) => Some(controller),
+            Err(error) => {
+                log::error!("Application::new: Error creating clipboard controller {error:?}");
+                None
+            }
+        };
+
         Ok(Self {
             remote_control: None,
             textures_path: input.textures_path,
@@ -319,6 +327,7 @@ impl<'a> Application<'a> {
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
+            clipboard_controller,
         })
     }
 
@@ -668,18 +677,10 @@ impl<'a> Application<'a> {
             return Err(ServerError::CursorControllerCreationError);
         }
 
-        let clipboard_controller = match ClipboardController::new() {
-            Ok(controller) => Some(controller),
-            Err(error) => {
-                log::error!("create_overlay_window: Error creating clipboard controller {error:?}");
-                None
-            }
-        };
         self.remote_control = Some(RemoteControl {
             gfx: graphics_context,
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
-            clipboard_controller,
         });
 
         #[cfg(target_os = "linux")]
@@ -1162,23 +1163,46 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     sentry_metadata.app_version,
                 );
             }
-            UserEvent::AddToClipboard(add_to_clipboard_data) => {
+            UserEvent::AddToClipboard(add_to_clipboard_data, requester_identity) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none add to clipboard");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                if remote_control.clipboard_controller.is_none() {
+                if self.clipboard_controller.is_none() {
                     log::warn!("user_event: clipboard controller is none add to clipboard");
                     return;
                 }
-                let clipboard_controller =
-                    &mut remote_control.clipboard_controller.as_ref().unwrap();
-                clipboard_controller.add_to_clipboard(
-                    add_to_clipboard_data.is_copy,
-                    &mut remote_control.keyboard_controller,
-                );
+                let remote_control = self.remote_control.as_mut().unwrap();
+                let clipboard_text = self
+                    .clipboard_controller
+                    .as_mut()
+                    .unwrap()
+                    .add_to_clipboard(
+                        add_to_clipboard_data.is_copy,
+                        &mut remote_control.keyboard_controller,
+                    );
+                if let Some(text) = clipboard_text {
+                    if let Some(room_service) = &self.room_service {
+                        let bytes = text.as_bytes();
+                        const MAX_PACKET: usize = 15 * 1024;
+                        let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
+                        for i in 0..total_packets {
+                            let start = (i as usize) * MAX_PACKET;
+                            let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                            room_service.publish_clipboard_data(
+                                room_service::ClipboardDataPayload {
+                                    requester_sid: requester_identity.clone(),
+                                    data: Some(room_service::ClipboardPayload {
+                                        packet_id: i,
+                                        total_packets,
+                                        data: bytes[start..end].to_vec(),
+                                    }),
+                                },
+                            );
+                        }
+                    }
+                }
             }
             UserEvent::PasteFromClipboard(paste_from_clipboard_data) => {
                 log::info!("user_event: Paste from clipboard");
@@ -1186,17 +1210,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none paste from clipboard");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                if remote_control.clipboard_controller.is_none() {
+                if self.clipboard_controller.is_none() {
                     log::warn!("user_event: clipboard controller is none paste from clipboard");
                     return;
                 }
-                let clipboard_controller =
-                    &mut remote_control.clipboard_controller.as_mut().unwrap();
-                clipboard_controller.paste_from_clipboard(
-                    &mut remote_control.keyboard_controller,
-                    paste_from_clipboard_data.data,
-                );
+                let remote_control = self.remote_control.as_mut().unwrap();
+                self.clipboard_controller
+                    .as_mut()
+                    .unwrap()
+                    .paste_from_clipboard(
+                        &mut remote_control.keyboard_controller,
+                        paste_from_clipboard_data.data,
+                    );
+            }
+            UserEvent::SetClipboard(payload) => {
+                log::info!("user_event: Set clipboard");
+                if let Some(clipboard_controller) = &mut self.clipboard_controller {
+                    clipboard_controller.set_clipboard(payload.data);
+                }
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
@@ -2179,8 +2210,9 @@ pub enum UserEvent {
     ParticipantInControl(String),
     LocalParticipantInControl(bool),
     SentryMetadata(SentryMetadata),
-    AddToClipboard(room_service::AddToClipboardData),
+    AddToClipboard(room_service::AddToClipboardData, String),
     PasteFromClipboard(room_service::PasteFromClipboardData),
+    SetClipboard(room_service::ClipboardDataPayload),
     DrawingMode(room_service::DrawingMode, String),
     DrawStart(room_service::ClientPoint, u64, String),
     DrawAddPoint(room_service::ClientPoint, String),
