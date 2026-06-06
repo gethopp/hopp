@@ -3,6 +3,7 @@ package callstate
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -29,6 +30,8 @@ func setupDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.Exec(`CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT)`).Error)
 	return db
 }
@@ -56,7 +59,7 @@ func getRoomEntry(t *testing.T, mr *miniredis.Miniredis, userID string) string {
 func assertNoCallKeys(t *testing.T, mr *miniredis.Miniredis) {
 	t.Helper()
 	for _, key := range mr.Keys() {
-		if key[:5] == "user:" || key[:5] == "lock:" || key[:5] == "call:" {
+		if strings.HasPrefix(key, "user:call:") || strings.HasPrefix(key, "user:room:") || strings.HasPrefix(key, "lock:call:") || strings.HasPrefix(key, "call:pending:") {
 			t.Errorf("unexpected key still present: %s", key)
 		}
 	}
@@ -75,11 +78,31 @@ func assertSymmetricPeers(t *testing.T, mr *miniredis.Miniredis, userIDs []strin
 	for _, uid := range userIDs {
 		e := getCallEntry(t, mr, uid)
 		require.NotNil(t, e, "entry missing for %s", uid)
+		expectedPeers := make([]string, 0, len(userIDs)-1)
 		for _, other := range userIDs {
 			if other == uid {
 				continue
 			}
-			assert.Contains(t, e.Peers, other, "%s should list %s as peer", uid, other)
+			expectedPeers = append(expectedPeers, other)
+		}
+		assert.ElementsMatch(t, expectedPeers, e.Peers, "%s should have exact peers %v", uid, expectedPeers)
+	}
+}
+
+func assertNoStaleCallReferences(t *testing.T, mr *miniredis.Miniredis) {
+	t.Helper()
+	for _, key := range mr.Keys() {
+		if !strings.HasPrefix(key, "user:call:") {
+			continue
+		}
+		uid := strings.TrimPrefix(key, "user:call:")
+		entry := getCallEntry(t, mr, uid)
+		require.NotNil(t, entry, "entry missing for %s", uid)
+		for _, peer := range entry.Peers {
+			assert.NotEqual(t, uid, peer, "%s should not reference itself", uid)
+			peerEntry := getCallEntry(t, mr, peer)
+			require.NotNil(t, peerEntry, "%s has stale peer reference to %s", uid, peer)
+			assert.Contains(t, peerEntry.Peers, uid, "peer %s should reference %s", peer, uid)
 		}
 	}
 }
@@ -279,9 +302,9 @@ func TestGetCallStates(t *testing.T) {
 
 		states, err := tr.GetCallStates(ctx, nil, []string{"a", "b"})
 		require.NoError(t, err)
-		require.True(t, states["a"].InCall)
+		require.Contains(t, states, "a")
 		assert.ElementsMatch(t, []string{"b"}, states["a"].PeerIDs)
-		require.True(t, states["b"].InCall)
+		require.Contains(t, states, "b")
 		assert.ElementsMatch(t, []string{"a"}, states["b"].PeerIDs)
 	})
 
@@ -293,7 +316,7 @@ func TestGetCallStates(t *testing.T) {
 
 		states, err := tr.GetCallStates(ctx, db, []string{"u1"})
 		require.NoError(t, err)
-		require.True(t, states["u1"].InCall)
+		require.Contains(t, states, "u1")
 		assert.Equal(t, "My Room", states["u1"].RoomName)
 	})
 
@@ -316,9 +339,9 @@ func TestGetCallStates(t *testing.T) {
 		states, err := tr.GetCallStates(ctx, db, []string{"a", "b", "c", "idle"})
 		require.NoError(t, err)
 
-		assert.True(t, states["a"].InCall)
-		assert.True(t, states["b"].InCall)
-		assert.True(t, states["c"].InCall)
+		assert.Contains(t, states, "a")
+		assert.Contains(t, states, "b")
+		assert.Contains(t, states, "c")
 		assert.Equal(t, "My Room", states["c"].RoomName)
 		_, present := states["idle"]
 		assert.False(t, present)
@@ -377,7 +400,7 @@ func TestConcurrentJoinLeave(t *testing.T) {
 	})
 
 	t.Run("concurrent join+leave: no corrupt state", func(t *testing.T) {
-		tr, _ := setupTracker(t)
+		tr, mr := setupTracker(t)
 
 		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
 
@@ -400,5 +423,62 @@ func TestConcurrentJoinLeave(t *testing.T) {
 			assert.ErrorIs(t, joinErr, ErrCallEnded)
 		}
 		require.NoError(t, leaveErr)
+
+		assertNoStaleCallReferences(t, mr)
+	})
+
+	t.Run("join while all participants leave: ErrCallEnded", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+
+		var wg sync.WaitGroup
+		wg.Add(3)
+
+		var joinErr error
+		go func() {
+			defer wg.Done()
+			tr.LeaveCall(ctx, "a") //nolint:errcheck
+		}()
+		go func() {
+			defer wg.Done()
+			tr.LeaveCall(ctx, "b") //nolint:errcheck
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, joinErr = tr.JoinCall(ctx, "c", "a")
+		}()
+		wg.Wait()
+
+		// c either joined before both left, or got ErrCallEnded
+		if joinErr != nil {
+			assert.ErrorIs(t, joinErr, ErrCallEnded)
+		}
+		// No orphaned keys regardless of outcome
+		assertNoCallKeys(t, mr)
+	})
+
+	t.Run("two concurrent joiners on two-user call", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+
+		var wg sync.WaitGroup
+		joiners := []string{"c", "d"}
+		errs := make([]error, len(joiners))
+		for i, joiner := range joiners {
+			wg.Add(1)
+			go func(idx int, id string) {
+				defer wg.Done()
+				_, _, errs[idx] = tr.JoinCall(ctx, id, "a")
+			}(i, joiner)
+		}
+		wg.Wait()
+
+		for i, err := range errs {
+			require.NoError(t, err, "joiner %s failed", joiners[i])
+		}
+
+		assertSymmetricPeers(t, mr, []string{"a", "b", "c", "d"})
 	})
 }

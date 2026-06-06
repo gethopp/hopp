@@ -121,7 +121,6 @@ func (t *Tracker) RemoveCallEntry(ctx context.Context, userID string) error {
 }
 
 type CallPresence struct {
-	InCall   bool     `json:"inCall"`
 	PeerIDs  []string `json:"peerIds,omitempty"`
 	RoomName string   `json:"roomName,omitempty"`
 }
@@ -146,7 +145,7 @@ func (t *Tracker) GetCallStates(ctx context.Context, db *gorm.DB, userIDs []stri
 		if err == nil {
 			var entry callEntry
 			if json.Unmarshal([]byte(raw), &entry) == nil {
-				result[id] = CallPresence{InCall: true, PeerIDs: entry.GetPeers()}
+				result[id] = CallPresence{PeerIDs: entry.GetPeers()}
 				continue
 			}
 		}
@@ -158,7 +157,7 @@ func (t *Tracker) GetCallStates(ctx context.Context, db *gorm.DB, userIDs []stri
 					roomName = room
 				}
 			}
-			result[id] = CallPresence{InCall: true, RoomName: roomName}
+			result[id] = CallPresence{RoomName: roomName}
 		}
 	}
 	return result, nil
@@ -338,7 +337,19 @@ func (t *Tracker) LeaveCall(ctx context.Context, userID string) (roomName string
 	}
 	defer t.redis.Del(ctx, lockKey)
 
-	// Phase 3: remove user and update peers
+	// Phase 3: re-read own entry after acquiring lock — peers may have grown since Phase 1
+	raw, err = t.redis.Get(ctx, callKey(userID)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return roomName, nil, nil
+		}
+		return "", nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+		return "", nil, err
+	}
+
+	// Phase 4: remove user and update peers
 	peers := entry.GetPeers()
 	pipe := t.redis.Pipeline()
 	pipe.Del(ctx, callKey(userID))

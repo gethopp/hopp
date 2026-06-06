@@ -109,11 +109,7 @@ components:
 
     CallPresence:
       type: object
-      required:
-        - inCall
       properties:
-        inCall:
-          type: boolean
         peerIds:
           type: array
           items:

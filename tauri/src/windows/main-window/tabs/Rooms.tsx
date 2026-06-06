@@ -345,7 +345,6 @@ export const Rooms = () => {
     }
   }, [rooms, searchQuery]);
 
-  callTokens?.audioToken;
   const isRoomCall = !(callTokens == null || !callTokens.room);
 
   return (
@@ -532,8 +531,6 @@ const EmptyRoomsState = ({
 };
 
 const SelectedRoom = ({ room }: { room: Room }) => {
-  const { callTokens } = useStore();
-
   const handleCopyRoomLink = async () => {
     const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
     await writeText(roomLink);

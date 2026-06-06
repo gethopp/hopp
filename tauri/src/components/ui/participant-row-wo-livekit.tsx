@@ -312,7 +312,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
         <TruncatedName text={`${props.user.first_name} ${props.user.last_name}`} className="medium" />
 
         <div className="muted truncate text-xs text-slate-500">
-          {userPresence?.inCall ?
+          {userPresence ?
             userPresence.roomName ?
               `In ${userPresence.roomName}`
             : "In a call"
@@ -323,7 +323,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       </div>
 
       <div className="mr-4">
-        {userPresence?.inCall && !userPresence.roomName && !inACall ?
+        {userPresence && !userPresence.roomName && !inACall ?
           <Button
             variant="gradient-white"
             onClick={joinCall}
@@ -348,7 +348,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
                 callUser();
               }
             }}
-            disabled={inACall || hasIncomingCall || !!userPresence?.inCall}
+            disabled={inACall || hasIncomingCall || !!userPresence}
             className={clsx(
               "px-2 w-auto h-7 flex flex-row items-center gap-1",
               !isCalling && "text-slate-600",

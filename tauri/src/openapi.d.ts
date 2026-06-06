@@ -2520,7 +2520,6 @@ export interface components {
       };
     };
     CallPresence: {
-      inCall: boolean;
       /** @description Peer user IDs in the call */
       peerIds?: string[];
       /** @description Room name (for room calls) */

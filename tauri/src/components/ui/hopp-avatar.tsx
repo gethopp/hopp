@@ -68,6 +68,22 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         <PeerBadge peer={peers[0]} />
       : peers.length === 2 ?
         <div className="group absolute bottom-0 right-0 flex overflow-visible">
+          <div className="pointer-events-none absolute bottom-full right-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-1">
+            {[peers[1], peers[0]].map((peer, i) => (
+              <div
+                key={i}
+                className="size-8 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
+              >
+                <Avatar className="size-full">
+                  <AvatarImage className="object-cover h-full" src={peer.avatarUrl || ""} />
+                  <AvatarFallback className="text-xs">
+                    {peer.firstName[0]}
+                    {peer.lastName[0]}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
+            ))}
+          </div>
           <div className="size-3.5 rounded-full outline-solid outline-2 outline-white overflow-visible bg-emerald-200 flex items-center justify-center -mr-1">
             <Avatar className="size-full rounded-full overflow-hidden">
               <AvatarImage className="object-cover h-full" src={peers[1].avatarUrl || ""} />
@@ -89,6 +105,22 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         </div>
       : peers.length >= 3 ?
         <div className="group absolute bottom-0 right-0 flex overflow-visible">
+          <div className="pointer-events-none absolute bottom-full right-0 mb-1 hidden group-hover:flex gap-1 rounded-md outline-solid outline-2 outline-white bg-white shadow-md p-1">
+            {peers.map((peer, i) => (
+              <div
+                key={i}
+                className="size-8 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-emerald-200"
+              >
+                <Avatar className="size-full">
+                  <AvatarImage className="object-cover h-full" src={peer.avatarUrl || ""} />
+                  <AvatarFallback className="text-xs">
+                    {peer.firstName[0]}
+                    {peer.lastName[0]}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
+            ))}
+          </div>
           <div className="size-3.5 rounded-full outline-solid outline-2 outline-white overflow-hidden bg-slate-500 flex items-center justify-center text-white -mr-1">
             <span className="text-[5px] font-bold">+{peers.length - 1}</span>
           </div>
