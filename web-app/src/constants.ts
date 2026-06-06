@@ -20,6 +20,9 @@ export const META = {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore - MODE is set by the Vite environment
   DEV_MODE: import.meta.env.MODE === "development",
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore - VITE_DISABLE_TELEMETRY is defined by us with Vite naming convention
+  DISABLE_TELEMETRY: import.meta.env.VITE_DISABLE_TELEMETRY === "true",
 };
 
 export const BACKEND_URLS = {
