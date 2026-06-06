@@ -293,12 +293,8 @@ impl ControllerCursor {
         self.mode = mode;
     }
 
-    fn set_visual_mode_override(&mut self, mode: Option<CursorMode>) -> bool {
-        if self.visual_mode_override == mode {
-            return false;
-        }
+    fn set_visual_mode_override(&mut self, mode: Option<CursorMode>) {
         self.visual_mode_override = mode;
-        true
     }
 
     fn set_pointer_mode(&mut self, enabled: bool, remote_control_enabled: bool) {
@@ -1046,24 +1042,11 @@ impl CursorController {
     pub fn set_controller_visual_mode(&mut self, identity: &str, mode: Option<CursorMode>) {
         log::info!("set_controller_visual_mode: {identity} {mode:?}");
 
-        let changed = {
-            let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
-            let mut changed = false;
-            for controller in controllers_cursors.iter_mut() {
-                if controller.identity == identity {
-                    changed = controller.set_visual_mode_override(mode);
-                    break;
-                }
-            }
-            changed
-        };
-
-        if changed {
-            if let Err(e) = self
-                .redraw_thread_sender
-                .send(RedrawThreadCommands::Activity)
-            {
-                log::error!("set_controller_visual_mode: error sending redraw event: {e:?}");
+        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter_mut() {
+            if controller.identity == identity {
+                controller.set_visual_mode_override(mode);
+                break;
             }
         }
     }
