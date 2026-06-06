@@ -772,16 +772,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .publish_controller_cursor_enabled(enabled);
             }
-            UserEvent::ControllerCursorVisible(visible, sid) => {
-                log::debug!("user_event: cursor visible: {visible:?} {sid}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor visible");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controller_pointer(visible, sid.as_str());
-            }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
                 if self.remote_control.is_none() {
@@ -2170,7 +2160,6 @@ pub enum UserEvent {
     CursorPosition(f32, f32, String),
     MouseClick(MouseClickData, String),
     ControllerCursorEnabled(bool),
-    ControllerCursorVisible(bool, String),
     Keystroke(KeystrokeData),
     Scroll(ScrollDelta, String),
     GetAvailableContent,

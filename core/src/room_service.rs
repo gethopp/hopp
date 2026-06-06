@@ -74,7 +74,6 @@ enum RoomServiceCommand {
     MuteScreenShareTrack,
     UnmuteScreenShareTrack,
     PublishMouseClick(MouseClickData),
-    PublishMouseVisible(MouseVisibleData),
     PublishKeystroke(KeystrokeData),
     PublishWheelEvent(WheelDelta),
     PublishAddToClipboard(AddToClipboardData),
@@ -109,7 +108,6 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::MuteScreenShareTrack => write!(f, "MuteScreenShareTrack"),
             Self::UnmuteScreenShareTrack => write!(f, "UnmuteScreenShareTrack"),
             Self::PublishMouseClick(..) => write!(f, "PublishMouseClick"),
-            Self::PublishMouseVisible(..) => write!(f, "PublishMouseVisible"),
             Self::PublishKeystroke(..) => write!(f, "PublishKeystroke"),
             Self::PublishWheelEvent(..) => write!(f, "PublishWheelEvent"),
             Self::PublishAddToClipboard(..) => write!(f, "PublishAddToClipboard"),
@@ -615,17 +613,6 @@ impl RoomService {
             .send(RoomServiceCommand::PublishMouseClick(data));
         if let Err(e) = res {
             log::error!("publish_mouse_click: Failed to send command: {e:?}");
-        }
-    }
-
-    /// Publishes mouse visibility state to the room.
-    pub fn publish_mouse_visible(&self, data: MouseVisibleData) {
-        log::debug!("publish_mouse_visible: {data:?}");
-        let res = self
-            .service_command_tx
-            .send(RoomServiceCommand::PublishMouseVisible(data));
-        if let Err(e) = res {
-            log::error!("publish_mouse_visible: Failed to send command: {e:?}");
         }
     }
 
@@ -1527,30 +1514,6 @@ async fn room_service_commands(
                     log::error!("room_service_commands: Failed to publish mouse click: {e:?}");
                 }
             }
-            RoomServiceCommand::PublishMouseVisible(data) => {
-                let inner_room = inner.room.lock().await;
-                if inner_room.is_none() {
-                    log::warn!("room_service_commands: Room doesn't exist for PublishMouseVisible");
-                    continue;
-                }
-                let room = inner_room.as_ref().unwrap();
-                let local_participant = room.local_participant();
-
-                let event = ClientEvent::MouseVisible(data);
-                let payload = serde_json::to_vec(&event).unwrap();
-                let res = local_participant
-                    .publish_data(DataPacket {
-                        payload,
-                        reliable: true,
-                        topic: None,
-                        ..Default::default()
-                    })
-                    .await;
-
-                if let Err(e) = res {
-                    log::error!("room_service_commands: Failed to publish mouse visible: {e:?}");
-                }
-            }
             RoomServiceCommand::PublishKeystroke(data) => {
                 let inner_room = inner.room.lock().await;
                 if inner_room.is_none() {
@@ -1735,14 +1698,6 @@ pub struct MouseClickData {
 
 /// Contains data for mouse visibility events.
 ///
-/// This structure is used to communicate whether the mouse cursor should be
-/// visible or hidden on remote clients.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MouseVisibleData {
-    /// Whether the mouse cursor should be visible
-    pub visible: bool,
-}
-
 /// Contains data for mouse wheel scroll events.
 ///
 /// This structure represents the scroll delta values for both horizontal
@@ -1851,8 +1806,6 @@ pub enum ClientEvent {
     MouseMove(ClientPoint),
     /// Mouse click event from a remote controller
     MouseClick(MouseClickData),
-    /// Mouse visibility change event
-    MouseVisible(MouseVisibleData),
     /// Keyboard input event from a remote controller
     Keystroke(KeystrokeData),
     /// Mouse wheel scroll event from a remote controller
@@ -2095,9 +2048,6 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             identity,
                         ))
                     }
-                    ClientEvent::MouseVisible(visible_data) => event_loop_proxy.send_event(
-                        UserEvent::ControllerCursorVisible(visible_data.visible, identity),
-                    ),
                     ClientEvent::Keystroke(key) => {
                         event_loop_proxy.send_event(UserEvent::Keystroke(crate::KeystrokeData {
                             key: key.key[0].clone(),
