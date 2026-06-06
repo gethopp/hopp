@@ -25,6 +25,48 @@ pub enum UserBadgeKind {
     Pencil,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BadgeLayout {
+    box_width: f32,
+    box_width_stroke: f32,
+    filter_width: f32,
+    text_x: f32,
+    svg_width: f32,
+    svg_height: f32,
+    scale_factor: f32,
+}
+
+impl BadgeLayout {
+    fn new(kind: UserBadgeKind, box_width: f32, scale_factor: f32) -> Self {
+        let is_pointer = kind == UserBadgeKind::Pointer;
+        let text_x = if is_pointer {
+            16.5317 + 6.0
+        } else {
+            18.6445 + 6.0
+        };
+        let svg_width = if is_pointer {
+            (box_width + 34.0) * scale_factor
+        } else {
+            (box_width + 36.0) * scale_factor
+        };
+        let svg_height = if is_pointer {
+            74.0 * scale_factor
+        } else {
+            75.0 * scale_factor
+        };
+
+        Self {
+            box_width,
+            box_width_stroke: box_width - 1.10065,
+            filter_width: box_width + 16.5097 * 2.0,
+            text_x,
+            svg_width,
+            svg_height,
+            scale_factor,
+        }
+    }
+}
+
 /// Calculate dynamic box width based on text length
 /// Increases box width for longer text to ensure it fits comfortably
 fn calculate_box_width(text: &str) -> f32 {
@@ -110,31 +152,10 @@ pub fn render_user_badge_to_png(
         name = name.chars().take(17).collect::<String>() + "...";
     };
 
-    // Calculate text x position with left padding
-    // For pointer template: rect starts at x=16.5317, original text at x=22.5317 (6px padding)
-    // For regular template: rect starts at x=18.6445, original text at x=24.6445 (6px padding)
-    let text_x_pointer = 16.5317 + 6.0;
-    let text_x_regular = 18.6445 + 6.0;
-
-    // Calculate dynamic SVG dimensions based on box_width
-    // Original: box_width=70, viewBox width=104 (pointer) or 106 (regular)
-    // The difference accounts for the rect x position + padding on the right
-    let svg_width_pointer = (box_width + 34.0) * scale_factor; // 16.5317 (left margin) + 70 (original box) + 17.4683 (right margin) ≈ 104
-    let svg_width_regular = (box_width + 36.0) * scale_factor; // 18.6445 (left margin) + 70 (original box) + 17.3555 (right margin) ≈ 106
-    let svg_height_pointer = 74.0 * scale_factor;
-    let svg_height_regular = 75.0 * scale_factor;
+    let layout = BadgeLayout::new(kind, box_width, scale_factor);
 
     if kind == UserBadgeKind::Pencil {
-        return render_pencil_user_badge_to_png(
-            color,
-            &name,
-            box_width,
-            text_x_regular,
-            svg_width_regular,
-            svg_height_regular,
-            scale_factor,
-            fontdb,
-        );
+        return render_pencil_user_badge_to_png(color, &name, layout, fontdb);
     }
 
     let pointer = kind == UserBadgeKind::Pointer;
@@ -210,13 +231,13 @@ pub fn render_user_badge_to_png(
 </svg>"##,
             color = color,
             name = name,
-            box_width = box_width,
-            box_width_stroke = box_width - 1.10065,
-            filter_width = box_width + 16.5097 * 2.0,
-            text_x = text_x_pointer,
-            svg_width = svg_width_pointer,
-            svg_height = svg_height_pointer,
-            scale_factor = scale_factor,
+            box_width = layout.box_width,
+            box_width_stroke = layout.box_width_stroke,
+            filter_width = layout.filter_width,
+            text_x = layout.text_x,
+            svg_width = layout.svg_width,
+            svg_height = layout.svg_height,
+            scale_factor = layout.scale_factor,
         )
     } else {
         // Regular cursor template
@@ -269,13 +290,13 @@ pub fn render_user_badge_to_png(
 </svg>"##,
             color = color,
             name = name,
-            box_width = box_width,
-            box_width_stroke = box_width - 1.10065,
-            filter_width = box_width + 16.5097 * 2.0,
-            text_x = text_x_regular,
-            svg_width = svg_width_regular,
-            svg_height = svg_height_regular,
-            scale_factor = scale_factor,
+            box_width = layout.box_width,
+            box_width_stroke = layout.box_width_stroke,
+            filter_width = layout.filter_width,
+            text_x = layout.text_x,
+            svg_width = layout.svg_width,
+            svg_height = layout.svg_height,
+            scale_factor = layout.scale_factor,
         )
     };
 
@@ -289,8 +310,8 @@ pub fn render_user_badge_to_png(
 
     // Get the SVG size (which is now already scaled by the SVG attributes)
     let svg_size = tree.size();
-    let width = (svg_size.width() * scale_factor) as u32;
-    let height = (svg_size.height() * scale_factor) as u32;
+    let width = (svg_size.width() * layout.scale_factor) as u32;
+    let height = (svg_size.height() * layout.scale_factor) as u32;
     // Print the size that it will render
     println!("SVG size: {}x{}", width, height);
 
@@ -310,11 +331,7 @@ pub fn render_user_badge_to_png(
 fn render_pencil_user_badge_to_png(
     color: &str,
     name: &str,
-    box_width: f32,
-    text_x: f32,
-    svg_width: f32,
-    svg_height: f32,
-    scale_factor: f32,
+    layout: BadgeLayout,
     fontdb: std::sync::Arc<Database>,
 ) -> Result<Vec<u8>, SvgRenderError> {
     let svg_template = format!(
@@ -372,13 +389,13 @@ fn render_pencil_user_badge_to_png(
 </svg>"##,
         color = color,
         name = name,
-        box_width = box_width,
-        box_width_stroke = box_width - 1.10065,
-        filter_width = box_width + 16.5097 * 2.0,
-        text_x = text_x,
-        svg_width = svg_width,
-        svg_height = svg_height,
-        scale_factor = scale_factor,
+        box_width = layout.box_width,
+        box_width_stroke = layout.box_width_stroke,
+        filter_width = layout.filter_width,
+        text_x = layout.text_x,
+        svg_width = layout.svg_width,
+        svg_height = layout.svg_height,
+        scale_factor = layout.scale_factor,
     );
 
     let usvg_options = usvg::Options {
@@ -389,8 +406,8 @@ fn render_pencil_user_badge_to_png(
         .map_err(|e| SvgRenderError::SvgParseError(e.to_string()))?;
 
     let svg_size = tree.size();
-    let width = (svg_size.width() * scale_factor) as u32;
-    let height = (svg_size.height() * scale_factor) as u32;
+    let width = (svg_size.width() * layout.scale_factor) as u32;
+    let height = (svg_size.height() * layout.scale_factor) as u32;
     println!("SVG size: {}x{}", width, height);
 
     let mut pixmap =
