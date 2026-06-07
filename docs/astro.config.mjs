@@ -49,6 +49,7 @@ export default defineConfig({
             { label: "Screen Sharing", slug: "features/screen-sharing" },
             { label: "Rooms", slug: "features/rooms" },
             { label: "Remote Control", slug: "features/remote-control" },
+            { label: "Clipboard", slug: "features/clipboard" },
             { label: "Drawing (beta)", slug: "features/drawing" },
           ],
         },

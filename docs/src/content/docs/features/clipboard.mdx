@@ -1,0 +1,42 @@
+---
+title: Clipboard
+description: Learn how to copy and paste between computers using Hopp's clipboard sharing.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Clipboard sharing lets you copy and paste text between the controller and sharer machines during a screen sharing session. Hopp simulates **Cmd+C / Cmd+V** on macOS and **Ctrl+C / Ctrl+V** on Windows/Linux on the sharer's machine.
+
+## Paste to Sharer's computer
+
+To paste text from your computer to the sharer's machine:
+
+1. Copy text on your machine as you normally would.
+2. Press your local paste shortcut (**Cmd+V** on macOS, **Ctrl+V** on Windows/Linux) while viewing the shared screen.
+3. Your clipboard content is sent to the sharer's machine and pasted into their focused application.
+
+If the sharer uses a different keyboard configuration, press your local paste shortcut first so the remote machine receives the new clipboard data, then type the remote combination manually.
+
+## Copy from Sharer's computer
+
+To copy text from the sharer's machine back to your clipboard:
+
+1. Press your local copy shortcut (**Cmd+C** on macOS, **Ctrl+C** on Windows/Linux) while viewing the shared screen.
+2. This triggers a copy on the sharer's machine and sends the clipboard data back to your computer.
+
+If the sharer uses a different keyboard configuration, use your local copy shortcut first to trigger the clipboard sync.
+
+## Cross-OS usage
+
+When the controller and sharer are on different operating systems, always use **your own local OS shortcuts**.
+
+For example, if the sharer is on Windows and the controller is on macOS, the controller should use **Cmd+C** and **Cmd+V**. This correctly triggers copy and paste on the remote machine and syncs the clipboard.
+
+<Aside type="caution">
+  If the controller uses the remote OS shortcuts instead (e.g. **Ctrl+C / Ctrl+V** on a macOS controller when the sharer
+  is on Windows), the local copy may work but the clipboard data will not sync back to the controller's machine.
+</Aside>
+
+## Limitations
+
+- **Text only** — images, files, and rich content are not supported.
