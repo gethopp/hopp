@@ -79,7 +79,7 @@ impl ClipboardController {
     ) -> Option<String> {
         let letter_key = if is_copy { "c" } else { "x" };
         simulate_shortcut_key_sequence(keyboard_controller, letter_key);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(20));
         self.clipboard.get_text().ok().filter(|t| !t.is_empty())
     }
 
