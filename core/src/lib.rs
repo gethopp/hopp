@@ -2016,6 +2016,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             }
                             ScreenShareInputEvent::PasteFromClipboard(text) => match text {
                                 Some(clipboard_text) => {
+                                    log::info!("PasteFromClipboard: {:?}", clipboard_text);
                                     let bytes = clipboard_text.as_bytes();
                                     const MAX_PACKET: usize = 15 * 1024;
                                     let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
