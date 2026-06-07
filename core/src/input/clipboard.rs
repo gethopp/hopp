@@ -19,21 +19,6 @@ fn construct_clipboard_data(clipboard_payload: &mut [room_service::ClipboardPayl
     String::from_utf8_lossy(&combined_data).into_owned()
 }
 
-fn release_all_modifiers(keyboard_controller: &mut KeyboardController<KeyboardLayout>) {
-    for key in ["Meta", "Control", "Shift", "Alt"] {
-        let keystroke = KeystrokeData {
-            key: key.to_string(),
-            meta: false,
-            shift: false,
-            ctrl: false,
-            alt: false,
-            down: false,
-        };
-        keyboard_controller.simulate_keystrokes(keystroke);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(10));
-}
-
 fn simulate_shortcut_key_sequence(
     keyboard_controller: &mut KeyboardController<KeyboardLayout>,
     letter_key: &str,
@@ -93,7 +78,6 @@ impl ClipboardController {
         keyboard_controller: &mut KeyboardController<KeyboardLayout>,
     ) -> Option<String> {
         let letter_key = if is_copy { "c" } else { "x" };
-        release_all_modifiers(keyboard_controller);
         simulate_shortcut_key_sequence(keyboard_controller, letter_key);
         std::thread::sleep(std::time::Duration::from_millis(50));
         self.clipboard.get_text().ok().filter(|t| !t.is_empty())
@@ -138,7 +122,6 @@ impl ClipboardController {
                 return;
             }
         }
-        release_all_modifiers(keyboard_controller);
         simulate_shortcut_key_sequence(keyboard_controller, "v");
     }
 }

@@ -1966,8 +1966,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // Route to screensharing window if it matches
         if let Some(screen_sharing_window) = &mut self.screensharing_window {
             if screen_sharing_window.window_id() == window_id {
-                let input_event = screen_sharing_window.handle_window_event(event);
-                if let Some(event) = input_event {
+                let input_events = screen_sharing_window.handle_window_event(event);
+                for event in input_events {
                     if let Some(rs) = &self.room_service {
                         match event {
                             ScreenShareInputEvent::CursorMoved { x, y } => {

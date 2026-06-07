@@ -385,6 +385,10 @@ struct ScreensharingState {
     last_click_x: f32,
     last_click_y: f32,
     sharer_name: String,
+    /// Modifier key-down events buffered until we know whether they precede a
+    /// clipboard shortcut (in which case they are discarded) or a regular key
+    /// (in which case they are flushed first).
+    queued_modifier_events: Vec<crate::room_service::KeystrokeData>,
 }
 
 impl Default for ScreensharingState {
@@ -408,6 +412,7 @@ impl Default for ScreensharingState {
             last_click_x: 0.0,
             last_click_y: 0.0,
             sharer_name: "Screen".to_string(),
+            queued_modifier_events: Vec::new(),
         }
     }
 }
@@ -824,6 +829,7 @@ impl ScreensharingWindow {
         self.state.last_click_time = StdInstant::now();
         self.state.last_click_x = 0.0;
         self.state.last_click_y = 0.0;
+        self.state.queued_modifier_events.clear();
 
         // Reset window-level state
         self.local_participant_in_control = false;
@@ -935,13 +941,13 @@ impl ScreensharingWindow {
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
-    /// Returns an optional input event to be forwarded to room service.
-    pub fn handle_window_event(&mut self, event: WindowEvent) -> Option<ScreenShareInputEvent> {
+    /// Returns input events to be forwarded to room service.
+    pub fn handle_window_event(&mut self, event: WindowEvent) -> Vec<ScreenShareInputEvent> {
         // Participant area event gating: update cursor-in-rect state and capture input
         // when inside the participant image area. All events still flow to iced.
         let scale_factor = self.window.scale_factor() as f32;
         let rect = self.participant_image_rect();
-        let mut input_event = None;
+        let mut input_events: Vec<ScreenShareInputEvent> = Vec::new();
 
         let is_redraw = matches!(event, WindowEvent::RedrawRequested);
 
@@ -969,11 +975,11 @@ impl ScreensharingWindow {
                             drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                             crate::utils::geometry::Position { x: pct_x, y: pct_y },
                         );
-                        input_event =
-                            Some(ScreenShareInputEvent::DrawAddPoint { x: pct_x, y: pct_y });
+                        input_events
+                            .push(ScreenShareInputEvent::DrawAddPoint { x: pct_x, y: pct_y });
                     } else {
-                        input_event =
-                            Some(ScreenShareInputEvent::CursorMoved { x: pct_x, y: pct_y });
+                        input_events
+                            .push(ScreenShareInputEvent::CursorMoved { x: pct_x, y: pct_y });
                     }
 
                     if !was_inside {
@@ -990,11 +996,12 @@ impl ScreensharingWindow {
                                 drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
-                            input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
+                            input_events.push(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
                     }
                     self.state.last_draw_cursor = None;
+                    self.state.queued_modifier_events.clear();
                     log::debug!("ScreensharingWindow: cursor left participant area");
                 }
             }
@@ -1008,11 +1015,12 @@ impl ScreensharingWindow {
                                 drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
-                            input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
+                            input_events.push(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
                     }
                     self.state.last_draw_cursor = None;
+                    self.state.queued_modifier_events.clear();
                     self.mouse_in_participant_area = false;
                     self.update_cursor();
                     log::debug!("ScreensharingWindow: cursor left participant area (CursorLeft)");
@@ -1028,11 +1036,12 @@ impl ScreensharingWindow {
                                 drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 crate::utils::geometry::Position { x: lx, y: ly },
                             );
-                            input_event = Some(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
+                            input_events.push(ScreenShareInputEvent::DrawEnd { x: lx, y: ly });
                         }
                         self.state.left_mouse_pressed = false;
                     }
                     self.state.last_draw_cursor = None;
+                    self.state.queued_modifier_events.clear();
                     self.mouse_in_participant_area = false;
                     self.update_cursor();
                     log::debug!(
@@ -1063,7 +1072,7 @@ impl ScreensharingWindow {
                                         crate::utils::geometry::Position { x: pct_x, y: pct_y },
                                         self.state.current_path_id,
                                     );
-                                    input_event = Some(ScreenShareInputEvent::DrawStart {
+                                    input_events.push(ScreenShareInputEvent::DrawStart {
                                         x: pct_x,
                                         y: pct_y,
                                         path_id: self.state.current_path_id,
@@ -1074,8 +1083,10 @@ impl ScreensharingWindow {
                                         drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                         crate::utils::geometry::Position { x: pct_x, y: pct_y },
                                     );
-                                    input_event =
-                                        Some(ScreenShareInputEvent::DrawEnd { x: pct_x, y: pct_y });
+                                    input_events.push(ScreenShareInputEvent::DrawEnd {
+                                        x: pct_x,
+                                        y: pct_y,
+                                    });
                                 }
                             }
                             winit::event::MouseButton::Right => {
@@ -1083,7 +1094,7 @@ impl ScreensharingWindow {
                                     self.participants_manager.draw_clear_all_paths(
                                         drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                     );
-                                    input_event = Some(ScreenShareInputEvent::DrawClearAllPaths);
+                                    input_events.push(ScreenShareInputEvent::DrawClearAllPaths);
                                 }
                             }
                             _ => {}
@@ -1093,8 +1104,8 @@ impl ScreensharingWindow {
                             self.click_animation_renderer.enable_click_animation(
                                 crate::utils::geometry::Position { x: pct_x, y: pct_y },
                             );
-                            input_event =
-                                Some(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
+                            input_events
+                                .push(ScreenShareInputEvent::ClickAnimation { x: pct_x, y: pct_y });
                         }
                     } else if self.state.remote_control_allowed {
                         // control mode
@@ -1132,7 +1143,7 @@ impl ScreensharingWindow {
                             self.state.last_click_count
                         };
 
-                        input_event = Some(ScreenShareInputEvent::MouseClick(
+                        input_events.push(ScreenShareInputEvent::MouseClick(
                             crate::room_service::MouseClickData {
                                 x: pct_x,
                                 y: pct_y,
@@ -1178,7 +1189,7 @@ impl ScreensharingWindow {
                         winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
                     };
 
-                    input_event = Some(ScreenShareInputEvent::Scroll(
+                    input_events.push(ScreenShareInputEvent::Scroll(
                         crate::room_service::WheelDelta {
                             deltaX: delta_x,
                             deltaY: delta_y,
@@ -1205,7 +1216,7 @@ impl ScreensharingWindow {
                             let _ = self
                                 .event_loop_proxy
                                 .send_event(crate::UserEvent::ExitRequested);
-                            return input_event;
+                            return input_events;
                         }
                     }
                 }
@@ -1249,14 +1260,17 @@ impl ScreensharingWindow {
                     if ctrl_or_cmd && key_event.state.is_pressed() {
                         match key_str.as_str() {
                             "c" => {
-                                input_event =
-                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: true });
+                                self.state.queued_modifier_events.clear();
+                                input_events
+                                    .push(ScreenShareInputEvent::AddToClipboard { is_copy: true });
                             }
                             "x" => {
-                                input_event =
-                                    Some(ScreenShareInputEvent::AddToClipboard { is_copy: false });
+                                self.state.queued_modifier_events.clear();
+                                input_events
+                                    .push(ScreenShareInputEvent::AddToClipboard { is_copy: false });
                             }
                             "v" => {
+                                self.state.queued_modifier_events.clear();
                                 let clipboard_text =
                                     self.clipboard.read(Kind::Standard).unwrap_or_default();
                                 let data = if clipboard_text.is_empty() {
@@ -1265,11 +1279,14 @@ impl ScreensharingWindow {
                                     self.clipboard.write(Kind::Standard, String::new());
                                     Some(clipboard_text)
                                 };
-                                input_event = Some(ScreenShareInputEvent::PasteFromClipboard(data));
+                                input_events.push(ScreenShareInputEvent::PasteFromClipboard(data));
                             }
                             _ => {
                                 let down = key_event.state.is_pressed();
-                                input_event = Some(ScreenShareInputEvent::KeyInput(
+                                for queued in self.state.queued_modifier_events.drain(..) {
+                                    input_events.push(ScreenShareInputEvent::KeyInput(queued));
+                                }
+                                input_events.push(ScreenShareInputEvent::KeyInput(
                                     crate::room_service::KeystrokeData {
                                         key: vec![key_str.clone()],
                                         meta,
@@ -1283,16 +1300,24 @@ impl ScreensharingWindow {
                         }
                     } else {
                         let down = key_event.state.is_pressed();
-                        input_event = Some(ScreenShareInputEvent::KeyInput(
-                            crate::room_service::KeystrokeData {
-                                key: vec![key_str.clone()],
-                                meta,
-                                ctrl: self.modifiers.control_key(),
-                                shift: self.modifiers.shift_key(),
-                                alt: self.modifiers.alt_key(),
-                                down,
-                            },
-                        ));
+                        let keystroke = crate::room_service::KeystrokeData {
+                            key: vec![key_str.clone()],
+                            meta,
+                            ctrl: self.modifiers.control_key(),
+                            shift: self.modifiers.shift_key(),
+                            alt: self.modifiers.alt_key(),
+                            down,
+                        };
+                        let is_modifier_down =
+                            down && matches!(key_str.as_str(), "Meta" | "Control");
+                        if is_modifier_down {
+                            self.state.queued_modifier_events.push(keystroke);
+                        } else {
+                            for queued in self.state.queued_modifier_events.drain(..) {
+                                input_events.push(ScreenShareInputEvent::KeyInput(queued));
+                            }
+                            input_events.push(ScreenShareInputEvent::KeyInput(keystroke));
+                        }
                     }
 
                     log::debug!(
@@ -1397,7 +1422,7 @@ impl ScreensharingWindow {
                                 mode.clone(),
                             );
                             self.state.left_mouse_pressed = false;
-                            input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                            input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
                         }
                         ScreensharingMessage::DropdownItemClicked(index) => {
                             let permanent = *index == 1;
@@ -1408,7 +1433,7 @@ impl ScreensharingWindow {
                                 drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                                 mode.clone(),
                             );
-                            input_event = Some(ScreenShareInputEvent::DrawingModeChanged(mode));
+                            input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
                         }
                         _ => {}
                     }
@@ -1487,7 +1512,7 @@ impl ScreensharingWindow {
                             let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
                                 target_w, target_h,
                             ));
-                            return None;
+                            return vec![];
                         }
                     }
 
@@ -1519,7 +1544,7 @@ impl ScreensharingWindow {
                 let cleared = self.redraw();
                 self.redraw_in_progress.store(false, Ordering::Release);
                 if !cleared.is_empty() {
-                    input_event = Some(ScreenShareInputEvent::DrawClearPaths(cleared));
+                    input_events.push(ScreenShareInputEvent::DrawClearPaths(cleared));
                 }
             }
             WindowEvent::CloseRequested => {
@@ -1528,7 +1553,7 @@ impl ScreensharingWindow {
             _ => {}
         }
 
-        input_event
+        input_events
     }
 
     fn view<'a>(
@@ -1784,6 +1809,7 @@ impl ScreensharingWindow {
                 self.state.tab_anim =
                     seg_ctrl_mod::start_animation(SEGMENTED_BUTTONS, self.state.active_tab, id);
                 self.state.active_tab = id;
+                self.state.queued_modifier_events.clear();
                 self.update_cursor();
                 log::info!("ScreensharingWindow: tab selected = {}", id);
             }
