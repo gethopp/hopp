@@ -76,7 +76,7 @@ export interface CallStartMessage {
 }
 
 export interface SentryMetadata {
-  user_email: string;
+  user_id: string;
   app_version: string;
 }
 
@@ -210,7 +210,7 @@ export interface CommandMap {
   create_settings_window: { args: void; return: void };
 
   // Sentry
-  set_sentry_metadata: { args: { userEmail: string; appVersion: string }; return: void };
+  set_sentry_metadata: { args: { userId: string; appVersion: string }; return: void };
 
   // Call
   call_started: { args: { audioToken: string; videoToken: string }; return: void };

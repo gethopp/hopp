@@ -15,15 +15,15 @@ pub fn set_telemetry_enabled(enabled: bool) {
 
 #[derive(Debug, Clone)]
 pub struct SentryMetadata {
-    pub user_email: String,
+    pub user_id: String,
     pub app_version: String,
 }
 
 static SENTRY_METADATA: OnceLock<SentryMetadata> = OnceLock::new();
 
-pub fn init_metadata(user_email: String, app_version: String) {
+pub fn init_metadata(user_id: String, app_version: String) {
     let metadata = SentryMetadata {
-        user_email,
+        user_id,
         app_version,
     };
 
@@ -79,7 +79,7 @@ fn get_system_tags() -> BTreeMap<String, String> {
     tags.insert("arch".to_string(), System::cpu_arch());
     match get_metadata() {
         Some(metadata) => {
-            tags.insert("user_email".to_string(), metadata.user_email.clone());
+            tags.insert("user_id".to_string(), metadata.user_id.clone());
             tags.insert("app_version".to_string(), metadata.app_version.clone());
         }
         None => {

@@ -1167,10 +1167,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
                 log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
-                sentry_utils::init_metadata(
-                    sentry_metadata.user_email,
-                    sentry_metadata.app_version,
-                );
+                sentry_utils::init_metadata(sentry_metadata.user_id, sentry_metadata.app_version);
             }
             UserEvent::AddToClipboard(add_to_clipboard_data) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");

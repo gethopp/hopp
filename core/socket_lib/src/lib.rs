@@ -113,7 +113,7 @@ pub struct CallStartMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SentryMetadata {
-    pub user_email: String,
+    pub user_id: String,
     pub app_version: String,
 }
 

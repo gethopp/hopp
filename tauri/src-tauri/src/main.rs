@@ -619,13 +619,13 @@ async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), Strin
 }
 
 #[tauri::command(async)]
-fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: String) {
+fn set_sentry_metadata(app: tauri::AppHandle, user_id: String, app_version: String) {
     log::info!("set_sentry_metadata");
-    sentry_utils::init_metadata(user_email.clone(), app_version.clone());
+    sentry_utils::init_metadata(user_id.clone(), app_version.clone());
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::SentryMetadata(SentryMetadata {
-        user_email,
+        user_id,
         app_version,
     })) {
         log::error!("set_sentry_metadata: failed to send message: {e:?}");
