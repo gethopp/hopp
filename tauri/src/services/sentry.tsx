@@ -1,8 +1,8 @@
 import { SENTRY_DSN } from "@/constants";
 import * as Sentry from "@sentry/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { typedInvoke } from "@/core_payloads";
 
-// Helper function to set window context
 export const setWindowContext = async () => {
   try {
     const currentWindow = getCurrentWindow();
@@ -14,7 +14,6 @@ export const setWindowContext = async () => {
       title: await currentWindow.title(),
     });
   } catch (error) {
-    // Fallback for non-Tauri environments or errors
     Sentry.setTag("window", "unknown");
     Sentry.setContext("window", {
       name: "unknown",
@@ -24,8 +23,7 @@ export const setWindowContext = async () => {
   }
 };
 
-// Initialize Sentry and set up window context
-Sentry.init({
+const sentryConfig: Sentry.BrowserOptions = {
   dsn: SENTRY_DSN,
   integrations: [
     Sentry.captureConsoleIntegration({
@@ -33,12 +31,24 @@ Sentry.init({
     }),
     Sentry.browserTracingIntegration(),
   ],
-  // Learn more at
-  // https://docs.sentry.io/platforms/javascript/session-replay/configuration/#general-integration-configuration
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
   tracesSampleRate: 1.0,
-});
+};
 
-// Set initial window context
+Sentry.init(sentryConfig);
 setWindowContext();
+
+export const disableSentry = () => {
+  Sentry.close();
+};
+
+export const enableSentry = () => {
+  Sentry.init(sentryConfig);
+};
+
+typedInvoke("get_user_settings").then((settings) => {
+  if (!settings.telemetry_enabled) {
+    disableSentry();
+  }
+});

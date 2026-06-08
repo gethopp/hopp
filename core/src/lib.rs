@@ -1397,6 +1397,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.noise_cancellation_enabled
                     .store(enabled, std::sync::atomic::Ordering::Relaxed);
             }
+            UserEvent::SetTelemetryEnabled(enabled) => {
+                log::info!("user_event: SetTelemetryEnabled({enabled})");
+                sentry_utils::set_telemetry_enabled(enabled);
+            }
             UserEvent::ToggleMic => {
                 log::info!("user_event: ToggleMic");
                 if let Some(room_service) = self.room_service.as_ref() {
@@ -2241,6 +2245,7 @@ pub enum UserEvent {
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
+    SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
 }
@@ -2393,6 +2398,9 @@ impl RenderEventLoop {
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
+                    }
+                    Message::SetTelemetryEnabled(enabled) => {
+                        UserEvent::SetTelemetryEnabled(enabled)
                     }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {

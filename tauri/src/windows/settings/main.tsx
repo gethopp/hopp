@@ -277,6 +277,21 @@ function SettingsWindow() {
           <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
             <h3 className="text-base font-medium text-black dark:text-white">Miscellaneous</h3>
             <div className="flex flex-col gap-3">
+              <CheckboxRow
+                title="Send anonymous telemetry"
+                description="Help improve Hopp by sending anonymous usage data and error reports"
+                checked={settings.telemetry_enabled}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_telemetry_enabled", { enabled: v }).then(() => {
+                    refetchSettings();
+                    if (v) {
+                      posthog.opt_in_capturing();
+                    } else {
+                      posthog.opt_out_capturing();
+                    }
+                  });
+                }}
+              />
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Backend URL</span>
                 <span className="text-sm text-gray-500 dark:text-gray-400">

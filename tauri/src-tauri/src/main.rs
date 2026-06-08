@@ -796,8 +796,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 680.0,
-            height: 740.0,
+            width: 740.0,
+            height: 800.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -908,6 +908,20 @@ fn set_call_feedback_popup(app: tauri::AppHandle, enabled: bool) {
     let mut data = data.lock().unwrap();
     data.app_state
         .update_user_setting(|s| s.call_feedback_popup = enabled);
+}
+
+#[tauri::command(async)]
+fn set_telemetry_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_telemetry_enabled: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.telemetry_enabled = enabled);
+    sentry_utils::set_telemetry_enabled(enabled);
+    if let Err(e) = data.sender.send(Message::SetTelemetryEnabled(enabled)) {
+        log::error!("set_telemetry_enabled: failed to send: {e:?}");
+    }
+    let _ = app.emit("telemetry_enabled_changed", enabled);
 }
 
 #[tauri::command(async)]
@@ -1457,6 +1471,13 @@ fn main() {
                     log::error!("Failed to send initial last_mode: {e:?}");
                 }
             }
+            {
+                let telemetry_enabled = app_state.user_settings().telemetry_enabled;
+                sentry_utils::set_telemetry_enabled(telemetry_enabled);
+                if let Err(e) = sender.send(Message::SetTelemetryEnabled(telemetry_enabled)) {
+                    log::error!("Failed to send initial telemetry_enabled: {e:?}");
+                }
+            }
             let data = Mutex::new(AppData::new(
                 sender,
                 event_socket,
@@ -1753,6 +1774,7 @@ fn main() {
             create_settings_window,
             get_user_settings,
             set_call_feedback_popup,
+            set_telemetry_enabled,
             set_show_dock_icon_in_call,
             set_start_camera_on_call,
             set_start_mic_on_call,

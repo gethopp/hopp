@@ -3,8 +3,15 @@ use sentry::types::random_uuid;
 use sentry::{ClientInitGuard, Envelope, Level};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use sysinfo::System;
+
+static TELEMETRY_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_telemetry_enabled(enabled: bool) {
+    TELEMETRY_ENABLED.store(enabled, Ordering::Relaxed);
+}
 
 #[derive(Debug, Clone)]
 pub struct SentryMetadata {
@@ -84,6 +91,9 @@ fn get_system_tags() -> BTreeMap<String, String> {
 }
 
 pub fn upload_logs_event(failure_reason: String) {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let client = match sentry::Hub::current().client() {
         Some(client) => client,
         None => {
@@ -173,6 +183,9 @@ fn pick_newest_by_filename(candidates: Vec<(PathBuf, Vec<u8>)>) -> Option<(PathB
 }
 
 pub fn upload_latest_crash() {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     #[cfg(target_os = "macos")]
     {
         let Some(dir) = diagnostic_reports_dir() else {
@@ -225,6 +238,9 @@ pub fn upload_latest_crash() {
 }
 
 pub fn simple_event(message: String) {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let client = match sentry::Hub::current().client() {
         Some(client) => client,
         None => {

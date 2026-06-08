@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 pub use socket_lib::StoredMode;
 
+fn default_true() -> bool {
+    true
+}
+
 /// User-facing settings exposed in the Settings window.
 /// All fields are non-optional with sensible defaults.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -14,6 +18,8 @@ pub struct UserSettings {
     pub shortcut_toggle_camera: Option<String>,
     pub shortcut_toggle_screenshare: Option<String>,
     pub shortcut_end_call: Option<String>,
+    #[serde(default = "default_true")]
+    pub telemetry_enabled: bool,
 }
 
 impl Default for UserSettings {
@@ -28,6 +34,7 @@ impl Default for UserSettings {
             shortcut_toggle_camera: None,
             shortcut_toggle_screenshare: None,
             shortcut_end_call: None,
+            telemetry_enabled: true,
         }
     }
 }
