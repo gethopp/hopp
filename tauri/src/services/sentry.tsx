@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { typedInvoke } from "@/core_payloads";
 
+// Helper function to set window context
 export const setWindowContext = async () => {
   try {
     const currentWindow = getCurrentWindow();
@@ -14,6 +15,7 @@ export const setWindowContext = async () => {
       title: await currentWindow.title(),
     });
   } catch (error) {
+    // Fallback for non-Tauri environments or errors
     Sentry.setTag("window", "unknown");
     Sentry.setContext("window", {
       name: "unknown",
@@ -23,6 +25,7 @@ export const setWindowContext = async () => {
   }
 };
 
+// Initialize Sentry and set up window context
 const sentryConfig: Sentry.BrowserOptions = {
   dsn: SENTRY_DSN,
   integrations: [
@@ -31,6 +34,8 @@ const sentryConfig: Sentry.BrowserOptions = {
     }),
     Sentry.browserTracingIntegration(),
   ],
+  // Learn more at
+  // https://docs.sentry.io/platforms/javascript/session-replay/configuration/#general-integration-configuration
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
   tracesSampleRate: 1.0,

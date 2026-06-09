@@ -28,7 +28,7 @@ const options: Partial<PostHogConfig> = {
   // autocapture: false,
   loaded: async function (ph) {
     if (import.meta.env.MODE == "development") {
-      ph.opt_out_capturing();
+      ph.opt_out_capturing(); // opts a user out of event capture
       ph.set_config({ disable_session_recording: true });
     } else {
       try {
