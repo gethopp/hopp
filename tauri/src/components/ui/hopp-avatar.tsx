@@ -69,7 +69,7 @@ export const HoppAvatar = ({ src, firstName, lastName, status, className, isMute
         {/* Absolute gray blanket for muted indicator */}
         {isMuted && (
           <div className="absolute flex items-center justify-center inset-0 bg-gray-500/40 rounded-[9px] w-full h-full">
-            {isMuted && <LuMicOff className="size-4 text-white" />}
+            <LuMicOff className="size-4 text-white" />
           </div>
         )}
         {status && (
