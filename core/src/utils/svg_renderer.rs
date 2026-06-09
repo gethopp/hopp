@@ -18,6 +18,55 @@ pub enum SvgRenderError {
     PngSaveError(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserBadgeKind {
+    Normal,
+    Pointer,
+    Pencil,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BadgeLayout {
+    box_width: f32,
+    box_width_stroke: f32,
+    filter_width: f32,
+    text_x: f32,
+    svg_width: f32,
+    svg_height: f32,
+    scale_factor: f32,
+}
+
+impl BadgeLayout {
+    fn new(kind: UserBadgeKind, box_width: f32, scale_factor: f32) -> Self {
+        let is_pointer = kind == UserBadgeKind::Pointer;
+        let text_x = if is_pointer {
+            16.5317 + 6.0
+        } else {
+            18.6445 + 6.0
+        };
+        let svg_width = if is_pointer {
+            (box_width + 34.0) * scale_factor
+        } else {
+            (box_width + 36.0) * scale_factor
+        };
+        let svg_height = if is_pointer {
+            74.0 * scale_factor
+        } else {
+            75.0 * scale_factor
+        };
+
+        Self {
+            box_width,
+            box_width_stroke: box_width - 1.10065,
+            filter_width: box_width + 16.5097 * 2.0,
+            text_x,
+            svg_width,
+            svg_height,
+            scale_factor,
+        }
+    }
+}
+
 /// Calculate dynamic box width based on text length
 /// Increases box width for longer text to ensure it fits comfortably
 fn calculate_box_width(text: &str) -> f32 {
@@ -80,7 +129,7 @@ fn get_box_width(text: &str, fontdb: std::sync::Arc<Database>) -> Result<f32, Sv
 pub fn render_user_badge_to_png(
     color: &str,
     name: &str,
-    pointer: bool,
+    kind: UserBadgeKind,
 ) -> Result<Vec<u8>, SvgRenderError> {
     // Create font database
     let mut fontdb = Database::new();
@@ -103,19 +152,13 @@ pub fn render_user_badge_to_png(
         name = name.chars().take(17).collect::<String>() + "...";
     };
 
-    // Calculate text x position with left padding
-    // For pointer template: rect starts at x=16.5317, original text at x=22.5317 (6px padding)
-    // For regular template: rect starts at x=18.6445, original text at x=24.6445 (6px padding)
-    let text_x_pointer = 16.5317 + 6.0;
-    let text_x_regular = 18.6445 + 6.0;
+    let layout = BadgeLayout::new(kind, box_width, scale_factor);
 
-    // Calculate dynamic SVG dimensions based on box_width
-    // Original: box_width=70, viewBox width=104 (pointer) or 106 (regular)
-    // The difference accounts for the rect x position + padding on the right
-    let svg_width_pointer = (box_width + 34.0) * scale_factor; // 16.5317 (left margin) + 70 (original box) + 17.4683 (right margin) ≈ 104
-    let svg_width_regular = (box_width + 36.0) * scale_factor; // 18.6445 (left margin) + 70 (original box) + 17.3555 (right margin) ≈ 106
-    let svg_height_pointer = 74.0 * scale_factor;
-    let svg_height_regular = 75.0 * scale_factor;
+    if kind == UserBadgeKind::Pencil {
+        return render_pencil_user_badge_to_png(color, &name, layout, fontdb);
+    }
+
+    let pointer = kind == UserBadgeKind::Pointer;
 
     // Choose SVG template based on pointer flag
     let svg_template = if pointer {
@@ -188,13 +231,13 @@ pub fn render_user_badge_to_png(
 </svg>"##,
             color = color,
             name = name,
-            box_width = box_width,
-            box_width_stroke = box_width - 1.10065,
-            filter_width = box_width + 16.5097 * 2.0,
-            text_x = text_x_pointer,
-            svg_width = svg_width_pointer,
-            svg_height = svg_height_pointer,
-            scale_factor = scale_factor,
+            box_width = layout.box_width,
+            box_width_stroke = layout.box_width_stroke,
+            filter_width = layout.filter_width,
+            text_x = layout.text_x,
+            svg_width = layout.svg_width,
+            svg_height = layout.svg_height,
+            scale_factor = layout.scale_factor,
         )
     } else {
         // Regular cursor template
@@ -247,13 +290,13 @@ pub fn render_user_badge_to_png(
 </svg>"##,
             color = color,
             name = name,
-            box_width = box_width,
-            box_width_stroke = box_width - 1.10065,
-            filter_width = box_width + 16.5097 * 2.0,
-            text_x = text_x_regular,
-            svg_width = svg_width_regular,
-            svg_height = svg_height_regular,
-            scale_factor = scale_factor,
+            box_width = layout.box_width,
+            box_width_stroke = layout.box_width_stroke,
+            filter_width = layout.filter_width,
+            text_x = layout.text_x,
+            svg_width = layout.svg_width,
+            svg_height = layout.svg_height,
+            scale_factor = layout.scale_factor,
         )
     };
 
@@ -267,8 +310,8 @@ pub fn render_user_badge_to_png(
 
     // Get the SVG size (which is now already scaled by the SVG attributes)
     let svg_size = tree.size();
-    let width = (svg_size.width() * scale_factor) as u32;
-    let height = (svg_size.height() * scale_factor) as u32;
+    let width = (svg_size.width() * layout.scale_factor) as u32;
+    let height = (svg_size.height() * layout.scale_factor) as u32;
     // Print the size that it will render
     println!("SVG size: {}x{}", width, height);
 
@@ -285,13 +328,105 @@ pub fn render_user_badge_to_png(
         .map_err(|e| SvgRenderError::PngSaveError(e.to_string()))
 }
 
+fn render_pencil_user_badge_to_png(
+    color: &str,
+    name: &str,
+    layout: BadgeLayout,
+    fontdb: std::sync::Arc<Database>,
+) -> Result<Vec<u8>, SvgRenderError> {
+    let svg_template = format!(
+        r##"<svg width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g transform="scale({scale_factor})">
+<g clip-path="url(#clip0_4176_5517)">
+<g filter="url(#filter0_di_4176_5517)">
+<path d="M22.3801 3.17548C22.7353 2.80773 23.1601 2.51439 23.6299 2.3126C24.0997 2.11081 24.6049 2.00459 25.1162 2.00015C25.6274 1.9957 26.1344 2.09312 26.6076 2.28672C27.0808 2.48033 27.5107 2.76623 27.8722 3.12775C28.2338 3.48927 28.5197 3.91918 28.7133 4.39237C28.9069 4.86557 29.0043 5.37259 28.9999 5.88384C28.9954 6.39509 28.8892 6.90034 28.6874 7.3701C28.4856 7.83986 28.1923 8.26473 27.8245 8.61992L26.2978 10.1466L20.8534 4.70215L22.3801 3.17548ZM18.1312 7.42438L2 23.5556V29H7.44444L23.5775 12.8688L18.1312 7.42438Z" fill="{color}"/>
+<path d="M22.3801 3.17548C22.7353 2.80773 23.1601 2.51439 23.6299 2.3126C24.0997 2.11081 24.6049 2.00459 25.1162 2.00015C25.6274 1.9957 26.1344 2.09312 26.6076 2.28672C27.0808 2.48033 27.5107 2.76623 27.8722 3.12775C28.2338 3.48927 28.5197 3.91918 28.7133 4.39237C28.9069 4.86557 29.0043 5.37259 28.9999 5.88384C28.9954 6.39509 28.8892 6.90034 28.6874 7.3701C28.4856 7.83986 28.1923 8.26473 27.8245 8.61992L26.2978 10.1466L20.8534 4.70215L22.3801 3.17548ZM18.1312 7.42438L2 23.5556V29H7.44444L23.5775 12.8688L18.1312 7.42438Z" stroke="white"/>
+</g>
+</g>
+<g filter="url(#filter1_di_3982_4518)">
+<rect x="18.6445" y="22.8086" width="{box_width}" height="35" rx="17.5" fill="{color}"/>
+<rect x="19.1949" y="23.3589" width="{box_width_stroke}" height="33.8994" rx="16.9497" stroke="white" stroke-opacity="1" stroke-width="1"/>
+<text fill="white" xml:space="preserve" style="white-space: pre" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="11.606" font-weight="600" letter-spacing="0.05em"><tspan x="{text_x}" y="44.5486">{name}</tspan></text>
+</g>
+</g>
+<defs>
+<filter id="filter0_di_4176_5517" x="0" y="0" width="32" height="32.5" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="0.5" dy="0.5"/>
+<feGaussianBlur stdDeviation="1"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_4176_5517"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_4176_5517" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="1" dy="4"/>
+<feGaussianBlur stdDeviation="1.5"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.35 0"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_4176_5517"/>
+</filter>
+<filter id="filter1_di_3982_4518" x="2.13481" y="6.29888" width="{filter_width}" height="68.0194" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="8.25486"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3982_4518"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3982_4518" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="3.16484"/>
+<feGaussianBlur stdDeviation="4.35165"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.75 0"/>
+<feBlend mode="normal" in2="shape" result="effect2_innerShadow_3982_4518"/>
+</filter>
+<clipPath id="clip0_4176_5517">
+<rect width="30" height="30" fill="white"/>
+</clipPath>
+</defs>
+</svg>"##,
+        color = color,
+        name = name,
+        box_width = layout.box_width,
+        box_width_stroke = layout.box_width_stroke,
+        filter_width = layout.filter_width,
+        text_x = layout.text_x,
+        svg_width = layout.svg_width,
+        svg_height = layout.svg_height,
+        scale_factor = layout.scale_factor,
+    );
+
+    let usvg_options = usvg::Options {
+        fontdb,
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_str(&svg_template, &usvg_options)
+        .map_err(|e| SvgRenderError::SvgParseError(e.to_string()))?;
+
+    let svg_size = tree.size();
+    let width = (svg_size.width() * layout.scale_factor) as u32;
+    let height = (svg_size.height() * layout.scale_factor) as u32;
+    println!("SVG size: {}x{}", width, height);
+
+    let mut pixmap =
+        tiny_skia::Pixmap::new(width, height).ok_or(SvgRenderError::PixmapCreationError)?;
+
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+
+    pixmap
+        .encode_png()
+        .map_err(|e| SvgRenderError::PngSaveError(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_render_user_badge_to_png() {
-        let png_data = render_user_badge_to_png("#FF5733", "Alice", false).unwrap();
+        let png_data = render_user_badge_to_png("#FF5733", "Alice", UserBadgeKind::Normal).unwrap();
 
         // Verify it's valid PNG data by checking PNG signature
         assert_eq!(&png_data[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
@@ -300,7 +435,8 @@ mod tests {
         assert!(png_data.len() > 100);
 
         // Test with different parameters
-        let png_data2 = render_user_badge_to_png("#00FF00", "Bob Doe", false).unwrap();
+        let png_data2 =
+            render_user_badge_to_png("#00FF00", "Bob Doe", UserBadgeKind::Normal).unwrap();
         assert_eq!(&png_data2[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
         assert!(png_data2.len() > 100);
 
@@ -330,14 +466,20 @@ mod tests {
     #[test]
     fn test_different_name_lengths() {
         // Test badges with different name lengths (now with dynamic box width)
-        let very_short_badge = render_user_badge_to_png("#0040FF", "Me", false).unwrap();
-        let short_badge = render_user_badge_to_png("#0040FF", "Joe", false).unwrap();
-        let medium_badge = render_user_badge_to_png("#0040FF", "Alice Doe", false).unwrap();
-        let long_badge = render_user_badge_to_png("#0040FF", "Iason Parask", false).unwrap();
+        let very_short_badge =
+            render_user_badge_to_png("#0040FF", "Me", UserBadgeKind::Normal).unwrap();
+        let short_badge =
+            render_user_badge_to_png("#0040FF", "Joe", UserBadgeKind::Normal).unwrap();
+        let medium_badge =
+            render_user_badge_to_png("#0040FF", "Alice Doe", UserBadgeKind::Normal).unwrap();
+        let long_badge =
+            render_user_badge_to_png("#0040FF", "Iason Parask", UserBadgeKind::Normal).unwrap();
         let extra_long_badge =
-            render_user_badge_to_png("#0040FF", "AlexanderGGGGGGGGGGG", false).unwrap();
+            render_user_badge_to_png("#0040FF", "AlexanderGGGGGGGGGGG", UserBadgeKind::Normal)
+                .unwrap();
         let extra_long_badge_two =
-            render_user_badge_to_png("#0040FF", "Lykourgos Mpezentakos", false).unwrap();
+            render_user_badge_to_png("#0040FF", "Lykourgos Mpezentakos", UserBadgeKind::Normal)
+                .unwrap();
 
         // All should generate valid PNG data
         assert_eq!(&short_badge[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
@@ -357,7 +499,8 @@ mod tests {
     #[test]
     fn test_pointer_badge() {
         // Test the pointer template
-        let pointer_badge = render_user_badge_to_png("#0040FF", "Costa", true).unwrap();
+        let pointer_badge =
+            render_user_badge_to_png("#0040FF", "Costa", UserBadgeKind::Pointer).unwrap();
 
         // Verify it's valid PNG data by checking PNG signature
         assert_eq!(&pointer_badge[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
@@ -366,12 +509,30 @@ mod tests {
         assert!(pointer_badge.len() > 100);
 
         // Test regular badge for comparison
-        let regular_badge = render_user_badge_to_png("#0040FF", "Costa", false).unwrap();
+        let regular_badge =
+            render_user_badge_to_png("#0040FF", "Costa", UserBadgeKind::Normal).unwrap();
 
         // The two images should be different (different templates)
         assert_ne!(pointer_badge, regular_badge);
 
         // Save example for visual inspection
         std::fs::write("test_pointer_badge.png", pointer_badge).unwrap();
+    }
+
+    #[test]
+    fn test_pencil_badge() {
+        let pencil_badge =
+            render_user_badge_to_png("#0040FF", "Costa", UserBadgeKind::Pencil).unwrap();
+
+        assert_eq!(&pencil_badge[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+        assert!(pencil_badge.len() > 100);
+
+        let pointer_badge =
+            render_user_badge_to_png("#0040FF", "Costa", UserBadgeKind::Pointer).unwrap();
+        let regular_badge =
+            render_user_badge_to_png("#0040FF", "Costa", UserBadgeKind::Normal).unwrap();
+
+        assert_ne!(pencil_badge, pointer_badge);
+        assert_ne!(pencil_badge, regular_badge);
     }
 }

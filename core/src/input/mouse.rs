@@ -240,6 +240,7 @@ struct ControllerCursor {
      */
     clicked: bool,
     mode: CursorMode,
+    visual_mode_override: Option<CursorMode>,
     pointer_mode: bool,
     has_control: bool,
     identity: String,
@@ -251,6 +252,7 @@ impl ControllerCursor {
             cursor_state,
             clicked: false,
             mode,
+            visual_mode_override: None,
             pointer_mode: mode == CursorMode::Pointer,
             has_control: false,
             identity,
@@ -283,8 +285,16 @@ impl ControllerCursor {
         self.mode
     }
 
+    fn visual_mode(&self) -> CursorMode {
+        self.visual_mode_override.unwrap_or(self.mode)
+    }
+
     fn set_mode(&mut self, mode: CursorMode) {
         self.mode = mode;
+    }
+
+    fn set_visual_mode_override(&mut self, mode: Option<CursorMode>) {
+        self.visual_mode_override = mode;
     }
 
     fn set_pointer_mode(&mut self, enabled: bool, remote_control_enabled: bool) {
@@ -1026,6 +1036,21 @@ impl CursorController {
         }
     }
 
+    /// Overrides only the rendered cursor badge for a controller.
+    ///
+    /// This keeps input-routing mode independent from drawing/click visual state.
+    pub fn set_controller_visual_mode(&mut self, identity: &str, mode: Option<CursorMode>) {
+        log::info!("set_controller_visual_mode: {identity} {mode:?}");
+
+        let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
+        for controller in controllers_cursors.iter_mut() {
+            if controller.identity == identity {
+                controller.set_visual_mode_override(mode);
+                break;
+            }
+        }
+    }
+
     /// Updates cursor positions in the ParticipantsManager for rendering.
     ///
     /// This function translates cursor state to pixel positions and updates the
@@ -1056,7 +1081,8 @@ impl CursorController {
             if controller.visible() {
                 participants_manager
                     .set_cursor_position(&controller.identity, Some(controller.local_position()));
-                participants_manager.set_cursor_mode(&controller.identity, controller.mode());
+                participants_manager
+                    .set_cursor_mode(&controller.identity, controller.visual_mode());
             } else {
                 participants_manager.set_cursor_position(&controller.identity, None);
             }
