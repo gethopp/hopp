@@ -36,19 +36,25 @@ const sentryConfig: Sentry.BrowserOptions = {
   tracesSampleRate: 1.0,
 };
 
-Sentry.init(sentryConfig);
-setWindowContext();
+let sentryEnabled = false;
 
 export const disableSentry = () => {
-  Sentry.close();
+  if (sentryEnabled) {
+    Sentry.close();
+    sentryEnabled = false;
+  }
 };
 
-export const enableSentry = () => {
-  Sentry.init(sentryConfig);
+export const enableSentry = async () => {
+  if (!sentryEnabled) {
+    Sentry.init(sentryConfig);
+    await setWindowContext();
+    sentryEnabled = true;
+  }
 };
 
 typedInvoke("get_user_settings").then((settings) => {
-  if (!settings.telemetry_enabled) {
-    disableSentry();
+  if (settings.telemetry_enabled) {
+    enableSentry();
   }
 });

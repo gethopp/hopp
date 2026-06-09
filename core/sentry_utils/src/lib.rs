@@ -183,11 +183,12 @@ fn pick_newest_by_filename(candidates: Vec<(PathBuf, Vec<u8>)>) -> Option<(PathB
 }
 
 pub fn upload_latest_crash() {
-    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
     #[cfg(target_os = "macos")]
     {
+        if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+
         let Some(dir) = diagnostic_reports_dir() else {
             log::warn!("upload_latest_crash: no DiagnosticReports dir");
             return;
