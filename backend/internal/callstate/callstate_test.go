@@ -3,11 +3,11 @@ package callstate
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +22,7 @@ func setupTracker(t *testing.T) (*Tracker, *miniredis.Miniredis) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	return NewTracker(rdb), mr
+	return NewTracker(rdb, echo.New().Logger), mr
 }
 
 // setupDB creates an in-memory SQLite DB with a rooms table.
@@ -36,449 +36,560 @@ func setupDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func getCallEntry(t *testing.T, mr *miniredis.Miniredis, userID string) *callEntry {
+// readSnapshotRooms returns the snapshot rooms from Redis for assertions.
+func readSnapshotRooms(t *testing.T, mr *miniredis.Miniredis) map[string]RoomPresence {
 	t.Helper()
-	raw, err := mr.Get(callKey(userID))
+	raw, err := mr.Get(snapshotKey)
 	if err != nil {
-		return nil
+		return map[string]RoomPresence{}
 	}
-	var e callEntry
-	require.NoError(t, json.Unmarshal([]byte(raw), &e))
-	return &e
-}
-
-func getRoomEntry(t *testing.T, mr *miniredis.Miniredis, userID string) string {
-	t.Helper()
-	v, err := mr.Get(userRoomKey(userID))
-	if err != nil {
-		return ""
+	var snap Snapshot
+	require.NoError(t, json.Unmarshal([]byte(raw), &snap))
+	if snap.Rooms == nil {
+		return map[string]RoomPresence{}
 	}
-	return v
+	return snap.Rooms
 }
 
-func assertNoCallKeys(t *testing.T, mr *miniredis.Miniredis) {
-	t.Helper()
-	for _, key := range mr.Keys() {
-		if strings.HasPrefix(key, "user:call:") || strings.HasPrefix(key, "user:room:") || strings.HasPrefix(key, "lock:call:") || strings.HasPrefix(key, "call:pending:") {
-			t.Errorf("unexpected key still present: %s", key)
-		}
-	}
-}
-
-func assertCallEntry(t *testing.T, mr *miniredis.Miniredis, userID string, peers []string, room string) {
-	t.Helper()
-	e := getCallEntry(t, mr, userID)
-	require.NotNil(t, e, "call entry missing for %s", userID)
-	assert.Equal(t, room, e.Room)
-	assert.ElementsMatch(t, peers, e.Peers)
-}
-
-func assertSymmetricPeers(t *testing.T, mr *miniredis.Miniredis, userIDs []string) {
-	t.Helper()
-	for _, uid := range userIDs {
-		e := getCallEntry(t, mr, uid)
-		require.NotNil(t, e, "entry missing for %s", uid)
-		expectedPeers := make([]string, 0, len(userIDs)-1)
-		for _, other := range userIDs {
-			if other == uid {
-				continue
-			}
-			expectedPeers = append(expectedPeers, other)
-		}
-		assert.ElementsMatch(t, expectedPeers, e.Peers, "%s should have exact peers %v", uid, expectedPeers)
-	}
-}
-
-func assertNoStaleCallReferences(t *testing.T, mr *miniredis.Miniredis) {
-	t.Helper()
-	for _, key := range mr.Keys() {
-		if !strings.HasPrefix(key, "user:call:") {
-			continue
-		}
-		uid := strings.TrimPrefix(key, "user:call:")
-		entry := getCallEntry(t, mr, uid)
-		require.NotNil(t, entry, "entry missing for %s", uid)
-		for _, peer := range entry.Peers {
-			assert.NotEqual(t, uid, peer, "%s should not reference itself", uid)
-			peerEntry := getCallEntry(t, mr, peer)
-			require.NotNil(t, peerEntry, "%s has stale peer reference to %s", uid, peer)
-			assert.Contains(t, peerEntry.Peers, uid, "peer %s should reference %s", peer, uid)
-		}
-	}
-}
-
-func TestSetCallActive(t *testing.T) {
-	tr, mr := setupTracker(t)
+func TestAddCallRoom(t *testing.T) {
 	ctx := context.Background()
 
-	require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-
-	assertCallEntry(t, mr, "a", []string{"b"}, "room1")
-	assertCallEntry(t, mr, "b", []string{"a"}, "room1")
-}
-
-func TestRemoveCall(t *testing.T) {
-	tr, mr := setupTracker(t)
-	ctx := context.Background()
-
-	require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-	require.NoError(t, tr.RemoveCallEntry(ctx, "a"))
-	require.NoError(t, tr.RemoveCallEntry(ctx, "b"))
-
-	assert.Nil(t, getCallEntry(t, mr, "a"))
-	assert.Nil(t, getCallEntry(t, mr, "b"))
-
-	// idempotent on missing keys
-	require.NoError(t, tr.RemoveCallEntry(ctx, "a"))
-}
-
-func TestAddRoomParticipant(t *testing.T) {
-	tr, mr := setupTracker(t)
-	ctx := context.Background()
-
-	require.NoError(t, tr.AddRoomParticipant(ctx, "room1", "u1"))
-	assert.Equal(t, "room1", getRoomEntry(t, mr, "u1"))
-
-	// Two users same room
-	require.NoError(t, tr.AddRoomParticipant(ctx, "room1", "u2"))
-	assert.Equal(t, "room1", getRoomEntry(t, mr, "u2"))
-
-	// Overwrites previous room
-	require.NoError(t, tr.AddRoomParticipant(ctx, "room2", "u1"))
-	assert.Equal(t, "room2", getRoomEntry(t, mr, "u1"))
-}
-
-func TestRemoveRoomParticipant(t *testing.T) {
-	tr, mr := setupTracker(t)
-	ctx := context.Background()
-
-	require.NoError(t, tr.AddRoomParticipant(ctx, "room1", "u1"))
-	require.NoError(t, tr.RemoveRoomParticipant(ctx, "room1", "u1"))
-	assert.Equal(t, "", getRoomEntry(t, mr, "u1"))
-
-	// No error when key missing
-	require.NoError(t, tr.RemoveRoomParticipant(ctx, "room1", "u1"))
-}
-
-func TestRoomTransition(t *testing.T) {
-	tr, mr := setupTracker(t)
-	ctx := context.Background()
-
-	require.NoError(t, tr.AddRoomParticipant(ctx, "roomA", "u1"))
-	require.NoError(t, tr.RemoveRoomParticipant(ctx, "roomA", "u1"))
-	require.NoError(t, tr.AddRoomParticipant(ctx, "roomB", "u1"))
-
-	assert.Equal(t, "roomB", getRoomEntry(t, mr, "u1"))
-}
-
-func TestJoinCall(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("three users", func(t *testing.T) {
+	t.Run("creates room with members", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		room, existing, err := tr.JoinCall(ctx, "c", "a")
+		changed, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
 		require.NoError(t, err)
-		assert.Equal(t, "room1", room)
-		assert.ElementsMatch(t, []string{"a", "b"}, existing)
+		assert.True(t, changed)
 
-		assertSymmetricPeers(t, mr, []string{"a", "b", "c"})
+		rooms := readSnapshotRooms(t, mr)
+		require.Contains(t, rooms, "room1")
+		assert.ElementsMatch(t, []string{"a", "b"}, rooms["room1"].UserIDs)
 	})
 
-	t.Run("target not in call", func(t *testing.T) {
+	t.Run("sets display name", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a"}, "Team Standup")
+		require.NoError(t, err)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.Equal(t, "Team Standup", rooms["room1"].DisplayName)
+	})
+
+	t.Run("merges members on repeat call", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+
+		changed, err := tr.AddCallRoom(ctx, "room1", []string{"b", "c"}, "")
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.ElementsMatch(t, []string{"a", "b", "c"}, rooms["room1"].UserIDs)
+	})
+
+	t.Run("idempotent when unchanged", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		_, _, err := tr.JoinCall(ctx, "c", "ghost")
-		assert.ErrorIs(t, err, ErrCallEnded)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+
+		changed, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+		assert.False(t, changed)
+	})
+
+	t.Run("multiple rooms coexist", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+		_, err = tr.AddCallRoom(ctx, "room2", []string{"c", "d"}, "Design")
+		require.NoError(t, err)
+
+		rooms := readSnapshotRooms(t, mr)
+		require.Len(t, rooms, 2)
+		assert.ElementsMatch(t, []string{"a", "b"}, rooms["room1"].UserIDs)
+		assert.ElementsMatch(t, []string{"c", "d"}, rooms["room2"].UserIDs)
 	})
 }
 
-func TestLeaveCall(t *testing.T) {
+func TestAddUserToRoom(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("two-user call: both entries removed", func(t *testing.T) {
+	t.Run("creates room for first user", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		room, peers, err := tr.LeaveCall(ctx, "a")
+		changed, err := tr.AddUserToRoom(ctx, "room1", "u1", "My Room")
 		require.NoError(t, err)
-		assert.Equal(t, "room1", room)
-		assert.ElementsMatch(t, []string{"b"}, peers)
+		assert.True(t, changed)
 
-		// Leaver deleted
-		assert.Nil(t, getCallEntry(t, mr, "a"))
-		// Last remaining user's entry also deleted (no orphan)
-		assert.Nil(t, getCallEntry(t, mr, "b"), "orphaned single-user entry should be deleted")
+		rooms := readSnapshotRooms(t, mr)
+		require.Contains(t, rooms, "room1")
+		assert.Equal(t, "My Room", rooms["room1"].DisplayName)
+		assert.ElementsMatch(t, []string{"u1"}, rooms["room1"].UserIDs)
 	})
 
-	t.Run("three-user call: remaining two are peers", func(t *testing.T) {
+	t.Run("appends user to existing room", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		_, _, err := tr.JoinCall(ctx, "c", "a")
+		_, err := tr.AddUserToRoom(ctx, "room1", "u1", "My Room")
 		require.NoError(t, err)
 
-		_, _, err = tr.LeaveCall(ctx, "a")
+		changed, err := tr.AddUserToRoom(ctx, "room1", "u2", "Ignored Name")
 		require.NoError(t, err)
+		assert.True(t, changed)
 
-		assert.Nil(t, getCallEntry(t, mr, "a"))
-		assertSymmetricPeers(t, mr, []string{"b", "c"})
+		rooms := readSnapshotRooms(t, mr)
+		assert.Equal(t, "My Room", rooms["room1"].DisplayName, "original display name preserved")
+		assert.ElementsMatch(t, []string{"u1", "u2"}, rooms["room1"].UserIDs)
+	})
+}
+
+func TestMaterializeRoom(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("resolves display name from DB", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+		db := setupDB(t)
+		tr.db = db
+		require.NoError(t, db.Exec(`INSERT INTO rooms (id, name) VALUES (?, ?)`, "r1", "Design Sync").Error)
+
+		changed, err := tr.MaterializeRoom(ctx, "r1", []string{"u1", "u2"})
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.Equal(t, "Design Sync", rooms["r1"].DisplayName)
+		assert.ElementsMatch(t, []string{"u1", "u2"}, rooms["r1"].UserIDs)
 	})
 
-	t.Run("all leave sequentially: no keys remain", func(t *testing.T) {
+	t.Run("preserves existing display name", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		_, _, err := tr.JoinCall(ctx, "c", "a")
+		_, err := tr.AddCallRoom(ctx, "r1", []string{"u1"}, "Already Named")
 		require.NoError(t, err)
 
-		tr.LeaveCall(ctx, "a") //nolint:errcheck
-		tr.LeaveCall(ctx, "b") //nolint:errcheck
-		tr.LeaveCall(ctx, "c") //nolint:errcheck
+		changed, err := tr.MaterializeRoom(ctx, "r1", []string{"u2"})
+		require.NoError(t, err)
+		assert.True(t, changed)
 
-		assertNoCallKeys(t, mr)
+		rooms := readSnapshotRooms(t, mr)
+		assert.Equal(t, "Already Named", rooms["r1"].DisplayName)
+		assert.ElementsMatch(t, []string{"u1", "u2"}, rooms["r1"].UserIDs)
 	})
 
-	t.Run("leave when not in call: no error", func(t *testing.T) {
+	t.Run("noop for empty members", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		room, peers, err := tr.LeaveCall(ctx, "ghost")
+
+		changed, err := tr.MaterializeRoom(ctx, "r1", nil)
 		require.NoError(t, err)
-		assert.Empty(t, room)
-		assert.Empty(t, peers)
+		assert.False(t, changed)
+	})
+
+	t.Run("idempotent when unchanged", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.MaterializeRoom(ctx, "r1", []string{"u1"})
+		require.NoError(t, err)
+
+		changed, err := tr.MaterializeRoom(ctx, "r1", []string{"u1"})
+		require.NoError(t, err)
+		assert.False(t, changed)
 	})
 }
 
-func TestCleanupUser(t *testing.T) {
+func TestRemoveUser(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("cleans own entry, updates peers", func(t *testing.T) {
+	t.Run("removes user and returns remaining", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		peers, _ := tr.CleanupUser(ctx, "a")
-		assert.ElementsMatch(t, []string{"b"}, peers)
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b", "c"}, "")
+		require.NoError(t, err)
 
-		assert.Nil(t, getCallEntry(t, mr, "a"))
-		// b had only a as peer, so b's entry should be deleted too
-		assert.Nil(t, getCallEntry(t, mr, "b"), "orphaned entry should be deleted after cleanup")
+		roomName, remaining, err := tr.RemoveUser(ctx, "b")
+		require.NoError(t, err)
+		assert.Equal(t, "room1", roomName)
+		assert.ElementsMatch(t, []string{"a", "c"}, remaining)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.ElementsMatch(t, []string{"a", "c"}, rooms["room1"].UserIDs)
 	})
 
-	t.Run("cleans room state", func(t *testing.T) {
+	t.Run("collapses empty room", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.AddRoomParticipant(ctx, "room1", "u1"))
-		_, room := tr.CleanupUser(ctx, "u1")
-		assert.Equal(t, "room1", room)
-		assert.Equal(t, "", getRoomEntry(t, mr, "u1"))
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a"}, "")
+		require.NoError(t, err)
+
+		roomName, remaining, err := tr.RemoveUser(ctx, "a")
+		require.NoError(t, err)
+		assert.Equal(t, "room1", roomName)
+		assert.Empty(t, remaining)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.NotContains(t, rooms, "room1")
 	})
 
 	t.Run("noop for unknown user", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		peers, room := tr.CleanupUser(ctx, "ghost")
-		assert.Empty(t, peers)
-		assert.Empty(t, room)
+
+		roomName, remaining, err := tr.RemoveUser(ctx, "ghost")
+		require.NoError(t, err)
+		assert.Empty(t, roomName)
+		assert.Nil(t, remaining)
 	})
 
-	t.Run("three-user: disconnect leaves remaining two as peers", func(t *testing.T) {
+	t.Run("does not affect other rooms", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		_, _, err := tr.JoinCall(ctx, "c", "a")
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+		_, err = tr.AddCallRoom(ctx, "room2", []string{"c", "d"}, "")
 		require.NoError(t, err)
 
-		tr.CleanupUser(ctx, "a")
+		_, _, err = tr.RemoveUser(ctx, "a")
+		require.NoError(t, err)
 
-		assert.Nil(t, getCallEntry(t, mr, "a"))
-		assertSymmetricPeers(t, mr, []string{"b", "c"})
+		rooms := readSnapshotRooms(t, mr)
+		assert.ElementsMatch(t, []string{"b"}, rooms["room1"].UserIDs)
+		assert.ElementsMatch(t, []string{"c", "d"}, rooms["room2"].UserIDs)
+	})
+
+	t.Run("sequential removal empties snapshot", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+
+		_, _, err = tr.RemoveUser(ctx, "a")
+		require.NoError(t, err)
+		_, _, err = tr.RemoveUser(ctx, "b")
+		require.NoError(t, err)
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.Empty(t, rooms)
 	})
 }
 
 func TestGetCallStates(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("users in call", func(t *testing.T) {
+	t.Run("returns peers for requested users", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b", "c"}, "Team")
+		require.NoError(t, err)
 
 		states, err := tr.GetCallStates(ctx, nil, []string{"a", "b"})
 		require.NoError(t, err)
+
 		require.Contains(t, states, "a")
-		assert.ElementsMatch(t, []string{"b"}, states["a"].PeerIDs)
+		assert.ElementsMatch(t, []string{"b", "c"}, states["a"].PeerIDs)
+		assert.Equal(t, "Team", states["a"].RoomName)
+
 		require.Contains(t, states, "b")
-		assert.ElementsMatch(t, []string{"a"}, states["b"].PeerIDs)
+		assert.ElementsMatch(t, []string{"a", "c"}, states["b"].PeerIDs)
 	})
 
-	t.Run("user in room: resolved via db", func(t *testing.T) {
+	t.Run("excludes unrequested users", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		db := setupDB(t)
-		require.NoError(t, db.Exec(`INSERT INTO rooms (id, name) VALUES (?, ?)`, "r1", "My Room").Error)
-		require.NoError(t, tr.AddRoomParticipant(ctx, "r1", "u1"))
 
-		states, err := tr.GetCallStates(ctx, db, []string{"u1"})
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
 		require.NoError(t, err)
-		require.Contains(t, states, "u1")
-		assert.Equal(t, "My Room", states["u1"].RoomName)
-	})
 
-	t.Run("idle user not in result", func(t *testing.T) {
-		tr, _ := setupTracker(t)
-		states, err := tr.GetCallStates(ctx, nil, []string{"nobody"})
-		require.NoError(t, err)
-		_, present := states["nobody"]
-		assert.False(t, present)
-	})
-
-	t.Run("mixed batch", func(t *testing.T) {
-		tr, _ := setupTracker(t)
-		db := setupDB(t)
-		require.NoError(t, db.Exec(`INSERT INTO rooms (id, name) VALUES (?, ?)`, "r1", "My Room").Error)
-
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-		require.NoError(t, tr.AddRoomParticipant(ctx, "r1", "c"))
-
-		states, err := tr.GetCallStates(ctx, db, []string{"a", "b", "c", "idle"})
+		states, err := tr.GetCallStates(ctx, nil, []string{"a"})
 		require.NoError(t, err)
 
 		assert.Contains(t, states, "a")
-		assert.Contains(t, states, "b")
-		assert.Contains(t, states, "c")
-		assert.Equal(t, "My Room", states["c"].RoomName)
-		_, present := states["idle"]
-		assert.False(t, present)
+		assert.NotContains(t, states, "b")
 	})
 
-	t.Run("empty input", func(t *testing.T) {
+	t.Run("idle user absent from result", func(t *testing.T) {
 		tr, _ := setupTracker(t)
-		states, err := tr.GetCallStates(ctx, nil, []string{})
+
+		states, err := tr.GetCallStates(ctx, nil, []string{"nobody"})
+		require.NoError(t, err)
+		assert.NotContains(t, states, "nobody")
+	})
+
+	t.Run("empty input returns empty map", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		states, err := tr.GetCallStates(ctx, nil, nil)
 		require.NoError(t, err)
 		assert.Empty(t, states)
 	})
+
+	t.Run("users across different rooms", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "Room 1")
+		require.NoError(t, err)
+		_, err = tr.AddCallRoom(ctx, "room2", []string{"c", "d"}, "Room 2")
+		require.NoError(t, err)
+
+		states, err := tr.GetCallStates(ctx, nil, []string{"a", "c"})
+		require.NoError(t, err)
+
+		require.Contains(t, states, "a")
+		assert.ElementsMatch(t, []string{"b"}, states["a"].PeerIDs)
+		assert.Equal(t, "Room 1", states["a"].RoomName)
+
+		require.Contains(t, states, "c")
+		assert.ElementsMatch(t, []string{"d"}, states["c"].PeerIDs)
+		assert.Equal(t, "Room 2", states["c"].RoomName)
+	})
 }
 
-func TestResetAllCallState(t *testing.T) {
-	tr, mr := setupTracker(t)
+func TestRoomCount(t *testing.T) {
 	ctx := context.Background()
 
-	require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-	require.NoError(t, tr.AddRoomParticipant(ctx, "r1", "a"))
+	t.Run("zero when empty", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+		assert.Equal(t, 0, tr.RoomCount(ctx))
+	})
 
-	require.NoError(t, tr.ResetAllCallState(ctx))
-	assertNoCallKeys(t, mr)
+	t.Run("counts active rooms", func(t *testing.T) {
+		tr, _ := setupTracker(t)
 
-	// Noop when empty
-	require.NoError(t, tr.ResetAllCallState(ctx))
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+		_, err = tr.AddCallRoom(ctx, "room2", []string{"c"}, "")
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, tr.RoomCount(ctx))
+	})
+
+	t.Run("decreases after room collapse", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a"}, "")
+		require.NoError(t, err)
+		_, err = tr.AddCallRoom(ctx, "room2", []string{"b"}, "")
+		require.NoError(t, err)
+		assert.Equal(t, 2, tr.RoomCount(ctx))
+
+		_, _, err = tr.RemoveUser(ctx, "a")
+		require.NoError(t, err)
+		assert.Equal(t, 1, tr.RoomCount(ctx))
+	})
 }
 
-func TestConcurrentJoinLeave(t *testing.T) {
+func TestGetUserRoom(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("concurrent joins: symmetric peers", func(t *testing.T) {
+	t.Run("returns room when user is present", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+
+		roomName, found, err := tr.GetUserRoom(ctx, "a")
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, "room1", roomName)
+	})
+
+	t.Run("returns false when user not in any room", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, found, err := tr.GetUserRoom(ctx, "ghost")
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("reflects removal", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
+
+		_, _, err = tr.RemoveUser(ctx, "a")
+		require.NoError(t, err)
+
+		_, found, err := tr.GetUserRoom(ctx, "a")
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+}
+
+func TestPending(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("set and get round-trips members", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		won, err := tr.setPending(ctx, "room1", []string{"a", "b"})
+		require.NoError(t, err)
+		assert.True(t, won)
+
+		members, err := tr.GetPending(ctx, "room1")
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"a", "b"}, members)
+	})
+
+	t.Run("second set loses SETNX race", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.setPending(ctx, "room1", []string{"a"})
+		require.NoError(t, err)
+
+		won, err := tr.setPending(ctx, "room1", []string{"b"})
+		require.NoError(t, err)
+		assert.False(t, won)
+
+		members, err := tr.GetPending(ctx, "room1")
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"a"}, members, "first writer's value preserved")
+	})
+
+	t.Run("clear allows re-set", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		_, err := tr.setPending(ctx, "room1", []string{"a"})
+		require.NoError(t, err)
+
+		require.NoError(t, tr.ClearPending(ctx, "room1"))
+
+		won, err := tr.setPending(ctx, "room1", []string{"b"})
+		require.NoError(t, err)
+		assert.True(t, won)
+	})
+
+	t.Run("get returns nil for missing key", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+
+		members, err := tr.GetPending(ctx, "nonexistent")
+		require.NoError(t, err)
+		assert.Nil(t, members)
+	})
+
+	t.Run("clear is idempotent", func(t *testing.T) {
+		tr, _ := setupTracker(t)
+		require.NoError(t, tr.ClearPending(ctx, "nonexistent"))
+	})
+}
+
+func TestConcurrentAddAndRemove(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("concurrent adds to same room", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a"}, "")
+		require.NoError(t, err)
 
 		var wg sync.WaitGroup
-		joiners := []string{"c", "d", "e"}
-		errs := make([]error, len(joiners))
-		for i, joiner := range joiners {
+		users := []string{"b", "c", "d", "e"}
+		errs := make([]error, len(users))
+		for i, u := range users {
 			wg.Add(1)
-			go func(idx int, id string) {
+			go func(idx int, userID string) {
 				defer wg.Done()
-				_, _, errs[idx] = tr.JoinCall(ctx, id, "a")
-			}(i, joiner)
+				_, errs[idx] = tr.AddUserToRoom(ctx, "room1", userID, "")
+			}(i, u)
 		}
 		wg.Wait()
 
-		// All joiners must succeed
 		for i, err := range errs {
-			require.NoError(t, err, "joiner %s failed", joiners[i])
+			require.NoError(t, err, "add user %s failed", users[i])
 		}
 
-		// Collect all participants
-		all := append([]string{"a", "b"}, joiners...)
-		assertSymmetricPeers(t, mr, all)
+		rooms := readSnapshotRooms(t, mr)
+		assert.ElementsMatch(t, []string{"a", "b", "c", "d", "e"}, rooms["room1"].UserIDs)
 	})
 
-	t.Run("concurrent join+leave: no corrupt state", func(t *testing.T) {
+	t.Run("concurrent removes leave no corrupt state", func(t *testing.T) {
 		tr, mr := setupTracker(t)
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b", "c", "d"}, "")
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		users := []string{"a", "b", "c", "d"}
+		for _, u := range users {
+			wg.Add(1)
+			go func(userID string) {
+				defer wg.Done()
+				tr.RemoveUser(ctx, userID) //nolint:errcheck
+			}(u)
+		}
+		wg.Wait()
+
+		rooms := readSnapshotRooms(t, mr)
+		assert.Empty(t, rooms)
+	})
+
+	t.Run("concurrent add and remove: no panic", func(t *testing.T) {
+		tr, mr := setupTracker(t)
+
+		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
+		require.NoError(t, err)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
-
-		var joinErr, leaveErr error
 		go func() {
 			defer wg.Done()
-			_, _, joinErr = tr.JoinCall(ctx, "c", "a")
+			tr.AddUserToRoom(ctx, "room1", "c", "") //nolint:errcheck
 		}()
 		go func() {
 			defer wg.Done()
-			_, _, leaveErr = tr.LeaveCall(ctx, "a")
+			tr.RemoveUser(ctx, "a") //nolint:errcheck
 		}()
 		wg.Wait()
 
-		// Join either succeeds or returns ErrCallEnded; leave is always ok
-		if joinErr != nil {
-			assert.ErrorIs(t, joinErr, ErrCallEnded)
+		rooms := readSnapshotRooms(t, mr)
+		room, ok := rooms["room1"]
+		if ok {
+			assert.NotContains(t, room.UserIDs, "a", "removed user should be gone")
+			assert.Contains(t, room.UserIDs, "b", "untouched user should remain")
 		}
-		require.NoError(t, leaveErr)
+	})
+}
 
-		assertNoStaleCallReferences(t, mr)
+func TestMergeUserIDs(t *testing.T) {
+	t.Run("adds new IDs", func(t *testing.T) {
+		result := mergeUserIDs([]string{"a", "b"}, []string{"c"})
+		assert.Equal(t, []string{"a", "b", "c"}, result)
 	})
 
-	t.Run("join while all participants leave: ErrCallEnded", func(t *testing.T) {
-		tr, mr := setupTracker(t)
-
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
-
-		var wg sync.WaitGroup
-		wg.Add(3)
-
-		var joinErr error
-		go func() {
-			defer wg.Done()
-			tr.LeaveCall(ctx, "a") //nolint:errcheck
-		}()
-		go func() {
-			defer wg.Done()
-			tr.LeaveCall(ctx, "b") //nolint:errcheck
-		}()
-		go func() {
-			defer wg.Done()
-			_, _, joinErr = tr.JoinCall(ctx, "c", "a")
-		}()
-		wg.Wait()
-
-		// c either joined before both left, or got ErrCallEnded
-		if joinErr != nil {
-			assert.ErrorIs(t, joinErr, ErrCallEnded)
-		}
-		// No orphaned keys regardless of outcome
-		assertNoCallKeys(t, mr)
+	t.Run("deduplicates", func(t *testing.T) {
+		result := mergeUserIDs([]string{"a", "b"}, []string{"b", "c"})
+		assert.Equal(t, []string{"a", "b", "c"}, result)
 	})
 
-	t.Run("two concurrent joiners on two-user call", func(t *testing.T) {
-		tr, mr := setupTracker(t)
+	t.Run("handles nil existing", func(t *testing.T) {
+		result := mergeUserIDs(nil, []string{"a"})
+		assert.Equal(t, []string{"a"}, result)
+	})
+}
 
-		require.NoError(t, tr.SetCallActive(ctx, "a", "b", "room1"))
+func TestRoomPresenceEqual(t *testing.T) {
+	t.Run("equal regardless of order", func(t *testing.T) {
+		a := RoomPresence{DisplayName: "Room", UserIDs: []string{"a", "b"}}
+		b := RoomPresence{DisplayName: "Room", UserIDs: []string{"b", "a"}}
+		assert.True(t, roomPresenceEqual(a, b))
+	})
 
-		var wg sync.WaitGroup
-		joiners := []string{"c", "d"}
-		errs := make([]error, len(joiners))
-		for i, joiner := range joiners {
-			wg.Add(1)
-			go func(idx int, id string) {
-				defer wg.Done()
-				_, _, errs[idx] = tr.JoinCall(ctx, id, "a")
-			}(i, joiner)
-		}
-		wg.Wait()
+	t.Run("different display names", func(t *testing.T) {
+		a := RoomPresence{DisplayName: "X", UserIDs: []string{"a"}}
+		b := RoomPresence{DisplayName: "Y", UserIDs: []string{"a"}}
+		assert.False(t, roomPresenceEqual(a, b))
+	})
 
-		for i, err := range errs {
-			require.NoError(t, err, "joiner %s failed", joiners[i])
-		}
+	t.Run("different members", func(t *testing.T) {
+		a := RoomPresence{UserIDs: []string{"a", "b"}}
+		b := RoomPresence{UserIDs: []string{"a", "c"}}
+		assert.False(t, roomPresenceEqual(a, b))
+	})
 
-		assertSymmetricPeers(t, mr, []string{"a", "b", "c", "d"})
+	t.Run("different lengths", func(t *testing.T) {
+		a := RoomPresence{UserIDs: []string{"a"}}
+		b := RoomPresence{UserIDs: []string{"a", "b"}}
+		assert.False(t, roomPresenceEqual(a, b))
 	})
 }

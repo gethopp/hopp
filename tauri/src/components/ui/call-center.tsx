@@ -223,6 +223,7 @@ export function CallCenter() {
 function CallParticipants() {
   const { callTokens, teammates, user } = useStore();
   const coreParticipants = callTokens?.participants ?? [];
+  const isRoomCall = !!(callTokens?.isRoomCall || callTokens?.room);
   const prevCountRef = useRef(coreParticipants.length);
 
   // Play sound when a new participant connects (count increases)
@@ -244,6 +245,17 @@ function CallParticipants() {
       return teammates?.find((t) => t.id === participantId) ?? null;
     };
 
+    const localEntry =
+      isRoomCall && user ?
+        {
+          id: "local",
+          participantId: user.id,
+          user,
+          isLocal: true,
+          isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
+        }
+      : null;
+
     const remoteEntries = coreParticipants
       .filter((p) => p.connected)
       .filter((p) => {
@@ -257,12 +269,13 @@ function CallParticipants() {
           id: p.identity,
           participantId,
           user: findUser(participantId),
+          isLocal: false,
           isMicrophoneEnabled: !p.muted,
         };
       });
 
-    return remoteEntries;
-  }, [coreParticipants, teammates, user]);
+    return localEntry ? [localEntry, ...remoteEntries] : remoteEntries;
+  }, [coreParticipants, teammates, user, isRoomCall, callTokens?.hasAudioEnabled]);
 
   if (participantList.length === 0) return null;
 
@@ -290,6 +303,7 @@ function CallParticipants() {
                 <div className="flex flex-col">
                   <span className="text-sm font-medium">
                     {participant.user.first_name} {participant.user.last_name}
+                    {participant.isLocal && " (You)"}
                   </span>
                   {!participant.isMicrophoneEnabled && (
                     <span className="flex items-center gap-1 text-xs font-medium text-orange-500">
@@ -304,7 +318,10 @@ function CallParticipants() {
                   <span className="text-xs font-medium text-slate-600">?</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-600">Unknown user</span>
+                  <span className="text-sm font-medium text-slate-600">
+                    Unknown user
+                    {participant.isLocal && " (You)"}
+                  </span>
                 </div>
               </>
             }

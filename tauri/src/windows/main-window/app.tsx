@@ -17,7 +17,7 @@ import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { CallBanner } from "@/components/ui/call-banner";
 import { socketService } from "@/services/socket";
-import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage, TPresenceAckMessage } from "@/payloads";
 import { Participants } from "@/components/ui/participants";
 import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
@@ -313,6 +313,25 @@ function App() {
         refetchCallsPresence();
       }
     });
+
+    socketService.on("presence_check", (data: TWebSocketMessage) => {
+      if (data.type !== "presence_check") {
+        return;
+      }
+      const room = data.payload.room;
+      const { callTokens } = useStore.getState();
+      // in_call answers the validation ping. For named room calls we additionally
+      // verify the room matches; ad-hoc 1:1 rooms aren't stored client-side, so
+      // the boolean (callTokens !== null) covers them.
+      let inCall = callTokens !== null;
+      if (inCall && callTokens?.room?.id) {
+        inCall = callTokens.room.id === room;
+      }
+      socketService.send({
+        type: "presence_ack",
+        payload: { room, in_call: inCall },
+      } as TPresenceAckMessage);
+    });
   }, []);
 
   useEffect(() => {
@@ -410,7 +429,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("ping", () => {});
+      const unlistenFn = await listen("ping", () => { });
 
       return unlistenFn;
     };

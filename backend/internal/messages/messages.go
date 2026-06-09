@@ -3,7 +3,7 @@ package messages
 import (
 	"encoding/json"
 	"fmt"
-	"hopp-backend/internal/common"
+	"hopp-backend/internal/livekitutil"
 )
 
 // MessageType represents the type of WebSocket message
@@ -40,6 +40,11 @@ const (
 
 	// Server -> Client: Presence state changed (call/room join/leave)
 	MessageTypePresenceChanged MessageType = "presence_changed"
+
+	// Server -> Client: Validation ping asking whether the user is in a room/call
+	MessageTypePresenceCheck MessageType = "presence_check"
+	// Client -> Server: Reply to a presence_check
+	MessageTypePresenceAck MessageType = "presence_ack"
 )
 
 // BaseMessage represents the common structure of all WebSocket messages
@@ -106,7 +111,7 @@ type AcceptCallMessage struct {
 type CallTokensMessage struct {
 	Type    MessageType `json:"type"`
 	Payload struct {
-		common.LivekitTokenSet
+		livekitutil.LivekitTokenSet
 	} `json:"payload"`
 }
 
@@ -195,6 +200,37 @@ func NewPresenceChangedMessage() PresenceChangedMessage {
 	return PresenceChangedMessage{Type: MessageTypePresenceChanged}
 }
 
+// PresenceCheckPayload carries the room being validated.
+type PresenceCheckPayload struct {
+	Room string `json:"room"`
+}
+
+// PresenceCheckMessage asks a client whether it is currently in the given room.
+type PresenceCheckMessage struct {
+	Type    MessageType          `json:"type"`
+	Payload PresenceCheckPayload `json:"payload"`
+}
+
+// NewPresenceCheckMessage creates a new presence check message.
+func NewPresenceCheckMessage(room string) PresenceCheckMessage {
+	return PresenceCheckMessage{
+		Type:    MessageTypePresenceCheck,
+		Payload: PresenceCheckPayload{Room: room},
+	}
+}
+
+// PresenceAckPayload is a client's answer to a presence_check.
+type PresenceAckPayload struct {
+	Room   string `json:"room" validate:"required"`
+	InCall bool   `json:"in_call"`
+}
+
+// PresenceAckMessage is a client -> server reply to a presence_check.
+type PresenceAckMessage struct {
+	Type    MessageType        `json:"type"`
+	Payload PresenceAckPayload `json:"payload"`
+}
+
 // ParsedMessage is a union type of all possible message types
 type ParsedMessage struct {
 	Success               *SuccessMessage
@@ -209,6 +245,8 @@ type ParsedMessage struct {
 	CallTokensMessage     *CallTokensMessage
 	TeammateOnlineMessage *TeammateOnlineMessage
 	PresenceChanged       *PresenceChangedMessage
+	PresenceCheck         *PresenceCheckMessage
+	PresenceAck           *PresenceAckMessage
 	Error                 *ErrorMessage
 }
 
@@ -282,6 +320,18 @@ func ParseMessage(data []byte) (*ParsedMessage, error) {
 			return nil, err
 		}
 		parsed.PresenceChanged = &msg
+	case MessageTypePresenceCheck:
+		var msg PresenceCheckMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.PresenceCheck = &msg
+	case MessageTypePresenceAck:
+		var msg PresenceAckMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.PresenceAck = &msg
 	}
 
 	return parsed, nil
@@ -338,10 +388,10 @@ func NewErrorMessage(err string) ErrorMessage {
 	}
 }
 
-func NewCallTokens(tokens common.LivekitTokenSet) CallTokensMessage {
+func NewCallTokens(tokens livekitutil.LivekitTokenSet) CallTokensMessage {
 	return CallTokensMessage{
 		Type: MessageTypeNewCallTokens,
-		Payload: struct{ common.LivekitTokenSet }{
+		Payload: struct{ livekitutil.LivekitTokenSet }{
 			LivekitTokenSet: tokens,
 		},
 	}

@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
+	"hopp-backend/internal/redisutil"
 	"net/http"
 	"strings"
 	"time"
@@ -611,7 +612,7 @@ func (h *AuthHandler) Teammates(c echo.Context) error {
 	ctx := context.Background()
 	for i := range teammates {
 		// Check if user has an active Redis subscription
-		channelPattern := common.GetUserChannel(teammates[i].ID)
+		channelPattern := redisutil.GetUserChannel(teammates[i].ID)
 		channels, err := h.Redis.PubSubChannels(ctx, channelPattern).Result()
 		if err != nil {
 			c.Logger().Error("Error checking Redis channels:", err)
@@ -1045,9 +1046,9 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	tokens.Participant = user.ID
 
 	if h.CallState != nil {
-		c.Logger().Infof("callstate: AddRoomParticipant userID=%s roomID=%s", user.ID, room.ID)
-		if err := h.CallState.AddRoomParticipant(c.Request().Context(), room.ID, user.ID); err != nil {
-			c.Logger().Warnf("callstate.AddRoomParticipant error: %v", err)
+		c.Logger().Infof("callstate: AddUserToRoom userID=%s roomID=%s", user.ID, room.ID)
+		if _, err := h.CallState.AddUserToRoom(c.Request().Context(), room.ID, user.ID, room.Name); err != nil {
+			c.Logger().Warnf("callstate.AddUserToRoom error: %v", err)
 		}
 	}
 
@@ -1089,17 +1090,19 @@ func (h *AuthHandler) JoinCall(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Call state service not available")
 	}
 
-	roomName, _, err := h.CallState.JoinCall(c.Request().Context(), user.ID, targetUserID)
+	// Read the target's current room from the snapshot to mint tokens for it.
+	roomName, found, err := h.CallState.GetUserRoom(c.Request().Context(), targetUserID)
 	if err != nil {
-		if errors.Is(err, callstate.ErrCallEnded) {
-			return echo.NewHTTPError(http.StatusConflict, "The call has ended")
-		}
-		c.Logger().Error("Error joining call: ", err)
+		c.Logger().Error("Error reading target presence: ", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to join call")
 	}
-
-	if roomName == "" {
+	if !found || roomName == "" {
 		return echo.NewHTTPError(http.StatusNotFound, "Target user is not in a call")
+	}
+
+	// Add the joiner to the room (validated: the user just performed the action).
+	if _, err := h.CallState.AddUserToRoom(c.Request().Context(), roomName, user.ID, ""); err != nil {
+		c.Logger().Warnf("callstate.AddUserToRoom error: %v", err)
 	}
 
 	tokens, err := generateLiveKitTokens(&h.ServerState, roomName, user)
@@ -1413,7 +1416,7 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 	}
 
 	// Convert LiveKit server URL (wss://) to HTTP URL for API calls
-	livekitHTTPURL, err := convertLivekitURLToHTTP(h.Config.Livekit.ServerURL)
+	livekitHTTPURL, err := livekitutil.ConvertURLToHTTP(h.Config.Livekit.ServerURL)
 	if err != nil {
 		c.Logger().Errorf("Failed to convert LiveKit URL: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to connect to LiveKit")
@@ -1439,7 +1442,7 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 		// Dedupe participants by user ID (each user can have audio/video/camera identities)
 		seenUserIDs := make(map[string]bool)
 		for _, p := range participants.Participants {
-			userID, err := extractUserIDFromIdentity(p.Identity)
+			userID, err := livekitutil.ExtractUserIDFromIdentity(p.Identity)
 			if err != nil {
 				c.Logger().Debugf("Skipping participant with invalid identity: %v", err)
 				continue

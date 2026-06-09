@@ -101,9 +101,22 @@ func (s *Server) Initialize() error {
 	s.setupRedis()
 
 	if s.Redis != nil {
-		s.CallState = callstate.NewTracker(s.Redis)
-		if err := s.CallState.ResetAllCallState(context.Background()); err != nil {
-			s.Echo.Logger.Warnf("Failed to reset call state: %v", err)
+		s.CallState = callstate.NewTracker(s.Redis, s.Echo.Logger)
+		// Presence is reconciled against LiveKit as a hint (confirmed by clients
+		// before being shown).
+		// Run one synchronous pass on startup to seed the
+		// snapshot, then start the periodic loop.
+		if s.Config.Livekit.ServerURL != "" {
+			if err := s.CallState.EnableReconciliation(s.DB, s.Config.Livekit.ServerURL, s.Config.Livekit.APIKey, s.Config.Livekit.Secret); err != nil {
+				s.Echo.Logger.Warnf("Failed to enable presence reconciliation: %v", err)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				s.CallState.ReconcileOnce(ctx)
+				cancel()
+				s.CallState.StartReconciliation()
+			}
+		} else {
+			s.Echo.Logger.Warn("LIVEKIT_SERVER_URL not configured, presence reconciliation disabled")
 		}
 	}
 
@@ -278,6 +291,21 @@ func (s *Server) setupMetrics() {
 			return connectedClients
 		},
 	))
+
+	if s.CallState != nil {
+		prometheus.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Subsystem: "callstate",
+				Name:      "active_rooms",
+				Help:      "Number of active call rooms in the presence snapshot",
+			},
+			func() float64 {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				return float64(s.CallState.RoomCount(ctx))
+			},
+		))
+	}
 }
 
 func (s *Server) setupGothProviders() {

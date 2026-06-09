@@ -3,13 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/messages"
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
+	"hopp-backend/internal/redisutil"
 	"net/http"
 	"time"
 
@@ -90,7 +90,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 		} else {
 			for _, teammate := range teammates {
 				// Check if teammate is online
-				channels, err := server.Redis.PubSubChannels(ctx, common.GetUserChannel(teammate.ID)).Result()
+				channels, err := server.Redis.PubSubChannels(ctx, redisutil.GetUserChannel(teammate.ID)).Result()
 				if err != nil {
 					c.Logger().Error(err)
 					continue
@@ -168,6 +168,9 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					// Handle user online message
 					c.Logger().Info("Received user online message ", parsedMessage.TeammateOnlineMessage.Payload.TeammateID, " ", user.ID)
 					publishTeammateOnlineMessage(c, server, user.ID, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
+				case parsedMessage.PresenceAck != nil:
+					// Client confirmed (or denied) presence in a candidate room
+					handlePresenceAck(c, server, user.ID, *parsedMessage.PresenceAck)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -252,6 +255,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 						if err != nil {
 							c.Logger().Error(err)
 						}
+					case parsedMessage.PresenceCheck != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
 					default:
 						c.Logger().Warn("Unknown message type")
 					}
@@ -261,38 +269,6 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 
 		// Wait for connection to close
 		<-done
-
-		if server.CallState != nil {
-			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cleanCancel()
-
-			_, remainingPeers, leaveErr := server.CallState.LeaveCall(cleanCtx, user.ID)
-			if leaveErr != nil {
-				if errors.Is(leaveErr, callstate.ErrCallEnded) {
-					c.Logger().Debugf("callstate: LeaveCall ErrCallEnded on disconnect userID=%s (call already ended)", user.ID)
-				} else {
-					c.Logger().Warnf("callstate.LeaveCall error on disconnect: %v", leaveErr)
-				}
-			}
-
-			// Also clean up the user:room: key (for 1:1 calls that use room tracking)
-			server.CallState.RemoveRoomParticipant(cleanCtx, "", user.ID)
-
-			// Notify remaining peer only if exactly one is left (last two in the call)
-			// Also clean up the last peer's call entry since the call is fully over.
-			if len(remainingPeers) == 1 {
-				server.CallState.RemoveCallEntry(context.Background(), remainingPeers[0])
-				server.CallState.RemoveRoomParticipant(context.Background(), "", remainingPeers[0])
-				c.Logger().Infof("callstate: disconnect mid-call userID=%s peer=%s — notifying peer", user.ID, remainingPeers[0])
-				endMsg := messages.NewCallEndMessage(user.ID)
-				endMsgJSON, mErr := json.Marshal(endMsg)
-				if mErr == nil {
-					server.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
-				}
-			}
-
-			broadcastPresenceChanged(c, server, user.ID)
-		}
 
 		return nil
 	}
@@ -316,7 +292,7 @@ func dedupeCallKey(a, b string) string {
 
 func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, rdb *redis.PubSub, callerId, calleeID string) {
 	rdbCtx := context.Background()
-	calleeChannelID := common.GetUserChannel(calleeID)
+	calleeChannelID := redisutil.GetUserChannel(calleeID)
 	dedupeKey := dedupeCallKey(callerId, calleeID)
 
 	// Dedupe: prevent duplicate/glare call requests within ringing window.
@@ -415,7 +391,7 @@ func rejectCall(ctx echo.Context, s *common.ServerState, rejecterID string, mess
 		return
 	}
 
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), payloadJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), payloadJSON)
 }
 
 func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, message messages.AcceptCallMessage) {
@@ -428,7 +404,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		ctx.Logger().Error(err)
 		return
 	}
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), payloadJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), payloadJSON)
 
 	// Next steps after accepting call
 	// 1. Create a room with the two participants
@@ -468,7 +444,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 
 	// Publish a message to the caller and the callee
 	// with their tokens
-	calleeMsg := messages.NewCallTokens(common.LivekitTokenSet{
+	calleeMsg := messages.NewCallTokens(livekitutil.LivekitTokenSet{
 		AudioToken:  calleeTokens.AudioToken,
 		VideoToken:  calleeTokens.VideoToken,
 		CameraToken: calleeTokens.CameraToken,
@@ -480,7 +456,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		return
 	}
 
-	callerMsg := messages.NewCallTokens(common.LivekitTokenSet{
+	callerMsg := messages.NewCallTokens(livekitutil.LivekitTokenSet{
 		AudioToken:  callerTokens.AudioToken,
 		VideoToken:  callerTokens.VideoToken,
 		CameraToken: callerTokens.CameraToken,
@@ -493,13 +469,14 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	}
 
 	// Publish the LiveKit tokens to the caller and the callee
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
-	s.Redis.Publish(context.Background(), common.GetUserChannel(calleeID), calleeMsgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(calleeID), calleeMsgJSON)
 
 	if s.CallState != nil {
-		ctx.Logger().Infof("callstate: SetCallActive callerID=%s calleeID=%s room=%s", callerID, calleeID, roomName)
-		if err := s.CallState.SetCallActive(context.Background(), callerID, calleeID, roomName); err != nil {
-			ctx.Logger().Warnf("callstate.SetCallActive error: %v", err)
+		ctx.Logger().Infof("callstate: AddCallRoom callerID=%s calleeID=%s room=%s", callerID, calleeID, roomName)
+		// Ad-hoc 1:1 call with empty display name
+		if _, err := s.CallState.AddCallRoom(context.Background(), roomName, []string{callerID, calleeID}, ""); err != nil {
+			ctx.Logger().Warnf("callstate.AddCallRoom error: %v", err)
 		}
 	}
 
@@ -515,7 +492,7 @@ func sendCommonErrorMessage(s *common.ServerState, err string, userIDs ...string
 		if err != nil {
 			return
 		}
-		s.Redis.Publish(context.Background(), common.GetUserChannel(userID), msgJSON)
+		s.Redis.Publish(context.Background(), redisutil.GetUserChannel(userID), msgJSON)
 	}
 }
 
@@ -524,31 +501,62 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
 
 	if s.CallState != nil {
-		ctx.Logger().Infof("callstate: LeaveCall userID=%s", userID)
-		roomName, remainingPeers, err := s.CallState.LeaveCall(context.Background(), userID)
+		ctx.Logger().Infof("callstate: RemoveUser userID=%s", userID)
+		roomName, remainingPeers, err := s.CallState.RemoveUser(context.Background(), userID)
 		if err != nil {
-			if errors.Is(err, callstate.ErrCallEnded) {
-				ctx.Logger().Debugf("callstate: LeaveCall ErrCallEnded userID=%s (call already ended)", userID)
-			} else {
-				ctx.Logger().Warnf("callstate.LeaveCall error: %v", err)
-			}
+			ctx.Logger().Warnf("callstate.RemoveUser error: %v", err)
 		}
-		ctx.Logger().Infof("callstate: LeaveCall room=%s remainingPeers=%v", roomName, remainingPeers)
+		ctx.Logger().Infof("callstate: RemoveUser room=%s remainingPeers=%v", roomName, remainingPeers)
 
-		// Only notify when exactly one peer remains (last two in the call)
-		// Also clean up the last peer's call entry since the call is fully over.
+		// Only notify when exactly one peer remains (last two in the call).
+		// Remove them too so the call is fully collapsed.
 		if len(remainingPeers) == 1 {
-			s.CallState.RemoveCallEntry(context.Background(), remainingPeers[0])
-			s.CallState.RemoveRoomParticipant(context.Background(), "", remainingPeers[0])
+			s.CallState.RemoveUser(context.Background(), remainingPeers[0])
 			endMsg := messages.NewCallEndMessage(userID)
 			endMsgJSON, mErr := json.Marshal(endMsg)
 			if mErr == nil {
-				s.Redis.Publish(context.Background(), common.GetUserChannel(remainingPeers[0]), endMsgJSON)
+				s.Redis.Publish(context.Background(), redisutil.GetUserChannel(remainingPeers[0]), endMsgJSON)
 			}
 		}
 	}
 
 	broadcastPresenceChanged(ctx, s, userID)
+}
+
+// handlePresenceAck materializes a candidate room into the snapshot when a
+// client confirms it is in the call (any-one ACK validates the whole room).
+func handlePresenceAck(ctx echo.Context, s *common.ServerState, userID string, msg messages.PresenceAckMessage) {
+	if s.CallState == nil {
+		return
+	}
+	room := msg.Payload.Room
+	if !msg.Payload.InCall {
+		// Leave the pending guard to expire; the next sweep re-pings if still live.
+		ctx.Logger().Debugf("callstate: presence_ack in_call=false userID=%s room=%s", userID, room)
+		return
+	}
+
+	bgCtx := context.Background()
+	members, err := s.CallState.GetPending(bgCtx, room)
+	if err != nil {
+		ctx.Logger().Warnf("callstate: GetPending error room=%s: %v", room, err)
+		return
+	}
+	// Ensure the acking user is included even if the pending list raced.
+	members = append(members, userID)
+
+	changed, err := s.CallState.MaterializeRoom(bgCtx, room, members)
+	if err != nil {
+		ctx.Logger().Warnf("callstate: MaterializeRoom error room=%s: %v", room, err)
+		return
+	}
+	if err := s.CallState.ClearPending(bgCtx, room); err != nil {
+		ctx.Logger().Warnf("callstate: ClearPending error room=%s: %v", room, err)
+	}
+	if changed {
+		ctx.Logger().Infof("callstate: materialized room=%s via ACK from userID=%s", room, userID)
+		broadcastPresenceChanged(ctx, s, userID)
+	}
 }
 
 func broadcastPresenceChanged(ctx echo.Context, s *common.ServerState, userID string) {
@@ -573,16 +581,16 @@ func broadcastPresenceChanged(ctx echo.Context, s *common.ServerState, userID st
 		return
 	}
 
-	s.Redis.Publish(bgCtx, common.GetUserChannel(userID), msgJSON)
+	s.Redis.Publish(bgCtx, redisutil.GetUserChannel(userID), msgJSON)
 
 	for _, teammate := range teammates {
-		channels, chErr := s.Redis.PubSubChannels(bgCtx, common.GetUserChannel(teammate.ID)).Result()
+		channels, chErr := s.Redis.PubSubChannels(bgCtx, redisutil.GetUserChannel(teammate.ID)).Result()
 		if chErr != nil {
 			ctx.Logger().Warnf("broadcastPresenceChanged: PubSubChannels error for %s: %v", teammate.ID, chErr)
 			continue
 		}
 		if len(channels) > 0 {
-			s.Redis.Publish(bgCtx, common.GetUserChannel(teammate.ID), msgJSON)
+			s.Redis.Publish(bgCtx, redisutil.GetUserChannel(teammate.ID), msgJSON)
 		}
 	}
 }
@@ -596,5 +604,5 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userI
 		return
 	}
 
-	s.Redis.Publish(context.Background(), common.GetUserChannel(teammateID), msgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(teammateID), msgJSON)
 }

@@ -42,13 +42,6 @@ type AuthHandler interface {
 	UserPage(c echo.Context) error
 }
 
-type LivekitTokenSet struct {
-	AudioToken  string `json:"audioToken"`
-	VideoToken  string `json:"videoToken"`
-	CameraToken string `json:"cameraToken"`
-	Participant string `json:"participant"`
-}
-
 type ServerState struct {
 	Echo        *echo.Echo
 	Config      *config.Config
