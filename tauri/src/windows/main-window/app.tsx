@@ -59,7 +59,7 @@ function App() {
     select: (data) => {
       setUser(data);
       if (!sentryMetadataRef.current) {
-        tauriUtils.setSentryMetadata(data.email);
+        tauriUtils.setSentryMetadata(data.id);
         sentryMetadataRef.current = true;
       }
       return data;

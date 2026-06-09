@@ -76,7 +76,7 @@ export interface CallStartMessage {
 }
 
 export interface SentryMetadata {
-  user_email: string;
+  user_id: string;
   app_version: string;
 }
 
@@ -122,6 +122,7 @@ export interface UserSettings {
   shortcut_toggle_camera: string;
   shortcut_toggle_screenshare: string;
   shortcut_end_call: string;
+  telemetry_enabled: boolean;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -209,7 +210,7 @@ export interface CommandMap {
   create_settings_window: { args: void; return: void };
 
   // Sentry
-  set_sentry_metadata: { args: { userEmail: string; appVersion: string }; return: void };
+  set_sentry_metadata: { args: { userId: string; appVersion: string }; return: void };
 
   // Call
   call_started: { args: { audioToken: string; videoToken: string }; return: void };
@@ -223,6 +224,7 @@ export interface CommandMap {
   // User settings (Settings window)
   get_user_settings: { args: void; return: UserSettings };
   set_call_feedback_popup: { args: { enabled: boolean }; return: void };
+  set_telemetry_enabled: { args: { enabled: boolean }; return: void };
   set_show_dock_icon_in_call: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };

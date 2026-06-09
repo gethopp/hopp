@@ -263,9 +263,9 @@ const getLivekitUrl = async () => {
   return await invoke<string>("get_livekit_url");
 };
 
-const setSentryMetadata = async (userEmail: string) => {
+const setSentryMetadata = async (userId: string) => {
   const appVersion = await getVersion();
-  return await invoke("set_sentry_metadata", { userEmail, appVersion });
+  return await invoke("set_sentry_metadata", { userId, appVersion });
 };
 
 const callStarted = async (audioToken: string, videoToken: string) => {

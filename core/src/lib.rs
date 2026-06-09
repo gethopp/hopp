@@ -1158,10 +1158,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
                 log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
-                sentry_utils::init_metadata(
-                    sentry_metadata.user_email,
-                    sentry_metadata.app_version,
-                );
+                sentry_utils::init_metadata(sentry_metadata.user_id, sentry_metadata.app_version);
             }
             UserEvent::AddToClipboard(add_to_clipboard_data, requester_identity) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
@@ -1417,6 +1414,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: SetNoiseCancellation({enabled})");
                 self.noise_cancellation_enabled
                     .store(enabled, std::sync::atomic::Ordering::Relaxed);
+            }
+            UserEvent::SetTelemetryEnabled(enabled) => {
+                log::info!("user_event: SetTelemetryEnabled({enabled})");
+                sentry_utils::set_telemetry_enabled(enabled);
             }
             UserEvent::ToggleMic => {
                 log::info!("user_event: ToggleMic");
@@ -2263,6 +2264,7 @@ pub enum UserEvent {
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
+    SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
 }
@@ -2415,6 +2417,9 @@ impl RenderEventLoop {
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
+                    }
+                    Message::SetTelemetryEnabled(enabled) => {
+                        UserEvent::SetTelemetryEnabled(enabled)
                     }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
