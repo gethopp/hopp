@@ -3,11 +3,10 @@ package handlers
 import (
 	"fmt"
 	"hopp-backend/internal/common"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/models"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -76,7 +75,7 @@ func getTeamMembersRawJSON(accessToken string) ([]byte, error) {
 	return body, nil
 }
 
-func generateLiveKitTokens(s *common.ServerState, roomName string, participant *models.User) (common.LivekitTokenSet, error) {
+func generateLiveKitTokens(s *common.ServerState, roomName string, participant *models.User) (livekitutil.LivekitTokenSet, error) {
 	// Create an access token (make sure these are loaded from your config)
 	videoID := fmt.Sprintf("room:%s:%s:video", roomName, participant.ID)
 	audioID := fmt.Sprintf("room:%s:%s:audio", roomName, participant.ID)
@@ -117,21 +116,21 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 
 	videoToken, err := video.ToJWT()
 	if err != nil {
-		return common.LivekitTokenSet{}, fmt.Errorf("creating video token: %w", err)
+		return livekitutil.LivekitTokenSet{}, fmt.Errorf("creating video token: %w", err)
 	}
 
 	audioToken, err := audio.ToJWT()
 	if err != nil {
-		return common.LivekitTokenSet{}, fmt.Errorf("creating audio token: %w", err)
+		return livekitutil.LivekitTokenSet{}, fmt.Errorf("creating audio token: %w", err)
 	}
 
 	cameraToken, err := camera.ToJWT()
 	if err != nil {
-		return common.LivekitTokenSet{}, fmt.Errorf("creating camera token: %w", err)
+		return livekitutil.LivekitTokenSet{}, fmt.Errorf("creating camera token: %w", err)
 	}
 
 	// Return the tokens
-	return common.LivekitTokenSet{
+	return livekitutil.LivekitTokenSet{
 		VideoToken:  videoToken,
 		AudioToken:  audioToken,
 		CameraToken: cameraToken,
@@ -161,40 +160,6 @@ func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User,
 
 func (bh *BillingHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
 	return getAuthenticatedUserFromJWTCommon(c, bh.JwtIssuer, bh.DB)
-}
-
-// convertLivekitURLToHTTP converts a LiveKit WebSocket URL (wss:// or ws://) to an HTTP URL.
-// Uses net/url for safe URL parsing instead of string concatenation.
-func convertLivekitURLToHTTP(livekitURL string) (string, error) {
-	parsed, err := url.Parse(livekitURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse LiveKit URL: %w", err)
-	}
-
-	// Convert scheme: wss -> https, ws -> http
-	switch parsed.Scheme {
-	case "wss":
-		parsed.Scheme = "https"
-	case "ws":
-		parsed.Scheme = "http"
-	case "https", "http":
-		// Already HTTP(S), no change needed
-	default:
-		return "", fmt.Errorf("unexpected LiveKit URL scheme: %s", parsed.Scheme)
-	}
-
-	return parsed.String(), nil
-}
-
-// extractUserIDFromIdentity extracts the user ID from a LiveKit participant identity.
-// Identity format is: "room:<roomId>:<userId>:<trackType>" (e.g., "room:abc123:usr_xyz:audio")
-// Returns an error if the identity doesn't match the expected format.
-func extractUserIDFromIdentity(identity string) (string, error) {
-	parts := strings.Split(identity, ":")
-	if len(parts) >= 4 && parts[0] == "room" {
-		return parts[2], nil
-	}
-	return "", fmt.Errorf("invalid identity format: %s", identity)
 }
 
 // checkUserHasAccess checks if a user has an active subscription or trial.

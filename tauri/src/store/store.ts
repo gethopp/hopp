@@ -49,6 +49,7 @@ type State = {
   callTokens: CallState | null;
   customServerUrl: string | null;
   livekitUrl: string | null;
+  callsPresence: { [userId: string]: components["schemas"]["CallPresence"] } | null;
 };
 
 type Actions = {
@@ -69,6 +70,7 @@ type Actions = {
   updateCallTokens: (tokens: Partial<CallState>) => void;
   setCustomServerUrl: (url: string | null) => void;
   setLivekitUrl: (url: string | null) => void;
+  setCallsPresence: (presence: { [userId: string]: components["schemas"]["CallPresence"] } | null) => void;
 };
 
 const initialState: State = {
@@ -84,6 +86,7 @@ const initialState: State = {
   callTokens: null,
   customServerUrl: null,
   livekitUrl: null,
+  callsPresence: null,
 };
 
 /**
@@ -145,6 +148,10 @@ const useStore = create<State & Actions>()(
     setLivekitUrl: (url) =>
       set((state) => {
         state.livekitUrl = url;
+      }),
+    setCallsPresence: (presence) =>
+      set((state) => {
+        state.callsPresence = presence;
       }),
     setTab: (tab) =>
       set((state) => {

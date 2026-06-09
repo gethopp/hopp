@@ -107,6 +107,29 @@ components:
               type: string
               description: User ID of a participant in the room
 
+    CallPresence:
+      type: object
+      properties:
+        peerIds:
+          type: array
+          items:
+            type: string
+          description: Peer user IDs in the call
+        roomName:
+          type: string
+          description: Room name (for room calls)
+
+    CallsPresenceResponse:
+      type: object
+      required:
+        - presence
+      properties:
+        presence:
+          type: object
+          description: Map of user IDs to their call presence state
+          additionalProperties:
+            $ref: "#/components/schemas/CallPresence"
+
     Error:
       type: object
       properties:
@@ -785,6 +808,81 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/calls/presence:
+    get:
+      summary: Get call presence for user and teammates
+      description: Returns which users are currently in a 1:1 call or room call
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Call presence data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallsPresenceResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/call/join/{userId}:
+    post:
+      summary: Join an ongoing call with a teammate
+      description: Join an existing 1:1 call that a teammate is currently in. Returns LiveKit tokens for the call room.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: The user ID of the teammate whose call to join
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LiveKit tokens for the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionTokensResponse"
+        "402":
+          description: Trial or subscription expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: trial-ended
+        "403":
+          description: Target user is not a teammate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Target user is not in a call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Call ended while joining
           content:
             application/json:
               schema:

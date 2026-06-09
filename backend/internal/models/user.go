@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hopp-backend/internal/redisutil"
 	"strconv"
 	"time"
 
@@ -134,7 +135,7 @@ func GetUserByID(db *gorm.DB, id string) (*User, error) {
 }
 
 func (u *User) GetRedisChannel() string {
-	return fmt.Sprintf("channel-user-%s", u.ID)
+	return redisutil.GetUserChannel(u.ID)
 }
 
 type UserWithActivity struct {

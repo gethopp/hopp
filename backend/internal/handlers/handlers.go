@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
+	"hopp-backend/internal/redisutil"
 	"net/http"
 	"strings"
 	"time"
@@ -610,7 +612,7 @@ func (h *AuthHandler) Teammates(c echo.Context) error {
 	ctx := context.Background()
 	for i := range teammates {
 		// Check if user has an active Redis subscription
-		channelPattern := common.GetUserChannel(teammates[i].ID)
+		channelPattern := redisutil.GetUserChannel(teammates[i].ID)
 		channels, err := h.Redis.PubSubChannels(ctx, channelPattern).Result()
 		if err != nil {
 			c.Logger().Error("Error checking Redis channels:", err)
@@ -1043,7 +1045,76 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	}
 	tokens.Participant = user.ID
 
+	if h.CallState != nil {
+		c.Logger().Infof("callstate: AddUserToRoom userID=%s roomID=%s", user.ID, room.ID)
+		if _, err := h.CallState.AddUserToRoom(c.Request().Context(), room.ID, user.ID, room.Name); err != nil {
+			c.Logger().Warnf("callstate.AddUserToRoom error: %v", err)
+		}
+	}
+
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
+
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined the %s room", user.ID, room.Name), h.Config)
+
+	return c.JSON(http.StatusOK, tokens)
+}
+
+func (h *AuthHandler) JoinCall(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	targetUserID := c.Param("userId")
+
+	target, err := models.GetUserByID(h.DB, targetUserID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Target user not found")
+	}
+
+	if user.TeamID == nil || target.TeamID == nil || *user.TeamID != *target.TeamID {
+		return echo.NewHTTPError(http.StatusForbidden, "You can only join calls with teammates")
+	}
+
+	hasAccess, err := checkUserHasAccess(h.DB, user, h.Config.IsStripeEnabled())
+	if err != nil {
+		c.Logger().Error("Error checking subscription: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check subscription status")
+	}
+	if !hasAccess {
+		_ = notifications.SendTelegramNotification(fmt.Sprintf("Unsubscribed user %s tried to join call with %s", user.ID, target.ID), h.Config)
+		return c.JSON(http.StatusPaymentRequired, map[string]string{"error": "trial-ended"})
+	}
+
+	if h.CallState == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Call state service not available")
+	}
+
+	// Read the target's current room from the snapshot to mint tokens for it.
+	roomName, found, err := h.CallState.GetUserRoom(c.Request().Context(), targetUserID)
+	if err != nil {
+		c.Logger().Error("Error reading target presence: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to join call")
+	}
+	if !found || roomName == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "Target user is not in a call")
+	}
+
+	// Add the joiner to the room (validated: the user just performed the action).
+	if _, err := h.CallState.AddUserToRoom(c.Request().Context(), roomName, user.ID, ""); err != nil {
+		c.Logger().Warnf("callstate.AddUserToRoom error: %v", err)
+	}
+
+	tokens, err := generateLiveKitTokens(&h.ServerState, roomName, user)
+	if err != nil {
+		c.Logger().Error("Failed to generate call tokens: ", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate tokens")
+	}
+	tokens.Participant = targetUserID
+
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
+
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", user.ID, target.ID), h.Config)
 
 	return c.JSON(http.StatusOK, tokens)
 }
@@ -1345,7 +1416,7 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 	}
 
 	// Convert LiveKit server URL (wss://) to HTTP URL for API calls
-	livekitHTTPURL, err := convertLivekitURLToHTTP(h.Config.Livekit.ServerURL)
+	livekitHTTPURL, err := livekitutil.ConvertURLToHTTP(h.Config.Livekit.ServerURL)
 	if err != nil {
 		c.Logger().Errorf("Failed to convert LiveKit URL: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to connect to LiveKit")
@@ -1371,7 +1442,7 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 		// Dedupe participants by user ID (each user can have audio/video/camera identities)
 		seenUserIDs := make(map[string]bool)
 		for _, p := range participants.Participants {
-			userID, err := extractUserIDFromIdentity(p.Identity)
+			userID, err := livekitutil.ExtractUserIDFromIdentity(p.Identity)
 			if err != nil {
 				c.Logger().Debugf("Skipping participant with invalid identity: %v", err)
 				continue
@@ -1388,4 +1459,34 @@ func (h *AuthHandler) GetRoomsPresence(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"rooms": roomsPresence,
 	})
+}
+
+func (h *AuthHandler) GetCallsPresence(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
+	if h.CallState == nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{"presence": map[string]interface{}{}})
+	}
+
+	teammates, err := user.GetTeammates(h.DB)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get teammates")
+	}
+
+	userIDs := make([]string, 0, len(teammates)+1)
+	userIDs = append(userIDs, user.ID)
+	for _, t := range teammates {
+		userIDs = append(userIDs, t.ID)
+	}
+
+	presence, err := h.CallState.GetCallStates(c.Request().Context(), h.DB, userIDs)
+	if err != nil {
+		c.Logger().Errorf("GetCallStates error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get call presence")
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{"presence": presence})
 }

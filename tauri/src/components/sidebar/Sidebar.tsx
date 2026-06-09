@@ -69,7 +69,7 @@ const getAvailableTabs = (
           key: "login",
         } as const,
       ]
-    : [
+      : [
         {
           label: "User List",
           icon: <HiOutlineUsers className="size-4 stroke-[1.5]" />,
@@ -125,7 +125,7 @@ const DownloadNewVersionButton = () => {
         >
           {updateInProgress ?
             <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+            : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
@@ -220,7 +220,7 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
         <TooltipContent side="right">
           {isExpired ?
             "Trial expired, click to manage subscription"
-          : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
+            : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
         </TooltipContent>
       </Tooltip>
     </div>
