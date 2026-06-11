@@ -9,11 +9,12 @@ const Tooltip = TooltipPrimitive.Root;
 
 const TooltipTrigger = TooltipPrimitive.Trigger;
 
-type TooltipVariant = "default" | "light";
+type TooltipVariant = "default" | "light" | "transparent";
 
 const tooltipVariantClasses: Record<TooltipVariant, string> = {
   default: "bg-slate-900 text-slate-50 dark:bg-slate-50 dark:text-slate-900",
   light: "bg-white text-slate-600 ring-1 ring-slate-200 shadow-sm",
+  transparent: "bg-transparent text-slate-600",
 };
 
 const TooltipContent = React.forwardRef<
