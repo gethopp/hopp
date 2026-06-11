@@ -502,15 +502,16 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 
 	if s.CallState != nil {
 		ctx.Logger().Infof("callstate: RemoveUser userID=%s", userID)
-		roomName, remainingPeers, err := s.CallState.RemoveUser(context.Background(), userID)
+		roomName, remainingPeers, isNamedRoom, err := s.CallState.RemoveUser(context.Background(), userID)
 		if err != nil {
 			ctx.Logger().Warnf("callstate.RemoveUser error: %v", err)
 		}
-		ctx.Logger().Infof("callstate: RemoveUser room=%s remainingPeers=%v", roomName, remainingPeers)
+		ctx.Logger().Infof("callstate: RemoveUser room=%s remainingPeers=%v isNamedRoom=%v", roomName, remainingPeers, isNamedRoom)
 
-		// Only notify when exactly one peer remains (last two in the call).
-		// Remove them too so the call is fully collapsed.
-		if len(remainingPeers) == 1 {
+		// Collapse ad-hoc 1:1 calls when exactly one peer remains (last two in the
+		// call): remove them too so the call is fully torn down. Named rooms are
+		// persistent meeting spots, so the remaining participant stays put.
+		if !isNamedRoom && len(remainingPeers) == 1 {
 			s.CallState.RemoveUser(context.Background(), remainingPeers[0])
 			endMsg := messages.NewCallEndMessage(userID)
 			endMsgJSON, mErr := json.Marshal(endMsg)

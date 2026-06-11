@@ -799,7 +799,7 @@ func (h *SlackHandler) LeaveRoom(c echo.Context) error {
 
 	if h.CallState != nil {
 		h.logger.Infof("callstate: RemoveUser userID=%s roomID=%s", user.ID, roomID)
-		if _, _, err := h.CallState.RemoveUser(c.Request().Context(), user.ID); err != nil {
+		if _, _, _, err := h.CallState.RemoveUser(c.Request().Context(), user.ID); err != nil {
 			h.logger.Warnf("callstate.RemoveUser error: %v", err)
 		}
 	}

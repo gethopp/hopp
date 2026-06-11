@@ -268,19 +268,22 @@ func (t *Tracker) MaterializeRoom(ctx context.Context, roomName string, members 
 }
 
 // RemoveUser removes a user from whatever room they're in, collapsing the room
-// if it becomes empty. Returns the room name and the remaining members.
-func (t *Tracker) RemoveUser(ctx context.Context, userID string) (string, []string, error) {
+// if it becomes empty. Returns the room name, the remaining members, and whether
+// the room is a named room (non-empty DisplayName => named/Slack room; empty =>
+// ad-hoc 1:1 call).
+func (t *Tracker) RemoveUser(ctx context.Context, userID string) (string, []string, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	snap, err := t.readSnapshot(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	for roomName, room := range snap.Rooms {
 		if !slices.Contains(room.UserIDs, userID) {
 			continue
 		}
+		isNamedRoom := room.DisplayName != ""
 		remaining := slices.DeleteFunc(slices.Clone(room.UserIDs), func(p string) bool {
 			return p == userID
 		})
@@ -289,9 +292,9 @@ func (t *Tracker) RemoveUser(ctx context.Context, userID string) (string, []stri
 		} else {
 			snap.Rooms[roomName] = RoomPresence{DisplayName: room.DisplayName, UserIDs: remaining}
 		}
-		return roomName, remaining, t.writeSnapshot(ctx, snap)
+		return roomName, remaining, isNamedRoom, t.writeSnapshot(ctx, snap)
 	}
-	return "", nil, nil
+	return "", nil, false, nil
 }
 
 // StartReconciliation launches the background loop that reconciles the snapshot
