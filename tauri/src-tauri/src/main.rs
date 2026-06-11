@@ -724,7 +724,11 @@ fn call_started(
 
 /// When enabled=true, shows the notification variant of the icon.
 /// When enabled=false, shows the default variant.
-#[tauri::command(async)]
+///
+/// NOTE: must NOT be `async`. The macOS implementation manipulates AppKit/CALayer,
+/// which has to run on the main thread; an async command would run off-thread and
+/// the notification dot would silently never update.
+#[tauri::command]
 fn set_tray_notification(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_tray_notification: enabled={}", enabled);
     let data = app.state::<std::sync::Mutex<hopp::AppData>>();

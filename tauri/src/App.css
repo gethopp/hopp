@@ -625,3 +625,21 @@ html.dark .trayNotification-body {
 html.dark .trayNotification-body #root {
   background-color: var(--bg-gray-dark);
 }
+
+kbd {
+  /* Inspired by: https://dylanatsmith.com/wrote/styling-the-kbd-element */
+  background-color: theme("colors.gray.100");
+  color: theme("colors.gray.900");
+  border-radius: 0.25rem; /* rounded */
+  border: 1px solid theme("colors.gray.300");
+  box-shadow: 0 0.5px 0 0.5px theme("colors.gray.300");
+  cursor: default;
+  font-family: theme("fontFamily.sans");
+  min-width: 0.75rem;
+  display: block;
+  text-align: center;
+  padding: 2px 5px;
+  margin: 0 4px;
+  position: relative;
+  top: -1px;
+}

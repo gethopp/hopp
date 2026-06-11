@@ -10,7 +10,7 @@ import type { CoreParticipantState, CoreRoleEvent } from "@/core_payloads";
 
 const windowName = getCurrentWindow().label;
 
-export const SidebarTabs = ["user-list", "invite", "debug", "login", "report-issue", "rooms"] as const;
+export const SidebarTabs = ["user-list", "invite", "debug", "login", "report-issue", "rooms", "call"] as const;
 export type Tab = (typeof SidebarTabs)[number];
 
 export enum ParticipantRole {
