@@ -22,7 +22,7 @@ import {
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { Constants, OS } from "@/constants";
 import { useQueryClient } from "@tanstack/react-query";
-import { downloadAndRelaunch } from "@/update";
+import { downloadAndRelaunch, hasPendingUpdate, installAndRelaunch } from "@/update";
 import { LuCircleFadingArrowUp } from "react-icons/lu";
 
 const SidebarButton = ({
@@ -119,6 +119,10 @@ const DownloadNewVersionButton = () => {
           className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
           onClick={() => {
             setUpdateInProgress(true);
+            if (OS === "macos" && hasPendingUpdate()) {
+              void installAndRelaunch();
+              return;
+            }
             void downloadAndRelaunch();
           }}
           disabled={updateInProgress}

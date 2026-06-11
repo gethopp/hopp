@@ -20,6 +20,8 @@ pub struct UserSettings {
     pub shortcut_end_call: Option<String>,
     #[serde(default = "default_true")]
     pub telemetry_enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_update_enabled: bool,
 }
 
 impl Default for UserSettings {
@@ -35,6 +37,7 @@ impl Default for UserSettings {
             shortcut_toggle_screenshare: None,
             shortcut_end_call: None,
             telemetry_enabled: true,
+            auto_update_enabled: true,
         }
     }
 }
