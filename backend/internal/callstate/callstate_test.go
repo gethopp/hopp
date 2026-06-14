@@ -210,7 +210,7 @@ func TestRemoveUser(t *testing.T) {
 		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b", "c"}, "")
 		require.NoError(t, err)
 
-		roomName, remaining, err := tr.RemoveUser(ctx, "b")
+		roomName, remaining, _, err := tr.RemoveUser(ctx, "b")
 		require.NoError(t, err)
 		assert.Equal(t, "room1", roomName)
 		assert.ElementsMatch(t, []string{"a", "c"}, remaining)
@@ -225,7 +225,7 @@ func TestRemoveUser(t *testing.T) {
 		_, err := tr.AddCallRoom(ctx, "room1", []string{"a"}, "")
 		require.NoError(t, err)
 
-		roomName, remaining, err := tr.RemoveUser(ctx, "a")
+		roomName, remaining, _, err := tr.RemoveUser(ctx, "a")
 		require.NoError(t, err)
 		assert.Equal(t, "room1", roomName)
 		assert.Empty(t, remaining)
@@ -237,7 +237,7 @@ func TestRemoveUser(t *testing.T) {
 	t.Run("noop for unknown user", func(t *testing.T) {
 		tr, _ := setupTracker(t)
 
-		roomName, remaining, err := tr.RemoveUser(ctx, "ghost")
+		roomName, remaining, _, err := tr.RemoveUser(ctx, "ghost")
 		require.NoError(t, err)
 		assert.Empty(t, roomName)
 		assert.Nil(t, remaining)
@@ -251,7 +251,7 @@ func TestRemoveUser(t *testing.T) {
 		_, err = tr.AddCallRoom(ctx, "room2", []string{"c", "d"}, "")
 		require.NoError(t, err)
 
-		_, _, err = tr.RemoveUser(ctx, "a")
+		_, _, _, err = tr.RemoveUser(ctx, "a")
 		require.NoError(t, err)
 
 		rooms := readSnapshotRooms(t, mr)
@@ -265,9 +265,9 @@ func TestRemoveUser(t *testing.T) {
 		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
 		require.NoError(t, err)
 
-		_, _, err = tr.RemoveUser(ctx, "a")
+		_, _, _, err = tr.RemoveUser(ctx, "a")
 		require.NoError(t, err)
-		_, _, err = tr.RemoveUser(ctx, "b")
+		_, _, _, err = tr.RemoveUser(ctx, "b")
 		require.NoError(t, err)
 
 		rooms := readSnapshotRooms(t, mr)
@@ -373,7 +373,7 @@ func TestRoomCount(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, tr.RoomCount(ctx))
 
-		_, _, err = tr.RemoveUser(ctx, "a")
+		_, _, _, err = tr.RemoveUser(ctx, "a")
 		require.NoError(t, err)
 		assert.Equal(t, 1, tr.RoomCount(ctx))
 	})
@@ -408,7 +408,7 @@ func TestGetUserRoom(t *testing.T) {
 		_, err := tr.AddCallRoom(ctx, "room1", []string{"a", "b"}, "")
 		require.NoError(t, err)
 
-		_, _, err = tr.RemoveUser(ctx, "a")
+		_, _, _, err = tr.RemoveUser(ctx, "a")
 		require.NoError(t, err)
 
 		_, found, err := tr.GetUserRoom(ctx, "a")
