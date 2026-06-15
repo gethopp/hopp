@@ -42,7 +42,7 @@ windows = { version = "0.58.0", features = [
     ]}
 
 [target.'cfg(target_os = "macos")'.dependencies]
-screencapturekit = "7.0.1"
+screencapturekit = { git = "https://github.com/gethopp/screencapturekit-rs.git", branch = "hopp" }
 core-graphics = { version = "0.25.0", features = ["highsierra"] }
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.7"
@@ -98,9 +98,3 @@ tract-onnx = "=0.21.4"
 tract-core = "=0.21.4"
 realfft = "3.4"
 rustfft = "6.2"
-
-[patch.crates-io]
-# Workaround: avoid duplicate Swift symbols from two modules named `CoreMediaBridge`
-# (one from `apple-cf`, one from `screencapturekit`) by renaming screencapturekit's
-# Swift target/module. See branch `hopp`.
-screencapturekit = { git = "https://github.com/gethopp/screencapturekit-rs.git", branch = "hopp" }
