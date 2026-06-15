@@ -21,8 +21,10 @@ import { CustomIcons } from "@/components/ui/icons";
 import clsx from "clsx";
 import { ChevronDownIcon } from "@radix-ui/react-icons";
 import { MoreHorizontal, X } from "lucide-react";
-import { HiOutlinePhoneXMark } from "react-icons/hi2";
+import { HiOutlinePhoneXMark, HiMiniLink } from "react-icons/hi2";
 import toast from "react-hot-toast";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Constants } from "@/constants";
 import { useEndCall } from "@/lib/hooks";
 import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
@@ -51,6 +53,13 @@ export function CallCenter() {
   const handleEndCall = useEndCall();
   const handleEndCallRef = useRef(handleEndCall);
   handleEndCallRef.current = handleEndCall;
+
+  const handleCopyRoomLink = async () => {
+    if (!callTokens?.room) return;
+    const roomLink = `${Constants.webAppUrl}/room/${callTokens.room.id}`;
+    await writeText(roomLink);
+    toast.success("Room link copied to clipboard");
+  };
 
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
@@ -115,17 +124,46 @@ export function CallCenter() {
         )}
 
         {/* Call Timer */}
-        {!callTokens.isInitialisingCall && (
-          <div className="w-full text-center mb-4">
-            <span className="text-xs font-medium">Pairing</span>{" "}
-            <span className="text-xs muted font-medium">
-              started{" "}
-              {formatDistanceToNow(callTokens.timeStarted, {
-                addSuffix: true,
-              })}
-            </span>
-          </div>
-        )}
+        {!callTokens.isInitialisingCall &&
+          (callTokens.room ?
+            <div className="w-full flex flex-col items-center gap-0.5 mb-4">
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="text-xs font-medium">{callTokens.room.name}</span>
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={handleCopyRoomLink}
+                        className="flex items-center justify-center size-5 rounded-sm text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                        aria-label="Copy room link"
+                      >
+                        <HiMiniLink className="size-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="flex flex-col items-center gap-0">
+                      <span>Copy room link for web</span>
+                      <span className="text-xs text-slate-400">Share with teammates</span>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <span className="text-xs muted font-medium">
+                started{" "}
+                {formatDistanceToNow(callTokens.timeStarted, {
+                  addSuffix: true,
+                })}
+              </span>
+            </div>
+            : <div className="w-full text-center mb-4">
+              <span className="text-xs font-medium">Pairing</span>{" "}
+              <span className="text-xs muted font-medium">
+                started{" "}
+                {formatDistanceToNow(callTokens.timeStarted, {
+                  addSuffix: true,
+                })}
+              </span>
+            </div>)}
       </div>
       <div className="gap-2 px-3 flex flex-col items-center w-full mb-2">
         <div className="flex flex-row gap-1 w-full">
@@ -161,9 +199,9 @@ export function CallCenter() {
                       }}
                       state={
                         controllerCursorState ? "active"
-                        : !accessibilityPermission ?
-                          "deactivated"
-                        : "neutral"
+                          : !accessibilityPermission ?
+                            "deactivated"
+                            : "neutral"
                       }
                       size="unsized"
                       className="size-9"
@@ -204,8 +242,8 @@ export function CallCenter() {
                   </Button>
                 </TooltipTrigger>
                 {userSettings?.shortcut_end_call && (
-                  <TooltipContent side="bottom" variant="light">
-                    <span className="font-mono text-xs">{userSettings.shortcut_end_call}</span>
+                  <TooltipContent sideOffset={0} side="bottom" variant="transparent">
+                    <kbd className="text-xs">{userSettings.shortcut_end_call}</kbd>
                   </TooltipContent>
                 )}
               </Tooltip>
@@ -254,7 +292,7 @@ function CallParticipants() {
           isLocal: true,
           isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
         }
-      : null;
+        : null;
 
     const remoteEntries = coreParticipants
       .filter((p) => p.connected)
@@ -294,7 +332,7 @@ function CallParticipants() {
                       alt={`${participant.user.first_name} ${participant.user.last_name}`}
                       className="size-full object-cover"
                     />
-                  : <span className="text-[10px] font-medium text-emerald-700">
+                    : <span className="text-[10px] font-medium text-emerald-700">
                       {participant.user.first_name[0]}
                       {participant.user.last_name[0]}
                     </span>
@@ -313,7 +351,7 @@ function CallParticipants() {
                   )}
                 </div>
               </>
-            : <>
+              : <>
                 <div className="size-8 rounded-md bg-slate-200 flex items-center justify-center shrink-0">
                   <span className="text-xs font-medium text-slate-600">?</span>
                 </div>
@@ -438,7 +476,7 @@ function DrawingEnableButton() {
             >
               {drawingEnabled ?
                 <PiCursorBold className="size-4" />
-              : <PiScribbleLoopBold className="size-4" />}
+                : <PiScribbleLoopBold className="size-4" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{drawingEnabled ? "Disable drawing" : "Enable drawing"}</TooltipContent>
@@ -581,7 +619,7 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
                     level={callTokens?.micLevel ?? 0}
                     className={`size-4 ${Colors.mic.icon} relative z-10`}
                   />
-                : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
+                  : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
               </div>
             }
             state={hasAudioEnabled ? "active" : "neutral"}
@@ -622,8 +660,8 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
           </ToggleIconButton>
         </TooltipTrigger>
         {shortcut && (
-          <TooltipContent side="bottom" variant="light">
-            <span className="font-mono text-xs">{shortcut}</span>
+          <TooltipContent sideOffset={0} side="bottom" variant="transparent">
+            <kbd className="text-xs">{shortcut}</kbd>
           </TooltipContent>
         )}
       </Tooltip>
@@ -663,7 +701,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
             icon={
               callTokens?.role === ParticipantRole.SHARER ?
                 <LuScreenShareOff className={`size-4 ${Colors.screen.icon}`} />
-              : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
+                : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
             }
             state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
             size="unsized"
@@ -691,8 +729,8 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
           </ToggleIconButton>
         </TooltipTrigger>
         {shortcut && (
-          <TooltipContent side="bottom" variant="light">
-            <span className="font-mono text-xs">{shortcut}</span>
+          <TooltipContent sideOffset={0} side="bottom" variant="transparent">
+            <kbd className="text-xs">{shortcut}</kbd>
           </TooltipContent>
         )}
       </Tooltip>
@@ -815,7 +853,7 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
             icon={
               cameraEnabled ?
                 <LuVideo className={`size-4 ${Colors.camera.icon}`} />
-              : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
+                : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
             }
             state={cameraEnabled ? "active" : "neutral"}
             size="unsized"
@@ -851,8 +889,8 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
           </ToggleIconButton>
         </TooltipTrigger>
         {shortcut && (
-          <TooltipContent side="bottom" variant="light">
-            <span className="font-mono text-xs">{shortcut}</span>
+          <TooltipContent sideOffset={0} side="bottom" variant="transparent">
+            <kbd className="text-xs">{shortcut}</kbd>
           </TooltipContent>
         )}
       </Tooltip>

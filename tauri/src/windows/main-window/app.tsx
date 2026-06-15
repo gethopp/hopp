@@ -182,6 +182,18 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Auto-navigate to the call page on call join, and away from it on call end.
+  const prevInCallRef = useRef(false);
+  useEffect(() => {
+    const inCall = !!callTokens;
+    if (inCall && !prevInCallRef.current) {
+      setTab("call");
+    } else if (!inCall && prevInCallRef.current && tab === "call") {
+      setTab("user-list");
+    }
+    prevInCallRef.current = inCall;
+  }, [callTokens, tab, setTab]);
+
   const handleReject = (isInCall?: boolean) => {
     const { incomingCallCallerId } = useStore.getState();
     if (!incomingCallCallerId && !isInCall) return;
@@ -455,7 +467,7 @@ function App() {
       <Sidebar />
       <ScrollArea type="scroll" className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full">
         {callTokens && (
-          <div className="sticky top-0 z-10 bg-white">
+          <div className={tab === "call" ? "" : "hidden"}>
             <CallCenter />
           </div>
         )}

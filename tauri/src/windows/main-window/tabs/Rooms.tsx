@@ -28,11 +28,9 @@ import { tauriUtils } from "@/windows/window-utils";
 import { useCallback, useEffect, useRef } from "react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
-import { HiMiniLink, HiMiniUser } from "react-icons/hi2";
+import { HiMiniUser } from "react-icons/hi2";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Constants } from "@/constants";
 import { useState } from "react";
 import doorImage from "@/assets/door.png";
 import { useEndCall } from "@/lib/hooks";
@@ -85,7 +83,7 @@ const RoomPresenceAvatars = ({
                         alt={`${info.first_name} ${info.last_name}`}
                         className="size-full object-cover"
                       />
-                    : <span className="text-[8px] font-medium text-emerald-700">
+                      : <span className="text-[8px] font-medium text-emerald-700">
                         {info.first_name[0]}
                         {info.last_name[0]}
                       </span>
@@ -345,161 +343,156 @@ export const Rooms = () => {
     }
   }, [rooms, searchQuery]);
 
-  const isRoomCall = !(callTokens == null || !callTokens.room);
-
   return (
     <div className="flex flex-col items-start gap-1.5 p-2">
-      {isRoomCall && callTokens.room && <SelectedRoom room={callTokens.room} />}
-      {!isRoomCall && (
-        <div className="flex flex-col gap-2 w-full">
-          <div className="flex items-center gap-2 w-full">
-            <div className="relative flex-1">
-              <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
-              <Input
-                type="text"
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search rooms"
-                className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
-              />
-            </div>
-            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <Plus className="size-4 text-slate-500" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
-                <DialogHeader>
-                  <DialogTitle>Create new room</DialogTitle>
-                  <DialogDescription>Create a new room for your team to collaborate on.</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-3">
-                  <Label htmlFor="room-name">Room name</Label>
-                  <Input id="room-name" name="roomName" placeholder="Watercooler" />
-                </div>
-                <DialogDescription>Anyone in your team can modify or remove this room.</DialogDescription>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button
-                      onClick={() => {
-                        const input = document.getElementById("room-name") as HTMLInputElement;
-                        handleCreateRoom(input?.value || "");
-                        setIsCreateDialogOpen(false);
-                      }}
-                      className="text-xs"
-                    >
-                      Create room
-                    </Button>
-                  </DialogClose>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+      <div className="flex flex-col gap-2 w-full">
+        <div className="flex items-center gap-2 w-full">
+          <div className="relative flex-1">
+            <HiMagnifyingGlass className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 size-4" />
+            <Input
+              type="text"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search rooms"
+              className="pl-8 w-full focus-visible:ring-opacity-20 focus-visible:ring-2 focus-visible:ring-blue-300"
+            />
           </div>
-          {filteredRooms && filteredRooms.length > 0 ?
-            <div className="grid grid-cols-2 gap-2 w-full">
-              {filteredRooms?.map((room) => {
-                const presenceIds = roomsPresence?.[room.id] ?? [];
-                return (
-                  <RoomButton
-                    key={room.id}
-                    onClick={() => handleJoinRoom(room)}
-                    disabled={!!callTokens?.isInitialisingCall || isJoiningRoom}
-                    size="unsized"
-                    title={room.name}
-                    className="flex-1 min-w-0 text-slate-600"
-                    presenceAvatars={
-                      presenceIds.length > 0 ?
-                        <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
-                      : undefined
-                    }
-                    cornerIcon={
-                      <DropdownMenu>
-                        <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
-                          <MoreHorizontal className="size-3 m-0" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="muted" align="end">
-                          <DropdownMenuItem
-                            className="text-xs [&>svg]:size-3.5"
-                            onClick={() => {
-                              setSelectedRoom(room);
-                              setIsUpdateDialogOpen(true);
-                            }}
-                          >
-                            <HiOutlinePencil />
-                            Rename room
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-xs [&>svg]:size-3.5 text-red-600"
-                            onClick={() => {
-                              setSelectedRoom(room);
-                              setIsDeleteDialogOpen(true);
-                            }}
-                          >
-                            <HiOutlineTrash />
-                            Delete room
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    }
-                  />
-                );
-              })}
-            </div>
-          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
-          <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-            <DialogContent container={document.getElementById("app-body")}>
+          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="icon">
+                <Plus className="size-4 text-slate-500" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-[80%]" container={document.getElementById("app-body")}>
               <DialogHeader>
-                <DialogTitle>Delete Room</DialogTitle>
-                <DialogDescription>
-                  Are you sure you want to delete this room? This action cannot be undone.
-                </DialogDescription>
+                <DialogTitle>Create new room</DialogTitle>
+                <DialogDescription>Create a new room for your team to collaborate on.</DialogDescription>
               </DialogHeader>
+              <div className="grid gap-3">
+                <Label htmlFor="room-name">Room name</Label>
+                <Input id="room-name" name="roomName" placeholder="Watercooler" />
+              </div>
+              <DialogDescription>Anyone in your team can modify or remove this room.</DialogDescription>
               <DialogFooter>
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    // Handle delete logic here
-                    if (selectedRoom) {
-                      handleDeleteRoom(selectedRoom);
-                      setIsDeleteDialogOpen(false);
-                      setSelectedRoom(null);
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
+                <DialogClose asChild>
+                  <Button
+                    onClick={() => {
+                      const input = document.getElementById("room-name") as HTMLInputElement;
+                      handleCreateRoom(input?.value || "");
+                      setIsCreateDialogOpen(false);
+                    }}
+                    className="text-xs"
+                  >
+                    Create room
+                  </Button>
+                </DialogClose>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
-            <DialogContent container={document.getElementById("app-body")}>
-              <form onSubmit={(e) => selectedRoom && handleUpdateRoom(selectedRoom, e)}>
-                <DialogHeader>
-                  <DialogTitle>Rename room</DialogTitle>
-                </DialogHeader>
-                <div className="grid gap-2">
-                  <Input
-                    id="room-name"
-                    name="name"
-                    className="text-xs text-slate-500"
-                    defaultValue={selectedRoom?.name}
-                  />
-                </div>
-                <DialogDescription className="mt-4 mb-2">
-                  Anyone in your team can modify or remove this room.
-                </DialogDescription>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button type="submit" className="text-xs">
-                      Update room
-                    </Button>
-                  </DialogClose>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
         </div>
-      )}
+        {filteredRooms && filteredRooms.length > 0 ?
+          <div className="grid grid-cols-2 gap-2 w-full">
+            {filteredRooms?.map((room) => {
+              const presenceIds = roomsPresence?.[room.id] ?? [];
+              return (
+                <RoomButton
+                  key={room.id}
+                  onClick={() => handleJoinRoom(room)}
+                  disabled={!!callTokens?.isInitialisingCall || isJoiningRoom}
+                  size="unsized"
+                  title={room.name}
+                  className="flex-1 min-w-0 text-slate-600"
+                  presenceAvatars={
+                    presenceIds.length > 0 ?
+                      <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
+                      : undefined
+                  }
+                  cornerIcon={
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="hover:outline-solid hover:outline-1 hover:outline-slate-300 focus:ring-0 focus-visible:ring-0 hover:bg-slate-200 size-4 rounded-xs p-0 border-0 shadow-none hover:shadow-xs m-0 flex flex-row justify-center items-center">
+                        <MoreHorizontal className="size-3 m-0" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent className="muted" align="end">
+                        <DropdownMenuItem
+                          className="text-xs [&>svg]:size-3.5"
+                          onClick={() => {
+                            setSelectedRoom(room);
+                            setIsUpdateDialogOpen(true);
+                          }}
+                        >
+                          <HiOutlinePencil />
+                          Rename room
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-xs [&>svg]:size-3.5 text-red-600"
+                          onClick={() => {
+                            setSelectedRoom(room);
+                            setIsDeleteDialogOpen(true);
+                          }}
+                        >
+                          <HiOutlineTrash />
+                          Delete room
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  }
+                />
+              );
+            })}
+          </div>
+          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
+        <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+          <DialogContent container={document.getElementById("app-body")}>
+            <DialogHeader>
+              <DialogTitle>Delete Room</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this room? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  // Handle delete logic here
+                  if (selectedRoom) {
+                    handleDeleteRoom(selectedRoom);
+                    setIsDeleteDialogOpen(false);
+                    setSelectedRoom(null);
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>
+          <DialogContent container={document.getElementById("app-body")}>
+            <form onSubmit={(e) => selectedRoom && handleUpdateRoom(selectedRoom, e)}>
+              <DialogHeader>
+                <DialogTitle>Rename room</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-2">
+                <Input
+                  id="room-name"
+                  name="name"
+                  className="text-xs text-slate-500"
+                  defaultValue={selectedRoom?.name}
+                />
+              </div>
+              <DialogDescription className="mt-4 mb-2">
+                Anyone in your team can modify or remove this room.
+              </DialogDescription>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button type="submit" className="text-xs">
+                    Update room
+                  </Button>
+                </DialogClose>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   );
 };
@@ -530,35 +523,3 @@ const EmptyRoomsState = ({
   );
 };
 
-const SelectedRoom = ({ room }: { room: Room }) => {
-  const handleCopyRoomLink = async () => {
-    const roomLink = `${Constants.webAppUrl}/room/${room.id}`;
-    await writeText(roomLink);
-    toast.success("Room link copied to clipboard");
-  };
-
-  return (
-    <div className="flex flex-col w-full">
-      <div className="flex flex-row gap-2 justify-between items-center mb-4">
-        <div>
-          <h3 className="small">{room.name}</h3>
-        </div>
-        <div className="flex flex-row gap-2">
-          <Button variant="outline" size="icon-sm" onClick={handleCopyRoomLink}>
-            <TooltipProvider delayDuration={100}>
-              <Tooltip>
-                <TooltipTrigger>
-                  <HiMiniLink className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent side="left" sideOffset={10} className="flex flex-col items-center gap-0">
-                  <span>Copy room link for web</span>
-                  <span className="text-xs text-slate-400">Share with teammates</span>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
