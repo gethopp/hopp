@@ -406,6 +406,9 @@ impl<'a> Application<'a> {
             }
         };
 
+        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
+        let scale = monitor.scale_factor();
+
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -414,6 +417,7 @@ impl<'a> Application<'a> {
             },
             !screenshare_input.accessibility_permission,
             buffer_source,
+            scale,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -430,7 +434,6 @@ impl<'a> Application<'a> {
         room_service.unmute_screen_share_track();
         log::info!("screenshare: screen share track unmuted");
 
-        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
         let res = self.create_overlay_window(

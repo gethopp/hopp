@@ -42,6 +42,7 @@ windows = { version = "0.58.0", features = [
     ]}
 
 [target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { git = "https://github.com/gethopp/screencapturekit-rs.git", branch = "hopp" }
 core-graphics = { version = "0.25.0", features = ["highsierra"] }
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.7"
