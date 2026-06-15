@@ -938,6 +938,15 @@ fn set_show_dock_icon_in_call(app: tauri::AppHandle, enabled: bool) {
 }
 
 #[tauri::command(async)]
+fn set_auto_update_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_auto_update_enabled: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.auto_update_enabled = enabled);
+}
+
+#[tauri::command(async)]
 fn set_start_camera_on_call(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_start_camera_on_call: {enabled}");
     let data = app.state::<Mutex<AppData>>();
@@ -1780,6 +1789,7 @@ fn main() {
             set_call_feedback_popup,
             set_telemetry_enabled,
             set_show_dock_icon_in_call,
+            set_auto_update_enabled,
             set_start_camera_on_call,
             set_start_mic_on_call,
             set_shortcut_toggle_mic,

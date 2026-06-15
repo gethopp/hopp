@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { differenceInSeconds, fromUnixTime } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { checkForUpdates } from "@/update.ts";
 import useStore from "../../store/store";
 import { tauriUtils } from "@/windows/window-utils.ts";
 import { Sidebar } from "@/components/sidebar/Sidebar";
@@ -26,6 +25,7 @@ import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
+import { pollUpdates } from "@/lib/auto-update";
 
 function App() {
   const {
@@ -162,25 +162,15 @@ function App() {
     };
   }, []);
 
-  // Check for updates
+  // Check for updates (and auto-install when idle on macOS)
   useEffect(() => {
     if (!isTauri()) return;
 
-    const checkUpdates = async () => {
-      try {
-        const needUpdate = await checkForUpdates();
-        setNeedsUpdate(needUpdate !== null);
-      } catch (err) {
-        console.error("Failed to check for updates:", err);
-      }
-    };
-
-    checkUpdates();
-
-    const interval = setInterval(checkUpdates, 60 * 60 * 1000);
+    pollUpdates(setNeedsUpdate);
+    const interval = setInterval(() => pollUpdates(setNeedsUpdate), 15 * 60 * 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [setNeedsUpdate]);
 
   // Auto-navigate to the call page on call join, and away from it on call end.
   const prevInCallRef = useRef(false);
