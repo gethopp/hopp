@@ -144,6 +144,12 @@ function SettingsWindow() {
     refetchOnWindowFocus: true,
   });
 
+  const { data: noiseCancellation, refetch: refetchNoiseCancellation } = useQuery({
+    queryKey: ["noise-cancellation"],
+    queryFn: () => typedInvoke("get_noise_cancellation"),
+    refetchOnWindowFocus: true,
+  });
+
   useEffect(() => {
     if (settings) {
       setServerUrl(settings.hopp_server_url ?? "");
@@ -235,6 +241,14 @@ function SettingsWindow() {
                 checked={settings.start_mic_on_call}
                 onCheckedChange={(v) => {
                   typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
+              <CheckboxRow
+                title="Noise cancellation"
+                description="Noise suppression on microphone input"
+                checked={noiseCancellation ?? true}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchNoiseCancellation());
                 }}
               />
             </div>
