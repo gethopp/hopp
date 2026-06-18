@@ -544,57 +544,6 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command(async)]
-async fn create_screenshare_window(
-    app: tauri::AppHandle,
-    video_token: String,
-) -> Result<(), String> {
-    let url = format!("screenshare.html?videoToken={}", video_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "screenshare",
-            title: "Screen sharing",
-            url: &url,
-            width: 800.0,
-            height: 450.0,
-            resizable: true,
-            always_on_top: false,
-            content_protected: false,
-            maximizable: false,
-            minimizable: true,
-            decorations: false,
-            transparent: false,
-            background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
-        },
-    )
-}
-
-#[tauri::command(async)]
-async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
-    log::info!("create_camera_window with token: {}", camera_token);
-
-    let url = format!("camera.html?cameraToken={}", camera_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "camera",
-            title: "Camera",
-            url: &url,
-            width: 160.0,
-            height: 365.0,
-            resizable: false,
-            always_on_top: true,
-            content_protected: true,
-            maximizable: true,
-            minimizable: true,
-            decorations: false,
-            transparent: true,
-            background_color: None,
-        },
-    )
-}
-
-#[tauri::command(async)]
 async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("create_content_picker_window");
 
@@ -1775,8 +1724,6 @@ fn main() {
             get_livekit_url,
             get_camera_permission,
             open_camera_settings,
-            create_camera_window,
-            create_screenshare_window,
             create_content_picker_window,
             set_sentry_metadata,
             call_started,

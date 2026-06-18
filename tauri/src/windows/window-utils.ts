@@ -8,31 +8,6 @@ getVersion().then((version) => {
   appVersion = version;
 });
 
-const createScreenShareWindow = async (videoToken: string, bringToFront: boolean = true) => {
-  // Check if there is already a window open,
-  // then focus on it and bring it to the front
-  const isWindowOpen = await WebviewWindow.getByLabel("screenshare");
-  if (isWindowOpen && bringToFront) {
-    await isWindowOpen.setFocus();
-    return;
-  }
-
-  if (isTauri) {
-    try {
-      await invoke("create_screenshare_window", { videoToken });
-      const windowHandle = await WebviewWindow.getByLabel("screenshare");
-      if (windowHandle) {
-        await windowHandle.setFocus();
-      }
-    } catch (error) {
-      console.error("Failed to create screenshare window:", error);
-    }
-  } else {
-    const URL = `screenshare.html?videoToken=${videoToken}`;
-    window.open(URL);
-  }
-};
-
 const createContentPickerWindow = async () => {
   // Check if sharing window is already open, and if so, focus on it
   const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
@@ -58,28 +33,6 @@ const createContentPickerWindow = async () => {
   } else {
     const URL = `contentPicker.html`;
     window.open(URL);
-  }
-};
-
-const createCameraWindow = async (cameraToken: string) => {
-  if (isTauri) {
-    try {
-      await invoke("create_camera_window", { cameraToken });
-    } catch (error) {
-      console.error("Failed to create camera window:", error);
-    }
-  } else {
-    const URL = `camera.html?cameraToken=${cameraToken}`;
-    window.open(URL);
-  }
-};
-
-const ensureCameraWindowIsVisible = async (token: string) => {
-  if (isTauri) {
-    const cameraWindow = await WebviewWindow.getByLabel("camera");
-    if (!cameraWindow) {
-      await createCameraWindow(token);
-    }
   }
 };
 
@@ -359,11 +312,9 @@ const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, parti
 };
 
 export const tauriUtils = {
-  createScreenShareWindow,
   closeScreenShareWindow,
   createContentPickerWindow,
   showWindow,
-  ensureCameraWindowIsVisible,
   closeCameraWindow,
   storeTokenBackend,
   getStoredToken,
