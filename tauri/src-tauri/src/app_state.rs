@@ -9,6 +9,8 @@ pub struct UserSettings {
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
+    #[serde(default = "default_noise_cancellation_enabled")]
+    pub noise_cancellation_enabled: bool,
     pub hopp_server_url: Option<String>,
     pub shortcut_toggle_mic: Option<String>,
     pub shortcut_toggle_camera: Option<String>,
@@ -23,6 +25,7 @@ impl Default for UserSettings {
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
             start_mic_on_call: true,
+            noise_cancellation_enabled: true,
             hopp_server_url: None,
             shortcut_toggle_mic: None,
             shortcut_toggle_camera: None,
@@ -30,6 +33,10 @@ impl Default for UserSettings {
             shortcut_end_call: None,
         }
     }
+}
+
+fn default_noise_cancellation_enabled() -> bool {
+    true
 }
 
 #[cfg(target_os = "macos")]
