@@ -431,7 +431,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("ping", () => { });
+      const unlistenFn = await listen("ping", () => {});
 
       return unlistenFn;
     };
@@ -455,7 +455,11 @@ function App() {
     <div className="container flex flex-row bg-white" id="app-body">
       {/* Action Sidebar */}
       <Sidebar />
-      <ScrollArea type="scroll" className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full">
+      <ScrollArea
+        key={tab}
+        type="scroll"
+        className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full"
+      >
         {callTokens && (
           <div className={tab === "call" ? "" : "hidden"}>
             <CallCenter />
