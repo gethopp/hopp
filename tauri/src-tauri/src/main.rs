@@ -995,17 +995,11 @@ fn toggle_mic(app: tauri::AppHandle) {
 fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.noise_cancellation_enabled = enabled;
+    data.app_state
+        .update_user_setting(|settings| settings.noise_cancellation_enabled = enabled);
     if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
         log::error!("set_noise_cancellation: failed to send: {e:?}");
     }
-}
-
-#[tauri::command(async)]
-fn get_noise_cancellation(app: tauri::AppHandle) -> bool {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    data.noise_cancellation_enabled
 }
 
 #[tauri::command(async)]
@@ -1476,6 +1470,10 @@ fn main() {
             let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
+            let noise_cancellation_enabled = app_state.user_settings().noise_cancellation_enabled;
+            if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
+                log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
+            }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
             }
@@ -1802,7 +1800,6 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
-            get_noise_cancellation,
             list_microphones,
             select_microphone,
             list_webcams,

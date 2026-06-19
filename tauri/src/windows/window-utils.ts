@@ -341,6 +341,7 @@ const getUserSettings = async () => {
     show_dock_icon_in_call: boolean;
     start_camera_on_call: boolean;
     start_mic_on_call: boolean;
+    noise_cancellation_enabled: boolean;
     hopp_server_url: string | null;
   }>("get_user_settings");
 };
