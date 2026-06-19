@@ -282,9 +282,9 @@ const ICON_COG: &[u8] = include_bytes!("../../resources/icons/cog.svg");
 const ICON_PENCIL_SVG: &[u8] = include_bytes!("../../resources/icons/pencil.svg");
 
 /// Icon font codepoints for segmented control (from icons-font).
-const ICON_REMOTE_CONTROL: char = '\u{F107}';
-const ICON_PEN: char = '\u{F109}';
-const ICON_CLICK_POINTER: char = '\u{F108}';
+const ICON_REMOTE_CONTROL: char = '\u{F002}';
+const ICON_PEN: char = '\u{F004}';
+const ICON_CLICK_POINTER: char = '\u{F008}';
 
 // ── Segmented control buttons ────────────────────────────────────────────────
 const SEGMENTED_BUTTONS: &[SegmentedButton] = &[
