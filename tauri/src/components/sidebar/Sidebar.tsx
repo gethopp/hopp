@@ -71,7 +71,7 @@ const getAvailableTabs = (
           key: "login",
         } as const,
       ]
-      : [
+    : [
         {
           label: "User List",
           icon: <HiOutlineUsers className="size-4 stroke-[1.5]" />,
@@ -131,7 +131,7 @@ const DownloadNewVersionButton = () => {
         >
           {updateInProgress ?
             <CgSpinner className="animate-spin size-3.5 text-gray-800" />
-            : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
+          : <LuCircleFadingArrowUp className="size-3.5 text-gray-800" />}
         </button>
       </TooltipTrigger>
       <TooltipContent side="right">Download and install update</TooltipContent>
@@ -154,18 +154,13 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   const isExpired = daysRemaining <= 0;
   const displayDays = Math.max(0, daysRemaining);
 
-  // teams created before 2026-05-04 keep 30-day trial; new teams get 14.
-  const TRIAL_GRANDFATHER_CUTOFF = new Date("2026-05-04T00:00:00Z");
-  const userCreatedAt = user.created_at ? parseISO(user.created_at) : new Date();
-  const maxTrialDays = userCreatedAt < TRIAL_GRANDFATHER_CUTOFF ? 30 : 14;
+  const maxTrialDays = 14;
   const percentage = isExpired ? 100 : Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100));
 
-  // Thresholds scale with maxTrialDays so bar starts green for both 14- and 30-day trials.
-  // 30-day: yellow ≤14, orange ≤7, red ≤3 (matches prior behavior).
-  // 14-day: yellow ≤7,  orange ≤3, red ≤1.
-  const yellowAt = Math.ceil(maxTrialDays / 2);
-  const orangeAt = Math.ceil(maxTrialDays / 4);
-  const redAt = Math.max(3, Math.floor(maxTrialDays / 10));
+  // 14-day trial thresholds: yellow ≤7, orange ≤3, red ≤1.
+  const yellowAt = 7;
+  const orangeAt = 3;
+  const redAt = 1;
 
   const getTextColor = (days: number) => {
     if (days <= redAt) return "text-red-800";
@@ -226,7 +221,7 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
         <TooltipContent side="right">
           {isExpired ?
             "Trial expired, click to manage subscription"
-            : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
+          : `Trial expires in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}, click to manage`}
         </TooltipContent>
       </Tooltip>
     </div>
@@ -267,7 +262,9 @@ const CallPageButton = () => {
           <FiPhoneCall className="size-4 text-green-500" />
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" className="flex flex-row items-center">Ongoing call <kbd className="max-w-min text-xs leading-3">{shortcutLabel}</kbd></TooltipContent>
+      <TooltipContent side="right" className="flex flex-row items-center">
+        Ongoing call <kbd className="max-w-min text-xs leading-3">{shortcutLabel}</kbd>
+      </TooltipContent>
     </Tooltip>
   );
 };
