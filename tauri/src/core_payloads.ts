@@ -205,8 +205,6 @@ export interface CommandMap {
   get_livekit_url: { args: void; return: string };
 
   // Windows
-  create_screenshare_window: { args: { videoToken: string }; return: void };
-  create_camera_window: { args: { cameraToken: string }; return: void };
   create_content_picker_window: { args: void; return: void };
   create_feedback_window: { args: { teamId: string; roomId: string; participantId: string }; return: void };
   create_settings_window: { args: void; return: void };
