@@ -83,9 +83,6 @@ pub struct AppData {
     /// Suppresses main window hide when activation policy is switched to Accessory after a call ends.
     pub suppress_hide_on_call_end: Arc<AtomicBool>,
 
-    /// Whether noise cancellation is enabled (synced with core process).
-    pub noise_cancellation_enabled: bool,
-
     /// Whether drawing mode is currently enabled (runtime state).
     pub drawing_enabled: bool,
 
@@ -132,7 +129,6 @@ impl AppData {
             #[cfg(target_os = "macos")]
             activation_policy_regular: false,
             suppress_hide_on_call_end,
-            noise_cancellation_enabled: true,
             drawing_enabled: false,
             call_active: false,
             is_camera_on: false,

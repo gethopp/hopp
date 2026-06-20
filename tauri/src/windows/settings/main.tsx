@@ -236,6 +236,14 @@ function SettingsWindow() {
                   typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
                 }}
               />
+              <CheckboxRow
+                title="Noise cancellation"
+                description="Noise suppression on microphone input"
+                checked={settings.noise_cancellation_enabled}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
             </div>
           </div>
 

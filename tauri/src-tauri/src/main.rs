@@ -544,57 +544,6 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command(async)]
-async fn create_screenshare_window(
-    app: tauri::AppHandle,
-    video_token: String,
-) -> Result<(), String> {
-    let url = format!("screenshare.html?videoToken={}", video_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "screenshare",
-            title: "Screen sharing",
-            url: &url,
-            width: 800.0,
-            height: 450.0,
-            resizable: true,
-            always_on_top: false,
-            content_protected: false,
-            maximizable: false,
-            minimizable: true,
-            decorations: false,
-            transparent: false,
-            background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
-        },
-    )
-}
-
-#[tauri::command(async)]
-async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
-    log::info!("create_camera_window with token: {}", camera_token);
-
-    let url = format!("camera.html?cameraToken={}", camera_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "camera",
-            title: "Camera",
-            url: &url,
-            width: 160.0,
-            height: 365.0,
-            resizable: false,
-            always_on_top: true,
-            content_protected: true,
-            maximizable: true,
-            minimizable: true,
-            decorations: false,
-            transparent: true,
-            background_color: None,
-        },
-    )
-}
-
-#[tauri::command(async)]
 async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("create_content_picker_window");
 
@@ -995,17 +944,11 @@ fn toggle_mic(app: tauri::AppHandle) {
 fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.noise_cancellation_enabled = enabled;
+    data.app_state
+        .update_user_setting(|settings| settings.noise_cancellation_enabled = enabled);
     if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
         log::error!("set_noise_cancellation: failed to send: {e:?}");
     }
-}
-
-#[tauri::command(async)]
-fn get_noise_cancellation(app: tauri::AppHandle) -> bool {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    data.noise_cancellation_enabled
 }
 
 #[tauri::command(async)]
@@ -1476,6 +1419,10 @@ fn main() {
             let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
+            let noise_cancellation_enabled = app_state.user_settings().noise_cancellation_enabled;
+            if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
+                log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
+            }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
             }
@@ -1775,8 +1722,6 @@ fn main() {
             get_livekit_url,
             get_camera_permission,
             open_camera_settings,
-            create_camera_window,
-            create_screenshare_window,
             create_content_picker_window,
             set_sentry_metadata,
             call_started,
@@ -1802,7 +1747,6 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
-            get_noise_cancellation,
             list_microphones,
             select_microphone,
             list_webcams,

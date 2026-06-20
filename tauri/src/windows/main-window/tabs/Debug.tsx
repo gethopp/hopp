@@ -1,6 +1,5 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import useStore from "@/store/store";
 import { socketService } from "@/services/socket";
 import { Button } from "@/components/ui/button";
@@ -16,7 +15,6 @@ export const Debug = () => {
   const { callTokens, setCallTokens, authToken } = useStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [trayNotification, setTrayNotification] = useState(false);
-  const [noiseCancellation, setNoiseCancellation] = useState(true);
   const soundRef = useRef(soundUtils.createPlayer("incoming-call"));
 
   const { refetch, data, isLoading, isFetching } = useQuery({
@@ -33,10 +31,6 @@ export const Debug = () => {
       console.error("Failed to set tray notification:", error);
     }
   };
-
-  useEffect(() => {
-    typedInvoke("get_noise_cancellation").then(setNoiseCancellation);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -131,26 +125,6 @@ export const Debug = () => {
         <Button onClick={() => typedInvoke("open_stats_window")} size="sm">
           Open Stats Window
         </Button>
-      </div>
-
-      <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
-        <Label className="text-sm font-medium">App Settings</Label>
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <Label htmlFor="noise-cancellation" className="text-sm">
-              Noise Cancellation
-            </Label>
-            <span className="text-xs text-muted-foreground">Noise suppression on microphone input</span>
-          </div>
-          <Switch
-            id="noise-cancellation"
-            checked={noiseCancellation}
-            onCheckedChange={(checked) => {
-              setNoiseCancellation(checked);
-              typedInvoke("set_noise_cancellation", { enabled: checked });
-            }}
-          />
-        </div>
       </div>
 
       <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
