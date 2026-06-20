@@ -8,7 +8,7 @@ use crate::components::fonts::{GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 
-const ICON_CHEVRON_DOWN: char = '\u{F009}';
+const ICON_CHEVRON_DOWN: char = '\u{F10A}';
 
 /// A single dropdown item (dynamic label, no icon required).
 #[derive(Debug, Clone)]

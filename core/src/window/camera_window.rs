@@ -117,6 +117,7 @@ const ICON_MICROPHONE_OFF: char = '\u{F106}';
 const ICON_SCREEN_SHARE: char = '\u{F102}';
 const ICON_VIDEO: char = '\u{F101}';
 const ICON_PHONE_OFF: char = '\u{F103}';
+const ICON_PIN_ANGLE: char = '\u{F10B}';
 
 const PIN_CORNER_WIDTH: f64 = 60.0;
 const PIN_CORNER_HEIGHT: f64 = 60.0;
@@ -1401,13 +1402,43 @@ fn pin_button<'a>() -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
     };
     let tooltip_text = format!("Pin to corner ({shortcut})");
 
-    let btn = split_button(
-        ICON_SCREEN_SHARE,
-        ColorToken::Gray400.to_color(),
-        CameraMessage::PinToCorner,
-        None,
-        false,
-    );
+    let slate300 = ColorToken::Slate300.to_color();
+    let icon = text(ICON_PIN_ANGLE.to_string())
+        .font(ICONS_FONT)
+        .size(14.0)
+        .color(slate300)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
+
+    let btn = button(
+        container(icon)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fixed(38.0))
+    .height(Length::Fixed(26.0))
+    .on_press(CameraMessage::PinToCorner)
+    .padding(Padding::from([6.0, 12.0]))
+    .style(move |_theme: &Theme, status| {
+        let bg_color = match status {
+            button::Status::Hovered => ColorToken::Slate600.to_color(),
+            button::Status::Pressed => ColorToken::Slate800.to_color(),
+            _ => ColorToken::Slate700.to_color(),
+        };
+        button::Style {
+            background: Some(Background::Color(bg_color)),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+                width: 1.0,
+                radius: 19.0.into(),
+            },
+            text_color: Color::WHITE,
+            shadow: Shadow::default(),
+            snap: false,
+        }
+    });
 
     let tooltip_content = container(text(tooltip_text).size(12).color(Color::WHITE))
         .padding(Padding::from([4.0, 8.0]))
@@ -1423,7 +1454,7 @@ fn pin_button<'a>() -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
         });
 
     tooltip(btn, tooltip_content, tooltip::Position::Left)
-        .gap(4)
+        .gap(1)
         .snap_within_viewport(true)
         .into()
 }

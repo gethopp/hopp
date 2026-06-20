@@ -14,6 +14,7 @@ module.exports = {
     "click-pointer": 0xf108,
     pen: 0xf109,
     "chevron-down": 0xf10a,
+    "pin-angle": 0xf10b,
   },
   formatOptions: {
     json: {
