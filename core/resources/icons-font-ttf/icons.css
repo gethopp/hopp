@@ -1,6 +1,6 @@
 @font-face {
   font-family: "icons";
-  src: url("./icons.ttf?d4cd89bd48bfcebbab353378d461832a") format("truetype");
+  src: url("./icons.ttf?7ad1d413ba2d2fd26ca0283218b4ebf8") format("truetype");
 }
 
 i[class^="icon-"]:before,
@@ -41,4 +41,7 @@ i[class*=" icon-"]:before {
 }
 .icon-chevron-down:before {
   content: "\f10a";
+}
+.icon-pin-angle:before {
+  content: "\f10b";
 }
