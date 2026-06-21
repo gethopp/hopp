@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use thiserror::Error;
 use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowAttributes, WindowLevel};
 
@@ -19,7 +19,10 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::platform::windows::WindowExtWindows;
 
 use crate::capture::capturer::{MonitorId, ScreenshareExt, ScreenshareFunctions};
+use crate::graphics::graphics_context::GraphicsContext;
+use crate::graphics::graphics_window_context::ContextManager;
 use crate::ServerError;
+use crate::UserEvent;
 
 // Constants for magic numbers
 /// Initial size for the overlay window (width and height in logical pixels)
@@ -64,17 +67,18 @@ impl From<WindowManagerError> for ServerError {
     }
 }
 
-struct WindowEntry {
+struct WindowEntry<'a> {
     window: Arc<Window>,
     monitor_id: MonitorId,
+    gfx: Option<GraphicsContext<'a>>,
 }
 
-pub struct WindowManager {
-    windows: Vec<WindowEntry>,
+pub struct WindowManager<'a> {
+    windows: Vec<WindowEntry<'a>>,
     active_monitor_id: Option<MonitorId>,
 }
 
-impl WindowManager {
+impl<'a> WindowManager<'a> {
     pub fn new(event_loop: &ActiveEventLoop) -> Result<Self, WindowManagerError> {
         log::info!("WindowManager::new: creating windows for available monitors");
         let mut windows = Vec::new();
@@ -93,7 +97,7 @@ impl WindowManager {
     fn create_window_entry(
         event_loop: &ActiveEventLoop,
         monitor: &MonitorHandle,
-    ) -> Result<WindowEntry, WindowManagerError> {
+    ) -> Result<WindowEntry<'a>, WindowManagerError> {
         let attributes = get_window_attributes();
         let window = event_loop
             .create_window(attributes)
@@ -137,13 +141,20 @@ impl WindowManager {
 
         let monitor_id = ScreenshareFunctions::get_monitor_id(monitor);
 
-        Ok(WindowEntry { window, monitor_id })
+        Ok(WindowEntry {
+            window,
+            monitor_id,
+            gfx: None,
+        })
     }
 
     pub fn show_window(
         &mut self,
         monitor: &MonitorHandle,
         event_loop: &ActiveEventLoop,
+        context_manager: &ContextManager,
+        textures_path: String,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Arc<Window>, WindowManagerError> {
         let target_id = ScreenshareFunctions::get_monitor_id(monitor);
         log::info!(
@@ -151,15 +162,19 @@ impl WindowManager {
             target_id
         );
 
-        let mut entry = self
-            .windows
-            .iter()
-            .find(|entry| entry.monitor_id == target_id)
-            .ok_or(WindowManagerError::MonitorNotFound)?;
+        // Check existence before the retry loop (avoids borrow issues with iter_mut + retain).
+        if !self.windows.iter().any(|e| e.monitor_id == target_id) {
+            return Err(WindowManagerError::MonitorNotFound);
+        }
 
         let max_retries = 5;
         let mut last_err = None;
         for retry in 0..max_retries {
+            let entry = self
+                .windows
+                .iter_mut()
+                .find(|e| e.monitor_id == target_id)
+                .unwrap();
             match set_fullscreen(&entry.window, monitor.clone()) {
                 Ok(_) => {
                     last_err = None;
@@ -176,11 +191,10 @@ impl WindowManager {
                 }
             }
 
-            let monitor_id = entry.monitor_id.clone();
+            let monitor_id = target_id.clone();
             self.windows.retain(|e| e.monitor_id != monitor_id);
             self.windows
                 .push(Self::create_window_entry(event_loop, monitor)?);
-            entry = self.windows.last().unwrap();
         }
 
         if let Some(e) = last_err {
@@ -191,10 +205,38 @@ impl WindowManager {
             return Err(WindowManagerError::FullscreenError(e.to_string()));
         }
 
+        let entry = self
+            .windows
+            .iter_mut()
+            .find(|e| e.monitor_id == target_id)
+            .unwrap();
+
         entry.window.set_visible(true);
         self.active_monitor_id = Some(target_id);
 
-        Ok(entry.window.clone())
+        let window = entry.window.clone();
+        let mut gfx = GraphicsContext::new(
+            context_manager,
+            window.clone(),
+            textures_path,
+            monitor.scale_factor(),
+            event_loop_proxy,
+        )
+        .map_err(|_| WindowManagerError::WindowCreationError)?;
+        gfx.add_participant("local".to_string(), "Me ", true)
+            .map_err(|_| WindowManagerError::WindowCreationError)?;
+        entry.gfx = Some(gfx);
+
+        Ok(window)
+    }
+
+    pub fn active_gfx_mut(&mut self) -> Option<&mut GraphicsContext<'a>> {
+        let active_id = self.active_monitor_id.as_ref()?;
+        self.windows
+            .iter_mut()
+            .find(|entry| &entry.monitor_id == active_id)?
+            .gfx
+            .as_mut()
     }
 
     pub fn hide_active_window(&mut self) {
@@ -205,9 +247,10 @@ impl WindowManager {
             );
             if let Some(entry) = self
                 .windows
-                .iter()
+                .iter_mut()
                 .find(|entry| entry.monitor_id == active_id)
             {
+                entry.gfx = None;
                 #[cfg(target_os = "macos")]
                 {
                     // this is needed for the screensharing probing logic to work

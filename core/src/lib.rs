@@ -132,40 +132,29 @@ pub enum ServerError {
 /// Encapsulates the active remote control session components.
 ///
 /// This struct manages all the components needed for an active remote control session,
-/// including graphics rendering, input simulation, and window management. It's created
-/// when a screen sharing session begins and destroyed when it ends.
-///
-/// # Fields
-///
-/// * `gfx` - Graphics context for rendering cursors and visual feedback
-/// * `cursor_controller` - Handles mouse movement, clicks, and cursor visualization
-/// * `keyboard_controller` - Manages keyboard input simulation
-///
-/// # Lifetime
-///
-/// The lifetime parameter `'a` ensures that the graphics context and cursor controller
-/// don't outlive the underlying window resources they depend on.
-struct RemoteControl<'a> {
-    gfx: GraphicsContext<'a>,
+/// including input simulation. It's created when a screen sharing session begins and
+/// destroyed when it ends. The graphics context is owned by the WindowEntry in
+/// WindowManager, co-located with the window it renders to.
+struct RemoteControl {
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
 }
 
-impl<'a> RemoteControl<'a> {
+impl RemoteControl {
     /// Renders a complete frame by updating cursors, hiding inactive ones, clearing expired paths, and drawing.
     ///
     /// # Returns
     /// Vector of cleared path IDs from auto-clear
-    pub fn render_frame(&mut self) -> Vec<u64> {
+    pub fn render_frame(&mut self, gfx: &mut GraphicsContext) -> Vec<u64> {
         self.cursor_controller
-            .update_cursors(self.gfx.participants_manager_mut());
+            .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
-        let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
+        let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
         let translator = self
             .cursor_controller
             .get_overlay_window()
             .create_position_translator();
-        self.gfx.draw(&translator);
+        gfx.draw(&translator);
         cleared_path_ids
     }
 }
@@ -214,7 +203,7 @@ impl<'a> RemoteControl<'a> {
 /// Operations return `Result<(), ServerError>` for proper error propagation.
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
-    remote_control: Option<RemoteControl<'a>>,
+    remote_control: Option<RemoteControl>,
     // TODO: remove me
     textures_path: String,
     // The arc is needed because we move the object to the
@@ -228,7 +217,7 @@ pub struct Application<'a> {
     previous_controllers_enabled: bool,
     controller_draw_persist: bool,
     last_mode: Option<socket_lib::StoredMode>,
-    window_manager: Option<window_manager::WindowManager>,
+    window_manager: Option<window_manager::WindowManager<'a>>,
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
     noise_cancellation_enabled: Arc<AtomicBool>,
@@ -448,22 +437,24 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_ref().unwrap();
-        if let Some(remote_control) = &mut self.remote_control {
-            let existing_participants = room_service.get_participants();
-            for participant in &existing_participants {
-                if let Err(e) = remote_control.gfx.add_participant(
-                    participant.identity.clone(),
-                    &participant.name,
-                    false,
-                ) {
-                    log::error!(
-                        "Failed to create cursor for participant {}: {e}",
-                        participant.identity
-                    );
-                } else {
-                    remote_control
-                        .cursor_controller
-                        .add_controller(participant.identity.clone());
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                let existing_participants = room_service.get_participants();
+                for participant in &existing_participants {
+                    if let Err(e) =
+                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
+                    {
+                        log::error!(
+                            "Failed to create cursor for participant {}: {e}",
+                            participant.identity
+                        );
+                    } else {
+                        remote_control
+                            .cursor_controller
+                            .add_controller(participant.identity.clone());
+                    }
                 }
             }
         }
@@ -590,7 +581,13 @@ impl<'a> Application<'a> {
             .window_manager
             .as_mut()
             .ok_or(ServerError::WindowCreationError)?
-            .show_window(&selected_monitor, event_loop)
+            .show_window(
+                &selected_monitor,
+                event_loop,
+                self.context_manager.as_ref().unwrap(),
+                self.textures_path.clone(),
+                self.event_loop_proxy.clone(),
+            )
             .map_err(|e| {
                 log::error!("create_overlay_window: Error showing window: {:?}", e);
                 ServerError::from(e)
@@ -598,30 +595,6 @@ impl<'a> Application<'a> {
 
         let window_size = window.inner_size();
         let window_outer_position = window.outer_position();
-
-        let mut graphics_context = match GraphicsContext::new(
-            self.context_manager.as_ref().unwrap(),
-            window,
-            self.textures_path.clone(),
-            selected_monitor.scale_factor(),
-            self.event_loop_proxy.clone(),
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                log::error!("create_overlay_window: Error creating graphics context {error:?}");
-                return Err(ServerError::GfxCreationError);
-            }
-        };
-
-        // Add local participant to draw manager with auto-clear enabled
-        graphics_context
-            .add_participant("local".to_string(), "Me ", true)
-            .map_err(|e| {
-                log::error!(
-                    "create_overlay_window: Failed to create local participant cursor: {e}"
-                );
-                ServerError::GfxCreationError
-            })?;
 
         /* Hardcode window frame to zero as we only support displays for now.*/
         let window_frame = Frame::default();
@@ -666,10 +639,16 @@ impl<'a> Application<'a> {
 
         log::info!("create_overlay_window: overlay_window created {overlay_window}");
 
-        let redraw_sender = graphics_context.redraw_sender();
-        let clock = graphics_context.clock();
+        let gfx = self
+            .window_manager
+            .as_mut()
+            .and_then(|wm| wm.active_gfx_mut())
+            .ok_or(ServerError::GfxCreationError)?;
+        let redraw_sender = gfx.redraw_sender();
+        let clock = gfx.clock();
+
         let cursor_controller = CursorController::new(
-            overlay_window.clone(),
+            overlay_window,
             redraw_sender,
             self.event_loop_proxy.clone(),
             accessibility_permission,
@@ -681,16 +660,9 @@ impl<'a> Application<'a> {
         }
 
         self.remote_control = Some(RemoteControl {
-            gfx: graphics_context,
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
         });
-
-        #[cfg(target_os = "linux")]
-        {
-            /* We can't support the overlay surface on linux yet. */
-            self.remote_control = None;
-        }
 
         Ok(())
     }
@@ -1046,12 +1018,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
-                if self.remote_control.is_none() {
+                let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                else {
                     log::warn!("user_event: remote control is none request redraw");
                     return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
+                };
                 gfx.window().request_redraw();
             }
             UserEvent::SharerPosition(x, y) => {
@@ -1076,20 +1050,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
 
-                if let Some(remote_control) = &mut self.remote_control {
-                    let identity = participant.identity.clone();
-                    let name = participant.name.clone();
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        let identity = participant.identity.clone();
+                        let name = participant.name.clone();
 
-                    // Add participant to draw manager first (assigns color)
-                    if let Err(e) =
-                        remote_control
-                            .gfx
-                            .add_participant(identity.clone(), &name, false)
-                    {
-                        log::error!("Failed to create cursor for participant {identity}: {e}");
-                    } else {
-                        // Then add to cursor controller for state tracking
-                        remote_control.cursor_controller.add_controller(identity);
+                        // Add participant to draw manager first (assigns color)
+                        if let Err(e) = gfx.add_participant(identity.clone(), &name, false) {
+                            log::error!("Failed to create cursor for participant {identity}: {e}");
+                        } else {
+                            // Then add to cursor controller for state tracking
+                            remote_control.cursor_controller.add_controller(identity);
+                        }
                     }
                 }
 
@@ -1108,14 +1082,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
 
-                if let Some(remote_control) = &mut self.remote_control {
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
                     remote_control
                         .cursor_controller
                         .remove_controller(participant.identity.as_str());
                     // Remove participant from draw manager
-                    remote_control
-                        .gfx
-                        .remove_participant(participant.identity.as_str());
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.remove_participant(participant.identity.as_str());
+                    }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     screensharing_window.remove_participant(participant.identity.as_str());
@@ -1231,7 +1207,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if let Some(remote_control) = &mut self.remote_control {
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
                     match &drawing_mode {
                         DrawingMode::Disabled => {
                             remote_control
@@ -1244,9 +1222,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                 .set_controller_pointer(true, sid.as_str());
                         }
                     }
-                    remote_control
-                        .gfx
-                        .set_drawing_mode(sid.as_str(), drawing_mode.clone());
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
+                    }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
@@ -1258,8 +1236,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_start(sid.as_str(), pos, path_id);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_start(sid.as_str(), pos, path_id);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1277,8 +1259,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_add_point(sid.as_str(), pos);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_add_point(sid.as_str(), pos);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1296,8 +1282,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_end(sid.as_str(), pos);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_end(sid.as_str(), pos);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1311,9 +1301,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawClearPath(path_id, sid) => {
                 log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
-                    remote_control.gfx.trigger_render();
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.draw_clear_path(sid.as_str(), path_id);
+                    gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     screensharing_window.draw_clear_path(sid.as_str(), path_id);
@@ -1321,9 +1315,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_clear_all_paths(sid.as_str());
-                    remote_control.gfx.trigger_render();
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.draw_clear_all_paths(sid.as_str());
+                    gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     screensharing_window.draw_clear_all_paths(sid.as_str());
@@ -1335,8 +1333,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point,
                     sid
                 );
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.trigger_click_animation(Position {
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.trigger_click_animation(Position {
                         x: point.x,
                         y: point.y,
                     });
@@ -1855,7 +1857,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     log::info!("Local drawing mode disabled");
 
-                    remote_control.gfx.trigger_render();
+                    if let Some(gfx) = self
+                        .window_manager
+                        .as_mut()
+                        .and_then(|wm| wm.active_gfx_mut())
+                    {
+                        gfx.trigger_render();
+                    }
 
                     // Hide drawing window
                     self.close_drawing_window();
@@ -2096,15 +2104,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if self.remote_control.is_none() {
+                let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                else {
                     log::warn!("window_event: remote control is none redraw requested");
                     return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                };
+                let Some(gfx) = window_manager.active_gfx_mut() else {
+                    log::warn!("window_event: gfx is none redraw requested");
+                    return;
+                };
 
                 // Render frame with cursor updates, auto-clear, and drawing
                 // TODO: cleared path ids is not used anymore from here
-                let cleared_path_ids = remote_control.render_frame();
+                let cleared_path_ids = remote_control.render_frame(gfx);
 
                 // Publish cleared paths to room service
                 if !cleared_path_ids.is_empty() && self.room_service.is_some() {
