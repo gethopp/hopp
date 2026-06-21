@@ -60,6 +60,14 @@ impl IcedRenderer {
         }
     }
 
+    pub fn reset(&mut self, engine: iced_wgpu::Engine) {
+        self.renderer = Renderer::Primary(iced_wgpu::Renderer::new(
+            engine,
+            Font::default(),
+            Pixels::from(16),
+        ));
+    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>, scale_factor: f64) {
         self.viewport = Viewport::with_physical_size(
             Size::new(new_size.width, new_size.height),

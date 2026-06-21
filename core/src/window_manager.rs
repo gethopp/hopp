@@ -245,6 +245,20 @@ impl<'a> WindowManager<'a> {
         Ok(entry.window.clone())
     }
 
+    /// Recreates the shared render engine and resets every window's renderer.
+    ///
+    /// All overlay windows share one Engine Arc. Resetting only the active window's renderer
+    /// leaves the other windows holding the old Arc, preventing the Engine (and its MSAA buffer
+    /// + texture atlas) from being freed. This method drops all clones at once.
+    pub fn reset_engines(&mut self, context_manager: &mut ContextManager) {
+        if let Some(format) = self.windows.first().map(|e| e.gfx.surface_format()) {
+            context_manager.overlay_context.reset_engine(format);
+        }
+        for entry in &mut self.windows {
+            entry.gfx.reset_renderer(context_manager);
+        }
+    }
+
     pub fn active_gfx_mut(&mut self) -> Option<&mut GraphicsContext<'a>> {
         let active_id = self.active_monitor_id.as_ref()?;
         Some(

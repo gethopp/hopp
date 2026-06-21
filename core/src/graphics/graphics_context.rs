@@ -257,6 +257,18 @@ impl<'a> GraphicsContext<'a> {
         })
     }
 
+    /// Replaces the iced renderer with one backed by the current engine in context_manager.
+    ///
+    /// Call after context_manager.overlay_context.reset_engine() to drop the old Engine Arc.
+    pub(crate) fn reset_renderer(&mut self, context_manager: &ContextManager) {
+        self.iced_renderer
+            .reset(context_manager.overlay_context.engine.clone());
+    }
+
+    pub(crate) fn surface_format(&self) -> wgpu::TextureFormat {
+        self.surface_format
+    }
+
     /// Returns a clone of the redraw thread sender for use by subsystems.
     ///
     /// This allows other components (like CursorController and CursorWrapper)

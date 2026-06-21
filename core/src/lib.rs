@@ -968,6 +968,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.audio_player.stop();
                 self.stop_camera();
 
+                if let Some(cm) = self.context_manager.as_mut() {
+                    if let Some(wm) = self.window_manager.as_mut() {
+                        wm.reset_engines(cm);
+                    }
+                }
+
                 let capturer_valid = {
                     let screen_capturer = self.screen_capturer.lock();
                     screen_capturer.is_ok()
