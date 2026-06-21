@@ -1654,23 +1654,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         );
                     }
                     screensharing_window.focus_window();
-                } else {
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
-                            let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
-                            self.open_screensharing_window(
-                                event_loop,
-                                screen_share_buffer,
-                                participants,
-                                redraw_rx,
-                                redraw_tx,
-                            );
-                        } else {
-                            log::warn!("user_event: No screen share buffer available");
-                        }
+                } else if let Some(room_service) = self.room_service.as_ref() {
+                    if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                        let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                        self.open_screensharing_window(
+                            event_loop,
+                            screen_share_buffer,
+                            participants,
+                            redraw_rx,
+                            redraw_tx,
+                        );
                     } else {
-                        log::warn!("user_event: Room service not available");
+                        log::warn!("user_event: No screen share buffer available");
                     }
+                } else {
+                    log::warn!("user_event: Room service not available");
                 }
                 if let Some(screensharing_window) = &self.screensharing_window {
                     if let Some(room_service) = self.room_service.as_ref() {
@@ -1795,11 +1793,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
 
-                if self
-                    .drawing_window
-                    .as_ref()
-                    .map_or(true, |w| !w.is_visible())
-                {
+                if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
                     let remote_control = self.remote_control.as_mut().unwrap();
 
                     // Store the current controller state before disabling

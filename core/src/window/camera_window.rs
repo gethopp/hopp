@@ -412,7 +412,7 @@ impl CameraWindow {
             .and_then(|p| p.get("local").map(|info| info.camera_active()))
             .unwrap_or(false);
         self.state = CameraState {
-            viewport_size: IcedSize::new(logical.width as f32, logical.height as f32),
+            viewport_size: IcedSize::new(logical.width, logical.height),
             camera_active,
             selected_mic_name: active_mic_name,
             ..Default::default()
