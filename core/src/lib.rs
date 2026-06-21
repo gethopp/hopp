@@ -746,13 +746,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_cursor_position(
-                        sid.as_str(),
-                        Some(Position {
-                            x: x as f64,
-                            y: y as f64,
-                        }),
-                    );
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_cursor_position(
+                            sid.as_str(),
+                            Some(Position {
+                                x: x as f64,
+                                y: y as f64,
+                            }),
+                        );
+                    }
                 }
             }
             UserEvent::MouseClick(data, sid) => {
@@ -977,7 +979,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         cam.reset_renderer(&mut cm.camera_context);
                     }
                     if let Some(screensharing_win) = self.screensharing_window.as_mut() {
-                        screensharing_win.reset_renderer(&mut cm.screensharing_context);
+                        if screensharing_win.is_visible() {
+                            screensharing_win.reset_renderer(&mut cm.screensharing_context);
+                        }
                     }
                     if let Some(dw) = self.drawing_window.as_mut() {
                         dw.reset_renderer(&mut cm.drawing_context);
@@ -1102,14 +1106,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if let Err(e) = screensharing_window.add_participant(
-                        participant.identity.clone(),
-                        &participant.name,
-                        false,
-                    ) {
-                        log::error!(
-                            "user_event: failed to add participant to screensharing window: {e:?}"
-                        );
+                    if screensharing_window.is_visible() {
+                        if let Err(e) = screensharing_window.add_participant(
+                            participant.identity.clone(),
+                            &participant.name,
+                            false,
+                        ) {
+                            log::error!(
+                                "user_event: failed to add participant to screensharing window: {e:?}"
+                            );
+                        }
                     }
                 }
             }
@@ -1128,7 +1134,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.remove_participant(participant.identity.as_str());
+                    if screensharing_window.is_visible() {
+                        screensharing_window.remove_participant(participant.identity.as_str());
+                    }
                 }
             }
             UserEvent::LivekitServerUrl(url) => {
@@ -1170,7 +1178,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::LocalParticipantInControl(in_control) => {
                 log::debug!("user_event: local participant in control: {in_control}");
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_local_participant_in_control(in_control);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_local_participant_in_control(in_control);
+                    }
                 }
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
@@ -1265,7 +1275,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                    }
                 }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
@@ -1287,8 +1299,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_start(sid.as_str(), pos, path_id);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_start(sid.as_str(), pos, path_id);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawAddPoint(point, sid) => {
@@ -1310,8 +1324,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_add_point(sid.as_str(), pos);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_add_point(sid.as_str(), pos);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawEnd(point, sid) => {
@@ -1333,8 +1349,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_end(sid.as_str(), pos);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_end(sid.as_str(), pos);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawClearPath(path_id, sid) => {
@@ -1348,7 +1366,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                    }
                 }
             }
             UserEvent::DrawClearAllPaths(sid) => {
@@ -1362,7 +1382,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_clear_all_paths(sid.as_str());
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_clear_all_paths(sid.as_str());
+                    }
                 }
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
@@ -1382,10 +1404,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     });
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.trigger_click_animation(Position {
-                        x: point.x,
-                        y: point.y,
-                    });
+                    if screensharing_window.is_visible() {
+                        screensharing_window.trigger_click_animation(Position {
+                            x: point.x,
+                            y: point.y,
+                        });
+                    }
                 }
             }
             UserEvent::ListAudioDevices => {
@@ -1727,7 +1751,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             // as a new-joiner in a Room will not have access to this
             UserEvent::SharerControlEnabled(enabled) => {
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_remote_control_allowed(enabled);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_remote_control_allowed(enabled);
+                    }
                 }
             }
             UserEvent::DefaultOutputDeviceChanged => {
