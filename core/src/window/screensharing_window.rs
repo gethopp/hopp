@@ -1918,6 +1918,11 @@ impl ScreensharingWindow {
                             let content_w =
                                 WindowConstant::DEFAULT_WIDTH - WindowConstant::SKELETON_W;
                             let content_h = content_w / aspect;
+                            log::warn!(
+                                "ScreensharingWindow: calculate_max_window_size returned None, using fallback {:.1}x{:.1}",
+                                WindowConstant::DEFAULT_WIDTH,
+                                content_h + WindowConstant::SKELETON_H
+                            );
                             (
                                 WindowConstant::DEFAULT_WIDTH,
                                 content_h + WindowConstant::SKELETON_H,
@@ -1938,11 +1943,13 @@ impl ScreensharingWindow {
                 self.aspect_ratio_enforcer
                     .set_aspect_ratio(&self.window, aspect);
 
-                let saved_pos = self.window.outer_position();
-                self.programmatic_resize_target = Some((width, height));
-                let _ = self
-                    .window
-                    .request_inner_size(winit::dpi::LogicalSize::new(width, height));
+                // If we're auto-maximizing to the probed screen area, move the window first.
+                // Otherwise macOS may clamp the resize request against the *current* monitor.
+                let saved_pos = if self.state.user_has_resized {
+                    self.window.outer_position().ok()
+                } else {
+                    None
+                };
 
                 if !self.state.user_has_resized {
                     self.window
@@ -1950,7 +1957,14 @@ impl ScreensharingWindow {
                             self.screen_area.position.x,
                             self.screen_area.position.y,
                         ));
-                } else if let Ok(pos) = saved_pos {
+                }
+
+                self.programmatic_resize_target = Some((width, height));
+                let _ = self
+                    .window
+                    .request_inner_size(winit::dpi::LogicalSize::new(width, height));
+
+                if let Some(pos) = saved_pos {
                     // Restore position so the window doesn't jump when aspect changes.
                     self.window.set_outer_position(pos);
                 }

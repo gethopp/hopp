@@ -537,11 +537,11 @@ impl<'a> Application<'a> {
             .audio_capturer
             .active_device_name()
             .map(|s| s.to_string());
-        let ss = self.screensharing_active;
+        let screensharing_active = self.screensharing_active;
 
         if let Some(cam) = &mut self.camera_window {
             if !cam.is_visible() {
-                cam.show(mic, ss);
+                cam.show(mic, screensharing_active);
             }
             return;
         }
@@ -558,7 +558,7 @@ impl<'a> Application<'a> {
             mic,
         ) {
             Ok(mut cam) => {
-                cam.set_screensharing_active(ss);
+                cam.set_screensharing_active(screensharing_active);
                 self.camera_window = Some(cam);
             }
             Err(e) => log::error!("Failed to create camera window: {e:?}"),
@@ -974,8 +974,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(cam) = self.camera_window.as_mut() {
                         cam.reset_renderer(&mut cm.camera_context);
                     }
-                    if let Some(ss) = self.screensharing_window.as_mut() {
-                        ss.reset_renderer(&mut cm.screensharing_context);
+                    if let Some(screensharing_win) = self.screensharing_window.as_mut() {
+                        screensharing_win.reset_renderer(&mut cm.screensharing_context);
                     }
                     if let Some(dw) = self.drawing_window.as_mut() {
                         dw.reset_renderer(&mut cm.drawing_context);
