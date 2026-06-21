@@ -20,7 +20,9 @@ use thiserror::Error;
 
 use crate::components::fonts::{self as fonts_mod, GEIST_REGULAR};
 use crate::graphics::graphics_context::participant::ParticipantsManager;
-use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
+use crate::graphics::graphics_window_context::{
+    ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
+};
 use crate::room_service::DrawingMode;
 use crate::utils::geometry::Position;
 use crate::window::drawing_helpers;
@@ -315,6 +317,29 @@ impl DrawingWindow {
 
     pub fn hide(&self) {
         self.window.set_visible(false);
+    }
+
+    pub fn show(&mut self, position: Option<winit::dpi::LogicalPosition<f64>>) {
+        if let Some(pos) = position {
+            self.window.set_outer_position(pos);
+        }
+        self.window.set_maximized(true);
+        self.cache = Some(Cache::default());
+        self.window.set_visible(true);
+        self.window.focus_window();
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.window.is_visible().unwrap_or(false)
+    }
+
+    pub fn reset_renderer(&mut self, context: &mut GraphicsWindowContext) {
+        context.reset_engine(self.format);
+        self.renderer = iced::Renderer::Primary(iced_wgpu::Renderer::new(
+            context.engine.clone(),
+            GEIST_REGULAR,
+            iced::Pixels::from(16),
+        ));
     }
 
     pub fn set_draw_persist(&mut self, permanent: bool) {
@@ -627,5 +652,11 @@ impl DrawingWindow {
         output.present();
 
         cleared
+    }
+}
+
+impl Drop for DrawingWindow {
+    fn drop(&mut self) {
+        self.stop_redraw_thread();
     }
 }

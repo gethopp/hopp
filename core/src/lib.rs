@@ -575,9 +575,8 @@ impl<'a> Application<'a> {
 
     fn close_drawing_window(&mut self) {
         log::info!("close_drawing_window");
-        if let Some(mut window) = self.drawing_window.take() {
+        if let Some(window) = &mut self.drawing_window {
             window.hide();
-            window.stop_redraw_thread();
         }
         if let Err(e) = self.socket.send(Message::DrawingDisabled) {
             log::error!("Failed to send DrawingDisabled: {e:?}");
@@ -977,6 +976,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     if let Some(ss) = self.screensharing_window.as_mut() {
                         ss.reset_renderer(&mut cm.screensharing_context);
+                    }
+                    if let Some(dw) = self.drawing_window.as_mut() {
+                        dw.reset_renderer(&mut cm.drawing_context);
                     }
                 }
 
@@ -1635,11 +1637,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .and_then(|rs| rs.screen_share_buffer());
                 let draw_persist = self.controller_draw_persist;
                 let last_mode = self.last_mode.clone();
+                self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.send_participants_snapshot();
+                }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    self.stop_screenshare();
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.send_participants_snapshot();
-                    }
                     let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                     if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
                         screensharing_window.update_window_with_new_sharer(
@@ -1653,9 +1655,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     screensharing_window.focus_window();
                 } else {
-                    self.stop_screenshare();
                     if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.send_participants_snapshot();
                         if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
                             let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                             self.open_screensharing_window(
@@ -1795,7 +1795,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
 
-                if self.drawing_window.is_none() {
+                if self
+                    .drawing_window
+                    .as_ref()
+                    .map_or(true, |w| !w.is_visible())
+                {
                     let remote_control = self.remote_control.as_mut().unwrap();
 
                     // Store the current controller state before disabling
@@ -1817,40 +1821,53 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         room_service.publish_drawing_mode(draw_mode);
                     }
 
-                    // Create and show drawing window
-                    let overlay_position = self
-                        .window_manager
-                        .as_ref()
-                        .and_then(|wm| wm.active_window_position());
+                    // Create or show drawing window
+                    if let Some(win) = &mut self.drawing_window {
+                        let overlay_position = self
+                            .window_manager
+                            .as_ref()
+                            .and_then(|wm| wm.active_window_position());
+                        win.set_draw_persist(drawing_enabled.permanent);
+                        win.show(overlay_position);
+                        log::info!(
+                            "Local drawing mode enabled (permanent: {})",
+                            drawing_enabled.permanent
+                        );
+                    } else {
+                        let overlay_position = self
+                            .window_manager
+                            .as_ref()
+                            .and_then(|wm| wm.active_window_position());
 
-                    match DrawingWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        drawing_enabled.permanent,
-                        overlay_position,
-                    ) {
-                        Ok(win) => {
-                            self.drawing_window = Some(win);
-                            log::info!(
-                                "Local drawing mode enabled (permanent: {})",
-                                drawing_enabled.permanent
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("Failed to create drawing window: {e:?}");
+                        match DrawingWindow::new(
+                            self.context_manager.as_ref().unwrap(),
+                            event_loop,
+                            drawing_enabled.permanent,
+                            overlay_position,
+                        ) {
+                            Ok(win) => {
+                                self.drawing_window = Some(win);
+                                log::info!(
+                                    "Local drawing mode enabled (permanent: {})",
+                                    drawing_enabled.permanent
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create drawing window: {e:?}");
 
-                            // Restore remote control to previous state
-                            let remote_control = self.remote_control.as_mut().unwrap();
-                            remote_control
-                                .cursor_controller
-                                .set_controllers_enabled(previous_controllers_enabled);
-                            remote_control
-                                .keyboard_controller
-                                .set_enabled(previous_controllers_enabled);
+                                // Restore remote control to previous state
+                                let remote_control = self.remote_control.as_mut().unwrap();
+                                remote_control
+                                    .cursor_controller
+                                    .set_controllers_enabled(previous_controllers_enabled);
+                                remote_control
+                                    .keyboard_controller
+                                    .set_enabled(previous_controllers_enabled);
 
-                            if let Some(room_service) = &self.room_service {
-                                room_service
-                                    .publish_drawing_mode(room_service::DrawingMode::Disabled);
+                                if let Some(room_service) = &self.room_service {
+                                    room_service
+                                        .publish_drawing_mode(room_service::DrawingMode::Disabled);
+                                }
                             }
                         }
                     }
