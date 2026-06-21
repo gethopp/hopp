@@ -43,7 +43,9 @@ use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
-use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
+use crate::graphics::graphics_window_context::{
+    ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
+};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
@@ -69,6 +71,8 @@ const REDRAW_INTERVAL_SCREENSHARING: Duration = Duration::from_millis(1_000 / 15
 
 pub enum RedrawCommand {
     Stop,
+    Pause,
+    Resume,
     SetScreensharingActive(bool),
 }
 
@@ -78,9 +82,12 @@ fn spawn_redraw_thread(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut interval = REDRAW_INTERVAL;
+        let mut paused = false;
         loop {
             match redraw_rx.recv_timeout(interval) {
                 Ok(RedrawCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(RedrawCommand::Pause) => paused = true,
+                Ok(RedrawCommand::Resume) => paused = false,
                 Ok(RedrawCommand::SetScreensharingActive(active)) => {
                     interval = if active {
                         REDRAW_INTERVAL_SCREENSHARING
@@ -88,7 +95,11 @@ fn spawn_redraw_thread(
                         REDRAW_INTERVAL
                     };
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if !paused {
+                        window.request_redraw();
+                    }
+                }
             }
         }
     })
@@ -225,6 +236,7 @@ pub struct CameraWindow {
     last_rendered_frame_ids: HashMap<String, u64>,
     screensharing_active: bool,
     resize_timer: Option<Instant>,
+    visible: bool,
 }
 
 pub fn camera_window_attributes() -> WindowAttributes {
@@ -351,7 +363,22 @@ impl CameraWindow {
             last_rendered_frame_ids: HashMap::new(),
             screensharing_active: false,
             resize_timer: None,
+            visible: true,
         })
+    }
+
+    /// Recreates the context's render engine and rebuilds this window's renderer on it.
+    ///
+    /// Called on call end to free the engine's GPU memory (MSAA buffer + texture atlas)
+    /// while the window itself is reused across calls. The context's engine clone and this
+    /// window's renderer hold the only two Arc clones; resetting both drops the old engine.
+    pub fn reset_renderer(&mut self, context: &mut GraphicsWindowContext) {
+        context.reset_engine(self.format);
+        self.renderer = iced::Renderer::Primary(iced_wgpu::Renderer::new(
+            context.engine.clone(),
+            GEIST_REGULAR,
+            Pixels::from(16),
+        ));
     }
 
     /// The winit `WindowId` for event routing.
@@ -360,7 +387,6 @@ impl CameraWindow {
     }
 
     pub fn focus_window(&self) {
-        self.window.set_visible(true);
         self.window.focus_window();
     }
 
@@ -375,6 +401,54 @@ impl CameraWindow {
             log::error!("CameraWindow::stop_redraw_thread: failed to send Stop: {e:?}");
         }
         self.redraw_thread.take();
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn set_participants(
+        &mut self,
+        participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    ) {
+        self.participants = participants;
+    }
+
+    /// Re-reveal after a hide(). Resets transient state to match a fresh window.
+    pub fn show(&mut self, active_mic_name: Option<String>, screensharing_active: bool) {
+        let logical = self.viewport.logical_size();
+        let camera_active = self
+            .participants
+            .read()
+            .ok()
+            .and_then(|p| p.get("local").map(|info| info.camera_active()))
+            .unwrap_or(false);
+        self.state = CameraState {
+            viewport_size: IcedSize::new(logical.width, logical.height),
+            camera_active,
+            selected_mic_name: active_mic_name,
+            ..Default::default()
+        };
+        self.last_rendered_frame_ids.clear();
+        self.screensharing_active = false;
+        self.resize_timer = None;
+        self.cache = Some(Cache::default());
+
+        let _ = self.redraw_tx.send(RedrawCommand::Resume);
+        self.visible = true;
+        self.window.set_visible(true);
+        self.window.focus_window();
+
+        self.set_screensharing_active(screensharing_active);
+    }
+
+    /// Hide and pause the redraw thread (keeps the wgpu surface alive).
+    pub fn hide(&mut self) {
+        if let Err(e) = self.redraw_tx.send(RedrawCommand::Pause) {
+            log::error!("CameraWindow::hide: failed to send Pause: {e:?}");
+        }
+        self.visible = false;
+        self.window.set_visible(false);
     }
 
     /// Update the redraw interval based on screensharing state.
@@ -585,7 +659,7 @@ impl CameraWindow {
                 self.redraw();
             }
             WindowEvent::CloseRequested => {
-                self.window.set_visible(false);
+                self.hide();
             }
             _ => {}
         }
@@ -1121,7 +1195,7 @@ impl CameraWindow {
 
 impl Drop for CameraWindow {
     fn drop(&mut self) {
-        let _ = self.redraw_thread.take();
+        self.stop_redraw_thread();
     }
 }
 

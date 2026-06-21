@@ -220,6 +220,11 @@ impl ParticipantsManager {
         Ok(())
     }
 
+    /// Removes all participants and resets color pool.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     /// Removes a participant and their data.
     pub fn remove_participant(&mut self, identity: &str) {
         log::info!(

@@ -138,8 +138,6 @@ pub struct GraphicsContext<'a> {
     surface: wgpu::Surface<'a>,
     /// GPU logical device
     device: wgpu::Device,
-    /// Command queue
-    queue: wgpu::Queue,
     /// Reference to the overlay window
     window: Arc<Window>,
 
@@ -156,6 +154,10 @@ pub struct GraphicsContext<'a> {
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Clock for time tracking
     clock: Arc<dyn Clock>,
+
+    surface_format: wgpu::TextureFormat,
+    surface_alpha_mode: wgpu::CompositeAlphaMode,
+    surface_present_mode: wgpu::PresentMode,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -222,8 +224,10 @@ impl<'a> GraphicsContext<'a> {
             .create_overlay_surface(&window_arc)
             .map_err(|_| OverlayError::SurfaceCreationError)?;
         let surface = surface_info.surface;
+        let surface_format = surface_info.format;
+        let surface_alpha_mode = surface_info.alpha_mode;
+        let surface_present_mode = context_manager.overlay_context.present_mode;
         let device = context_manager.overlay_context.device.clone();
-        let queue = context_manager.overlay_context.queue.clone();
 
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
@@ -237,14 +241,28 @@ impl<'a> GraphicsContext<'a> {
         Ok(Self {
             surface,
             device,
-            queue,
             window: window_arc,
             click_animation_renderer,
             iced_renderer,
             participants_manager: ParticipantsManager::default(),
             redraw_thread_sender: sender,
             clock,
+            surface_format,
+            surface_alpha_mode,
+            surface_present_mode,
         })
+    }
+
+    /// Replaces the iced renderer with one backed by the current engine in context_manager.
+    ///
+    /// Call after context_manager.overlay_context.reset_engine() to drop the old Engine Arc.
+    pub(crate) fn reset_renderer(&mut self, context_manager: &ContextManager) {
+        self.iced_renderer
+            .reset(context_manager.overlay_context.engine.clone());
+    }
+
+    pub(crate) fn surface_format(&self) -> wgpu::TextureFormat {
+        self.surface_format
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
@@ -261,6 +279,29 @@ impl<'a> GraphicsContext<'a> {
     /// clock for time-dependent logic.
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    /// Reconfigures the wgpu surface for a new window size.
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+        self.surface.configure(
+            &self.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.surface_format,
+                width: new_size.width,
+                height: new_size.height,
+                present_mode: self.surface_present_mode,
+                alpha_mode: self.surface_alpha_mode,
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+            },
+        );
+        self.iced_renderer
+            .resize(new_size, self.window.scale_factor());
+        self.window.request_redraw();
     }
 
     /// Triggers rendering activity.
@@ -448,42 +489,5 @@ impl Drop for GraphicsContext<'_> {
     fn drop(&mut self) {
         // Stop the redraw thread (detach, don't join)
         let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
-
-        // Clear the framebuffer before the window is hidden so stale overlay
-        // content is not visible when a new surface is created on top of it.
-        if let Ok(output) = self.surface.get_current_texture() {
-            let view = output
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("clear_on_drop"),
-                });
-            {
-                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("clear_on_drop"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-            }
-            self.queue.submit(std::iter::once(encoder.finish()));
-            self.window.pre_present_notify();
-            output.present();
-        }
-
-        // This is needed for windows, because otherwise the title bar becomes
-        // visible when a new overlay surface is created.
-        self.window.set_minimized(true);
     }
 }

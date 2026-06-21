@@ -199,6 +199,17 @@ impl GraphicsWindowContext {
             alpha_mode,
         }
     }
+
+    pub fn reset_engine(&mut self, format: wgpu::TextureFormat) {
+        self.engine = Engine::new(
+            &self.adapter,
+            self.device.clone(),
+            self.queue.clone(),
+            format,
+            Some(iced_wgpu::graphics::Antialiasing::MSAAx4),
+            Shell::headless(),
+        );
+    }
 }
 
 pub struct ContextManager {
