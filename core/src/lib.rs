@@ -1636,6 +1636,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let draw_persist = self.controller_draw_persist;
                 let last_mode = self.last_mode.clone();
                 if let Some(screensharing_window) = &mut self.screensharing_window {
+                    self.stop_screenshare();
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.send_participants_snapshot();
+                    }
                     let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
                     if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
                         screensharing_window.update_window_with_new_sharer(
