@@ -381,7 +381,6 @@ impl CameraWindow {
     }
 
     pub fn focus_window(&self) {
-        self.window.set_visible(true);
         self.window.focus_window();
     }
 
@@ -400,6 +399,13 @@ impl CameraWindow {
 
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    pub fn set_participants(
+        &mut self,
+        participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    ) {
+        self.participants = participants;
     }
 
     /// Re-reveal after a hide(). Resets transient state to match a fresh window.

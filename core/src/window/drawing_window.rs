@@ -324,9 +324,28 @@ impl DrawingWindow {
             self.window.set_outer_position(pos);
         }
         self.window.set_maximized(true);
+
+        self.left_mouse_pressed = false;
+        self.current_path_id = 0;
+        self.last_cursor_position = None;
+
+        let mut participants_manager = ParticipantsManager::new();
+        if let Err(e) = participants_manager.add_participant(
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY.to_string(),
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+            true,
+            DrawingMode::Draw(crate::room_service::DrawSettings {
+                permanent: self.draw_persist,
+            }),
+        ) {
+            log::warn!("DrawingWindow::show: failed to add local participant: {e:?}");
+        }
+        self.participants_manager = participants_manager;
+
         self.cache = Some(Cache::default());
         self.window.set_visible(true);
         self.window.focus_window();
+        self.window.request_redraw();
     }
 
     pub fn is_visible(&self) -> bool {

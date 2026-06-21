@@ -331,7 +331,9 @@ impl<'a> Application<'a> {
 
         if let Some(wm) = self.window_manager.as_mut() {
             if let Some(cm) = self.context_manager.as_ref() {
-                let _ = wm.update(event_loop, cm);
+                if let Err(e) = wm.update(event_loop, cm) {
+                    log::warn!("wm.update failed: {e:?}");
+                }
             }
         }
 
@@ -1141,7 +1143,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 log::debug!("user_event: Room service created: {room_service:?}");
-                self.room_service = Some(room_service.unwrap());
+                let room_service = room_service.unwrap();
+                if let Some(cam) = self.camera_window.as_mut() {
+                    cam.set_participants(room_service.participants());
+                }
+                self.room_service = Some(room_service);
             }
             UserEvent::ControllerTakesScreenShare => {
                 log::info!("user_event: Controller takes screen share");
@@ -2151,6 +2157,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("window_event: remote control is none redraw requested");
                     return;
                 };
+                if !window_manager.is_active_window(window_id) {
+                    return;
+                }
                 let Some(gfx) = window_manager.active_gfx_mut() else {
                     log::warn!("window_event: gfx is none redraw requested");
                     return;
