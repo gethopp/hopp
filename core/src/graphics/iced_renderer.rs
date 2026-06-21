@@ -60,6 +60,13 @@ impl IcedRenderer {
         }
     }
 
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>, scale_factor: f64) {
+        self.viewport = Viewport::with_physical_size(
+            Size::new(new_size.width, new_size.height),
+            scale_factor as f32,
+        );
+    }
+
     pub fn draw(
         &mut self,
         frame: &wgpu::SurfaceTexture,

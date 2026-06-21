@@ -156,6 +156,10 @@ pub struct GraphicsContext<'a> {
     redraw_thread_sender: Sender<RedrawThreadCommands>,
     /// Clock for time tracking
     clock: Arc<dyn Clock>,
+
+    surface_format: wgpu::TextureFormat,
+    surface_alpha_mode: wgpu::CompositeAlphaMode,
+    surface_present_mode: wgpu::PresentMode,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -222,6 +226,9 @@ impl<'a> GraphicsContext<'a> {
             .create_overlay_surface(&window_arc)
             .map_err(|_| OverlayError::SurfaceCreationError)?;
         let surface = surface_info.surface;
+        let surface_format = surface_info.format;
+        let surface_alpha_mode = surface_info.alpha_mode;
+        let surface_present_mode = context_manager.overlay_context.present_mode;
         let device = context_manager.overlay_context.device.clone();
         let queue = context_manager.overlay_context.queue.clone();
 
@@ -244,6 +251,9 @@ impl<'a> GraphicsContext<'a> {
             participants_manager: ParticipantsManager::default(),
             redraw_thread_sender: sender,
             clock,
+            surface_format,
+            surface_alpha_mode,
+            surface_present_mode,
         })
     }
 
@@ -261,6 +271,29 @@ impl<'a> GraphicsContext<'a> {
     /// clock for time-dependent logic.
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    /// Reconfigures the wgpu surface for a new window size.
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+        self.surface.configure(
+            &self.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.surface_format,
+                width: new_size.width,
+                height: new_size.height,
+                present_mode: self.surface_present_mode,
+                alpha_mode: self.surface_alpha_mode,
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+            },
+        );
+        self.iced_renderer
+            .resize(new_size, self.window.scale_factor());
+        self.window.request_redraw();
     }
 
     /// Triggers rendering activity.

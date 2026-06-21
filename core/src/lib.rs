@@ -330,7 +330,9 @@ impl<'a> Application<'a> {
         }
 
         if let Some(wm) = self.window_manager.as_mut() {
-            let _ = wm.update(event_loop);
+            if let Some(cm) = self.context_manager.as_ref() {
+                let _ = wm.update(event_loop, cm);
+            }
         }
 
         res.unwrap()
@@ -581,13 +583,7 @@ impl<'a> Application<'a> {
             .window_manager
             .as_mut()
             .ok_or(ServerError::WindowCreationError)?
-            .show_window(
-                &selected_monitor,
-                event_loop,
-                self.context_manager.as_ref().unwrap(),
-                self.textures_path.clone(),
-                self.event_loop_proxy.clone(),
-            )
+            .show_window(&selected_monitor, event_loop)
             .map_err(|e| {
                 log::error!("create_overlay_window: Error showing window: {:?}", e);
                 ServerError::from(e)
@@ -1023,7 +1019,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .as_mut()
                     .and_then(|wm| wm.active_gfx_mut())
                 else {
-                    log::warn!("user_event: remote control is none request redraw");
+                    log::trace!("user_event: remote control is none request redraw");
                     return;
                 };
                 gfx.window().request_redraw();
@@ -1886,13 +1882,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
         }
         if self.window_manager.is_none() {
-            log::info!("Application::resumed: initializing WindowManager");
-            match window_manager::WindowManager::new(event_loop) {
-                Ok(wm) => self.window_manager = Some(wm),
-                Err(e) => log::error!(
-                    "Application::resumed: failed to initialize WindowManager: {:?}",
-                    e
-                ),
+            if let Some(context_manager) = self.context_manager.as_ref() {
+                log::info!("Application::resumed: initializing WindowManager");
+                match window_manager::WindowManager::new(
+                    event_loop,
+                    context_manager,
+                    self.textures_path.clone(),
+                    self.event_loop_proxy.clone(),
+                ) {
+                    Ok(wm) => self.window_manager = Some(wm),
+                    Err(e) => log::error!(
+                        "Application::resumed: failed to initialize WindowManager: {:?}",
+                        e
+                    ),
+                }
+            } else {
+                log::error!(
+                    "Application::resumed: context_manager not initialized, skipping WindowManager"
+                );
             }
         }
     }
@@ -2127,13 +2134,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .publish_draw_clear_paths(cleared_path_ids);
                 }
             }
-            WindowEvent::Resized(_size) => {
+            WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
                     if wm.is_active_window(window_id) {
-                        log::info!("window_event: active window resized {:?}", window_id);
-                        if let Err(e) = wm.update(event_loop) {
-                            log::error!("window_event: failed to update window manager: {:?}", e);
-                        }
+                        log::info!("window_event: active window resized to {:?}", new_size);
+                        wm.resize_active_window(new_size);
                     }
                 }
             }
