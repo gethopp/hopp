@@ -138,8 +138,6 @@ pub struct GraphicsContext<'a> {
     surface: wgpu::Surface<'a>,
     /// GPU logical device
     device: wgpu::Device,
-    /// Command queue
-    queue: wgpu::Queue,
     /// Reference to the overlay window
     window: Arc<Window>,
 
@@ -230,7 +228,6 @@ impl<'a> GraphicsContext<'a> {
         let surface_alpha_mode = surface_info.alpha_mode;
         let surface_present_mode = context_manager.overlay_context.present_mode;
         let device = context_manager.overlay_context.device.clone();
-        let queue = context_manager.overlay_context.queue.clone();
 
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
@@ -244,7 +241,6 @@ impl<'a> GraphicsContext<'a> {
         Ok(Self {
             surface,
             device,
-            queue,
             window: window_arc,
             click_animation_renderer,
             iced_renderer,
@@ -493,42 +489,5 @@ impl Drop for GraphicsContext<'_> {
     fn drop(&mut self) {
         // Stop the redraw thread (detach, don't join)
         let _ = self.redraw_thread_sender.send(RedrawThreadCommands::Stop);
-
-        // Clear the framebuffer before the window is hidden so stale overlay
-        // content is not visible when a new surface is created on top of it.
-        if let Ok(output) = self.surface.get_current_texture() {
-            let view = output
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("clear_on_drop"),
-                });
-            {
-                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("clear_on_drop"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-            }
-            self.queue.submit(std::iter::once(encoder.finish()));
-            self.window.pre_present_notify();
-            output.present();
-        }
-
-        // This is needed for windows, because otherwise the title bar becomes
-        // visible when a new overlay surface is created.
-        self.window.set_minimized(true);
     }
 }
