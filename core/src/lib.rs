@@ -567,7 +567,7 @@ impl<'a> Application<'a> {
 
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
-        if let Some(mut window) = self.screensharing_window.take() {
+        if let Some(window) = &mut self.screensharing_window {
             window.hide();
             window.stop_redraw_thread();
         }
@@ -971,6 +971,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(cm) = self.context_manager.as_mut() {
                     if let Some(wm) = self.window_manager.as_mut() {
                         wm.reset_engines(cm);
+                    }
+                    if let Some(cam) = self.camera_window.as_mut() {
+                        cam.reset_renderer(&mut cm.camera_context);
+                    }
+                    if let Some(ss) = self.screensharing_window.as_mut() {
+                        ss.reset_renderer(&mut cm.screensharing_context);
                     }
                 }
 
@@ -1623,10 +1629,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 redraw_tx,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
+                let buffer = self
+                    .room_service
+                    .as_ref()
+                    .and_then(|rs| rs.screen_share_buffer());
+                let draw_persist = self.controller_draw_persist;
+                let last_mode = self.last_mode.clone();
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
-                    if let Some((rx, tx)) = redraw_rx.zip(redraw_tx) {
-                        screensharing_window.update_window_with_new_sharer(&participants, rx, tx);
+                    if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
+                        screensharing_window.update_window_with_new_sharer(
+                            buffer,
+                            &participants,
+                            draw_persist,
+                            last_mode,
+                            rx,
+                            tx,
+                        );
                     }
                     screensharing_window.focus_window();
                 } else {
@@ -1678,8 +1697,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
                 if let Some(screen_sharing_window) = &self.screensharing_window {
-                    screen_sharing_window.focus_window();
-                    focused = true;
+                    if screen_sharing_window.is_visible() {
+                        screen_sharing_window.focus_window();
+                        focused = true;
+                    }
                 }
                 if let Some(cam) = &self.camera_window {
                     if cam.is_visible() {

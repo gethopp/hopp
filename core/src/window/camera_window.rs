@@ -43,7 +43,9 @@ use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
-use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
+use crate::graphics::graphics_window_context::{
+    ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
+};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
@@ -357,6 +359,20 @@ impl CameraWindow {
             resize_timer: None,
             visible: true,
         })
+    }
+
+    /// Recreates the context's render engine and rebuilds this window's renderer on it.
+    ///
+    /// Called on call end to free the engine's GPU memory (MSAA buffer + texture atlas)
+    /// while the window itself is reused across calls. The context's engine clone and this
+    /// window's renderer hold the only two Arc clones; resetting both drops the old engine.
+    pub fn reset_renderer(&mut self, context: &mut GraphicsWindowContext) {
+        context.reset_engine(self.format);
+        self.renderer = iced::Renderer::Primary(iced_wgpu::Renderer::new(
+            context.engine.clone(),
+            GEIST_REGULAR,
+            Pixels::from(16),
+        ));
     }
 
     /// The winit `WindowId` for event routing.
