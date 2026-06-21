@@ -519,8 +519,49 @@ impl<'a> Application<'a> {
 
     fn close_camera_window(&mut self) {
         log::info!("close_camera_window");
-        if let Some(mut cam) = self.camera_window.take() {
-            cam.stop_redraw_thread();
+        if let Some(cam) = &mut self.camera_window {
+            cam.hide();
+        }
+    }
+
+    fn open_camera_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        participants: Arc<
+            std::sync::RwLock<
+                std::collections::HashMap<String, crate::livekit::participant::ParticipantInfo>,
+            >,
+        >,
+    ) {
+        let mic = self
+            .audio_capturer
+            .active_device_name()
+            .map(|s| s.to_string());
+        let ss = self.screensharing_active;
+
+        if let Some(cam) = &mut self.camera_window {
+            if !cam.is_visible() {
+                cam.show(mic, ss);
+            }
+            return;
+        }
+
+        let Some(context_manager) = self.context_manager.as_ref() else {
+            log::error!("open_camera_window: context_manager not initialized");
+            return;
+        };
+        match CameraWindow::new(
+            context_manager,
+            event_loop,
+            participants,
+            self.event_loop_proxy.clone(),
+            mic,
+        ) {
+            Ok(mut cam) => {
+                cam.set_screensharing_active(ss);
+                self.camera_window = Some(cam);
+            }
+            Err(e) => log::error!("Failed to create camera window: {e:?}"),
         }
     }
 
@@ -848,28 +889,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             self.start_camera_on_call = start_camera_on_call;
 
                             // Open camera window immediately for snappiness
-                            if start_camera_on_call && self.camera_window.is_none() {
+                            if start_camera_on_call {
                                 let participants = room_service.participants();
-                                match CameraWindow::new(
-                                    self.context_manager.as_ref().unwrap(),
-                                    event_loop,
-                                    participants,
-                                    self.event_loop_proxy.clone(),
-                                    self.audio_capturer
-                                        .active_device_name()
-                                        .map(|s| s.to_string()),
-                                ) {
-                                    Ok(mut cam) => {
-                                        log::info!(
-                                            "user_event: CallStart: camera window opened early"
-                                        );
-                                        cam.set_screensharing_active(self.screensharing_active);
-                                        self.camera_window = Some(cam);
-                                    }
-                                    Err(e) => log::error!(
-                                        "Failed to open camera window in CallStart: {e:?}"
-                                    ),
-                                }
+                                self.open_camera_window(event_loop, participants);
                             }
                         }
                         Err(e) => {
@@ -1488,26 +1510,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 };
 
                 // Open camera window first for snappiness
-                if self.camera_window.is_none() {
+                {
                     let participants = room_service.participants();
-                    match CameraWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        participants,
-                        self.event_loop_proxy.clone(),
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    ) {
-                        Ok(mut cam) => {
-                            log::info!("user_event: Camera window opened for local camera");
-                            cam.set_screensharing_active(self.screensharing_active);
-                            self.camera_window = Some(cam);
-                        }
-                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                    }
+                    let _ = room_service;
+                    self.open_camera_window(event_loop, participants);
                 }
 
+                let room_service = self.room_service.as_ref().unwrap();
                 log::info!("user_event: StartCamera: starting capture");
                 let capture_result = {
                     let mut capturer = self.camera_capturer.lock().unwrap();
@@ -1518,7 +1527,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         buffer_source,
                     )
                 };
-
                 if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
                     room_service.mute_camera_track();
@@ -1585,27 +1593,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
-                if self.camera_window.is_some() {
-                    log::info!("user_event: Camera window already exists, skipping");
-                    return;
-                }
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        participants,
-                        self.event_loop_proxy.clone(),
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    ) {
-                        Ok(mut cam) => {
-                            cam.set_screensharing_active(self.screensharing_active);
-                            self.camera_window = Some(cam);
-                        }
-                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                    }
+                    self.open_camera_window(event_loop, participants);
                 } else {
                     log::warn!("user_event: room service is none, cannot open camera window");
                 }
@@ -1686,8 +1676,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     focused = true;
                 }
                 if let Some(cam) = &self.camera_window {
-                    cam.focus_window();
-                    focused = true;
+                    if cam.is_visible() {
+                        cam.focus_window();
+                        focused = true;
+                    }
                 }
                 if let Err(e) = self
                     .socket
