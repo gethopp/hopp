@@ -5,6 +5,82 @@ use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowAttributes, WindowLevel};
 
+struct MonitorRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+pub fn ensure_on_screen(window: &Window) {
+    let monitors: Vec<MonitorRect> = window
+        .available_monitors()
+        .map(|m| {
+            let scale = m.scale_factor();
+            let pos: LogicalPosition<f64> = m.position().to_logical(scale);
+            let size: LogicalSize<f64> = m.size().to_logical(scale);
+            MonitorRect {
+                x: pos.x,
+                y: pos.y,
+                width: size.width,
+                height: size.height,
+            }
+        })
+        .collect();
+
+    let scale = window.scale_factor();
+    let pos: LogicalPosition<f64> = match window.outer_position() {
+        Ok(p) => p.to_logical(scale),
+        Err(_) => {
+            log::warn!("ensure_on_screen: failed to get outer_position");
+            return;
+        }
+    };
+    let size: LogicalSize<f64> = window.inner_size().to_logical(scale);
+
+    log::info!(
+        "ensure_on_screen: window pos=({:.1}, {:.1}) size={:.1}x{:.1}, {} monitors",
+        pos.x,
+        pos.y,
+        size.width,
+        size.height,
+        monitors.len()
+    );
+    for (i, m) in monitors.iter().enumerate() {
+        log::info!(
+            "ensure_on_screen: monitor[{}] pos=({:.1}, {:.1}) size={:.1}x{:.1}",
+            i,
+            m.x,
+            m.y,
+            m.width,
+            m.height
+        );
+    }
+
+    let fits = monitors.iter().any(|m| {
+        pos.x >= m.x
+            && pos.y >= m.y
+            && pos.x + size.width <= m.x + m.width
+            && pos.y + size.height <= m.y + m.height
+    });
+
+    if fits {
+        log::info!("ensure_on_screen: window fits, no move needed");
+        return;
+    }
+
+    if let Some(m) = monitors.first() {
+        log::info!(
+            "ensure_on_screen: moving window to monitor[0] pos=({:.1}, {:.1})",
+            m.x,
+            m.y
+        );
+        window.set_outer_position(LogicalPosition::new(m.x, m.y));
+    } else {
+        log::warn!("ensure_on_screen: no monitors found");
+    }
+}
+
 #[cfg(target_os = "macos")]
 use winit::platform::macos::WindowExtMacOS;
 

@@ -1728,7 +1728,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
-                if let Some(screen_sharing_window) = &self.screensharing_window {
+                if let Some(screen_sharing_window) = &mut self.screensharing_window {
                     if screen_sharing_window.is_visible() {
                         screen_sharing_window.focus_window();
                         focused = true;

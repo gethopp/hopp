@@ -387,6 +387,7 @@ impl CameraWindow {
     }
 
     pub fn focus_window(&self) {
+        crate::window_manager::ensure_on_screen(&self.window);
         self.window.focus_window();
     }
 
@@ -437,7 +438,7 @@ impl CameraWindow {
         let _ = self.redraw_tx.send(RedrawCommand::Resume);
         self.visible = true;
         self.window.set_visible(true);
-        self.window.focus_window();
+        self.focus_window();
 
         self.set_screensharing_active(screensharing_active);
     }

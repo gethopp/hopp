@@ -756,7 +756,9 @@ impl ScreensharingWindow {
         self.window.is_visible().unwrap_or(true)
     }
 
-    pub fn focus_window(&self) {
+    pub fn focus_window(&mut self) {
+        crate::window_manager::ensure_on_screen(&self.window);
+        self.screen_area = fallback_screen_area_from_monitor(&self.window);
         if self.window.is_visible() == Some(false) {
             self.window.set_visible(true);
         }
