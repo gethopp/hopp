@@ -500,6 +500,10 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 	// Release the dedupe lock so either party can call again immediately.
 	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
 
+	// The peer to notify that the call ended. During ringing this is the only
+	// signal the callee gets; for active calls it's recomputed below.
+	notifyPeerID := message.Payload.ParticipantID
+
 	if s.CallState != nil {
 		ctx.Logger().Infof("callstate: RemoveUser userID=%s", userID)
 		roomName, remainingPeers, isNamedRoom, err := s.CallState.RemoveUser(context.Background(), userID)
@@ -508,16 +512,22 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 		}
 		ctx.Logger().Infof("callstate: RemoveUser room=%s remainingPeers=%v isNamedRoom=%v", roomName, remainingPeers, isNamedRoom)
 
-		// Collapse ad-hoc 1:1 calls when exactly one peer remains (last two in the
-		// call): remove them too so the call is fully torn down. Named rooms are
-		// persistent meeting spots, so the remaining participant stays put.
-		if !isNamedRoom && len(remainingPeers) == 1 {
+		// Caller is in an active ad-hoc 1:1 room: collapse it and notify the
+		// remaining peer (existing behavior).
+		if roomName != "" && !isNamedRoom && len(remainingPeers) == 1 {
 			s.CallState.RemoveUser(context.Background(), remainingPeers[0])
-			endMsg := messages.NewCallEndMessage(userID)
-			endMsgJSON, mErr := json.Marshal(endMsg)
-			if mErr == nil {
-				s.Redis.Publish(context.Background(), redisutil.GetUserChannel(remainingPeers[0]), endMsgJSON)
-			}
+			notifyPeerID = remainingPeers[0]
+		} else if roomName != "" {
+			// Named room or >1 peers remaining: do NOT broadcast call_end.
+			notifyPeerID = ""
+		}
+	}
+
+	if notifyPeerID != "" {
+		endMsg := messages.NewCallEndMessage(userID)
+		endMsgJSON, mErr := json.Marshal(endMsg)
+		if mErr == nil {
+			s.Redis.Publish(context.Background(), redisutil.GetUserChannel(notifyPeerID), endMsgJSON)
 		}
 	}
 
