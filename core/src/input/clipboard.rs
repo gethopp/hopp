@@ -85,7 +85,7 @@ impl ClipboardController {
 
     pub fn set_clipboard(&mut self, data: Option<room_service::ClipboardPayload>) {
         if let Some(packet) = data {
-            log::info!("clipboard_data: {:?}", packet);
+            log::debug!("clipboard_data: {:?}", packet);
             self.clipboard_payload.push(packet);
             let total = self.clipboard_payload.last().unwrap().total_packets as usize;
             if self.clipboard_payload.len() == total {
