@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -68,6 +69,9 @@ type Config struct {
 		PaidYearlyPriceID string // Price ID for yearly paid tier
 		SuccessURL        string
 		CancelURL         string
+		// TrialPeriodDays is the length of the card-on-file trial Stripe starts
+		// at checkout. Set to 0 to disable the trial (charge immediately).
+		TrialPeriodDays int64
 	}
 }
 
@@ -166,6 +170,18 @@ func Load() (*Config, error) {
 	c.Stripe.WebhookSecret = os.Getenv("STRIPE_WEBHOOK_SECRET")
 	c.Stripe.PaidPriceID = os.Getenv("STRIPE_PAID_PRICE_ID")
 	c.Stripe.PaidYearlyPriceID = os.Getenv("STRIPE_PAID_YEARLY_PRICE_ID")
+
+	// Card-on-file trial length. Defaults to 14 days; STRIPE_TRIAL_PERIOD_DAYS=0
+	// disables the trial so checkout charges immediately.
+	c.Stripe.TrialPeriodDays = 14
+	if v := os.Getenv("STRIPE_TRIAL_PERIOD_DAYS"); v != "" {
+		days, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || days < 0 {
+			fmt.Printf("WARNING: STRIPE_TRIAL_PERIOD_DAYS must be a non-negative integer, got: %s. Falling back to 14.\n", v)
+		} else {
+			c.Stripe.TrialPeriodDays = days
+		}
+	}
 
 	for _, entry := range []struct{ name, val string }{
 		{"STRIPE_PAID_PRICE_ID", c.Stripe.PaidPriceID},

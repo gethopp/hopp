@@ -76,7 +76,6 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     password: "",
     firstName: "",
     lastName: "",
-    teamName: "",
     teamInviteUUID: uuid || "",
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -174,9 +173,9 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
           ...(isSignUp && {
             first_name: formData.firstName,
             last_name: formData.lastName,
-            ...(formData.teamInviteUUID ?
-              { team_invite_uuid: formData.teamInviteUUID }
-            : { team_name: formData.teamName }),
+            // Non-invited signups don't pass a team name; the backend creates a
+            // placeholder team that is renamed during onboarding.
+            ...(formData.teamInviteUUID && { team_invite_uuid: formData.teamInviteUUID }),
           }),
         }),
       });
@@ -304,12 +303,6 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                             <Label htmlFor="lastName">Last Name</Label>
                             <Input id="lastName" value={formData.lastName} onChange={handleInputChange} required />
                           </div>
-                          {!isInvitation && (
-                            <div className="grid gap-2">
-                              <Label htmlFor="teamName">Team Name</Label>
-                              <Input id="teamName" value={formData.teamName} onChange={handleInputChange} required />
-                            </div>
-                          )}
                         </>
                       )}
                       <div className="grid gap-2">
