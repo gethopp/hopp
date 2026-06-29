@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 pub use socket_lib::StoredMode;
 
+fn default_true() -> bool {
+    true
+}
+
 /// User-facing settings exposed in the Settings window.
 /// All fields are non-optional with sensible defaults.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -9,11 +13,17 @@ pub struct UserSettings {
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
+    #[serde(default = "default_noise_cancellation_enabled")]
+    pub noise_cancellation_enabled: bool,
     pub hopp_server_url: Option<String>,
     pub shortcut_toggle_mic: Option<String>,
     pub shortcut_toggle_camera: Option<String>,
     pub shortcut_toggle_screenshare: Option<String>,
     pub shortcut_end_call: Option<String>,
+    #[serde(default = "default_true")]
+    pub telemetry_enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_update_enabled: bool,
 }
 
 impl Default for UserSettings {
@@ -23,13 +33,20 @@ impl Default for UserSettings {
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
             start_mic_on_call: true,
+            noise_cancellation_enabled: true,
             hopp_server_url: None,
             shortcut_toggle_mic: None,
             shortcut_toggle_camera: None,
             shortcut_toggle_screenshare: None,
             shortcut_end_call: None,
+            telemetry_enabled: true,
+            auto_update_enabled: true,
         }
     }
+}
+
+fn default_noise_cancellation_enabled() -> bool {
+    true
 }
 
 #[cfg(target_os = "macos")]

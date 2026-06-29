@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"hopp-backend/internal/common"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/messages"
 	"hopp-backend/internal/models"
 	"hopp-backend/internal/notifications"
+	"hopp-backend/internal/redisutil"
 	"net/http"
 	"time"
 
@@ -88,7 +90,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 		} else {
 			for _, teammate := range teammates {
 				// Check if teammate is online
-				channels, err := server.Redis.PubSubChannels(ctx, common.GetUserChannel(teammate.ID)).Result()
+				channels, err := server.Redis.PubSubChannels(ctx, redisutil.GetUserChannel(teammate.ID)).Result()
 				if err != nil {
 					c.Logger().Error(err)
 					continue
@@ -166,6 +168,9 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					// Handle user online message
 					c.Logger().Info("Received user online message ", parsedMessage.TeammateOnlineMessage.Payload.TeammateID, " ", user.ID)
 					publishTeammateOnlineMessage(c, server, user.ID, parsedMessage.TeammateOnlineMessage.Payload.TeammateID)
+				case parsedMessage.PresenceAck != nil:
+					// Client confirmed (or denied) presence in a candidate room
+					handlePresenceAck(c, server, user.ID, *parsedMessage.PresenceAck)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -245,6 +250,16 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 						if err != nil {
 							c.Logger().Error(err)
 						}
+					case parsedMessage.PresenceChanged != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
+					case parsedMessage.PresenceCheck != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
 					default:
 						c.Logger().Warn("Unknown message type")
 					}
@@ -254,6 +269,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 
 		// Wait for connection to close
 		<-done
+
 		return nil
 	}
 }
@@ -276,7 +292,7 @@ func dedupeCallKey(a, b string) string {
 
 func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, rdb *redis.PubSub, callerId, calleeID string) {
 	rdbCtx := context.Background()
-	calleeChannelID := common.GetUserChannel(calleeID)
+	calleeChannelID := redisutil.GetUserChannel(calleeID)
 	dedupeKey := dedupeCallKey(callerId, calleeID)
 
 	// Dedupe: prevent duplicate/glare call requests within ringing window.
@@ -375,7 +391,7 @@ func rejectCall(ctx echo.Context, s *common.ServerState, rejecterID string, mess
 		return
 	}
 
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), payloadJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), payloadJSON)
 }
 
 func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, message messages.AcceptCallMessage) {
@@ -388,7 +404,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		ctx.Logger().Error(err)
 		return
 	}
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), payloadJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), payloadJSON)
 
 	// Next steps after accepting call
 	// 1. Create a room with the two participants
@@ -428,7 +444,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 
 	// Publish a message to the caller and the callee
 	// with their tokens
-	calleeMsg := messages.NewCallTokens(common.LivekitTokenSet{
+	calleeMsg := messages.NewCallTokens(livekitutil.LivekitTokenSet{
 		AudioToken:  calleeTokens.AudioToken,
 		VideoToken:  calleeTokens.VideoToken,
 		CameraToken: calleeTokens.CameraToken,
@@ -440,7 +456,7 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		return
 	}
 
-	callerMsg := messages.NewCallTokens(common.LivekitTokenSet{
+	callerMsg := messages.NewCallTokens(livekitutil.LivekitTokenSet{
 		AudioToken:  callerTokens.AudioToken,
 		VideoToken:  callerTokens.VideoToken,
 		CameraToken: callerTokens.CameraToken,
@@ -453,8 +469,18 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	}
 
 	// Publish the LiveKit tokens to the caller and the callee
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
-	s.Redis.Publish(context.Background(), common.GetUserChannel(calleeID), calleeMsgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(calleeID), calleeMsgJSON)
+
+	if s.CallState != nil {
+		ctx.Logger().Infof("callstate: AddCallRoom callerID=%s calleeID=%s room=%s", callerID, calleeID, roomName)
+		// Ad-hoc 1:1 call with empty display name
+		if _, err := s.CallState.AddCallRoom(context.Background(), roomName, []string{callerID, calleeID}, ""); err != nil {
+			ctx.Logger().Warnf("callstate.AddCallRoom error: %v", err)
+		}
+	}
+
+	broadcastPresenceChanged(ctx, s, callerID)
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("Call started: %s -> %s", caller.ID, callee.ID), s.Config)
 }
@@ -466,7 +492,7 @@ func sendCommonErrorMessage(s *common.ServerState, err string, userIDs ...string
 		if err != nil {
 			return
 		}
-		s.Redis.Publish(context.Background(), common.GetUserChannel(userID), msgJSON)
+		s.Redis.Publish(context.Background(), redisutil.GetUserChannel(userID), msgJSON)
 	}
 }
 
@@ -474,14 +500,110 @@ func endCall(ctx echo.Context, s *common.ServerState, userID string, message mes
 	// Release the dedupe lock so either party can call again immediately.
 	s.Redis.Del(context.Background(), dedupeCallKey(userID, message.Payload.ParticipantID))
 
-	// Publish a message to the other participant
-	payloadJSON, err := json.Marshal(message)
+	// The peer to notify that the call ended. During ringing this is the only
+	// signal the callee gets; for active calls it's recomputed below.
+	notifyPeerID := message.Payload.ParticipantID
+
+	if s.CallState != nil {
+		ctx.Logger().Infof("callstate: RemoveUser userID=%s", userID)
+		roomName, remainingPeers, isNamedRoom, err := s.CallState.RemoveUser(context.Background(), userID)
+		if err != nil {
+			ctx.Logger().Warnf("callstate.RemoveUser error: %v", err)
+		}
+		ctx.Logger().Infof("callstate: RemoveUser room=%s remainingPeers=%v isNamedRoom=%v", roomName, remainingPeers, isNamedRoom)
+
+		// Caller is in an active ad-hoc 1:1 room: collapse it and notify the
+		// remaining peer (existing behavior).
+		if roomName != "" && !isNamedRoom && len(remainingPeers) == 1 {
+			s.CallState.RemoveUser(context.Background(), remainingPeers[0])
+			notifyPeerID = remainingPeers[0]
+		} else if roomName != "" {
+			// Named room or >1 peers remaining: do NOT broadcast call_end.
+			notifyPeerID = ""
+		}
+	}
+
+	if notifyPeerID != "" {
+		endMsg := messages.NewCallEndMessage(userID)
+		endMsgJSON, mErr := json.Marshal(endMsg)
+		if mErr == nil {
+			s.Redis.Publish(context.Background(), redisutil.GetUserChannel(notifyPeerID), endMsgJSON)
+		}
+	}
+
+	broadcastPresenceChanged(ctx, s, userID)
+}
+
+// handlePresenceAck materializes a candidate room into the snapshot when a
+// client confirms it is in the call (any-one ACK validates the whole room).
+func handlePresenceAck(ctx echo.Context, s *common.ServerState, userID string, msg messages.PresenceAckMessage) {
+	if s.CallState == nil {
+		return
+	}
+	room := msg.Payload.Room
+	if !msg.Payload.InCall {
+		// Leave the pending guard to expire; the next sweep re-pings if still live.
+		ctx.Logger().Debugf("callstate: presence_ack in_call=false userID=%s room=%s", userID, room)
+		return
+	}
+
+	bgCtx := context.Background()
+	members, err := s.CallState.GetPending(bgCtx, room)
+	if err != nil {
+		ctx.Logger().Warnf("callstate: GetPending error room=%s: %v", room, err)
+		return
+	}
+	// Ensure the acking user is included even if the pending list raced.
+	members = append(members, userID)
+
+	changed, err := s.CallState.MaterializeRoom(bgCtx, room, members)
+	if err != nil {
+		ctx.Logger().Warnf("callstate: MaterializeRoom error room=%s: %v", room, err)
+		return
+	}
+	if err := s.CallState.ClearPending(bgCtx, room); err != nil {
+		ctx.Logger().Warnf("callstate: ClearPending error room=%s: %v", room, err)
+	}
+	if changed {
+		ctx.Logger().Infof("callstate: materialized room=%s via ACK from userID=%s", room, userID)
+		broadcastPresenceChanged(ctx, s, userID)
+	}
+}
+
+func broadcastPresenceChanged(ctx echo.Context, s *common.ServerState, userID string) {
+	bgCtx := context.Background()
+
+	user, err := models.GetUserByID(s.DB, userID)
+	if err != nil {
+		ctx.Logger().Warnf("broadcastPresenceChanged: failed to get user %s: %v", userID, err)
+		return
+	}
+
+	teammates, err := user.GetTeammates(s.DB)
+	if err != nil {
+		ctx.Logger().Warnf("broadcastPresenceChanged: failed to get teammates for %s: %v", userID, err)
+		return
+	}
+
+	msg := messages.NewPresenceChangedMessage()
+	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		ctx.Logger().Error(err)
 		return
 	}
 
-	s.Redis.Publish(context.Background(), common.GetUserChannel(message.Payload.ParticipantID), payloadJSON)
+	s.Redis.Publish(bgCtx, redisutil.GetUserChannel(userID), msgJSON)
+
+	for _, teammate := range teammates {
+		channels, chErr := s.Redis.PubSubChannels(bgCtx, redisutil.GetUserChannel(teammate.ID)).Result()
+		if chErr != nil {
+			ctx.Logger().Warnf("broadcastPresenceChanged: PubSubChannels error for %s: %v", teammate.ID, chErr)
+			continue
+		}
+		if len(channels) > 0 {
+			s.Redis.Publish(bgCtx, redisutil.GetUserChannel(teammate.ID), msgJSON)
+		}
+	}
 }
 
 func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userID, teammateID string) {
@@ -493,5 +615,5 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userI
 		return
 	}
 
-	s.Redis.Publish(context.Background(), common.GetUserChannel(teammateID), msgJSON)
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(teammateID), msgJSON)
 }

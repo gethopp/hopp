@@ -43,7 +43,9 @@ use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
 use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
-use crate::graphics::graphics_window_context::{ContextManager, GraphicsWindowContextError};
+use crate::graphics::graphics_window_context::{
+    ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
+};
 use crate::graphics::yuv_renderer::YuvVideoProgram;
 use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
@@ -69,6 +71,8 @@ const REDRAW_INTERVAL_SCREENSHARING: Duration = Duration::from_millis(1_000 / 15
 
 pub enum RedrawCommand {
     Stop,
+    Pause,
+    Resume,
     SetScreensharingActive(bool),
 }
 
@@ -78,9 +82,12 @@ fn spawn_redraw_thread(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut interval = REDRAW_INTERVAL;
+        let mut paused = false;
         loop {
             match redraw_rx.recv_timeout(interval) {
                 Ok(RedrawCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(RedrawCommand::Pause) => paused = true,
+                Ok(RedrawCommand::Resume) => paused = false,
                 Ok(RedrawCommand::SetScreensharingActive(active)) => {
                     interval = if active {
                         REDRAW_INTERVAL_SCREENSHARING
@@ -88,7 +95,11 @@ fn spawn_redraw_thread(
                         REDRAW_INTERVAL
                     };
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if !paused {
+                        window.request_redraw();
+                    }
+                }
             }
         }
     })
@@ -117,6 +128,11 @@ const ICON_MICROPHONE_OFF: char = '\u{F106}';
 const ICON_SCREEN_SHARE: char = '\u{F102}';
 const ICON_VIDEO: char = '\u{F101}';
 const ICON_PHONE_OFF: char = '\u{F103}';
+const ICON_PIN_ANGLE: char = '\u{F10B}';
+
+const PIN_CORNER_WIDTH: f64 = 60.0;
+const PIN_CORNER_HEIGHT: f64 = 60.0;
+const PIN_CORNER_MARGIN: f64 = 40.0;
 
 const ICON_EYE_ON_SVG: &[u8] = include_bytes!("../../resources/icons/EyeOn.svg");
 const ICON_EYE_OFF_SVG: &[u8] = include_bytes!("../../resources/icons/EyeOff.svg");
@@ -153,6 +169,7 @@ pub enum CameraMessage {
     MicDropdownToggle,
     MicDropdownDismiss,
     SelectMic(String),
+    PinToCorner,
 }
 
 struct CameraState {
@@ -219,6 +236,7 @@ pub struct CameraWindow {
     last_rendered_frame_ids: HashMap<String, u64>,
     screensharing_active: bool,
     resize_timer: Option<Instant>,
+    visible: bool,
 }
 
 pub fn camera_window_attributes() -> WindowAttributes {
@@ -345,7 +363,22 @@ impl CameraWindow {
             last_rendered_frame_ids: HashMap::new(),
             screensharing_active: false,
             resize_timer: None,
+            visible: true,
         })
+    }
+
+    /// Recreates the context's render engine and rebuilds this window's renderer on it.
+    ///
+    /// Called on call end to free the engine's GPU memory (MSAA buffer + texture atlas)
+    /// while the window itself is reused across calls. The context's engine clone and this
+    /// window's renderer hold the only two Arc clones; resetting both drops the old engine.
+    pub fn reset_renderer(&mut self, context: &mut GraphicsWindowContext) {
+        context.reset_engine(self.format);
+        self.renderer = iced::Renderer::Primary(iced_wgpu::Renderer::new(
+            context.engine.clone(),
+            GEIST_REGULAR,
+            Pixels::from(16),
+        ));
     }
 
     /// The winit `WindowId` for event routing.
@@ -354,7 +387,7 @@ impl CameraWindow {
     }
 
     pub fn focus_window(&self) {
-        self.window.set_visible(true);
+        crate::window_manager::ensure_on_screen(&self.window);
         self.window.focus_window();
     }
 
@@ -369,6 +402,54 @@ impl CameraWindow {
             log::error!("CameraWindow::stop_redraw_thread: failed to send Stop: {e:?}");
         }
         self.redraw_thread.take();
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn set_participants(
+        &mut self,
+        participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    ) {
+        self.participants = participants;
+    }
+
+    /// Re-reveal after a hide(). Resets transient state to match a fresh window.
+    pub fn show(&mut self, active_mic_name: Option<String>, screensharing_active: bool) {
+        let logical = self.viewport.logical_size();
+        let camera_active = self
+            .participants
+            .read()
+            .ok()
+            .and_then(|p| p.get("local").map(|info| info.camera_active()))
+            .unwrap_or(false);
+        self.state = CameraState {
+            viewport_size: IcedSize::new(logical.width, logical.height),
+            camera_active,
+            selected_mic_name: active_mic_name,
+            ..Default::default()
+        };
+        self.last_rendered_frame_ids.clear();
+        self.screensharing_active = false;
+        self.resize_timer = None;
+        self.cache = Some(Cache::default());
+
+        let _ = self.redraw_tx.send(RedrawCommand::Resume);
+        self.visible = true;
+        self.window.set_visible(true);
+        self.focus_window();
+
+        self.set_screensharing_active(screensharing_active);
+    }
+
+    /// Hide and pause the redraw thread (keeps the wgpu surface alive).
+    pub fn hide(&mut self) {
+        if let Err(e) = self.redraw_tx.send(RedrawCommand::Pause) {
+            log::error!("CameraWindow::hide: failed to send Pause: {e:?}");
+        }
+        self.visible = false;
+        self.window.set_visible(false);
     }
 
     /// Update the redraw interval based on screensharing state.
@@ -489,6 +570,33 @@ impl CameraWindow {
             }
         }
 
+        // Intercept Cmd+P (macOS) / Ctrl+P (Windows/Linux) to pin to corner
+        if let WindowEvent::KeyboardInput {
+            event: ref key_event,
+            ..
+        } = event
+        {
+            if key_event.state.is_pressed() {
+                let is_pin_modifier = if cfg!(target_os = "macos") {
+                    self.modifiers.super_key()
+                } else {
+                    self.modifiers.control_key()
+                };
+                if is_pin_modifier {
+                    if let winit::keyboard::Key::Character(ref ch) = key_event.logical_key {
+                        if ch.as_ref() == "p" {
+                            if self.state.is_compact {
+                                self.unpin();
+                            } else {
+                                self.pin_to_corner();
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Handle winit-specific events
         match event {
             WindowEvent::ModifiersChanged(new_modifiers) => {
@@ -552,7 +660,7 @@ impl CameraWindow {
                 self.redraw();
             }
             WindowEvent::CloseRequested => {
-                self.window.set_visible(false);
+                self.hide();
             }
             _ => {}
         }
@@ -779,6 +887,22 @@ impl CameraWindow {
         if let Some(floating) = floating_show_btn {
             layers.push(floating);
         }
+        if !state.is_compact {
+            layers.push(
+                container(pin_button())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::Start)
+                    .padding(Padding {
+                        top: 8.0,
+                        right: 8.0,
+                        bottom: 0.0,
+                        left: 0.0,
+                    })
+                    .into(),
+            );
+        }
         if let Some(toast_el) = toast::toast_view(&state.toast, Some(&toast_position)) {
             layers.push(toast_el);
         }
@@ -905,6 +1029,13 @@ impl CameraWindow {
                     log::error!("Failed to send StartAudioCapture: {e:?}");
                 }
             }
+            CameraMessage::PinToCorner => {
+                if self.state.is_compact {
+                    self.unpin();
+                } else {
+                    self.pin_to_corner();
+                }
+            }
         }
     }
 
@@ -936,6 +1067,61 @@ impl CameraWindow {
                     CAMERA_WINDOW_MIN_WIDTH,
                     min_h,
                 )));
+        }
+    }
+
+    /// Resize and reposition the window to the top-right corner of the current monitor,
+    /// hiding the local participant tile.
+    fn pin_to_corner(&mut self) {
+        self.state.self_hidden = true;
+        self.state.local_tile_hovered = false;
+
+        let monitor = self
+            .window
+            .current_monitor()
+            .or_else(|| self.window.available_monitors().next());
+
+        if let Some(monitor) = monitor {
+            let scale = monitor.scale_factor();
+            let mon_size: winit::dpi::LogicalSize<f64> = monitor.size().to_logical(scale);
+            let mon_pos: winit::dpi::LogicalPosition<f64> = monitor.position().to_logical(scale);
+
+            let x = mon_pos.x + mon_size.width - PIN_CORNER_WIDTH - PIN_CORNER_MARGIN;
+            let y = mon_pos.y;
+
+            let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
+                PIN_CORNER_WIDTH,
+                PIN_CORNER_HEIGHT,
+            ));
+            self.window
+                .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+        }
+    }
+
+    /// Restore the window to its default size, centered on the current monitor.
+    fn unpin(&mut self) {
+        self.state.self_hidden = false;
+
+        let monitor = self
+            .window
+            .current_monitor()
+            .or_else(|| self.window.available_monitors().next());
+
+        let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
+            CAMERA_WINDOW_WIDTH,
+            CAMERA_WINDOW_HEIGHT,
+        ));
+
+        if let Some(monitor) = monitor {
+            let scale = monitor.scale_factor();
+            let mon_size: winit::dpi::LogicalSize<f64> = monitor.size().to_logical(scale);
+            let mon_pos: winit::dpi::LogicalPosition<f64> = monitor.position().to_logical(scale);
+
+            let x = mon_pos.x + (mon_size.width - CAMERA_WINDOW_WIDTH) / 2.0;
+            let y = mon_pos.y + (mon_size.height - CAMERA_WINDOW_HEIGHT) / 2.0;
+
+            self.window
+                .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
         }
     }
 
@@ -1010,7 +1196,7 @@ impl CameraWindow {
 
 impl Drop for CameraWindow {
     fn drop(&mut self) {
-        let _ = self.redraw_thread.take();
+        self.stop_redraw_thread();
     }
 }
 
@@ -1278,6 +1464,71 @@ fn self_visibility_button<'a>(
     };
 
     tooltip(btn, tooltip_content, tip_pos)
+        .gap(1)
+        .snap_within_viewport(true)
+        .into()
+}
+
+fn pin_button<'a>() -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
+    let shortcut = if cfg!(target_os = "macos") {
+        "⌘P"
+    } else {
+        "Ctrl+P"
+    };
+    let tooltip_text = format!("Pin to corner ({shortcut})");
+
+    let slate300 = ColorToken::Slate300.to_color();
+    let icon = text(ICON_PIN_ANGLE.to_string())
+        .font(ICONS_FONT)
+        .size(14.0)
+        .color(slate300)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
+
+    let btn = button(
+        container(icon)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fixed(38.0))
+    .height(Length::Fixed(26.0))
+    .on_press(CameraMessage::PinToCorner)
+    .padding(Padding::from([6.0, 12.0]))
+    .style(move |_theme: &Theme, status| {
+        let bg_color = match status {
+            button::Status::Hovered => ColorToken::Slate600.to_color(),
+            button::Status::Pressed => ColorToken::Slate800.to_color(),
+            _ => ColorToken::Slate700.to_color(),
+        };
+        button::Style {
+            background: Some(Background::Color(bg_color)),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+                width: 1.0,
+                radius: 19.0.into(),
+            },
+            text_color: Color::WHITE,
+            shadow: Shadow::default(),
+            snap: false,
+        }
+    });
+
+    let tooltip_content = container(text(tooltip_text).size(12).color(Color::WHITE))
+        .padding(Padding::from([4.0, 8.0]))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(ColorToken::Gray600.to_color())),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            shadow: ShadowToken::Xs.to_shadow(),
+            ..Default::default()
+        });
+
+    tooltip(btn, tooltip_content, tooltip::Position::Left)
         .gap(1)
         .snap_within_viewport(true)
         .into()

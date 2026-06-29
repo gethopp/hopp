@@ -1,7 +1,7 @@
 import "../../App.css";
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { useDisableNativeContextMenu, useSystemTheme } from "@/lib/hooks";
+import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -125,7 +125,7 @@ function ShortcutRow({
       >
         {recording ?
           <span className="text-gray-400 dark:text-gray-500 text-xs">Recording...</span>
-        : <span className="text-gray-600 dark:text-gray-400 text-s">{formatAccel(value)}</span>}
+          : <span className="text-gray-600 dark:text-gray-400 text-s">{formatAccel(value)}</span>}
       </Button>
     </div>
   );
@@ -133,7 +133,6 @@ function ShortcutRow({
 
 function SettingsWindow() {
   useDisableNativeContextMenu();
-  useSystemTheme();
 
   const [serverUrl, setServerUrl] = useState("");
 
@@ -163,9 +162,9 @@ function SettingsWindow() {
       for (const other of others) {
         const otherVal =
           other === "mic" ? settings.shortcut_toggle_mic
-          : other === "camera" ? settings.shortcut_toggle_camera
-          : other === "screenshare" ? settings.shortcut_toggle_screenshare
-          : settings.shortcut_end_call;
+            : other === "camera" ? settings.shortcut_toggle_camera
+              : other === "screenshare" ? settings.shortcut_toggle_screenshare
+                : settings.shortcut_end_call;
         if (otherVal === accel) {
           await typedInvoke(setters[other], { accel: "" });
         }
@@ -237,6 +236,14 @@ function SettingsWindow() {
                   typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
                 }}
               />
+              <CheckboxRow
+                title="Noise cancellation"
+                description="Noise suppression on microphone input"
+                checked={settings.noise_cancellation_enabled}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
             </div>
           </div>
 
@@ -277,6 +284,31 @@ function SettingsWindow() {
           <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
             <h3 className="text-base font-medium text-black dark:text-white">Miscellaneous</h3>
             <div className="flex flex-col gap-3">
+              <CheckboxRow
+                title="Send anonymous telemetry"
+                description="Help improve Hopp by sending anonymous usage data and error reports"
+                checked={settings.telemetry_enabled}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_telemetry_enabled", { enabled: v }).then(() => {
+                    refetchSettings();
+                    if (v) {
+                      posthog.opt_in_capturing();
+                    } else {
+                      posthog.opt_out_capturing();
+                    }
+                  });
+                }}
+              />
+              {OS === "macos" && (
+                <CheckboxRow
+                  title="Automatic updates"
+                  description="Download and install updates automatically when you're not in a call"
+                  checked={settings.auto_update_enabled}
+                  onCheckedChange={(v) => {
+                    typedInvoke("set_auto_update_enabled", { enabled: v }).then(() => refetchSettings());
+                  }}
+                />
+              )}
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Backend URL</span>
                 <span className="text-sm text-gray-500 dark:text-gray-400">

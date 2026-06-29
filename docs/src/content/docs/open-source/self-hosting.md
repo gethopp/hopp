@@ -80,6 +80,12 @@ The web app served by your backend works without a rebuild — it derives the AP
 
 For the desktop app, you can set a custom backend URL at runtime via **Settings > Custom Backend URL** (see [Settings docs](/features/settings)).
 
+## Telemetry
+
+**Web app**: telemetry (PostHog analytics) is disabled by default in selfhosted builds. No data is sent to external services.
+
+**Desktop app**: when connecting to a selfhosted backend, disable telemetry from the desktop app **Settings**.
+
 ## Advanced
 
 ### Custom ports

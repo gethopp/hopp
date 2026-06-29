@@ -22,8 +22,10 @@ import {
 import { appVersion, tauriUtils } from "@/windows/window-utils.ts";
 import { Constants, OS } from "@/constants";
 import { useQueryClient } from "@tanstack/react-query";
-import { downloadAndRelaunch } from "@/update";
+import { downloadAndRelaunch, hasPendingUpdate, installAndRelaunch } from "@/update";
 import { LuCircleFadingArrowUp } from "react-icons/lu";
+import { FiPhoneCall } from "react-icons/fi";
+import hotkeys from "hotkeys-js";
 
 const SidebarButton = ({
   active,
@@ -119,6 +121,10 @@ const DownloadNewVersionButton = () => {
           className="flex items-center justify-center rounded-lg bg-white bg-linear-to-b from-gray-100 p-1.5 border border-slate-300 mx-1 size-8 w-full hover:scale-[1.025] hover:shadow-xs transition-all duration-300"
           onClick={() => {
             setUpdateInProgress(true);
+            if (OS === "macos" && hasPendingUpdate()) {
+              void installAndRelaunch();
+              return;
+            }
             void downloadAndRelaunch();
           }}
           disabled={updateInProgress}
@@ -148,18 +154,13 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   const isExpired = daysRemaining <= 0;
   const displayDays = Math.max(0, daysRemaining);
 
-  // teams created before 2026-05-04 keep 30-day trial; new teams get 14.
-  const TRIAL_GRANDFATHER_CUTOFF = new Date("2026-05-04T00:00:00Z");
-  const userCreatedAt = user.created_at ? parseISO(user.created_at) : new Date();
-  const maxTrialDays = userCreatedAt < TRIAL_GRANDFATHER_CUTOFF ? 30 : 14;
+  const maxTrialDays = 14;
   const percentage = isExpired ? 100 : Math.min(100, Math.max(5, (daysRemaining / maxTrialDays) * 100));
 
-  // Thresholds scale with maxTrialDays so bar starts green for both 14- and 30-day trials.
-  // 30-day: yellow ≤14, orange ≤7, red ≤3 (matches prior behavior).
-  // 14-day: yellow ≤7,  orange ≤3, red ≤1.
-  const yellowAt = Math.ceil(maxTrialDays / 2);
-  const orangeAt = Math.ceil(maxTrialDays / 4);
-  const redAt = Math.max(3, Math.floor(maxTrialDays / 10));
+  // 14-day trial thresholds: yellow ≤7, orange ≤3, red ≤1.
+  const yellowAt = 7;
+  const orangeAt = 3;
+  const redAt = 1;
 
   const getTextColor = (days: number) => {
     if (days <= redAt) return "text-red-800";
@@ -227,6 +228,47 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
   );
 };
 
+const CallPageButton = () => {
+  const { tab, setTab, callTokens } = useStore();
+
+  // Local shortcut to jump to the call page while in a call. hotkeys-js binds to
+  // the webview document, so it only fires when the main window is focused.
+  useEffect(() => {
+    if (!callTokens) return;
+    hotkeys("cmd+o, ctrl+o", (event) => {
+      event.preventDefault();
+      setTab("call");
+    });
+    return () => hotkeys.unbind("cmd+o, ctrl+o");
+  }, [callTokens, setTab]);
+
+  if (!callTokens) return null;
+
+  const active = tab === "call";
+  const shortcutLabel = OS === "macos" ? "⌘O" : "Ctrl+O";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => setTab("call")}
+          className={clsx(
+            "p-1.5 rounded-md flex items-center justify-center size-8 border border-green-500",
+            !active && "hover:bg-green-50",
+            active && "bg-white shadow-xs",
+          )}
+        >
+          <FiPhoneCall className="size-4 text-green-500" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="flex flex-row items-center">
+        Ongoing call <kbd className="max-w-min text-xs leading-3">{shortcutLabel}</kbd>
+      </TooltipContent>
+    </Tooltip>
+  );
+};
+
 export const Sidebar = () => {
   const { tab, setTab, user, reset } = useStore();
   const queryClient = useQueryClient();
@@ -254,6 +296,9 @@ export const Sidebar = () => {
           )}
         </div>
         <Separator className="w-[70%] mx-auto" />
+        <div className="flex justify-center w-full pt-2">
+          <CallPageButton />
+        </div>
         {/* Bottom user section */}
         <div className="flex flex-col gap-1 mt-auto">
           <div className="flex justify-center w-full">

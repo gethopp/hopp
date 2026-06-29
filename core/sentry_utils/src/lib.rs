@@ -3,20 +3,27 @@ use sentry::types::random_uuid;
 use sentry::{ClientInitGuard, Envelope, Level};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use sysinfo::System;
 
+static TELEMETRY_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_telemetry_enabled(enabled: bool) {
+    TELEMETRY_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 #[derive(Debug, Clone)]
 pub struct SentryMetadata {
-    pub user_email: String,
+    pub user_id: String,
     pub app_version: String,
 }
 
 static SENTRY_METADATA: OnceLock<SentryMetadata> = OnceLock::new();
 
-pub fn init_metadata(user_email: String, app_version: String) {
+pub fn init_metadata(user_id: String, app_version: String) {
     let metadata = SentryMetadata {
-        user_email,
+        user_id,
         app_version,
     };
 
@@ -72,7 +79,7 @@ fn get_system_tags() -> BTreeMap<String, String> {
     tags.insert("arch".to_string(), System::cpu_arch());
     match get_metadata() {
         Some(metadata) => {
-            tags.insert("user_email".to_string(), metadata.user_email.clone());
+            tags.insert("user_id".to_string(), metadata.user_id.clone());
             tags.insert("app_version".to_string(), metadata.app_version.clone());
         }
         None => {
@@ -84,6 +91,9 @@ fn get_system_tags() -> BTreeMap<String, String> {
 }
 
 pub fn upload_logs_event(failure_reason: String) {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let client = match sentry::Hub::current().client() {
         Some(client) => client,
         None => {
@@ -175,6 +185,10 @@ fn pick_newest_by_filename(candidates: Vec<(PathBuf, Vec<u8>)>) -> Option<(PathB
 pub fn upload_latest_crash() {
     #[cfg(target_os = "macos")]
     {
+        if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+
         let Some(dir) = diagnostic_reports_dir() else {
             log::warn!("upload_latest_crash: no DiagnosticReports dir");
             return;
@@ -225,6 +239,9 @@ pub fn upload_latest_crash() {
 }
 
 pub fn simple_event(message: String) {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let client = match sentry::Hub::current().client() {
         Some(client) => client,
         None => {

@@ -76,7 +76,7 @@ export interface CallStartMessage {
 }
 
 export interface SentryMetadata {
-  user_email: string;
+  user_id: string;
   app_version: string;
 }
 
@@ -117,11 +117,14 @@ export interface UserSettings {
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
+  noise_cancellation_enabled: boolean;
   hopp_server_url: string | null;
   shortcut_toggle_mic: string;
   shortcut_toggle_camera: string;
   shortcut_toggle_screenshare: string;
   shortcut_end_call: string;
+  telemetry_enabled: boolean;
+  auto_update_enabled: boolean;
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -202,14 +205,12 @@ export interface CommandMap {
   get_livekit_url: { args: void; return: string };
 
   // Windows
-  create_screenshare_window: { args: { videoToken: string }; return: void };
-  create_camera_window: { args: { cameraToken: string }; return: void };
   create_content_picker_window: { args: void; return: void };
   create_feedback_window: { args: { teamId: string; roomId: string; participantId: string }; return: void };
   create_settings_window: { args: void; return: void };
 
   // Sentry
-  set_sentry_metadata: { args: { userEmail: string; appVersion: string }; return: void };
+  set_sentry_metadata: { args: { userId: string; appVersion: string }; return: void };
 
   // Call
   call_started: { args: { audioToken: string; videoToken: string }; return: void };
@@ -223,7 +224,9 @@ export interface CommandMap {
   // User settings (Settings window)
   get_user_settings: { args: void; return: UserSettings };
   set_call_feedback_popup: { args: { enabled: boolean }; return: void };
+  set_telemetry_enabled: { args: { enabled: boolean }; return: void };
   set_show_dock_icon_in_call: { args: { enabled: boolean }; return: void };
+  set_auto_update_enabled: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };
   set_shortcut_toggle_mic: { args: { accel: string }; return: void };
@@ -238,7 +241,6 @@ export interface CommandMap {
   unmute_mic: { args: void; return: void };
   toggle_mic: { args: void; return: void };
   set_noise_cancellation: { args: { enabled: boolean }; return: void };
-  get_noise_cancellation: { args: void; return: boolean };
   list_microphones: { args: void; return: AudioDevice[] };
   select_microphone: { args: { deviceName: string }; return: void };
 

@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { differenceInSeconds, fromUnixTime } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { checkForUpdates } from "@/update.ts";
 import useStore from "../../store/store";
 import { tauriUtils } from "@/windows/window-utils.ts";
 import { Sidebar } from "@/components/sidebar/Sidebar";
@@ -17,7 +16,7 @@ import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { CallBanner } from "@/components/ui/call-banner";
 import { socketService } from "@/services/socket";
-import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage, TPresenceAckMessage } from "@/payloads";
 import { Participants } from "@/components/ui/participants";
 import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
@@ -26,6 +25,7 @@ import { sounds } from "@/constants/sounds";
 import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
+import { pollUpdates } from "@/lib/auto-update";
 
 function App() {
   const {
@@ -42,6 +42,7 @@ function App() {
     setAuthToken,
     setLivekitUrl,
     setIncomingCallCallerId,
+    setCallsPresence,
   } = useStore();
 
   const coreProcessCrashedRef = useRef(false);
@@ -59,7 +60,7 @@ function App() {
     select: (data) => {
       setUser(data);
       if (!sentryMetadataRef.current) {
-        tauriUtils.setSentryMetadata(data.email);
+        tauriUtils.setSentryMetadata(data.id);
         sentryMetadataRef.current = true;
       }
       return data;
@@ -76,6 +77,19 @@ function App() {
     select: (data) => {
       setTeammates(data);
       return data;
+    },
+  });
+
+  // Poll call presence every 10 seconds
+  const { refetch: refetchCallsPresence } = useQuery("get", "/api/auth/calls/presence", undefined, {
+    enabled: !!authToken,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+    retry: true,
+    queryHash: `calls-presence-${authToken}`,
+    select: (data) => {
+      setCallsPresence(data.presence);
+      return data.presence;
     },
   });
 
@@ -148,25 +162,27 @@ function App() {
     };
   }, []);
 
-  // Check for updates
+  // Check for updates (and auto-install when idle on macOS)
   useEffect(() => {
     if (!isTauri()) return;
 
-    const checkUpdates = async () => {
-      try {
-        const needUpdate = await checkForUpdates();
-        setNeedsUpdate(needUpdate !== null);
-      } catch (err) {
-        console.error("Failed to check for updates:", err);
-      }
-    };
-
-    checkUpdates();
-
-    const interval = setInterval(checkUpdates, 60 * 60 * 1000);
+    pollUpdates(setNeedsUpdate);
+    const interval = setInterval(() => pollUpdates(setNeedsUpdate), 15 * 60 * 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [setNeedsUpdate]);
+
+  // Auto-navigate to the call page on call join, and away from it on call end.
+  const prevInCallRef = useRef(false);
+  useEffect(() => {
+    const inCall = !!callTokens;
+    if (inCall && !prevInCallRef.current) {
+      setTab("call");
+    } else if (!inCall && prevInCallRef.current && tab === "call") {
+      setTab("user-list");
+    }
+    prevInCallRef.current = inCall;
+  }, [callTokens, tab, setTab]);
 
   const handleReject = (isInCall?: boolean) => {
     const { incomingCallCallerId } = useStore.getState();
@@ -293,6 +309,31 @@ function App() {
         }
       }
     });
+
+    socketService.on("presence_changed", (data: TWebSocketMessage) => {
+      if (data.type === "presence_changed") {
+        refetchCallsPresence();
+      }
+    });
+
+    socketService.on("presence_check", (data: TWebSocketMessage) => {
+      if (data.type !== "presence_check") {
+        return;
+      }
+      const room = data.payload.room;
+      const { callTokens } = useStore.getState();
+      // in_call answers the validation ping. For named room calls we additionally
+      // verify the room matches; ad-hoc 1:1 rooms aren't stored client-side, so
+      // the boolean (callTokens !== null) covers them.
+      let inCall = callTokens !== null;
+      if (inCall && callTokens?.room?.id) {
+        inCall = callTokens.room.id === room;
+      }
+      socketService.send({
+        type: "presence_ack",
+        payload: { room, in_call: inCall },
+      } as TPresenceAckMessage);
+    });
   }, []);
 
   useEffect(() => {
@@ -414,9 +455,13 @@ function App() {
     <div className="container flex flex-row bg-white" id="app-body">
       {/* Action Sidebar */}
       <Sidebar />
-      <ScrollArea type="scroll" className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full">
+      <ScrollArea
+        key={tab}
+        type="scroll"
+        className="h-100% overflow-y-scroll overflow-x-hidden w-[350px] relative h-full"
+      >
         {callTokens && (
-          <div className="sticky top-0 z-10 bg-white">
+          <div className={tab === "call" ? "" : "hidden"}>
             <CallCenter />
           </div>
         )}

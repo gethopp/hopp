@@ -24,14 +24,8 @@ import { PostHogConfig } from "posthog-js";
 import { InvitationHandler } from "./pages/InvitationHandler";
 import { useCookies } from "react-cookie";
 
-const options: Partial<PostHogConfig> = {
+const posthogOptions: Partial<PostHogConfig> = {
   api_host: "https://eu.i.posthog.com",
-  loaded: function (ph) {
-    if (META.DEV_MODE) {
-      ph.opt_out_capturing(); // opts a user out of event capture
-      ph.set_config({ disable_session_recording: true });
-    }
-  },
 };
 
 export const queryClient = new QueryClient({
@@ -71,24 +65,32 @@ const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boo
   if (!requireAuth && authToken && !overrideRedirect) navigate("/dashboard");
   if (requireAuth && !authToken && !overrideRedirect) navigate("/login");
 
+  const telemetryEnabled = !META.DEV_MODE && !META.DISABLE_TELEMETRY;
+
+  const content = (
+    <QueryClientProvider client={queryClient}>
+      <QueryProvider>
+        <ReactQueryDevtools initialIsOpen={false} />
+        {!authToken && <Outlet />}
+        {authToken && (
+          <SidebarProvider>
+            <HoppSidebar />
+            <main className="p-8 w-full">
+              <Outlet />
+            </main>
+          </SidebarProvider>
+        )}
+      </QueryProvider>
+    </QueryClientProvider>
+  );
+
   return (
     <div className="w-screen h-screen">
-      <PostHogProvider apiKey="phc_qOumHIIkywfbcmxjoI84orWP5Wo2oZVamh83bOUeF5x" options={options}>
-        <QueryClientProvider client={queryClient}>
-          <QueryProvider>
-            <ReactQueryDevtools initialIsOpen={false} />
-            {!authToken && <Outlet />}
-            {authToken && (
-              <SidebarProvider>
-                <HoppSidebar />
-                <main className="p-8 w-full">
-                  <Outlet />
-                </main>
-              </SidebarProvider>
-            )}
-          </QueryProvider>
-        </QueryClientProvider>
-      </PostHogProvider>
+      {telemetryEnabled ?
+        <PostHogProvider apiKey="phc_qOumHIIkywfbcmxjoI84orWP5Wo2oZVamh83bOUeF5x" options={posthogOptions}>
+          {content}
+        </PostHogProvider>
+      : content}
     </div>
   );
 };

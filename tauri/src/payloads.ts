@@ -191,6 +191,9 @@ export const MessageType = z.enum([
   "ping",
   "pong",
   "teammate_online",
+  "presence_changed",
+  "presence_check",
+  "presence_ack",
 ]);
 
 export type TMessageType = z.infer<typeof MessageType>;
@@ -267,6 +270,21 @@ export const PTeammateOnlineMessage = z.object({
   payload: z.object({ teammate_id: z.string() }),
 });
 
+export const PPresenceChangedMessage = z.object({
+  type: z.literal("presence_changed"),
+  payload: z.object({}),
+});
+
+export const PPresenceCheckMessage = z.object({
+  type: z.literal("presence_check"),
+  payload: z.object({ room: z.string() }),
+});
+
+export const PPresenceAckMessage = z.object({
+  type: z.literal("presence_ack"),
+  payload: z.object({ room: z.string(), in_call: z.boolean() }),
+});
+
 // Export types for all messages
 export type TSuccessMessage = z.infer<typeof PSuccessMessage>;
 export type TCallRequestMessage = z.infer<typeof PCallRequestMessage>;
@@ -280,6 +298,9 @@ export type TPingMessage = z.infer<typeof PPingMessage>;
 export type TPongMessage = z.infer<typeof PPongMessage>;
 export type TCalleeOfflineMessage = z.infer<typeof PCalleeOfflineMessage>;
 export type TTeammateOnlineMessage = z.infer<typeof PTeammateOnlineMessage>;
+export type TPresenceChangedMessage = z.infer<typeof PPresenceChangedMessage>;
+export type TPresenceCheckMessage = z.infer<typeof PPresenceCheckMessage>;
+export type TPresenceAckMessage = z.infer<typeof PPresenceAckMessage>;
 
 // Union type for all possible messages
 export const PWebSocketMessage = z.discriminatedUnion("type", [
@@ -295,6 +316,9 @@ export const PWebSocketMessage = z.discriminatedUnion("type", [
   PPongMessage,
   PCalleeOfflineMessage,
   PTeammateOnlineMessage,
+  PPresenceChangedMessage,
+  PPresenceCheckMessage,
+  PPresenceAckMessage,
 ]);
 
 export type TWebSocketMessage = z.infer<typeof PWebSocketMessage>;

@@ -133,41 +133,29 @@ pub enum ServerError {
 /// Encapsulates the active remote control session components.
 ///
 /// This struct manages all the components needed for an active remote control session,
-/// including graphics rendering, input simulation, and window management. It's created
-/// when a screen sharing session begins and destroyed when it ends.
-///
-/// # Fields
-///
-/// * `gfx` - Graphics context for rendering cursors and visual feedback
-/// * `cursor_controller` - Handles mouse movement, clicks, and cursor visualization
-/// * `keyboard_controller` - Manages keyboard input simulation
-///
-/// # Lifetime
-///
-/// The lifetime parameter `'a` ensures that the graphics context and cursor controller
-/// don't outlive the underlying window resources they depend on.
-struct RemoteControl<'a> {
-    gfx: GraphicsContext<'a>,
+/// including input simulation. It's created when a screen sharing session begins and
+/// destroyed when it ends. The graphics context is owned by the WindowEntry in
+/// WindowManager, co-located with the window it renders to.
+struct RemoteControl {
     cursor_controller: CursorController,
     keyboard_controller: KeyboardController<KeyboardLayout>,
-    clipboard_controller: Option<ClipboardController>,
 }
 
-impl<'a> RemoteControl<'a> {
+impl RemoteControl {
     /// Renders a complete frame by updating cursors, hiding inactive ones, clearing expired paths, and drawing.
     ///
     /// # Returns
     /// Vector of cleared path IDs from auto-clear
-    pub fn render_frame(&mut self) -> Vec<u64> {
+    pub fn render_frame(&mut self, gfx: &mut GraphicsContext) -> Vec<u64> {
         self.cursor_controller
-            .update_cursors(self.gfx.participants_manager_mut());
+            .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
-        let cleared_path_ids = self.gfx.participants_manager_mut().update_auto_clear();
+        let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
         let translator = self
             .cursor_controller
             .get_overlay_window()
             .create_position_translator();
-        self.gfx.draw(&translator);
+        gfx.draw(&translator);
         cleared_path_ids
     }
 }
@@ -216,7 +204,7 @@ impl<'a> RemoteControl<'a> {
 /// Operations return `Result<(), ServerError>` for proper error propagation.
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
-    remote_control: Option<RemoteControl<'a>>,
+    remote_control: Option<RemoteControl>,
     // TODO: remove me
     textures_path: String,
     // The arc is needed because we move the object to the
@@ -230,7 +218,7 @@ pub struct Application<'a> {
     previous_controllers_enabled: bool,
     controller_draw_persist: bool,
     last_mode: Option<socket_lib::StoredMode>,
-    window_manager: Option<window_manager::WindowManager>,
+    window_manager: Option<window_manager::WindowManager<'a>>,
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
     noise_cancellation_enabled: Arc<AtomicBool>,
@@ -243,6 +231,7 @@ pub struct Application<'a> {
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
+    clipboard_controller: Option<ClipboardController>,
 }
 
 #[derive(Error, Debug)]
@@ -296,6 +285,14 @@ impl<'a> Application<'a> {
         std::thread::spawn(move || poll_stream(screencapturer_for_poll));
         std::thread::spawn(move || poll_camera_stream(camera_capturer_clone));
 
+        let clipboard_controller = match ClipboardController::new() {
+            Ok(controller) => Some(controller),
+            Err(error) => {
+                log::error!("Application::new: Error creating clipboard controller {error:?}");
+                None
+            }
+        };
+
         Ok(Self {
             remote_control: None,
             textures_path: input.textures_path,
@@ -320,6 +317,7 @@ impl<'a> Application<'a> {
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
+            clipboard_controller,
         })
     }
 
@@ -333,7 +331,11 @@ impl<'a> Application<'a> {
         }
 
         if let Some(wm) = self.window_manager.as_mut() {
-            let _ = wm.update(event_loop);
+            if let Some(cm) = self.context_manager.as_ref() {
+                if let Err(e) = wm.update(event_loop, cm) {
+                    log::warn!("wm.update failed: {e:?}");
+                }
+            }
         }
 
         res.unwrap()
@@ -398,6 +400,9 @@ impl<'a> Application<'a> {
             }
         };
 
+        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
+        let scale = monitor.scale_factor();
+
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -406,6 +411,7 @@ impl<'a> Application<'a> {
             },
             !screenshare_input.accessibility_permission,
             buffer_source,
+            scale,
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -422,7 +428,6 @@ impl<'a> Application<'a> {
         room_service.unmute_screen_share_track();
         log::info!("screenshare: screen share track unmuted");
 
-        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
         drop(screen_capturer);
 
         let res = self.create_overlay_window(
@@ -437,22 +442,24 @@ impl<'a> Application<'a> {
         }
 
         let room_service = self.room_service.as_ref().unwrap();
-        if let Some(remote_control) = &mut self.remote_control {
-            let existing_participants = room_service.get_participants();
-            for participant in &existing_participants {
-                if let Err(e) = remote_control.gfx.add_participant(
-                    participant.identity.clone(),
-                    &participant.name,
-                    false,
-                ) {
-                    log::error!(
-                        "Failed to create cursor for participant {}: {e}",
-                        participant.identity
-                    );
-                } else {
-                    remote_control
-                        .cursor_controller
-                        .add_controller(participant.identity.clone());
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                let existing_participants = room_service.get_participants();
+                for participant in &existing_participants {
+                    if let Err(e) =
+                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
+                    {
+                        log::error!(
+                            "Failed to create cursor for participant {}: {e}",
+                            participant.identity
+                        );
+                    } else {
+                        remote_control
+                            .cursor_controller
+                            .add_controller(participant.identity.clone());
+                    }
                 }
             }
         }
@@ -515,14 +522,55 @@ impl<'a> Application<'a> {
 
     fn close_camera_window(&mut self) {
         log::info!("close_camera_window");
-        if let Some(mut cam) = self.camera_window.take() {
-            cam.stop_redraw_thread();
+        if let Some(cam) = &mut self.camera_window {
+            cam.hide();
+        }
+    }
+
+    fn open_camera_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        participants: Arc<
+            std::sync::RwLock<
+                std::collections::HashMap<String, crate::livekit::participant::ParticipantInfo>,
+            >,
+        >,
+    ) {
+        let mic = self
+            .audio_capturer
+            .active_device_name()
+            .map(|s| s.to_string());
+        let screensharing_active = self.screensharing_active;
+
+        if let Some(cam) = &mut self.camera_window {
+            if !cam.is_visible() {
+                cam.show(mic, screensharing_active);
+            }
+            return;
+        }
+
+        let Some(context_manager) = self.context_manager.as_ref() else {
+            log::error!("open_camera_window: context_manager not initialized");
+            return;
+        };
+        match CameraWindow::new(
+            context_manager,
+            event_loop,
+            participants,
+            self.event_loop_proxy.clone(),
+            mic,
+        ) {
+            Ok(mut cam) => {
+                cam.set_screensharing_active(screensharing_active);
+                self.camera_window = Some(cam);
+            }
+            Err(e) => log::error!("Failed to create camera window: {e:?}"),
         }
     }
 
     fn close_screensharing_window(&mut self) {
         log::info!("close_screensharing_window");
-        if let Some(mut window) = self.screensharing_window.take() {
+        if let Some(window) = &mut self.screensharing_window {
             window.hide();
             window.stop_redraw_thread();
         }
@@ -530,9 +578,8 @@ impl<'a> Application<'a> {
 
     fn close_drawing_window(&mut self) {
         log::info!("close_drawing_window");
-        if let Some(mut window) = self.drawing_window.take() {
+        if let Some(window) = &mut self.drawing_window {
             window.hide();
-            window.stop_redraw_thread();
         }
         if let Err(e) = self.socket.send(Message::DrawingDisabled) {
             log::error!("Failed to send DrawingDisabled: {e:?}");
@@ -588,30 +635,6 @@ impl<'a> Application<'a> {
         let window_size = window.inner_size();
         let window_outer_position = window.outer_position();
 
-        let mut graphics_context = match GraphicsContext::new(
-            self.context_manager.as_ref().unwrap(),
-            window,
-            self.textures_path.clone(),
-            selected_monitor.scale_factor(),
-            self.event_loop_proxy.clone(),
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                log::error!("create_overlay_window: Error creating graphics context {error:?}");
-                return Err(ServerError::GfxCreationError);
-            }
-        };
-
-        // Add local participant to draw manager with auto-clear enabled
-        graphics_context
-            .add_participant("local".to_string(), "Me ", true)
-            .map_err(|e| {
-                log::error!(
-                    "create_overlay_window: Failed to create local participant cursor: {e}"
-                );
-                ServerError::GfxCreationError
-            })?;
-
         /* Hardcode window frame to zero as we only support displays for now.*/
         let window_frame = Frame::default();
         let scaled = {
@@ -655,10 +678,16 @@ impl<'a> Application<'a> {
 
         log::info!("create_overlay_window: overlay_window created {overlay_window}");
 
-        let redraw_sender = graphics_context.redraw_sender();
-        let clock = graphics_context.clock();
+        let gfx = self
+            .window_manager
+            .as_mut()
+            .and_then(|wm| wm.active_gfx_mut())
+            .ok_or(ServerError::GfxCreationError)?;
+        let redraw_sender = gfx.redraw_sender();
+        let clock = gfx.clock();
+
         let cursor_controller = CursorController::new(
-            overlay_window.clone(),
+            overlay_window,
             redraw_sender,
             self.event_loop_proxy.clone(),
             accessibility_permission,
@@ -669,25 +698,10 @@ impl<'a> Application<'a> {
             return Err(ServerError::CursorControllerCreationError);
         }
 
-        let clipboard_controller = match ClipboardController::new() {
-            Ok(controller) => Some(controller),
-            Err(error) => {
-                log::error!("create_overlay_window: Error creating clipboard controller {error:?}");
-                None
-            }
-        };
         self.remote_control = Some(RemoteControl {
-            gfx: graphics_context,
             cursor_controller: cursor_controller.unwrap(),
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
-            clipboard_controller,
         });
-
-        #[cfg(target_os = "linux")]
-        {
-            /* We can't support the overlay surface on linux yet. */
-            self.remote_control = None;
-        }
 
         Ok(())
     }
@@ -733,13 +747,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_cursor_position(
-                        sid.as_str(),
-                        Some(Position {
-                            x: x as f64,
-                            y: y as f64,
-                        }),
-                    );
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_cursor_position(
+                            sid.as_str(),
+                            Some(Position {
+                                x: x as f64,
+                                y: y as f64,
+                            }),
+                        );
+                    }
                 }
             }
             UserEvent::MouseClick(data, sid) => {
@@ -772,16 +788,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .as_ref()
                     .unwrap()
                     .publish_controller_cursor_enabled(enabled);
-            }
-            UserEvent::ControllerCursorVisible(visible, sid) => {
-                log::debug!("user_event: cursor visible: {visible:?} {sid}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor visible");
-                    return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controller_pointer(visible, sid.as_str());
             }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
@@ -887,28 +893,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             self.start_camera_on_call = start_camera_on_call;
 
                             // Open camera window immediately for snappiness
-                            if start_camera_on_call && self.camera_window.is_none() {
+                            if start_camera_on_call {
                                 let participants = room_service.participants();
-                                match CameraWindow::new(
-                                    self.context_manager.as_ref().unwrap(),
-                                    event_loop,
-                                    participants,
-                                    self.event_loop_proxy.clone(),
-                                    self.audio_capturer
-                                        .active_device_name()
-                                        .map(|s| s.to_string()),
-                                ) {
-                                    Ok(mut cam) => {
-                                        log::info!(
-                                            "user_event: CallStart: camera window opened early"
-                                        );
-                                        cam.set_screensharing_active(self.screensharing_active);
-                                        self.camera_window = Some(cam);
-                                    }
-                                    Err(e) => log::error!(
-                                        "Failed to open camera window in CallStart: {e:?}"
-                                    ),
-                                }
+                                self.open_camera_window(event_loop, participants);
                             }
                         }
                         Err(e) => {
@@ -985,6 +972,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.audio_player.stop();
                 self.stop_camera();
 
+                if let Some(cm) = self.context_manager.as_mut() {
+                    if let Some(wm) = self.window_manager.as_mut() {
+                        wm.reset_engines(cm);
+                    }
+                    if let Some(cam) = self.camera_window.as_mut() {
+                        cam.reset_renderer(&mut cm.camera_context);
+                    }
+                    if let Some(screensharing_win) = self.screensharing_window.as_mut() {
+                        if screensharing_win.is_visible() {
+                            screensharing_win.reset_renderer(&mut cm.screensharing_context);
+                        }
+                    }
+                    if let Some(dw) = self.drawing_window.as_mut() {
+                        dw.reset_renderer(&mut cm.drawing_context);
+                    }
+                }
+
                 let capturer_valid = {
                     let screen_capturer = self.screen_capturer.lock();
                     screen_capturer.is_ok()
@@ -1053,12 +1057,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none request redraw");
+                let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                else {
+                    log::trace!("user_event: remote control is none request redraw");
                     return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let gfx = &mut remote_control.gfx;
+                };
                 gfx.window().request_redraw();
             }
             UserEvent::SharerPosition(x, y) => {
@@ -1083,49 +1089,55 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ParticipantConnected(participant) => {
                 log::debug!("user_event: Participant connected: {participant:?}");
 
-                if let Some(remote_control) = &mut self.remote_control {
-                    let identity = participant.identity.clone();
-                    let name = participant.name.clone();
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        let identity = participant.identity.clone();
+                        let name = participant.name.clone();
 
-                    // Add participant to draw manager first (assigns color)
-                    if let Err(e) =
-                        remote_control
-                            .gfx
-                            .add_participant(identity.clone(), &name, false)
-                    {
-                        log::error!("Failed to create cursor for participant {identity}: {e}");
-                    } else {
-                        // Then add to cursor controller for state tracking
-                        remote_control.cursor_controller.add_controller(identity);
+                        // Add participant to draw manager first (assigns color)
+                        if let Err(e) = gfx.add_participant(identity.clone(), &name, false) {
+                            log::error!("Failed to create cursor for participant {identity}: {e}");
+                        } else {
+                            // Then add to cursor controller for state tracking
+                            remote_control.cursor_controller.add_controller(identity);
+                        }
                     }
                 }
 
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if let Err(e) = screensharing_window.add_participant(
-                        participant.identity.clone(),
-                        &participant.name,
-                        false,
-                    ) {
-                        log::error!(
-                            "user_event: failed to add participant to screensharing window: {e:?}"
-                        );
+                    if screensharing_window.is_visible() {
+                        if let Err(e) = screensharing_window.add_participant(
+                            participant.identity.clone(),
+                            &participant.name,
+                            false,
+                        ) {
+                            log::error!(
+                                "user_event: failed to add participant to screensharing window: {e:?}"
+                            );
+                        }
                     }
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
                 log::debug!("user_event: Participant disconnected: {participant:?}");
 
-                if let Some(remote_control) = &mut self.remote_control {
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
                     remote_control
                         .cursor_controller
                         .remove_controller(participant.identity.as_str());
                     // Remove participant from draw manager
-                    remote_control
-                        .gfx
-                        .remove_participant(participant.identity.as_str());
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.remove_participant(participant.identity.as_str());
+                    }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.remove_participant(participant.identity.as_str());
+                    if screensharing_window.is_visible() {
+                        screensharing_window.remove_participant(participant.identity.as_str());
+                    }
                 }
             }
             UserEvent::LivekitServerUrl(url) => {
@@ -1140,7 +1152,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
                 log::debug!("user_event: Room service created: {room_service:?}");
-                self.room_service = Some(room_service.unwrap());
+                let room_service = room_service.unwrap();
+                if let Some(cam) = self.camera_window.as_mut() {
+                    cam.set_participants(room_service.participants());
+                }
+                self.room_service = Some(room_service);
             }
             UserEvent::ControllerTakesScreenShare => {
                 log::info!("user_event: Controller takes screen share");
@@ -1163,33 +1179,55 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::LocalParticipantInControl(in_control) => {
                 log::debug!("user_event: local participant in control: {in_control}");
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_local_participant_in_control(in_control);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_local_participant_in_control(in_control);
+                    }
                 }
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
                 log::debug!("user_event: Sentry metadata: {sentry_metadata:?}");
-                sentry_utils::init_metadata(
-                    sentry_metadata.user_email,
-                    sentry_metadata.app_version,
-                );
+                sentry_utils::init_metadata(sentry_metadata.user_id, sentry_metadata.app_version);
             }
-            UserEvent::AddToClipboard(add_to_clipboard_data) => {
+            UserEvent::AddToClipboard(add_to_clipboard_data, requester_identity) => {
                 log::info!("user_event: Add to clipboard: {add_to_clipboard_data:?}");
                 if self.remote_control.is_none() {
                     log::warn!("user_event: remote control is none add to clipboard");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                if remote_control.clipboard_controller.is_none() {
+                if self.clipboard_controller.is_none() {
                     log::warn!("user_event: clipboard controller is none add to clipboard");
                     return;
                 }
-                let clipboard_controller =
-                    &mut remote_control.clipboard_controller.as_ref().unwrap();
-                clipboard_controller.add_to_clipboard(
-                    add_to_clipboard_data.is_copy,
-                    &mut remote_control.keyboard_controller,
-                );
+                let remote_control = self.remote_control.as_mut().unwrap();
+                let clipboard_text = self
+                    .clipboard_controller
+                    .as_mut()
+                    .unwrap()
+                    .add_to_clipboard(
+                        add_to_clipboard_data.is_copy,
+                        &mut remote_control.keyboard_controller,
+                    );
+                if let Some(text) = clipboard_text {
+                    if let Some(room_service) = &self.room_service {
+                        let bytes = text.as_bytes();
+                        const MAX_PACKET: usize = 15 * 1024;
+                        let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
+                        for i in 0..total_packets {
+                            let start = (i as usize) * MAX_PACKET;
+                            let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                            room_service.publish_clipboard_data(
+                                room_service::ClipboardDataPayload {
+                                    requester_sid: requester_identity.clone(),
+                                    data: Some(room_service::ClipboardPayload {
+                                        packet_id: i,
+                                        total_packets,
+                                        data: bytes[start..end].to_vec(),
+                                    }),
+                                },
+                            );
+                        }
+                    }
+                }
             }
             UserEvent::PasteFromClipboard(paste_from_clipboard_data) => {
                 log::info!("user_event: Paste from clipboard");
@@ -1197,21 +1235,30 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("user_event: remote control is none paste from clipboard");
                     return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                if remote_control.clipboard_controller.is_none() {
+                if self.clipboard_controller.is_none() {
                     log::warn!("user_event: clipboard controller is none paste from clipboard");
                     return;
                 }
-                let clipboard_controller =
-                    &mut remote_control.clipboard_controller.as_mut().unwrap();
-                clipboard_controller.paste_from_clipboard(
-                    &mut remote_control.keyboard_controller,
-                    paste_from_clipboard_data.data,
-                );
+                let remote_control = self.remote_control.as_mut().unwrap();
+                self.clipboard_controller
+                    .as_mut()
+                    .unwrap()
+                    .paste_from_clipboard(
+                        &mut remote_control.keyboard_controller,
+                        paste_from_clipboard_data.data,
+                    );
+            }
+            UserEvent::SetClipboard(payload) => {
+                log::info!("user_event: Set clipboard");
+                if let Some(clipboard_controller) = &mut self.clipboard_controller {
+                    clipboard_controller.set_clipboard(payload.data);
+                }
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if let Some(remote_control) = &mut self.remote_control {
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
                     let cursor_controller = &mut remote_control.cursor_controller;
                     match &drawing_mode {
                         DrawingMode::Draw(_) => {
@@ -1232,12 +1279,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         }
                         DrawingMode::Any => {}
                     }
-                    remote_control
-                        .gfx
-                        .set_drawing_mode(sid.as_str(), drawing_mode.clone());
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
+                    }
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
+                    }
                 }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
@@ -1246,8 +1295,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_start(sid.as_str(), pos, path_id);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_start(sid.as_str(), pos, path_id);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1255,8 +1308,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_start(sid.as_str(), pos, path_id);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_start(sid.as_str(), pos, path_id);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawAddPoint(point, sid) => {
@@ -1265,8 +1320,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_add_point(sid.as_str(), pos);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_add_point(sid.as_str(), pos);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1274,8 +1333,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_add_point(sid.as_str(), pos);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_add_point(sid.as_str(), pos);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawEnd(point, sid) => {
@@ -1284,8 +1345,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     x: point.x,
                     y: point.y,
                 };
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_end(sid.as_str(), pos);
+                if let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                {
+                    if let Some(gfx) = window_manager.active_gfx_mut() {
+                        gfx.draw_end(sid.as_str(), pos);
+                    }
                     remote_control.cursor_controller.cursor_move_controller(
                         point.x,
                         point.y,
@@ -1293,28 +1358,42 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     );
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_end(sid.as_str(), pos);
-                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_end(sid.as_str(), pos);
+                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
+                    }
                 }
             }
             UserEvent::DrawClearPath(path_id, sid) => {
                 log::debug!("user_event: DrawClearPath: {} {}", path_id, sid);
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_clear_path(sid.as_str(), path_id);
-                    remote_control.gfx.trigger_render();
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.draw_clear_path(sid.as_str(), path_id);
+                    gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_clear_path(sid.as_str(), path_id);
+                    }
                 }
             }
             UserEvent::DrawClearAllPaths(sid) => {
                 log::debug!("user_event: DrawClearAllPaths: {}", sid);
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.draw_clear_all_paths(sid.as_str());
-                    remote_control.gfx.trigger_render();
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.draw_clear_all_paths(sid.as_str());
+                    gfx.trigger_render();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.draw_clear_all_paths(sid.as_str());
+                    if screensharing_window.is_visible() {
+                        screensharing_window.draw_clear_all_paths(sid.as_str());
+                    }
                 }
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
@@ -1323,17 +1402,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     point,
                     sid
                 );
-                if let Some(remote_control) = &mut self.remote_control {
-                    remote_control.gfx.trigger_click_animation(Position {
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|wm| wm.active_gfx_mut())
+                {
+                    gfx.trigger_click_animation(Position {
                         x: point.x,
                         y: point.y,
                     });
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.trigger_click_animation(Position {
-                        x: point.x,
-                        y: point.y,
-                    });
+                    if screensharing_window.is_visible() {
+                        screensharing_window.trigger_click_animation(Position {
+                            x: point.x,
+                            y: point.y,
+                        });
+                    }
                 }
             }
             UserEvent::ListAudioDevices => {
@@ -1406,6 +1491,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.noise_cancellation_enabled
                     .store(enabled, std::sync::atomic::Ordering::Relaxed);
             }
+            UserEvent::SetTelemetryEnabled(enabled) => {
+                log::info!("user_event: SetTelemetryEnabled({enabled})");
+                sentry_utils::set_telemetry_enabled(enabled);
+            }
             UserEvent::ToggleMic => {
                 log::info!("user_event: ToggleMic");
                 if let Some(room_service) = self.room_service.as_ref() {
@@ -1474,26 +1563,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 };
 
                 // Open camera window first for snappiness
-                if self.camera_window.is_none() {
+                {
                     let participants = room_service.participants();
-                    match CameraWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        participants,
-                        self.event_loop_proxy.clone(),
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    ) {
-                        Ok(mut cam) => {
-                            log::info!("user_event: Camera window opened for local camera");
-                            cam.set_screensharing_active(self.screensharing_active);
-                            self.camera_window = Some(cam);
-                        }
-                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                    }
+                    let _ = room_service;
+                    self.open_camera_window(event_loop, participants);
                 }
 
+                let room_service = self.room_service.as_ref().unwrap();
                 log::info!("user_event: StartCamera: starting capture");
                 let capture_result = {
                     let mut capturer = self.camera_capturer.lock().unwrap();
@@ -1504,7 +1580,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         buffer_source,
                     )
                 };
-
                 if let Err(ref e) = capture_result {
                     log::error!("user_event: StartCamera failed: {e}");
                     room_service.mute_camera_track();
@@ -1571,27 +1646,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::OpenCamera => {
                 log::info!("user_event: OpenCamera");
-                if self.camera_window.is_some() {
-                    log::info!("user_event: Camera window already exists, skipping");
-                    return;
-                }
                 if let Some(room_service) = self.room_service.as_ref() {
                     let participants = room_service.participants();
-                    match CameraWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        participants,
-                        self.event_loop_proxy.clone(),
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    ) {
-                        Ok(mut cam) => {
-                            cam.set_screensharing_active(self.screensharing_active);
-                            self.camera_window = Some(cam);
-                        }
-                        Err(e) => log::error!("Failed to open camera window: {e:?}"),
-                    }
+                    self.open_camera_window(event_loop, participants);
                 } else {
                     log::warn!("user_event: room service is none, cannot open camera window");
                 }
@@ -1613,31 +1670,44 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 redraw_tx,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
+                let buffer = self
+                    .room_service
+                    .as_ref()
+                    .and_then(|rs| rs.screen_share_buffer());
+                let draw_persist = self.controller_draw_persist;
+                let last_mode = self.last_mode.clone();
+                self.stop_screenshare();
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.send_participants_snapshot();
+                }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
-                    if let Some((rx, tx)) = redraw_rx.zip(redraw_tx) {
-                        screensharing_window.update_window_with_new_sharer(&participants, rx, tx);
+                    if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
+                        screensharing_window.update_window_with_new_sharer(
+                            buffer,
+                            &participants,
+                            draw_persist,
+                            last_mode,
+                            rx,
+                            tx,
+                        );
                     }
                     screensharing_window.focus_window();
-                } else {
-                    self.stop_screenshare();
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.send_participants_snapshot();
-                        if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
-                            let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
-                            self.open_screensharing_window(
-                                event_loop,
-                                screen_share_buffer,
-                                participants,
-                                redraw_rx,
-                                redraw_tx,
-                            );
-                        } else {
-                            log::warn!("user_event: No screen share buffer available");
-                        }
+                } else if let Some(room_service) = self.room_service.as_ref() {
+                    if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
+                        let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                        self.open_screensharing_window(
+                            event_loop,
+                            screen_share_buffer,
+                            participants,
+                            redraw_rx,
+                            redraw_tx,
+                        );
                     } else {
-                        log::warn!("user_event: Room service not available");
+                        log::warn!("user_event: No screen share buffer available");
                     }
+                } else {
+                    log::warn!("user_event: Room service not available");
                 }
                 if let Some(screensharing_window) = &self.screensharing_window {
                     if let Some(room_service) = self.room_service.as_ref() {
@@ -1667,13 +1737,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
-                if let Some(screen_sharing_window) = &self.screensharing_window {
-                    screen_sharing_window.focus_window();
-                    focused = true;
+                if let Some(screen_sharing_window) = &mut self.screensharing_window {
+                    if screen_sharing_window.is_visible() {
+                        screen_sharing_window.focus_window();
+                        focused = true;
+                    }
                 }
                 if let Some(cam) = &self.camera_window {
-                    cam.focus_window();
-                    focused = true;
+                    if cam.is_visible() {
+                        cam.focus_window();
+                        focused = true;
+                    }
                 }
                 if let Err(e) = self
                     .socket
@@ -1686,7 +1760,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             // as a new-joiner in a Room will not have access to this
             UserEvent::SharerControlEnabled(enabled) => {
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    screensharing_window.set_remote_control_allowed(enabled);
+                    if screensharing_window.is_visible() {
+                        screensharing_window.set_remote_control_allowed(enabled);
+                    }
                 }
             }
             UserEvent::DefaultOutputDeviceChanged => {
@@ -1758,7 +1834,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 }
 
-                if self.drawing_window.is_none() {
+                if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
                     let remote_control = self.remote_control.as_mut().unwrap();
 
                     // Store the current controller state before disabling
@@ -1780,40 +1856,53 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         room_service.publish_drawing_mode(draw_mode);
                     }
 
-                    // Create and show drawing window
-                    let overlay_position = self
-                        .window_manager
-                        .as_ref()
-                        .and_then(|wm| wm.active_window_position());
+                    // Create or show drawing window
+                    if let Some(win) = &mut self.drawing_window {
+                        let overlay_position = self
+                            .window_manager
+                            .as_ref()
+                            .and_then(|wm| wm.active_window_position());
+                        win.set_draw_persist(drawing_enabled.permanent);
+                        win.show(overlay_position);
+                        log::info!(
+                            "Local drawing mode enabled (permanent: {})",
+                            drawing_enabled.permanent
+                        );
+                    } else {
+                        let overlay_position = self
+                            .window_manager
+                            .as_ref()
+                            .and_then(|wm| wm.active_window_position());
 
-                    match DrawingWindow::new(
-                        self.context_manager.as_ref().unwrap(),
-                        event_loop,
-                        drawing_enabled.permanent,
-                        overlay_position,
-                    ) {
-                        Ok(win) => {
-                            self.drawing_window = Some(win);
-                            log::info!(
-                                "Local drawing mode enabled (permanent: {})",
-                                drawing_enabled.permanent
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("Failed to create drawing window: {e:?}");
+                        match DrawingWindow::new(
+                            self.context_manager.as_ref().unwrap(),
+                            event_loop,
+                            drawing_enabled.permanent,
+                            overlay_position,
+                        ) {
+                            Ok(win) => {
+                                self.drawing_window = Some(win);
+                                log::info!(
+                                    "Local drawing mode enabled (permanent: {})",
+                                    drawing_enabled.permanent
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("Failed to create drawing window: {e:?}");
 
-                            // Restore remote control to previous state
-                            let remote_control = self.remote_control.as_mut().unwrap();
-                            remote_control
-                                .cursor_controller
-                                .set_controllers_enabled(previous_controllers_enabled);
-                            remote_control
-                                .keyboard_controller
-                                .set_enabled(previous_controllers_enabled);
+                                // Restore remote control to previous state
+                                let remote_control = self.remote_control.as_mut().unwrap();
+                                remote_control
+                                    .cursor_controller
+                                    .set_controllers_enabled(previous_controllers_enabled);
+                                remote_control
+                                    .keyboard_controller
+                                    .set_enabled(previous_controllers_enabled);
 
-                            if let Some(room_service) = &self.room_service {
-                                room_service
-                                    .publish_drawing_mode(room_service::DrawingMode::Disabled);
+                                if let Some(room_service) = &self.room_service {
+                                    room_service
+                                        .publish_drawing_mode(room_service::DrawingMode::Disabled);
+                                }
                             }
                         }
                     }
@@ -1839,7 +1928,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                     log::info!("Local drawing mode disabled");
 
-                    remote_control.gfx.trigger_render();
+                    if let Some(gfx) = self
+                        .window_manager
+                        .as_mut()
+                        .and_then(|wm| wm.active_gfx_mut())
+                    {
+                        gfx.trigger_render();
+                    }
 
                     // Hide drawing window
                     self.close_drawing_window();
@@ -1862,13 +1957,24 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
         }
         if self.window_manager.is_none() {
-            log::info!("Application::resumed: initializing WindowManager");
-            match window_manager::WindowManager::new(event_loop) {
-                Ok(wm) => self.window_manager = Some(wm),
-                Err(e) => log::error!(
-                    "Application::resumed: failed to initialize WindowManager: {:?}",
-                    e
-                ),
+            if let Some(context_manager) = self.context_manager.as_ref() {
+                log::info!("Application::resumed: initializing WindowManager");
+                match window_manager::WindowManager::new(
+                    event_loop,
+                    context_manager,
+                    self.textures_path.clone(),
+                    self.event_loop_proxy.clone(),
+                ) {
+                    Ok(wm) => self.window_manager = Some(wm),
+                    Err(e) => log::error!(
+                        "Application::resumed: failed to initialize WindowManager: {:?}",
+                        e
+                    ),
+                }
+            } else {
+                log::error!(
+                    "Application::resumed: context_manager not initialized, skipping WindowManager"
+                );
             }
         }
     }
@@ -1954,8 +2060,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // Route to screensharing window if it matches
         if let Some(screen_sharing_window) = &mut self.screensharing_window {
             if screen_sharing_window.window_id() == window_id {
-                let input_event = screen_sharing_window.handle_window_event(event);
-                if let Some(event) = input_event {
+                let input_events = screen_sharing_window.handle_window_event(event);
+                for event in input_events {
                     if let Some(rs) = &self.room_service {
                         match event {
                             ScreenShareInputEvent::CursorMoved { x, y } => {
@@ -2004,6 +2110,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             }
                             ScreenShareInputEvent::PasteFromClipboard(text) => match text {
                                 Some(clipboard_text) => {
+                                    log::debug!("PasteFromClipboard: {:?}", clipboard_text);
                                     let bytes = clipboard_text.as_bytes();
                                     const MAX_PACKET: usize = 15 * 1024;
                                     let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
@@ -2079,15 +2186,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if self.remote_control.is_none() {
+                let (Some(window_manager), Some(remote_control)) =
+                    (self.window_manager.as_mut(), self.remote_control.as_mut())
+                else {
                     log::warn!("window_event: remote control is none redraw requested");
                     return;
+                };
+                if !window_manager.is_active_window(window_id) {
+                    return;
                 }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
+                let Some(gfx) = window_manager.active_gfx_mut() else {
+                    log::warn!("window_event: gfx is none redraw requested");
+                    return;
+                };
 
                 // Render frame with cursor updates, auto-clear, and drawing
                 // TODO: cleared path ids is not used anymore from here
-                let cleared_path_ids = remote_control.render_frame();
+                let cleared_path_ids = remote_control.render_frame(gfx);
 
                 // Publish cleared paths to room service
                 if !cleared_path_ids.is_empty() && self.room_service.is_some() {
@@ -2097,13 +2212,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         .publish_draw_clear_paths(cleared_path_ids);
                 }
             }
-            WindowEvent::Resized(_size) => {
+            WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
                     if wm.is_active_window(window_id) {
-                        log::info!("window_event: active window resized {:?}", window_id);
-                        if let Err(e) = wm.update(event_loop) {
-                            log::error!("window_event: failed to update window manager: {:?}", e);
-                        }
+                        log::info!("window_event: active window resized to {:?}", new_size);
+                        wm.resize_active_window(new_size);
                     }
                 }
             }
@@ -2179,7 +2292,6 @@ pub enum UserEvent {
     CursorPosition(f32, f32, String),
     MouseClick(MouseClickData, String),
     ControllerCursorEnabled(bool),
-    ControllerCursorVisible(bool, String),
     Keystroke(KeystrokeData),
     Scroll(ScrollDelta, String),
     GetAvailableContent,
@@ -2199,8 +2311,9 @@ pub enum UserEvent {
     ParticipantInControl(String),
     LocalParticipantInControl(bool),
     SentryMetadata(SentryMetadata),
-    AddToClipboard(room_service::AddToClipboardData),
+    AddToClipboard(room_service::AddToClipboardData, String),
     PasteFromClipboard(room_service::PasteFromClipboardData),
+    SetClipboard(room_service::ClipboardDataPayload),
     DrawingMode(room_service::DrawingMode, String),
     DrawStart(room_service::ClientPoint, u64, String),
     DrawAddPoint(room_service::ClientPoint, String),
@@ -2250,6 +2363,7 @@ pub enum UserEvent {
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
+    SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
 }
@@ -2402,6 +2516,9 @@ impl RenderEventLoop {
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
+                    }
+                    Message::SetTelemetryEnabled(enabled) => {
+                        UserEvent::SetTelemetryEnabled(enabled)
                     }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {

@@ -1048,6 +1048,144 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/calls/presence": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get call presence for user and teammates
+     * @description Returns which users are currently in a 1:1 call or room call
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Call presence data retrieved successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["CallsPresenceResponse"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/call/join/{userId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Join an ongoing call with a teammate
+     * @description Join an existing 1:1 call that a teammate is currently in. Returns LiveKit tokens for the call room.
+     */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          /** @description The user ID of the teammate whose call to join */
+          userId: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description LiveKit tokens for the call */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["SessionTokensResponse"];
+          };
+        };
+        /** @description Trial or subscription expired */
+        402: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @example trial-ended */
+              error?: string;
+            };
+          };
+        };
+        /** @description Target user is not a teammate */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Target user is not in a call */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Call ended while joining */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/room/{id}": {
     parameters: {
       query?: never;
@@ -2379,6 +2517,18 @@ export interface components {
       /** @description Map of room IDs to arrays of participant user IDs */
       rooms: {
         [key: string]: string[];
+      };
+    };
+    CallPresence: {
+      /** @description Peer user IDs in the call */
+      peerIds?: string[];
+      /** @description Room name (for room calls) */
+      roomName?: string;
+    };
+    CallsPresenceResponse: {
+      /** @description Map of user IDs to their call presence state */
+      presence: {
+        [key: string]: components["schemas"]["CallPresence"];
       };
     };
     Error: {

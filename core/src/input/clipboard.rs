@@ -73,12 +73,29 @@ impl ClipboardController {
     }
 
     pub fn add_to_clipboard(
-        &self,
+        &mut self,
         is_copy: bool,
         keyboard_controller: &mut KeyboardController<KeyboardLayout>,
-    ) {
+    ) -> Option<String> {
         let letter_key = if is_copy { "c" } else { "x" };
         simulate_shortcut_key_sequence(keyboard_controller, letter_key);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        self.clipboard.get_text().ok().filter(|t| !t.is_empty())
+    }
+
+    pub fn set_clipboard(&mut self, data: Option<room_service::ClipboardPayload>) {
+        if let Some(packet) = data {
+            log::debug!("clipboard_data: {:?}", packet);
+            self.clipboard_payload.push(packet);
+            let total = self.clipboard_payload.last().unwrap().total_packets as usize;
+            if self.clipboard_payload.len() == total {
+                let text = construct_clipboard_data(&mut self.clipboard_payload);
+                if let Err(e) = self.clipboard.set_text(text) {
+                    log::error!("set_clipboard: Error setting clipboard text {e:?}");
+                }
+                self.clipboard_payload.clear();
+            }
+        }
     }
 
     pub fn paste_from_clipboard(

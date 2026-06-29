@@ -76,10 +76,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-latest"
+          - platform: "macos-26"
             args: "--target x86_64-apple-darwin --config src-tauri/tauri.conf.rel.json"
             target: "x86_64-apple-darwin"
-          - platform: "macos-latest"
+          - platform: "macos-26"
             args: "--target aarch64-apple-darwin --config src-tauri/tauri.conf.rel.json"
             target: "aarch64-apple-darwin"
           - platform: "windows-latest"
@@ -93,11 +93,6 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
           token: ${{ secrets.GH_TOKEN }}
-
-      - name: Set XCode
-        if: matrix.platform == 'macos-latest'
-        run: |
-          sudo xcode-select -s "/Applications/Xcode_16.2.app"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -165,7 +160,7 @@ jobs:
           esac
 
       - name: Import Apple Developer Certificate
-        if: matrix.platform == 'macos-latest'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -181,7 +176,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Verify certificate and set signing identity
-        if: matrix.platform == 'macos-latest'
+        if: matrix.platform == 'macos-26'
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')

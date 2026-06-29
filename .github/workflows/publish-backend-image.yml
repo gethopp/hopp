@@ -34,6 +34,8 @@ jobs:
 
       - name: Build web-app
         run: yarn workspace web-app build
+        env:
+          VITE_DISABLE_TELEMETRY: "true"
 
       - name: Inject web-app into backend
         run: cp web-app/static/react/assets/index.html backend/web/web-app.html

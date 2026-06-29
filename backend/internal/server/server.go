@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
 	"hopp-backend/internal/email"
@@ -98,6 +99,26 @@ func (s *Server) Initialize() error {
 	s.setupDatabase()
 
 	s.setupRedis()
+
+	if s.Redis != nil {
+		s.CallState = callstate.NewTracker(s.Redis, s.Echo.Logger)
+		// Presence is reconciled against LiveKit as a hint (confirmed by clients
+		// before being shown).
+		// Run one synchronous pass on startup to seed the
+		// snapshot, then start the periodic loop.
+		if s.Config.Livekit.ServerURL != "" {
+			if err := s.CallState.EnableReconciliation(s.DB, s.Config.Livekit.ServerURL, s.Config.Livekit.APIKey, s.Config.Livekit.Secret); err != nil {
+				s.Echo.Logger.Warnf("Failed to enable presence reconciliation: %v", err)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				s.CallState.ReconcileOnce(ctx)
+				cancel()
+				s.CallState.StartReconciliation()
+			}
+		} else {
+			s.Echo.Logger.Warn("LIVEKIT_SERVER_URL not configured, presence reconciliation disabled")
+		}
+	}
 
 	// Initialize JWT
 	s.JwtIssuer = handlers.NewJwtAuth(s.Config.Auth.SessionSecret)
@@ -270,6 +291,21 @@ func (s *Server) setupMetrics() {
 			return connectedClients
 		},
 	))
+
+	if s.CallState != nil {
+		prometheus.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Subsystem: "callstate",
+				Name:      "active_rooms",
+				Help:      "Number of active call rooms in the presence snapshot",
+			},
+			func() float64 {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				return float64(s.CallState.RoomCount(ctx))
+			},
+		))
+	}
 }
 
 func (s *Server) setupGothProviders() {
@@ -309,6 +345,8 @@ func (s *Server) setupRoutes() {
 
 	// Set the EmailClient field directly
 	auth.EmailClient = s.EmailClient
+	auth.CallState = s.CallState
+	slackHndlr.CallState = s.CallState
 
 	// Start the background Slack room cleanup goroutine
 	// This runs every 5 seconds and cleans up empty Slack rooms
@@ -369,6 +407,8 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/room/:id", auth.GetRoom)
 	protectedAPI.GET("/rooms", auth.GetRooms)
 	protectedAPI.GET("/rooms/presence", auth.GetRoomsPresence)
+	protectedAPI.GET("/calls/presence", auth.GetCallsPresence)
+	protectedAPI.POST("/call/join/:userId", auth.JoinCall)
 	protectedAPI.POST("/room/:id/leave", slackHndlr.LeaveRoom)
 
 	// LiveKit server endpoint

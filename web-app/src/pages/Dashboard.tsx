@@ -123,7 +123,7 @@ export function Dashboard() {
     }
 
     if (downloadUrl) {
-      posthog.capture("app_download_attempted", {
+      posthog?.capture("app_download_attempted", {
         platform: platformName,
         download_type: "direct_download",
       });
@@ -136,7 +136,7 @@ export function Dashboard() {
       document.body.removeChild(link);
       toast.success("Download started!");
     } else {
-      posthog.capture("app_download_failed", {
+      posthog?.capture("app_download_failed", {
         platform: platformName,
         error_reason: "download_url_not_found",
       });
@@ -306,7 +306,7 @@ export function Dashboard() {
       return;
     }
 
-    posthog.capture("invite_teammates_clicked", {
+    posthog?.capture("invite_teammates_clicked", {
       method: "email_invites",
       invite_count: emailOptions.length,
     });
@@ -418,7 +418,7 @@ export function Dashboard() {
                   <Input id="invite-url" value={inviteUrl} disabled className="max-w-md" />
                   <CopyButton
                     onCopy={() => {
-                      posthog.capture("invite_link_copied", {
+                      posthog?.capture("invite_link_copied", {
                         method: "copy_button",
                       });
                       navigator.clipboard.writeText(inviteUrl);

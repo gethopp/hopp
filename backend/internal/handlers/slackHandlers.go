@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hopp-backend/internal/common"
 	"hopp-backend/internal/config"
+	"hopp-backend/internal/livekitutil"
 	"hopp-backend/internal/models"
 	"io"
 	"net/http"
@@ -95,7 +96,7 @@ func (h *SlackHandler) cleanupEmptySlackRooms() {
 	}
 
 	// Create LiveKit room service client
-	livekitHTTPURL, err := convertLivekitURLToHTTP(h.Config.Livekit.ServerURL)
+	livekitHTTPURL, err := livekitutil.ConvertURLToHTTP(h.Config.Livekit.ServerURL)
 	if err != nil {
 		h.logger.Errorf("failed to convert LiveKit URL: %v", err)
 		return
@@ -171,7 +172,7 @@ func (h *SlackHandler) getLiveKitParticipantCount(ctx context.Context, roomClien
 	// Dedupe participants by user ID (each user can have audio/video/camera identities)
 	seenUserIDs := make(map[string]bool)
 	for _, p := range participants.Participants {
-		userID, err := extractUserIDFromIdentity(p.Identity)
+		userID, err := livekitutil.ExtractUserIDFromIdentity(p.Identity)
 		if err != nil {
 			continue
 		}
@@ -604,6 +605,13 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 		h.DB.Save(room)
 	}
 
+	if h.CallState != nil {
+		h.logger.Infof("callstate: AddUserToRoom userID=%s roomID=%s", user.ID, room.ID)
+		if _, err := h.CallState.AddUserToRoom(c.Request().Context(), room.ID, user.ID, room.Name); err != nil {
+			h.logger.Warnf("callstate.AddUserToRoom error: %v", err)
+		}
+	}
+
 	c.Logger().Infof("Generated tokens for user %s joining session %s", user.ID, sessionID)
 
 	return c.JSON(http.StatusOK, tokens)
@@ -788,6 +796,15 @@ func (h *SlackHandler) LeaveRoom(c echo.Context) error {
 			h.logger.Warnf("Failed to get Slack metadata for participant removal for team %s", user.Team)
 		}
 	}
+
+	if h.CallState != nil {
+		h.logger.Infof("callstate: RemoveUser userID=%s roomID=%s", user.ID, roomID)
+		if _, _, _, err := h.CallState.RemoveUser(c.Request().Context(), user.ID); err != nil {
+			h.logger.Warnf("callstate.RemoveUser error: %v", err)
+		}
+	}
+
+	broadcastPresenceChanged(c, &h.ServerState, user.ID)
 
 	// Update LastParticipantLeftAt
 	now := time.Now()

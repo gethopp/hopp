@@ -33,7 +33,8 @@ pub enum MonitorId {
 use std::sync::{mpsc, Arc, Mutex};
 use std::vec;
 
-#[path = "stream.rs"]
+#[cfg_attr(target_os = "macos", path = "macos_stream.rs")]
+#[cfg_attr(not(target_os = "macos"), path = "stream.rs")]
 mod stream;
 use stream::{Stream, StreamRuntimeMessage};
 
@@ -512,15 +513,15 @@ impl Capturer {
         stream_resolution: Extent,
         include_cursor: bool,
         buffer_source: NativeVideoSource,
+        scale: f64,
     ) -> Result<(), CapturerError> {
-        log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor}");
+        log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor} scale: {scale}");
         if self.active_stream.is_some() {
             log::warn!("start_capture: active stream, stopping it");
             self.active_stream.as_mut().unwrap().stop_capture();
             self.active_stream = None;
         }
 
-        let scale = 1.0;
         let mut stream = Stream::new(
             stream_resolution,
             scale,

@@ -92,6 +92,8 @@ tasks:
 
   release:
     desc: Bundle app, it takes two argument vars, OS (mac | win) and AARCH (arm64 | x64)
+    env:
+      SENTRY_DSN_RUST: ""
     vars:
       TARGET_ARCH:
         sh: |

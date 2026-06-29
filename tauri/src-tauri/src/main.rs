@@ -544,57 +544,6 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command(async)]
-async fn create_screenshare_window(
-    app: tauri::AppHandle,
-    video_token: String,
-) -> Result<(), String> {
-    let url = format!("screenshare.html?videoToken={}", video_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "screenshare",
-            title: "Screen sharing",
-            url: &url,
-            width: 800.0,
-            height: 450.0,
-            resizable: true,
-            always_on_top: false,
-            content_protected: false,
-            maximizable: false,
-            minimizable: true,
-            decorations: false,
-            transparent: false,
-            background_color: Some(tauri::webview::Color(0, 0, 0, 0)),
-        },
-    )
-}
-
-#[tauri::command(async)]
-async fn create_camera_window(app: tauri::AppHandle, camera_token: String) -> Result<(), String> {
-    log::info!("create_camera_window with token: {}", camera_token);
-
-    let url = format!("camera.html?cameraToken={}", camera_token);
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "camera",
-            title: "Camera",
-            url: &url,
-            width: 160.0,
-            height: 365.0,
-            resizable: false,
-            always_on_top: true,
-            content_protected: true,
-            maximizable: true,
-            minimizable: true,
-            decorations: false,
-            transparent: true,
-            background_color: None,
-        },
-    )
-}
-
-#[tauri::command(async)]
 async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("create_content_picker_window");
 
@@ -619,13 +568,13 @@ async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), Strin
 }
 
 #[tauri::command(async)]
-fn set_sentry_metadata(app: tauri::AppHandle, user_email: String, app_version: String) {
+fn set_sentry_metadata(app: tauri::AppHandle, user_id: String, app_version: String) {
     log::info!("set_sentry_metadata");
-    sentry_utils::init_metadata(user_email.clone(), app_version.clone());
+    sentry_utils::init_metadata(user_id.clone(), app_version.clone());
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
     if let Err(e) = data.sender.send(Message::SentryMetadata(SentryMetadata {
-        user_email,
+        user_id,
         app_version,
     })) {
         log::error!("set_sentry_metadata: failed to send message: {e:?}");
@@ -724,7 +673,11 @@ fn call_started(
 
 /// When enabled=true, shows the notification variant of the icon.
 /// When enabled=false, shows the default variant.
-#[tauri::command(async)]
+///
+/// NOTE: must NOT be `async`. The macOS implementation manipulates AppKit/CALayer,
+/// which has to run on the main thread; an async command would run off-thread and
+/// the notification dot would silently never update.
+#[tauri::command]
 fn set_tray_notification(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_tray_notification: enabled={}", enabled);
     let data = app.state::<std::sync::Mutex<hopp::AppData>>();
@@ -796,8 +749,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 680.0,
-            height: 740.0,
+            width: 740.0,
+            height: 800.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -911,12 +864,35 @@ fn set_call_feedback_popup(app: tauri::AppHandle, enabled: bool) {
 }
 
 #[tauri::command(async)]
+fn set_telemetry_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_telemetry_enabled: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.telemetry_enabled = enabled);
+    sentry_utils::set_telemetry_enabled(enabled);
+    if let Err(e) = data.sender.send(Message::SetTelemetryEnabled(enabled)) {
+        log::error!("set_telemetry_enabled: failed to send: {e:?}");
+    }
+    let _ = app.emit("telemetry_enabled_changed", enabled);
+}
+
+#[tauri::command(async)]
 fn set_show_dock_icon_in_call(app: tauri::AppHandle, enabled: bool) {
     log::info!("set_show_dock_icon_in_call: {enabled}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
     data.app_state
         .update_user_setting(|s| s.show_dock_icon_in_call = enabled);
+}
+
+#[tauri::command(async)]
+fn set_auto_update_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_auto_update_enabled: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.auto_update_enabled = enabled);
 }
 
 #[tauri::command(async)]
@@ -968,17 +944,11 @@ fn toggle_mic(app: tauri::AppHandle) {
 fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.noise_cancellation_enabled = enabled;
+    data.app_state
+        .update_user_setting(|settings| settings.noise_cancellation_enabled = enabled);
     if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
         log::error!("set_noise_cancellation: failed to send: {e:?}");
     }
-}
-
-#[tauri::command(async)]
-fn get_noise_cancellation(app: tauri::AppHandle) -> bool {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    data.noise_cancellation_enabled
 }
 
 #[tauri::command(async)]
@@ -1449,12 +1419,23 @@ fn main() {
             let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
+            let noise_cancellation_enabled = app_state.user_settings().noise_cancellation_enabled;
+            if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
+                log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
+            }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
             }
             if let Some(mode) = app_state.last_mode() {
                 if let Err(e) = sender.send(Message::LastModeChanged(mode)) {
                     log::error!("Failed to send initial last_mode: {e:?}");
+                }
+            }
+            {
+                let telemetry_enabled = app_state.user_settings().telemetry_enabled;
+                sentry_utils::set_telemetry_enabled(telemetry_enabled);
+                if let Err(e) = sender.send(Message::SetTelemetryEnabled(telemetry_enabled)) {
+                    log::error!("Failed to send initial telemetry_enabled: {e:?}");
                 }
             }
             let data = Mutex::new(AppData::new(
@@ -1741,8 +1722,6 @@ fn main() {
             get_livekit_url,
             get_camera_permission,
             open_camera_settings,
-            create_camera_window,
-            create_screenshare_window,
             create_content_picker_window,
             set_sentry_metadata,
             call_started,
@@ -1753,7 +1732,9 @@ fn main() {
             create_settings_window,
             get_user_settings,
             set_call_feedback_popup,
+            set_telemetry_enabled,
             set_show_dock_icon_in_call,
+            set_auto_update_enabled,
             set_start_camera_on_call,
             set_start_mic_on_call,
             set_shortcut_toggle_mic,
@@ -1766,7 +1747,6 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
-            get_noise_cancellation,
             list_microphones,
             select_microphone,
             list_webcams,
