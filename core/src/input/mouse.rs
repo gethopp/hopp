@@ -231,7 +231,6 @@ impl CursorState {
 }
 
 struct ControllerCursor {
-    /// Cursor state
     cursor_state: CursorState,
     /*
      * This is used to record when the controller
@@ -240,18 +239,20 @@ struct ControllerCursor {
      */
     clicked: bool,
     mode: CursorMode,
-    pointer_mode: bool,
+    /// Caches mode before controllers are globally disabled.
+    /// `Some` = controllers disabled, `None` = controllers enabled.
+    cached_mode: Option<CursorMode>,
     has_control: bool,
     identity: String,
 }
 
 impl ControllerCursor {
-    fn new(cursor_state: CursorState, identity: String, mode: CursorMode) -> Self {
+    fn new(cursor_state: CursorState, identity: String) -> Self {
         Self {
             cursor_state,
             clicked: false,
-            mode,
-            pointer_mode: mode == CursorMode::Pointer,
+            mode: CursorMode::Normal,
+            cached_mode: None,
             has_control: false,
             identity,
         }
@@ -284,20 +285,24 @@ impl ControllerCursor {
     }
 
     fn set_mode(&mut self, mode: CursorMode) {
-        self.mode = mode;
-    }
-
-    fn set_pointer_mode(&mut self, enabled: bool, remote_control_enabled: bool) {
-        if !enabled && remote_control_enabled {
-            self.mode = CursorMode::Normal;
+        if self.cached_mode.is_some() {
+            self.cached_mode = Some(mode);
         } else {
-            self.mode = CursorMode::Pointer;
+            self.mode = mode;
         }
-        self.pointer_mode = enabled;
     }
 
-    fn pointer_mode(&self) -> bool {
-        self.pointer_mode
+    fn disable(&mut self) {
+        if self.cached_mode.is_none() {
+            self.cached_mode = Some(self.mode);
+        }
+        self.mode = CursorMode::Pointer;
+    }
+
+    fn enable(&mut self) {
+        if let Some(cached) = self.cached_mode.take() {
+            self.mode = cached;
+        }
     }
 
     fn clicked(&mut self) -> bool {
@@ -664,16 +669,14 @@ impl CursorController {
             }
         }
 
-        let mode = if self.controllers_cursors_enabled {
-            CursorMode::Normal
-        } else {
-            CursorMode::Pointer
-        };
-        controllers_cursors.push(ControllerCursor::new(
+        let mut controller = ControllerCursor::new(
             CursorState::new(self.redraw_thread_sender.clone(), self.clock.clone()),
             identity,
-            mode,
-        ));
+        );
+        if !self.controllers_cursors_enabled {
+            controller.disable();
+        }
+        controllers_cursors.push(controller);
     }
 
     /// Removes a remote controller from the cursor management system.
@@ -957,13 +960,9 @@ impl CursorController {
             let mut any_had_control = false;
             for controller in controllers_cursors.iter_mut() {
                 if enabled {
-                    if controller.pointer_mode() {
-                        controller.set_mode(CursorMode::Pointer);
-                    } else {
-                        controller.set_mode(CursorMode::Normal);
-                    }
+                    controller.enable();
                 } else {
-                    controller.set_mode(CursorMode::Pointer);
+                    controller.disable();
                 }
 
                 if controller.has_control() {
@@ -986,13 +985,11 @@ impl CursorController {
         }
     }
 
-    /// Switch pointer mode made by the controller.
-    /// # Parameters
+    /// Sets the cursor mode for a specific controller.
     ///
-    /// * `identity` - Session ID identifying which controller to modify
-    /// * `enabled` - Whether to enable (true) or disable (false) pointer mode for the specified controller
-    pub fn set_controller_pointer(&mut self, enabled: bool, identity: &str) {
-        log::info!("set_controller_pointer: {identity} {enabled}");
+    /// If the controller currently has control, it is given back to the sharer.
+    pub fn set_controller_mode(&mut self, identity: &str, mode: CursorMode) {
+        log::info!("set_controller_mode: {identity} {mode:?}");
 
         let had_control = {
             let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
@@ -1003,12 +1000,14 @@ impl CursorController {
                 }
 
                 if controller.has_control() {
-                    log::info!("set_controller_pointer: controller {identity} has control, give control back to sharer.");
+                    log::info!(
+                        "set_controller_mode: controller {identity} has control, giving back to sharer."
+                    );
                     controller.show();
                     had_control = true;
                 }
 
-                controller.set_pointer_mode(enabled, self.controllers_cursors_enabled);
+                controller.set_mode(mode);
                 break;
             }
             had_control

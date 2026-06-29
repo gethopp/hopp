@@ -59,6 +59,7 @@ pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer};
+use graphics::graphics_context::participant::CursorMode;
 use graphics::graphics_context::GraphicsContext;
 use graphics::graphics_window_context::ContextManager;
 use input::clipboard::ClipboardController;
@@ -1258,17 +1259,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let (Some(window_manager), Some(remote_control)) =
                     (self.window_manager.as_mut(), self.remote_control.as_mut())
                 {
+                    let cursor_controller = &mut remote_control.cursor_controller;
                     match &drawing_mode {
+                        DrawingMode::Draw(_) => {
+                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Pencil);
+                        }
+                        DrawingMode::ClickAnimation => {
+                            cursor_controller
+                                .set_controller_mode(sid.as_str(), CursorMode::Pointer);
+                        }
                         DrawingMode::Disabled => {
-                            remote_control
-                                .cursor_controller
-                                .set_controller_pointer(false, sid.as_str());
+                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Normal);
                         }
-                        _ => {
-                            remote_control
-                                .cursor_controller
-                                .set_controller_pointer(true, sid.as_str());
-                        }
+                        DrawingMode::Any => {}
                     }
                     if let Some(gfx) = window_manager.active_gfx_mut() {
                         gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
