@@ -1262,20 +1262,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     let cursor_controller = &mut remote_control.cursor_controller;
                     match &drawing_mode {
                         DrawingMode::Draw(_) => {
-                            cursor_controller.set_controller_pointer(true, sid.as_str());
-                            cursor_controller
-                                .set_controller_visual_mode(sid.as_str(), Some(CursorMode::Pencil));
+                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Pencil);
                         }
                         DrawingMode::ClickAnimation => {
-                            cursor_controller.set_controller_pointer(true, sid.as_str());
-                            cursor_controller.set_controller_visual_mode(
-                                sid.as_str(),
-                                Some(CursorMode::Pointer),
-                            );
+                            cursor_controller
+                                .set_controller_mode(sid.as_str(), CursorMode::Pointer);
                         }
                         DrawingMode::Disabled => {
-                            cursor_controller.set_controller_pointer(false, sid.as_str());
-                            cursor_controller.set_controller_visual_mode(sid.as_str(), None);
+                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Normal);
                         }
                         DrawingMode::Any => {}
                     }
