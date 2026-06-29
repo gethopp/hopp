@@ -48,7 +48,9 @@ use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
 };
 use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
-use crate::graphics::graphics_context::participant::{ParticipantError, ParticipantsManager};
+use crate::graphics::graphics_context::participant::{
+    CursorMode, ParticipantError, ParticipantsManager,
+};
 use crate::graphics::graphics_window_context::{
     ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
 };
@@ -814,6 +816,15 @@ impl ScreensharingWindow {
     }
 
     pub fn set_drawing_mode(&mut self, identity: &str, mode: crate::room_service::DrawingMode) {
+        let cursor_mode = match &mode {
+            crate::room_service::DrawingMode::Draw(_) => CursorMode::Pencil,
+            crate::room_service::DrawingMode::ClickAnimation => CursorMode::Pointer,
+            crate::room_service::DrawingMode::Disabled | crate::room_service::DrawingMode::Any => {
+                CursorMode::Normal
+            }
+        };
+        self.participants_manager
+            .set_cursor_mode(identity, cursor_mode);
         self.participants_manager.set_drawing_mode(identity, mode);
     }
 
