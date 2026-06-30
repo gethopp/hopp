@@ -41,7 +41,7 @@ VALUES
         'true',
         '1',
         '$2a$10$d6Kfs1rGlv4JGY12U.XfUOvKVaYVj2Au.SB3RT9M57m.j0Z/XvONG', -- hashed version of 'hoppless'
-        'https://tvline.com/wp-content/uploads/2011/04/greatscott_april27_514110427100239.jpg?w=514&h=360&crop=1',
+        'https://upload.wikimedia.org/wikipedia/en/5/56/PrisonMike.png',
         NOW(),
         NOW(),
         null,

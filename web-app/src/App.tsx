@@ -1,14 +1,16 @@
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { createBrowserRouter, Outlet, RouterProvider, redirect } from "react-router-dom";
+import { createBrowserRouter, Outlet, RouterProvider, redirect, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useHoppStore, useHydration } from "./store/store";
 import { LoginForm } from "@/pages/Login";
 import { ForgotPassword } from "@/pages/ForgotPassword";
 import { ResetPassword } from "@/pages/ResetPassword";
 import { Dashboard } from "@/pages/Dashboard";
+import { Onboarding } from "@/pages/Onboarding";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "react-hot-toast";
-import { QueryProvider } from "./hooks/useQueryClients";
+import { QueryProvider, useAPI } from "./hooks/useQueryClients";
+import { useEffect, type ReactNode } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { HoppSidebar } from "./components/sidebar";
 import { Settings } from "./pages/Settings";
@@ -37,7 +39,53 @@ export const queryClient = new QueryClient({
   },
 });
 
-const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boolean; overrideRedirect?: boolean }) => {
+// OnboardingGate blocks dashboard routes for team admins who must add a payment
+// method (post-cutoff teams with no active subscription) and force-redirects
+// them to the blocking onboarding flow. Non-admins, invited users, pre-cutoff
+// teams, and subscribed teams are never redirected. Must render inside
+// QueryProvider so it can call the typed API client.
+const OnboardingGate = ({ children }: { children: ReactNode }) => {
+  const { useQuery } = useAPI();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Just returned from Stripe checkout: the webhook that creates the trialing
+  // subscription may not have landed yet, and the cached subscription is stale.
+  // Skip the redirect for this render so the user isn't bounced back to
+  // onboarding, and always read fresh data so the gate self-corrects.
+  const justSubscribed = searchParams.get("subscription_success") === "true";
+
+  const { data, isLoading } = useQuery("get", "/api/auth/billing/subscription", undefined, {
+    refetchOnMount: "always",
+    staleTime: 0,
+  });
+  const subscription = data?.subscription;
+  const mustOnboard = !justSubscribed && !!subscription?.requires_payment_method && !!subscription?.is_admin;
+
+  useEffect(() => {
+    if (mustOnboard) {
+      navigate("/onboarding", { replace: true });
+    }
+  }, [mustOnboard, navigate]);
+
+  if (isLoading || mustOnboard) {
+    return <div>Loading...</div>;
+  }
+
+  return <>{children}</>;
+};
+
+const Providers = ({
+  requireAuth,
+  overrideRedirect = false,
+  bareLayout = false,
+  gateOnboarding = false,
+}: {
+  requireAuth: boolean;
+  overrideRedirect?: boolean;
+  bareLayout?: boolean;
+  gateOnboarding?: boolean;
+}) => {
   const hasHydrated = useHydration();
   const navigate = useNavigate();
   const authToken = useHoppStore((state) => state.authToken);
@@ -67,19 +115,24 @@ const Providers = ({ requireAuth, overrideRedirect = false }: { requireAuth: boo
 
   const telemetryEnabled = !META.DEV_MODE && !META.DISABLE_TELEMETRY;
 
+  const authedLayout =
+    bareLayout ?
+      <Outlet />
+    : <SidebarProvider>
+        <HoppSidebar />
+        <main className="p-8 w-full">
+          <Outlet />
+        </main>
+      </SidebarProvider>;
+
+  const authedContent = gateOnboarding ? <OnboardingGate>{authedLayout}</OnboardingGate> : authedLayout;
+
   const content = (
     <QueryClientProvider client={queryClient}>
       <QueryProvider>
         <ReactQueryDevtools initialIsOpen={false} />
         {!authToken && <Outlet />}
-        {authToken && (
-          <SidebarProvider>
-            <HoppSidebar />
-            <main className="p-8 w-full">
-              <Outlet />
-            </main>
-          </SidebarProvider>
-        )}
+        {authToken && authedContent}
       </QueryProvider>
     </QueryClientProvider>
   );
@@ -162,8 +215,18 @@ const router = createBrowserRouter([
     loader: () => redirect("/dashboard?subscription_success=true"),
   },
   {
+    path: "/onboarding",
+    element: <Providers requireAuth={true} bareLayout={true} />,
+    children: [
+      {
+        path: "",
+        element: <Onboarding />,
+      },
+    ],
+  },
+  {
     path: "/",
-    element: <Providers requireAuth={true} />,
+    element: <Providers requireAuth={true} gateOnboarding={true} />,
     children: [
       {
         index: true,

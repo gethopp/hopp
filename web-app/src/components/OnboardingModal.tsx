@@ -62,7 +62,7 @@ interface OnboardingModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function CompanySizeSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
+export function CompanySizeSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
   const id = useId();
   const [open, setOpen] = useState(false);
 
@@ -94,7 +94,6 @@ function CompanySizeSelect({ form, showErrors }: { form: any; showErrors: boolea
                 </Button>
               </Pressable>
               <Popover
-                isNonModal
                 placement="bottom start"
                 offset={8}
                 className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"
@@ -131,7 +130,7 @@ function CompanySizeSelect({ form, showErrors }: { form: any; showErrors: boolea
   );
 }
 
-function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
+export function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
   const id = useId();
   const [open, setOpen] = useState(false);
 
@@ -200,7 +199,6 @@ function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: b
                 </Button>
               </Pressable>
               <Popover
-                isNonModal
                 placement="bottom start"
                 offset={8}
                 className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"
@@ -230,7 +228,7 @@ function PairingToolMultiSelect({ form, showErrors }: { form: any; showErrors: b
   );
 }
 
-function ReferralSourceSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
+export function ReferralSourceSelect({ form, showErrors }: { form: any; showErrors: boolean }) {
   const id = useId();
   const [open, setOpen] = useState(false);
 
@@ -263,7 +261,6 @@ function ReferralSourceSelect({ form, showErrors }: { form: any; showErrors: boo
                   </Button>
                 </Pressable>
                 <Popover
-                  isNonModal
                   placement="bottom start"
                   offset={8}
                   className="w-(--trigger-width) p-0 z-50 max-h-(--popover-content-available-height) bg-popover border border-border rounded-md shadow-md"

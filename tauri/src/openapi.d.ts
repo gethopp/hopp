@@ -630,6 +630,88 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/team": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update the current admin's team
+     * @description Updates the authenticated team admin's team. Currently only the team name can be changed. Used by onboarding to rename the placeholder team created at signup.
+     */
+    patch: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** @description New team name */
+            name: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Team updated successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Team"];
+          };
+        };
+        /** @description Invalid input or user is not part of any team */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - user is not a team admin */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    trace?: never;
+  };
   "/api/auth/get-invite-uuid": {
     parameters: {
       query?: never;
@@ -792,7 +874,16 @@ export interface paths {
         path?: never;
         cookie?: never;
       };
-      requestBody?: never;
+      requestBody?: {
+        content: {
+          "application/json": {
+            /** @description Free-form onboarding survey answers */
+            onboarding?: {
+              [key: string]: unknown;
+            };
+          };
+        };
+      };
       responses: {
         /** @description Onboarding form status updated successfully */
         200: {
@@ -2507,6 +2598,17 @@ export interface components {
        */
       trial_ends_at?: string | null;
     };
+    Team: {
+      /** Format: uint */
+      readonly ID: number;
+      name: string;
+      is_manual_upgrade?: boolean;
+      billing_email?: string | null;
+      /** Format: date-time */
+      readonly CreatedAt?: string;
+      /** Format: date-time */
+      readonly UpdatedAt?: string;
+    };
     Room: {
       /** Format: uuid */
       id: string;
@@ -2556,6 +2658,8 @@ export interface components {
       cancel_at_period_end?: boolean | null;
       /** @description Whether the current user is a team admin */
       is_admin: boolean;
+      /** @description Whether the team must add a payment method to access the product (post-cutoff team with no active/trialing subscription). Drives the blocking onboarding/paywall gate for admins. */
+      requires_payment_method: boolean;
     };
     CreateCheckoutSessionRequest: {
       /**
@@ -2570,8 +2674,6 @@ export interface components {
       interval?: "monthly" | "yearly";
       /** @description Optional Stripe price ID (uses environment default if not provided) */
       price_id?: string;
-      /** @description Optional Rewardful referral ID for affiliate tracking */
-      referral?: string;
     };
     BillingSettingsRequest: {
       /**

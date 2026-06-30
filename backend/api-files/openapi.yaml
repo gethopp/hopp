@@ -79,6 +79,33 @@ components:
               description: When the trial period ends (null if not in trial or has active subscription)
 
       type: object
+
+    Team:
+      type: object
+      required:
+        - ID
+        - name
+      properties:
+        ID:
+          type: integer
+          format: uint
+          readOnly: true
+        name:
+          type: string
+        is_manual_upgrade:
+          type: boolean
+        billing_email:
+          type: string
+          nullable: true
+        CreatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        UpdatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
     Room:
       required:
         - id
@@ -142,6 +169,7 @@ components:
         - status
         - manual_upgrade
         - is_admin
+        - requires_payment_method
       properties:
         status:
           type: string
@@ -166,6 +194,12 @@ components:
         is_admin:
           type: boolean
           description: Whether the current user is a team admin
+        requires_payment_method:
+          type: boolean
+          description: >-
+            Whether the team must add a payment method to access the product
+            (post-cutoff team with no active/trialing subscription). Drives the
+            blocking onboarding/paywall gate for admins.
 
     CreateCheckoutSessionRequest:
       type: object
@@ -183,9 +217,6 @@ components:
         price_id:
           type: string
           description: Optional Stripe price ID (uses environment default if not provided)
-        referral:
-          type: string
-          description: Optional Rewardful referral ID for affiliate tracking
 
     BillingSettingsRequest:
       type: object
@@ -591,6 +622,59 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/auth/team:
+    patch:
+      summary: Update the current admin's team
+      description: >-
+        Updates the authenticated team admin's team. Currently only the team name
+        can be changed. Used by onboarding to rename the placeholder team created
+        at signup.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  description: New team name
+      responses:
+        "200":
+          description: Team updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          description: Invalid input or user is not part of any team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - user is not a team admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/auth/get-invite-uuid:
     get:
       summary: Get or create a team invitation UUID
@@ -679,6 +763,17 @@ paths:
       summary: Update onboarding form status
       security:
         - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                onboarding:
+                  type: object
+                  additionalProperties: true
+                  description: Free-form onboarding survey answers
       responses:
         "200":
           description: Onboarding form status updated successfully
