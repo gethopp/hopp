@@ -14,6 +14,7 @@ import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAPI } from "@/services/query";
+import { useEndCall } from "@/lib/hooks";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -52,10 +53,13 @@ const TruncatedName = ({ text, className }: { text: string; className?: string }
   );
 };
 
-export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] }) => {
+export const ParticipantRow = (props: {
+  user: components["schemas"]["BaseUser"];
+  rooms: components["schemas"]["Room"][];
+}) => {
   const posthog = usePostHog();
   const isCalling = useStore((state) => state.calling === props.user.id);
-  const { setCalling, setCallTokens } = useStore((state) => state);
+  const { setCalling, callTokens, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
   const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
   const callsPresence = useStore((state) => state.callsPresence);
@@ -77,6 +81,83 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
 
   const { useMutation } = useAPI();
   const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
+  const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
+
+  const targetRoom = useMemo(
+    () => props.rooms.find((r) => r.name === userPresence?.roomName),
+    [props.rooms, userPresence?.roomName],
+  );
+  const isJoiningRoom = useRef(false);
+  const endCall = useEndCall();
+
+  const joinRoom = useCallback(async () => {
+    if (!targetRoom || isJoiningRoom.current) return;
+
+    isJoiningRoom.current = true;
+    try {
+      posthog.capture("user_join_room", {
+        user_id: props.user.id,
+        user_name: props.user.first_name,
+        room_id: targetRoom.id,
+        room_name: targetRoom.name,
+      });
+
+      if (callTokens) {
+        endCall();
+        await sleep(500);
+      }
+
+      const tokens = await getRoomTokens({
+        params: { path: { id: targetRoom.id } },
+      });
+
+      if (!tokens) {
+        toast.error("Error joining room");
+        return;
+      }
+
+      sounds.callAccepted.play();
+      let startMic = false;
+      let startCamera = false;
+      try {
+        const settings = await tauriUtils.getUserSettings();
+        startMic = settings.start_mic_on_call;
+        startCamera = settings.start_camera_on_call;
+      } catch {
+        // fall back to safe defaults
+      }
+      setCallTokens({
+        ...tokens,
+        isRoomCall: true,
+        timeStarted: new Date(),
+        hasAudioEnabled: startMic,
+        hasCameraEnabled: startCamera,
+        role: ParticipantRole.NONE,
+        isRemoteControlEnabled: true,
+        room: targetRoom,
+        participants: [],
+        isInitialisingCall: true,
+        micLevel: 0,
+      });
+
+      try {
+        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+      } catch {
+        setCallTokens(null);
+        toast.error("Failed to start call");
+        return;
+      }
+      tauriUtils.showWindow("main");
+    } catch (error: any) {
+      if (error?.error === "trial-ended") {
+        toast.error("Trial has expired, contact us if you want to extend it");
+      } else {
+        toast.error("Error joining room");
+      }
+    } finally {
+      isJoiningRoom.current = false;
+    }
+  }, [targetRoom, callTokens, props.user, setCallTokens, endCall, getRoomTokens, posthog]);
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
@@ -323,7 +404,17 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
       </div>
 
       <div className="mr-4">
-        {userPresence && !userPresence.roomName && !inACall ?
+        {userPresence?.roomName && !inACall ?
+          <Button
+            variant="gradient-white"
+            onClick={joinRoom}
+            disabled={!targetRoom || isJoiningRoom.current}
+            className="px-2 w-auto h-7 flex flex-row items-center gap-1 text-slate-600"
+          >
+            <HiPhoneArrowDownLeft className="size-3" />
+            Join
+          </Button>
+        : userPresence && !userPresence.roomName && !inACall ?
           <Button
             variant="gradient-white"
             onClick={joinCall}
@@ -348,7 +439,7 @@ export const ParticipantRow = (props: { user: components["schemas"]["BaseUser"] 
                 callUser();
               }
             }}
-            disabled={inACall || hasIncomingCall || !!userPresence}
+            disabled={inACall || hasIncomingCall}
             className={clsx(
               "px-2 w-auto h-7 flex flex-row items-center gap-1",
               !isCalling && "text-slate-600",
