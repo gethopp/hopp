@@ -84,6 +84,7 @@ export const ParticipantRow = (props: {
   const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const targetRoom = useMemo(
+    // TODO: Modify CallPresence to return the room id in order to handle name conflicts
     () => props.rooms.find((r) => r.name === userPresence?.roomName),
     [props.rooms, userPresence?.roomName],
   );
