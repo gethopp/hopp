@@ -63,7 +63,6 @@ pub struct KeystrokeMessage {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ContentType {
     Display,
-    Window { display_id: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -76,30 +75,14 @@ impl fmt::Display for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.content_type {
             ContentType::Display => write!(f, "Display {}", self.id),
-            ContentType::Window { display_id } => {
-                write!(f, "Window {} on Display {}", self.id, display_id)
-            }
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CaptureContent {
-    pub content: Content,
-    pub base64: String,
-    pub title: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AvailableContentMessage {
-    pub content: Vec<CaptureContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenShareMessage {
     pub content: Content,
     pub resolution: Extent,
-    pub accessibility_permission: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -190,7 +173,6 @@ pub enum StoredMode {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     GetAvailableContent,
-    AvailableContent(AvailableContentMessage),
     CallStart(CallStartMessage),
     CallStartResult(Result<(), String>),
     CallEnd,
@@ -231,7 +213,6 @@ pub enum Message {
     RoleChange(CoreRoleEvent),
     CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
     RoomConnectionFailed(String),
-    OpenContentPicker,
     ControllerDrawPersistChanged(bool),
     SharerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),
@@ -249,8 +230,7 @@ impl Message {
     pub fn is_response(&self) -> bool {
         matches!(
             self,
-            Message::AvailableContent(_)
-                | Message::StartScreenShareResult(_)
+            Message::StartScreenShareResult(_)
                 | Message::CallStartResult(_)
                 | Message::AudioDeviceList(_)
                 | Message::StartAudioCaptureResult(_)
@@ -581,16 +561,14 @@ mod tests {
 
         // Send a response-type message from server to client
         server_sender
-            .send(Message::AvailableContent(AvailableContentMessage {
-                content: vec![],
-            }))
+            .send(Message::StartScreenShareResult(Ok(())))
             .unwrap();
 
         let msg = client_events
             .responses
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        assert!(matches!(msg, Message::AvailableContent(_)));
+        assert!(matches!(msg, Message::StartScreenShareResult(_)));
     }
 
     #[test]
@@ -599,11 +577,6 @@ mod tests {
 
         // Send mix of events and responses from client to server
         client_sender.send(Message::GetAvailableContent).unwrap();
-        client_sender
-            .send(Message::AvailableContent(AvailableContentMessage {
-                content: vec![],
-            }))
-            .unwrap();
         client_sender.send(Message::Ping).unwrap();
         client_sender
             .send(Message::StartScreenShareResult(Ok(())))
@@ -644,12 +617,7 @@ mod tests {
             .unwrap();
         assert!(matches!(msg6, Message::CallEnd));
 
-        // Responses: AvailableContent, StartScreenShareResult, CallStartResult
-        let msg3 = server_events
-            .responses
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
-        assert!(matches!(msg3, Message::AvailableContent(_)));
+        // Responses: StartScreenShareResult, CallStartResult
         let msg4 = server_events
             .responses
             .recv_timeout(Duration::from_secs(5))
@@ -735,30 +703,16 @@ mod tests {
 
     #[test]
     fn test_request_response_pattern() {
-        let ((server_sender, server_events), (client_sender, client_events)) = test_pair();
+        let ((server_sender, server_events), (_client_sender, _client_events)) = test_pair();
 
         // Client sends request
-        client_sender.send(Message::GetAvailableContent).unwrap();
+        server_sender.send(Message::Ping).unwrap();
 
         // Server receives event
         let msg = server_events
             .events
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        assert!(matches!(msg, Message::GetAvailableContent));
-
-        // Server sends response
-        server_sender
-            .send(Message::AvailableContent(AvailableContentMessage {
-                content: vec![],
-            }))
-            .unwrap();
-
-        // Client receives response on responses channel
-        let response = client_events
-            .responses
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
-        assert!(matches!(response, Message::AvailableContent(_)));
+        assert!(matches!(msg, Message::Ping));
     }
 }

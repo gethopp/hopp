@@ -4,7 +4,9 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
-use crate::graphics::graphics_window_context::ContextManager;
+use crate::graphics::{
+    graphics_context::RedrawThreadCommands::Activity, graphics_window_context::ContextManager,
+};
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
 use crate::UserEvent;
@@ -158,6 +160,8 @@ pub struct GraphicsContext<'a> {
     surface_format: wgpu::TextureFormat,
     surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_present_mode: wgpu::PresentMode,
+
+    screen_selection: bool,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -250,6 +254,7 @@ impl<'a> GraphicsContext<'a> {
             surface_format,
             surface_alpha_mode,
             surface_present_mode,
+            screen_selection: false,
         })
     }
 
@@ -263,6 +268,11 @@ impl<'a> GraphicsContext<'a> {
 
     pub(crate) fn surface_format(&self) -> wgpu::TextureFormat {
         self.surface_format
+    }
+
+    pub fn set_screen_selection(&mut self, screen_selection: bool) {
+        self.screen_selection = screen_selection;
+        //self.redraw_thread_sender.send(Activity);
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
@@ -372,6 +382,7 @@ impl<'a> GraphicsContext<'a> {
             &self.participants_manager,
             &self.click_animation_renderer,
             position_translator,
+            self.screen_selection,
         );
 
         self.window.pre_present_notify();

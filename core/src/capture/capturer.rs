@@ -1,19 +1,9 @@
-use base64::prelude::*;
-use image::codecs::jpeg::JpegEncoder;
-use livekit::webrtc::{
-    desktop_capturer::{CaptureError, DesktopCapturer, DesktopCapturerOptions, DesktopFrame},
-    native::yuv_helper,
-    video_frame::{native::VideoFrameBufferExt, NV12Buffer},
-    video_source::native::NativeVideoSource,
-};
+use livekit::webrtc::video_source::native::NativeVideoSource;
 
-use socket_lib::{CaptureContent, Content, ContentType};
+use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
-use crate::{
-    utils::geometry::{aspect_fit, Extent},
-    UserEvent, STREAM_FAILURE_EXIT_CODE,
-};
+use crate::{utils::geometry::Extent, UserEvent, STREAM_FAILURE_EXIT_CODE};
 
 /// Platform-agnostic monitor identifier.
 ///
@@ -31,7 +21,6 @@ pub enum MonitorId {
     Position(PhysicalPosition<i32>),
 }
 use std::sync::{mpsc, Arc, Mutex};
-use std::vec;
 
 #[cfg_attr(target_os = "macos", path = "macos_stream.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "stream.rs")]
@@ -39,12 +28,6 @@ mod stream;
 use stream::{Stream, StreamRuntimeMessage};
 
 // Constants for magic numbers
-const JPEG_QUALITY: u8 = 70;
-const THUMBNAIL_WIDTH: f64 = 960.0;
-const THUMBNAIL_HEIGHT: f64 = 720.0;
-const SCREENSHOT_CAPTURE_SLEEP_MS: u64 = 33;
-const SCREENSHOT_CAPTURE_RATE_SLEEP_MS: u64 = 16;
-const SCREENSHOT_TIMEOUT: u64 = 10;
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
@@ -68,14 +51,6 @@ pub enum CapturerError {
     #[error("Failed to create DesktopCapturer")]
     DesktopCapturerCreationError,
 
-    /// Failed to capture screenshot frames within the expected timeout.
-    ///
-    /// This error occurs when the screenshot capture process cannot complete
-    /// successfully within the retry limit ({SCREENSHOT_TIMEOUT} attempts).
-    /// Common causes include:
-    #[error("Failed to capture frames")]
-    FailedToCaptureFrames,
-
     /// Capture source list is empty.
     ///
     /// This error could occur when the screen sharing engine fails from the os and
@@ -95,17 +70,6 @@ pub enum CapturerError {
 /// trait are provided by platform-specific modules (windows.rs, macos.rs) and
 /// handle the differences in how each operating system manages displays.
 pub trait ScreenshareExt {
-    /// Retrieves the size dimensions of a specific monitor.
-    ///
-    /// # Parameters
-    /// - `monitors`: A list of all available monitors from the window system
-    /// - `input_id`: The identifier of the target monitor to get dimensions for
-    ///
-    /// # Returns
-    /// An `Extent` containing the width and height of the specified monitor.
-    /// If the monitor ID is not found, returns the dimensions of the first monitor.
-    fn get_monitor_size(monitors: &[MonitorHandle], input_id: u32) -> Extent;
-
     /// Selects and returns a specific monitor handle by ID.
     ///
     /// # Parameters
@@ -125,145 +89,10 @@ pub trait ScreenshareExt {
     /// # Returns
     /// A `MonitorId` that uniquely identifies this monitor across position changes.
     fn get_monitor_id(monitor: &MonitorHandle) -> MonitorId;
-}
 
-fn raw_image_to_jpeg(raw_image: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
-    let mut jpeg = Vec::new();
-    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY);
-    match encoder.encode(&raw_image, width, height, image::ExtendedColorType::Rgb8) {
-        Ok(_) => jpeg,
-        Err(e) => {
-            log::error!("Failed to encode raw image to jpeg: {e:?}");
-            Vec::new()
-        }
-    }
-}
-
-fn screenshot_capture_callback(
-    target_extent: Extent,
-    display_id: u32,
-    display_title: String,
-    content: Arc<Mutex<Vec<CaptureContent>>>,
-) -> impl Fn(Result<DesktopFrame, CaptureError>) {
-    log::debug!(
-        "screenshot_capture_callback: display_id: {display_id}, display_title: {display_title}"
-    );
-    move |result: Result<DesktopFrame, CaptureError>| {
-        let frame = match result {
-            Ok(frame) => frame,
-            Err(CaptureError::Temporary) => {
-                log::warn!("Capture frame, temporary error");
-                return;
-            }
-            Err(CaptureError::Permanent) => {
-                log::info!("Capture frame, permanent error for display: {display_id}, title: {display_title}");
-                let mut content = content.lock().unwrap();
-                content.push(CaptureContent {
-                    content: Content {
-                        content_type: ContentType::Display,
-                        id: display_id,
-                    },
-                    base64: "".to_string(),
-                    title: display_title.clone(),
-                });
-                return;
-            }
-            Err(CaptureError::UserStopped) => {
-                log::info!(
-                    "Capture frame, user stopped for display: {display_id}, title: {display_title}"
-                );
-                return;
-            }
-        };
-
-        /* Skip processing if there is content for this display */
-        {
-            let content = content.lock().unwrap();
-            for c in content.iter() {
-                if c.content.id == display_id {
-                    return;
-                }
-            }
-        }
-
-        let frame_height = frame.height();
-        let frame_width = frame.width();
-        let frame_stride = frame.stride();
-        let frame_data = frame.data();
-        log::info!(
-            "screenshot_capture_callback: Frame: {frame_width}x{frame_height}, stride: {frame_stride}",
-        );
-
-        let (width, height) = aspect_fit(
-            frame_width as u32,
-            frame_height as u32,
-            target_extent.width as u32,
-            target_extent.height as u32,
-        );
-        log::info!(
-            "screenshot_capture_callback: Frame: {frame_width}x{frame_height}, target: {width}x{height}"
-        );
-
-        /* Remove extra padding */
-        let stride = 4 * frame_width;
-        let mut raw_image: Vec<u8> = Vec::with_capacity((stride * frame_height) as usize);
-        for i in 0..(frame_height as usize) {
-            let start = i * (frame_stride as usize);
-            let end = start + (stride as usize);
-            raw_image.extend_from_slice(&frame_data[start..end]);
-        }
-
-        let mut framebuffer = NV12Buffer::new(frame_width as u32, frame_height as u32);
-        let (stride_y, stride_uv) = framebuffer.strides();
-        let (data_y, data_uv) = framebuffer.data_mut();
-        yuv_helper::argb_to_nv12(
-            &raw_image,
-            stride as u32,
-            data_y,
-            stride_y,
-            data_uv,
-            stride_uv,
-            frame_width,
-            frame_height,
-        );
-
-        let scaled_framebuffer = framebuffer.scale(width as i32, height as i32);
-        let capacity = width * 4 * height;
-        let mut raw_image_rgba: Vec<u8> = Vec::with_capacity((capacity) as usize);
-        for _ in 0..(capacity) {
-            raw_image_rgba.extend_from_slice(&[0]);
-        }
-        scaled_framebuffer.to_argb(
-            livekit::webrtc::prelude::VideoFormatType::BGRA,
-            &mut raw_image_rgba,
-            width * 4,
-            width as i32,
-            height as i32,
-        );
-
-        let mut raw_image: Vec<u8> = Vec::with_capacity((width * 3 * height) as usize);
-        for chunk in raw_image_rgba.chunks_exact(4) {
-            raw_image.extend_from_slice(&chunk[1..4]);
-        }
-
-        let buffer = raw_image_to_jpeg(raw_image, width, height);
-
-        let base64 = BASE64_STANDARD.encode(&buffer);
-        let base64 = format!("data:image/{};base64,{}", "jpeg", base64);
-
-        let mut content = content.lock().unwrap();
-        content.push(CaptureContent {
-            content: Content {
-                content_type: ContentType::Display,
-                id: display_id,
-            },
-            base64,
-            title: display_title.clone(),
-        });
-        log::info!(
-            "screenshot_capture_callback: Added display: {display_id}, title: {display_title}"
-        );
-    }
+    /// Reverse mapping: returns the capture content id (used by `Content.id`)
+    /// for the given monitor, or `None` if it cannot be resolved.
+    fn capture_content_id_for_monitor(monitor: &MonitorHandle) -> Option<u32>;
 }
 
 /// Main interface for managing screen capture operations and stream lifecycle.
@@ -271,8 +100,8 @@ fn screenshot_capture_callback(
 /// The `Capturer` serves as the primary coordinator for screen capture functionality,
 /// managing stream creation, lifecycle events, error handling, and communication
 /// with the UI layer. It maintains a single active capture stream and provides
-/// methods for discovering available capture sources, starting/stopping captures,
-/// and handling runtime errors through automatic stream recovery.
+/// methods for starting/stopping captures and handling runtime errors through
+/// automatic stream recovery.
 pub struct Capturer {
     /// Receiver for runtime messages from capture streams.
     ///
@@ -308,11 +137,11 @@ impl Capturer {
     /// - `event_loop_proxy`: Proxy for sending events back to the main application event loop
     ///
     /// # Returns
-    /// A new `Capturer` instance ready to discover and capture screen sources.
+    /// A new `Capturer` instance ready to capture screen sources.
     ///
     /// # Notes
     /// The capturer is created in an idle state with no active streams.
-    /// Use `get_available_content()` to discover sources and `start_capture()` to begin capturing.
+    /// Use `start_capture()` with a display `Content` id to begin capturing.
     pub fn new(event_loop_proxy: EventLoopProxy<UserEvent>) -> Self {
         let (tx, rx) = mpsc::channel();
         Capturer {
@@ -320,169 +149,6 @@ impl Capturer {
             tx,
             active_stream: None,
             event_loop_proxy,
-        }
-    }
-
-    /// Discovers and captures thumbnails of all available screen sources.
-    ///
-    /// # Returns
-    /// - `Ok(Vec<CaptureContent>)`: List of available capture sources with thumbnail previews
-    /// - `Err(CapturerError)`: Failed to enumerate sources or capture thumbnails
-    ///
-    /// # Behavior
-    /// - Creates temporary capturers for each available display/window
-    /// - Captures a single frame from each source at THUMBNAIL_WIDTH x THUMBNAIL_HEIGHT resolution
-    /// - Converts frames to base64-encoded JPEG thumbnails for display in UI
-    /// - Times out after SCREENSHOT_TIMEOUT if sources don't respond
-    ///
-    /// # Notes
-    /// This method assumes that source list IDs match the display IDs from winit.
-    /// The thumbnails are intended for source selection UI and are not suitable for streaming.
-    pub fn get_available_content(&mut self) -> Result<Vec<CaptureContent>, CapturerError> {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            use livekit::webrtc::desktop_capturer::DesktopCaptureSourceType;
-
-            #[allow(unused_mut)]
-            let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
-            #[cfg(target_os = "macos")]
-            {
-                options.set_sck_system_picker(false);
-            }
-            // We can't clone options so we pass it by value.
-            // For subsequent usages we need to recreate it.
-            let first_capturer = DesktopCapturer::new(options);
-            if first_capturer.is_none() {
-                return Err(CapturerError::DesktopCapturerCreationError);
-            }
-            let first_capturer = first_capturer.unwrap();
-            // We are making the assumption that the source list id
-            // is matching the display id we get from winit.
-            let displays = first_capturer.get_source_list();
-            log::info!("get_available_content: displays: {}", displays.len());
-
-            let mut handles = vec![];
-            let result = Arc::new(Mutex::new(vec![]));
-            let target_dims = Extent {
-                width: THUMBNAIL_WIDTH,
-                height: THUMBNAIL_HEIGHT,
-            };
-            for display in displays.iter() {
-                let (sender, receiver) = std::sync::mpsc::channel();
-                let display_clone = display.clone();
-                let result_clone = result.clone();
-                let handle = std::thread::spawn(move || {
-                    let callback = screenshot_capture_callback(
-                        target_dims,
-                        display_clone.id() as u32,
-                        if display_clone.title() != "" {
-                            display_clone.title()
-                        } else {
-                            format!("Display {}", display_clone.id())
-                        },
-                        result_clone,
-                    );
-                    #[allow(unused_mut)]
-                    let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
-                    #[cfg(target_os = "macos")]
-                    {
-                        options.set_sck_system_picker(false);
-                    }
-                    let capturer = DesktopCapturer::new(options);
-                    if capturer.is_none() {
-                        log::error!(
-                            "Failed to create DesktopCapturer for display: {}",
-                            display_clone.id()
-                        );
-                        return;
-                    }
-                    let mut capturer = capturer.unwrap();
-                    capturer.start_capture(Some(display_clone), callback);
-
-                    loop {
-                        match receiver.recv_timeout(std::time::Duration::from_millis(
-                            SCREENSHOT_CAPTURE_RATE_SLEEP_MS,
-                        )) {
-                            Ok(()) => break,
-                            Err(e) => match e {
-                                mpsc::RecvTimeoutError::Timeout => {
-                                    capturer.capture_frame();
-                                }
-                                mpsc::RecvTimeoutError::Disconnected => {
-                                    log::error!("get_available_content: capture loop disconnected");
-                                    break;
-                                }
-                            },
-                        }
-                    }
-                });
-
-                handles.push((handle, sender));
-            }
-
-            let now = std::time::Instant::now();
-            let mut failed = false;
-            loop {
-                {
-                    let res = result.lock().unwrap();
-                    if res.len() == displays.len() {
-                        break;
-                    }
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(
-                    SCREENSHOT_CAPTURE_SLEEP_MS,
-                ));
-
-                if now.elapsed().as_secs() > SCREENSHOT_TIMEOUT {
-                    failed = true;
-                    break;
-                }
-            }
-
-            while let Some((handle, sender)) = handles.pop() {
-                match sender.send(()) {
-                    Ok(()) => {
-                        let _ = handle.join();
-                    }
-                    Err(_) => {
-                        log::error!("failed to send stop message to screenshot capture thread")
-                    }
-                }
-            }
-
-            if failed {
-                return Err(CapturerError::FailedToCaptureFrames);
-            }
-
-            let res = result.lock().unwrap();
-            Ok((*res).clone())
-        }
-        /*
-         * On linux desktop capture is using the system picker so we can't get
-         * screenshots the way we do on macos and windows.
-         */
-        #[cfg(target_os = "linux")]
-        {
-            let capturer = DesktopCapturer::new(|_, _| {}, false, false);
-            if capturer.is_none() {
-                return Err(CapturerError::DesktopCapturerCreationError);
-            }
-            let capturer = capturer.unwrap();
-            let sources = capturer.get_source_list();
-            if sources.is_empty() {
-                log::error!("Capturer returned 0 sources");
-                return Ok(vec![]);
-            }
-            let display = &sources[0];
-            Ok(vec![CaptureContent {
-                content: Content {
-                    content_type: ContentType::Display,
-                    id: display.id() as u32,
-                },
-                base64: "".to_string(),
-                title: display.title().clone(),
-            }])
         }
     }
 
@@ -674,23 +340,6 @@ impl Capturer {
         if let Err(e) = res {
             log::error!("stop_runtime_stream_handler: error sending Stop message: {e}");
         }
-    }
-
-    /// Gets the size of a specific monitor by ID.
-    ///
-    /// # Parameters
-    /// - `monitors`: List of available monitor handles from the window system
-    /// - `input_id`: The identifier of the target monitor
-    ///
-    /// # Returns
-    /// An `Extent` containing the width and height of the specified monitor.
-    /// Falls back to the first monitor if the specified ID is not found.
-    ///
-    /// # Notes
-    /// This is a convenience wrapper around the platform-specific implementation
-    /// provided by `ScreenshareFunctions`. The actual behavior varies by platform.
-    pub fn get_monitor_size(monitors: &[MonitorHandle], input_id: u32) -> Extent {
-        ScreenshareFunctions::get_monitor_size(monitors, input_id)
     }
 
     pub fn get_selected_monitor(&self, monitors: &[MonitorHandle], input_id: u32) -> MonitorHandle {

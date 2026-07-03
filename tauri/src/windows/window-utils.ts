@@ -8,32 +8,8 @@ getVersion().then((version) => {
   appVersion = version;
 });
 
-const createContentPickerWindow = async () => {
-  // Check if sharing window is already open, and if so, focus on it
-  const isWindowOpen = await WebviewWindow.getByLabel("contentPicker");
-  if (isWindowOpen) {
-    // There might be a case that all old window with a call token was open:
-    // https://github.com/tauri-apps/tauri/issues/6539
-    // We cannot get the URL for the time being to know if we need to invalidate that window or not
-    // But should be no-op as when a call changes (or tokens change) we close all windows
-    await isWindowOpen.setFocus();
-    return;
-  }
-
-  if (isTauri) {
-    try {
-      await invoke("create_content_picker_window", {});
-      const windowHandle = await WebviewWindow.getByLabel("contentPicker");
-      if (windowHandle) {
-        await windowHandle.setFocus();
-      }
-    } catch (error) {
-      console.error("Failed to create content picker window:", error);
-    }
-  } else {
-    const URL = `contentPicker.html`;
-    window.open(URL);
-  }
+const getAvailableContent = async () => {
+  if (isTauri) await invoke("get_available_content");
 };
 
 const closeCameraWindow = async () => {
@@ -98,26 +74,15 @@ const resetCoreProcess = async () => {
   await invoke("reset_core_process");
 };
 
-const closeContentPickerWindow = async () => {
-  if (isTauri) {
-    const contentPickerWindow = await WebviewWindow.getByLabel("contentPicker");
-    if (contentPickerWindow) {
-      console.debug("Closing content picker window");
-      await contentPickerWindow.close();
-    }
-  }
+const endCallCleanup = async () => {
+  await resetCoreProcess();
+  await closeScreenShareWindow();
+  await closeCameraWindow();
 };
 
 const getTokenParam = (param: string) => {
   const urlParams = new URLSearchParams(window.location.search);
   return urlParams.get(param);
-};
-
-const endCallCleanup = async () => {
-  await resetCoreProcess();
-  await closeScreenShareWindow();
-  await closeContentPickerWindow();
-  await closeCameraWindow();
 };
 
 const setControllerCursor = async (enabled: boolean) => {
@@ -314,7 +279,7 @@ const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, parti
 
 export const tauriUtils = {
   closeScreenShareWindow,
-  createContentPickerWindow,
+  getAvailableContent,
   showWindow,
   closeCameraWindow,
   storeTokenBackend,

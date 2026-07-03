@@ -254,7 +254,7 @@ impl<'a> WindowManager<'a> {
     pub fn show_window(
         &mut self,
         monitor: &MonitorHandle,
-        _event_loop: &ActiveEventLoop,
+        set_active_window: bool,
     ) -> Result<Arc<Window>, WindowManagerError> {
         let target_id = ScreenshareFunctions::get_monitor_id(monitor);
         log::info!(
@@ -310,13 +310,17 @@ impl<'a> WindowManager<'a> {
         let fullscreen_size = entry.window.inner_size();
         entry.gfx.resize(fullscreen_size);
 
-        entry
-            .gfx
-            .add_participant("local".to_string(), "Me ", true)
-            .map_err(|_| WindowManagerError::WindowCreationError)?;
-
+        if set_active_window {
+            entry
+                .gfx
+                .add_participant("local".to_string(), "Me ", true)
+                .map_err(|_| WindowManagerError::WindowCreationError)?;
+            self.active_monitor_id = Some(target_id);
+        } else {
+            entry.gfx.set_screen_selection(true);
+            let _ = entry.gfx.window().set_cursor_hittest(true);
+        }
         entry.window.set_visible(true);
-        self.active_monitor_id = Some(target_id);
 
         Ok(entry.window.clone())
     }
@@ -344,6 +348,13 @@ impl<'a> WindowManager<'a> {
                 .find(|entry| &entry.monitor_id == active_id)?
                 .gfx,
         )
+    }
+
+    pub fn all_gfx_mut(&mut self) -> Vec<&mut GraphicsContext<'a>> {
+        self.windows
+            .iter_mut()
+            .map(|entry| &mut entry.gfx)
+            .collect()
     }
 
     pub fn hide_active_window(&mut self) {
@@ -390,6 +401,27 @@ impl<'a> WindowManager<'a> {
         })
     }
 
+    pub fn monitor_id_for_window(&self, window_id: winit::window::WindowId) -> Option<MonitorId> {
+        self.windows
+            .iter()
+            .find(|entry| entry.window.id() == window_id)
+            .map(|entry| entry.monitor_id.clone())
+    }
+
+    pub fn resize_window(
+        &mut self,
+        window_id: winit::window::WindowId,
+        new_size: winit::dpi::PhysicalSize<u32>,
+    ) {
+        if let Some(entry) = self
+            .windows
+            .iter_mut()
+            .find(|entry| entry.window.id() == window_id)
+        {
+            entry.gfx.resize(new_size);
+        }
+    }
+
     pub fn resize_active_window(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         let active_id = match self.active_monitor_id.as_ref() {
             Some(id) => id.clone(),
@@ -397,6 +429,29 @@ impl<'a> WindowManager<'a> {
         };
         if let Some(entry) = self.windows.iter_mut().find(|e| e.monitor_id == active_id) {
             entry.gfx.resize(new_size);
+        }
+    }
+
+    pub fn show_screen_selection(&mut self, event_loop: &ActiveEventLoop) {
+        log::info!("show_screen_selection");
+        let monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
+        for monitor in monitors.iter() {
+            let res = self.show_window(monitor, false);
+            log::info!("{:?}", res);
+        }
+    }
+
+    pub fn hide_screen_selection(&mut self) {
+        for entry in &mut self.windows {
+            entry.gfx.set_screen_selection(false);
+            #[cfg(target_os = "macos")]
+            {
+                entry.window.set_simple_fullscreen(false);
+                remove_miniaturizable_style(&entry.window);
+            }
+            let _ = entry.window.set_cursor_hittest(false);
+            entry.window.set_visible(false);
+            entry.gfx.resize(winit::dpi::PhysicalSize::new(1, 1));
         }
     }
 

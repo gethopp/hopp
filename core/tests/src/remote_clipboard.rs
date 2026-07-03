@@ -318,7 +318,7 @@ async fn internal_test_add_to_clipboard_cut(room: &Room) -> io::Result<()> {
 /// Public function to test paste with single payload only.
 pub async fn test_paste_single() -> io::Result<()> {
     println!("Starting paste single payload test...");
-    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 
@@ -342,7 +342,7 @@ pub async fn test_paste_single() -> io::Result<()> {
 /// Public function to test paste with multiple payloads only.
 pub async fn test_paste_multiple() -> io::Result<()> {
     println!("Starting paste multiple payloads test...");
-    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 
@@ -366,7 +366,7 @@ pub async fn test_paste_multiple() -> io::Result<()> {
 /// Public function to test add to clipboard (copy) only.
 pub async fn test_add_copy() -> io::Result<()> {
     println!("Starting add to clipboard (copy) test...");
-    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 
@@ -390,7 +390,7 @@ pub async fn test_add_copy() -> io::Result<()> {
 /// Public function to test add to clipboard (cut) only.
 pub async fn test_add_cut() -> io::Result<()> {
     println!("Starting add to clipboard (cut) test...");
-    let (sender, _event_socket, _) = screenshare_client::start_screenshare_session()?;
+    let (sender, _event_socket) = screenshare_client::start_screenshare_session()?;
 
     sleep(Duration::from_secs(2)).await;
 

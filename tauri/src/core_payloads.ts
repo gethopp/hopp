@@ -9,11 +9,6 @@ import { invoke } from "@tauri-apps/api/core";
  * But skipping for now, as it would need quite
  * many changes to the socket code, and tweaking.
  */
-export interface Extent {
-  width: number;
-  height: number;
-}
-
 export interface WindowFrameMessage {
   origin_x: number;
   origin_y: number;
@@ -46,29 +41,6 @@ export interface KeystrokeMessage {
   ctrl: boolean;
   alt: boolean;
   down: boolean;
-}
-
-export type ContentType = "Display" | { Window: { display_id: number } };
-
-export interface Content {
-  content_type: ContentType;
-  id: number;
-}
-
-export interface CaptureContent {
-  content: Content;
-  base64: string;
-  title: string;
-}
-
-export interface AvailableContentMessage {
-  content: CaptureContent[];
-}
-
-export interface ScreenShareMessage {
-  content: Content;
-  resolution: Extent;
-  accessibility_permission: boolean;
 }
 
 export interface CallStartMessage {
@@ -140,16 +112,8 @@ export interface CoreRoleEvent {
  * It is used to generate the type-safe invoke function.
  */
 export interface CommandMap {
-  screenshare: {
-    args: {
-      content: Content;
-      resolution: Extent;
-      accessibilityPermission: boolean;
-    };
-    return: void;
-  };
   stop_sharing: { args: void; return: void };
-  get_available_content: { args: void; return: CaptureContent[] };
+  get_available_content: { args: void; return: void };
 
   // Token management
   store_token_cmd: { args: { token: string }; return: void };
@@ -205,7 +169,6 @@ export interface CommandMap {
   get_livekit_url: { args: void; return: string };
 
   // Windows
-  create_content_picker_window: { args: void; return: void };
   create_feedback_window: { args: { teamId: string; roomId: string; participantId: string }; return: void };
   create_settings_window: { args: void; return: void };
 

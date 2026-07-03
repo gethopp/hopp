@@ -321,33 +321,18 @@ pub fn test_call(
     // Start screen sharing if requested
     if screenshare {
         println!("Starting screen share...");
-        let available_content = screenshare_client::get_available_content(&sender, &event_socket)?;
-        match available_content {
-            Message::AvailableContent(content_msg) => {
-                if let Some(capture_content) = content_msg.content.last() {
-                    println!("Using display: {}", capture_content.content.id);
+        let screen_id = std::env::var("HOPP_TEST_SCREEN_ID")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0u32);
+        println!("Using display: {screen_id}");
 
-                    // Use default resolution for screenshare
-                    let width = 1920.0;
-                    let height = 1080.0;
+        // Use default resolution for screenshare
+        let width = 1920.0;
+        let height = 1080.0;
 
-                    screenshare_client::request_screenshare(
-                        &sender,
-                        &event_socket,
-                        capture_content.content.id,
-                        //1,
-                        width,
-                        height,
-                    )?;
-                    println!("Screen share started successfully");
-                } else {
-                    return Err(io::Error::other("No displays found"));
-                }
-            }
-            other => {
-                return Err(io::Error::other(format!("Unexpected response: {other:?}")));
-            }
-        }
+        screenshare_client::request_screenshare(&sender, &event_socket, screen_id, width, height)?;
+        println!("Screen share started successfully");
     }
 
     println!("In call with camera and mic. Press Ctrl-C to stop.");

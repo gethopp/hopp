@@ -1,9 +1,6 @@
 use winit::platform::windows::MonitorHandleExtWindows;
 
-use crate::{
-    capture::capturer::{MonitorId, ScreenshareExt},
-    utils::geometry::Extent,
-};
+use crate::capture::capturer::{MonitorId, ScreenshareExt};
 
 use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
@@ -11,25 +8,6 @@ use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
 pub struct ScreenshareFunctions {}
 
 impl ScreenshareExt for ScreenshareFunctions {
-    fn get_monitor_size(monitors: &[winit::monitor::MonitorHandle], input_id: u32) -> Extent {
-        let input_monitor_name = get_display_index(input_id);
-        log::debug!("get_monitor_size input name: {input_monitor_name:?}");
-        for monitor in monitors {
-            if monitor.native_id() == input_monitor_name {
-                let monitor_size = monitor.size();
-                return Extent {
-                    width: monitor_size.width as f64,
-                    height: monitor_size.height as f64,
-                };
-            }
-        }
-
-        Extent {
-            width: 0.,
-            height: 0.,
-        }
-    }
-
     fn get_selected_monitor(
         monitors: &[winit::monitor::MonitorHandle],
         input_id: u32,
@@ -47,6 +25,24 @@ impl ScreenshareExt for ScreenshareFunctions {
 
     fn get_monitor_id(monitor: &winit::monitor::MonitorHandle) -> MonitorId {
         MonitorId::Named(monitor.native_id())
+    }
+
+    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u32> {
+        let monitor_name = monitor.native_id();
+        let mut index = 0;
+
+        loop {
+            let display_name = get_display_index(index);
+            if display_name.is_empty() {
+                return None;
+            }
+
+            if display_name == monitor_name {
+                return Some(index);
+            }
+
+            index += 1;
+        }
     }
 }
 

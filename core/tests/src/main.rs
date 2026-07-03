@@ -179,9 +179,7 @@ enum ClipboardTest {
 enum ScreenshareTest {
     /// Run basic screenshare test
     Basic,
-    /// Test available content consistency across multiple requests
-    AvailableContent,
-    /// Screen share every available monitor for 10 seconds each
+    /// Screen share the configured monitor for 10 seconds
     EveryMonitor,
     /// Start call, wait 5s, end call, start another call
     CallRestartCycle,
@@ -353,10 +351,6 @@ async fn main() -> io::Result<()> {
                 ScreenshareTest::Basic => {
                     println!("Running basic screenshare test...");
                     screenshare_client::screenshare_test()?;
-                }
-                ScreenshareTest::AvailableContent => {
-                    println!("Running available content test...");
-                    screenshare_client::test_available_content_consistency()?;
                 }
                 ScreenshareTest::EveryMonitor => {
                     println!("Running every monitor screenshare test...");

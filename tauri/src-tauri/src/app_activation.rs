@@ -50,13 +50,6 @@ impl AppActivationObserver {
                     return;
                 }
 
-                if let Some(window) = app_handle.get_webview_window("contentPicker") {
-                    log::info!("app_activation: contentPicker is open focus there");
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    return;
-                }
-
                 // Regular mode is either when permissions/notification windows are open, or when we are in a call.
                 if app_handle
                     .state::<Mutex<AppData>>()

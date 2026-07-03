@@ -122,28 +122,13 @@ fn handle_screenshare(app: &tauri::AppHandle) {
         (data.is_screensharing, data.sender.clone())
     };
 
-    if is_screensharing {
-        if let Err(e) = sender.send(Message::StopScreenshare) {
-            log::error!("handle_screenshare shortcut (stop): {e}");
-        }
-    } else if let Err(e) = hopp::create_media_window(
-        app,
-        hopp::MediaWindowConfig {
-            label: "contentPicker",
-            title: "Content picker",
-            url: "contentPicker.html",
-            width: 800.0,
-            height: 450.0,
-            resizable: true,
-            always_on_top: true,
-            content_protected: false,
-            maximizable: false,
-            minimizable: true,
-            decorations: true,
-            transparent: false,
-            background_color: None,
-        },
-    ) {
-        log::error!("handle_screenshare shortcut (open picker): {e}");
+    let message = if is_screensharing {
+        Message::StopScreenshare
+    } else {
+        Message::GetAvailableContent
+    };
+
+    if let Err(e) = sender.send(message) {
+        log::error!("handle_screenshare shortcut: {e}");
     }
 }

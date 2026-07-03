@@ -573,18 +573,6 @@ html.dark .camera-body #root {
   background-color: var(--bg-gray-dark);
 }
 
-.contentPicker-body {
-  border-radius: 12px;
-}
-
-.contentPicker-body #root {
-  background-color: var(--bg-gray-light);
-}
-
-html.dark .contentPicker-body #root {
-  background-color: var(--bg-gray-dark);
-}
-
 .permissions-body {
   margin: 0;
   height: 100vh;

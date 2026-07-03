@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::components::fonts as fonts_mod;
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::geometry::Position;
 use iced::Renderer;
@@ -49,6 +50,7 @@ impl IcedRenderer {
         );
         let clipboard = Clipboard::connect(window.clone());
         let overlay_surface = OverlaySurface::new(texture_path);
+        fonts_mod::load_fonts();
         let wgpu_renderer = iced_wgpu::Renderer::new(engine, Font::default(), Pixels::from(16));
         let renderer = Renderer::Primary(wgpu_renderer);
         Self {
@@ -82,10 +84,15 @@ impl IcedRenderer {
         participants: &ParticipantsManager,
         click_animation_renderer: &ClickAnimationRenderer,
         position_translator: &dyn Fn(Position) -> Position,
+        screen_selection: bool,
     ) {
         let mut interface = UserInterface::build(
-            self.overlay_surface
-                .view(participants, click_animation_renderer, position_translator),
+            self.overlay_surface.view(
+                participants,
+                click_animation_renderer,
+                position_translator,
+                screen_selection,
+            ),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,
