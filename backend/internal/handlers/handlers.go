@@ -365,29 +365,31 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	// TeamID/IsAdmin and all downstream assumptions stay intact; the real team
 	// name is collected later during onboarding (PATCH /api/auth/team). This
 	// mirrors the social-signup "{FirstName}-Team" fallback and avoids teamless
-	// users.
-	if u.TeamID == nil {
-		teamName := req.TeamName
-		if teamName == "" {
-			teamName = fmt.Sprintf("%s-Team", u.FirstName)
+	// users. Team creation and the user insert run in one transaction so a failed
+	// user insert (e.g. duplicate email) can't leave an orphan team behind.
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if u.TeamID == nil {
+			teamName := strings.TrimSpace(req.TeamName)
+			if teamName == "" {
+				teamName = fmt.Sprintf("%s-Team", u.FirstName)
+			}
+			team := models.Team{Name: teamName}
+			if err := tx.Create(&team).Error; err != nil {
+				return err
+			}
+			u.TeamID = &team.ID
+			u.IsAdmin = true
 		}
-		team := models.Team{Name: teamName}
-		if err := h.DB.Create(&team).Error; err != nil {
-			c.Logger().Errorf("Failed to create team: %v", err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create team")
-		}
-		u.TeamID = &team.ID
-		u.IsAdmin = true
-	}
 
-	result := h.DB.Create(u)
-	if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
+		return tx.Create(u).Error
+	})
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return echo.NewHTTPError(409, "user with this email already exists")
 	}
 
 	// Handle other potential errors during creation
-	if result.Error != nil {
-		c.Logger().Errorf("Failed to create user: %v", result.Error)
+	if err != nil {
+		c.Logger().Errorf("Failed to create user: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create user")
 	}
 

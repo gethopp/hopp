@@ -26,6 +26,11 @@ import (
 // with it keep the legacy free trial.
 var preCutoffDate = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// postCutoffDate is comfortably after the hard-paywall cutoff so teams stamped
+// with it are always subject to the card-required paywall, regardless of when
+// the suite runs or where the cutoff is moved.
+var postCutoffDate = time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // setupTestServerWithStripe builds a test server with Stripe "enabled" (a dummy
 // secret key) so the access guard in GetUserWithSubscription is exercised. No
 // real Stripe calls are made on the 402 path.
@@ -80,9 +85,13 @@ func makeSubscription(t *testing.T, db *gorm.DB, teamID uint, status models.Subs
 }
 
 // newAdminWithTeam creates a team and an admin user assigned to it. The team's
-// created_at defaults to now (post-cutoff); callers override it for legacy cases.
+// created_at is explicitly stamped to a known post-cutoff value so the paywall
+// tests always exercise the hard-paywall path; callers override it (via
+// setTeamCreatedAt) for legacy pre-cutoff cases.
 func newAdminWithTeam(t *testing.T, srv *server.Server, teamName, email string) (*models.Team, *models.User) {
 	team := createTestTeam(t, srv.DB, teamName)
+	setTeamCreatedAt(t, srv.DB, team.ID, postCutoffDate)
+	team.CreatedAt = postCutoffDate
 	user := createTestUser(t, srv.DB, email, "Admin", "User", "password123", true)
 	user.TeamID = &team.ID
 	require.NoError(t, srv.DB.Save(user).Error)
@@ -274,6 +283,13 @@ func TestHardPaywall_RequiresPaymentMethod(t *testing.T) {
 
 			resp := getSubscriptionStatus(t, srv, user.Email)
 			assert.Equal(t, tc.expected, resp.Subscription.RequiresPaymentMethod)
+
+			// A blocked post-cutoff team (no subscription) must not be reported as
+			// trialing, otherwise clients treat it as if a trial already exists.
+			if tc.expected {
+				assert.NotEqual(t, string(models.StatusTrialing), resp.Subscription.Status,
+					"team requiring a payment method must not report trialing")
+			}
 		})
 	}
 }

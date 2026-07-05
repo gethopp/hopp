@@ -324,8 +324,19 @@ func (bh *BillingHandler) GetSubscriptionStatus(c echo.Context) error {
 			IsAdmin:           user.IsAdmin,
 		}
 	} else {
+		// No subscription record. Pre-cutoff teams are on the legacy free trial,
+		// but post-cutoff teams get no trial and are blocked until they add a card.
+		// Report a non-trialing status for the latter so clients don't treat a
+		// blocked team as if a trial were already running (stays consistent with
+		// models.GetUserWithSubscription, where these teams are IsPro=false and
+		// IsTrial=false). Self-hosted deployments without Stripe keep the legacy
+		// behavior since IsStripeEnabled() is false.
+		status := models.StatusTrialing
+		if bh.Config.IsStripeEnabled() && models.IsTeamPostCutoff(team) {
+			status = models.StatusIncomplete
+		}
 		subscriptionResponse = SubscriptionResponse{
-			Status:            models.StatusTrialing,
+			Status:            status,
 			ManualUpgrade:     team.IsManualUpgrade,
 			CurrentPeriodEnd:  nil,
 			CancelAtPeriodEnd: nil,

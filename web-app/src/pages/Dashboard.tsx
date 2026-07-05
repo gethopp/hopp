@@ -13,7 +13,6 @@ import { BsApple, BsWindows } from "react-icons/bs";
 import { VscTerminalLinux } from "react-icons/vsc";
 import { z } from "zod";
 import CreatableSelect from "react-select/creatable";
-import { SignInSuccessModal } from "@/components/SignInSuccessModal";
 import { AuthenticationDialog } from "@/components/AuthenticationDialog";
 import { SubscriptionSuccessModal } from "@/components/SubscriptionSuccessModal";
 import { usePostHog } from "posthog-js/react";
@@ -346,7 +345,6 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col w-full">
-      <SignInSuccessModal />
       <AuthenticationDialog
         open={showAuthDialog}
         onOpenChange={onAuthenticationDialogOpenChange}
