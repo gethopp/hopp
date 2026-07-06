@@ -270,7 +270,6 @@ impl<'a> GraphicsContext<'a> {
 
     pub fn set_screen_selection(&mut self, screen_selection: bool) {
         self.screen_selection = screen_selection;
-        //self.redraw_thread_sender.send(Activity);
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
