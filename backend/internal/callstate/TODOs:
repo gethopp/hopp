@@ -1,4 +1,0 @@
-TODOs:
-1. Fix app trial at for countdown
-2. Also the team will be `isTrial` false by default (no more relevant Post-cutoff)
-3. Validate that RoomPresence is not "conflicting" with other teams
