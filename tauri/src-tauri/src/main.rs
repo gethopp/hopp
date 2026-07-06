@@ -264,7 +264,7 @@ fn open_screenshare_settings(_app: tauri::AppHandle) {
 #[tauri::command(async)]
 async fn trigger_screenshare_permission(_app: tauri::AppHandle) -> bool {
     log::info!("trigger_screenshare_permission");
-    permissions::screenshare()
+    permissions::request_screenshare()
 }
 
 #[tauri::command(async)]

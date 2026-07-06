@@ -85,6 +85,7 @@ impl IcedRenderer {
         click_animation_renderer: &ClickAnimationRenderer,
         position_translator: &dyn Fn(Position) -> Position,
         screen_selection: bool,
+        window_focused: bool,
     ) {
         let mut interface = UserInterface::build(
             self.overlay_surface.view(
@@ -92,6 +93,7 @@ impl IcedRenderer {
                 click_animation_renderer,
                 position_translator,
                 screen_selection,
+                window_focused,
             ),
             self.viewport.logical_size(),
             user_interface::Cache::default(),

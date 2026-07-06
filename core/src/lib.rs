@@ -374,7 +374,6 @@ impl<'a> Application<'a> {
     /// - Begins streaming captured content via LiveKit
     fn screenshare(
         &mut self,
-        event_loop: &ActiveEventLoop,
         screenshare_input: ScreenShareMessage,
         monitors: Vec<MonitorHandle>,
     ) -> Result<(), ServerError> {
@@ -435,7 +434,7 @@ impl<'a> Application<'a> {
 
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(event_loop, monitor, REMOTE_CONTROL_ENABLED);
+        let res = self.create_overlay_window(monitor, REMOTE_CONTROL_ENABLED);
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -615,9 +614,40 @@ impl<'a> Application<'a> {
         log::info!("set_screensharing_active: {active}");
     }
 
-    fn create_overlay_window(
+    fn cancel_screen_selection(&mut self) {
+        if let Some(window_manager) = self.window_manager.as_mut() {
+            window_manager.hide_screen_selection();
+        }
+        self.screen_selection_active = false;
+    }
+
+    fn select_screen_selection_window(
         &mut self,
         event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+    ) {
+        let Some(message) = self.screenshare_message_for_window(event_loop, window_id) else {
+            log::error!("select_screen_selection_window: failed to resolve selected screen");
+            return;
+        };
+
+        if let Some(window_manager) = self.window_manager.as_mut() {
+            window_manager.hide_screen_selection();
+        }
+        self.screen_selection_active = false;
+
+        if let Err(error) = self
+            .event_loop_proxy
+            .send_event(UserEvent::ScreenShare(message))
+        {
+            log::error!(
+                "select_screen_selection_window: failed to send ScreenShare event: {error:?}"
+            );
+        }
+    }
+
+    fn create_overlay_window(
+        &mut self,
         selected_monitor: MonitorHandle,
         remote_control_enabled: bool,
     ) -> Result<(), ServerError> {
@@ -1046,7 +1076,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
 
-                let result_message = match self.screenshare(event_loop, data, monitors) {
+                let result_message = match self.screenshare(data, monitors) {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         log::error!("user_event: Screen share failed: {e:?}");
@@ -1060,13 +1090,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(room_service) = self.room_service.as_ref() {
                         room_service.send_participants_snapshot();
                     }
-                } else {
-                    if let Err(e) = self
-                        .socket
-                        .send(Message::StartScreenShareResult(result_message))
-                    {
-                        error!("user_event: Error sending start screen share result: {e:?}");
-                    }
+                }
+
+                if let Err(e) = self
+                    .socket
+                    .send(Message::StartScreenShareResult(result_message))
+                {
+                    error!("user_event: Error sending start screen share result: {e:?}");
                 }
             }
             UserEvent::StopScreenShare => {
@@ -1077,6 +1107,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
+                if self.screen_selection_active {
+                    let Some(window_manager) = self.window_manager.as_mut() else {
+                        log::trace!("user_event: window manager is none request redraw");
+                        return;
+                    };
+                    for gfx in window_manager.all_gfx_mut() {
+                        gfx.window().request_redraw();
+                    }
+                    return;
+                }
+
                 let Some(gfx) = self
                     .window_manager
                     .as_mut()
@@ -2238,34 +2279,35 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 button: MouseButton::Left,
                 ..
             } if self.screen_selection_active => {
-                let Some(message) = self.screenshare_message_for_window(event_loop, window_id)
-                else {
-                    log::error!("window_event: failed to resolve selected screen");
-                    return;
-                };
-
-                if let Some(window_manager) = self.window_manager.as_mut() {
-                    window_manager.hide_screen_selection();
+                self.select_screen_selection_window(event_loop, window_id);
+            }
+            WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
+                if let Some(window_manager) = self.window_manager.as_ref() {
+                    if !window_manager.focus_window(window_id) {
+                        log::warn!("window_event: failed to focus screen selection window");
+                    }
                 }
-                self.screen_selection_active = false;
-
-                if let Err(error) = self
-                    .event_loop_proxy
-                    .send_event(UserEvent::ScreenShare(message))
-                {
-                    log::error!("window_event: failed to send ScreenShare event: {error:?}");
+                if let Some(window_manager) = self.window_manager.as_mut() {
+                    for gfx in window_manager.all_gfx_mut() {
+                        gfx.trigger_render();
+                    }
                 }
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Right,
-                ..
-            } if self.screen_selection_active => {
-                log::info!("window_event: Right click, cancelling screen selection");
-                if let Some(window_manager) = self.window_manager.as_mut() {
-                    window_manager.hide_screen_selection();
-                }
-                self.screen_selection_active = false;
+            WindowEvent::KeyboardInput { event, .. }
+                if self.screen_selection_active
+                    && event.state.is_pressed()
+                    && matches!(event.logical_key, Key::Named(NamedKey::Escape)) =>
+            {
+                log::info!("window_event: Escape, cancelling screen selection");
+                self.cancel_screen_selection();
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if self.screen_selection_active
+                    && event.state.is_pressed()
+                    && matches!(event.logical_key, Key::Named(NamedKey::Enter)) =>
+            {
+                log::info!("window_event: Enter, selecting focused screen");
+                self.select_screen_selection_window(event_loop, window_id);
             }
             WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {

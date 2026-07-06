@@ -1,4 +1,4 @@
-use iced::widget::{canvas, container, text};
+use iced::widget::{canvas, column, container, text};
 use iced::{mouse, Alignment, Background, Border, Color, Length, Padding, Rectangle, Theme};
 use iced_wgpu::core::Element;
 
@@ -86,19 +86,39 @@ impl OverlaySurface {
         click_animation_renderer: &'a ClickAnimationRenderer,
         position_translator: &'a dyn Fn(Position) -> Position,
         screen_selection: bool,
+        window_focused: bool,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
         if screen_selection {
-            let box_text = text("Click anywhere to select the screen. Press right click to cancel")
-                .size(16.0)
-                .color(Color::BLACK)
-                .font(GEIST_REGULAR);
+            let card_background = if window_focused {
+                Color::from_rgba(0.28, 0.12, 0.58, 0.98)
+            } else {
+                Color::from_rgba(0.42, 0.20, 0.80, 0.88)
+            };
+            let scrim_background = if window_focused {
+                Color::from_rgba(0.08, 0.05, 0.20, 0.80)
+            } else {
+                Color::from_rgba(0.12, 0.08, 0.27, 0.58)
+            };
+
+            let box_text = column![
+                text("Click anywhere to select this screen or press Enter")
+                    .size(24.0)
+                    .color(Color::from_rgb(0.98, 0.96, 1.0))
+                    .font(GEIST_REGULAR),
+                text("Move your cursor to the display you'd like to share and click. Press ESC to cancel.")
+                    .size(16.0)
+                    .color(Color::from_rgb(0.89, 0.84, 0.98))
+                    .font(GEIST_REGULAR),
+            ]
+            .spacing(14.0)
+            .max_width(420.0);
 
             let box_container = container(box_text)
-                .padding(Padding::from([20.0, 32.0]))
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb(0.29, 0.10, 0.42))),
+                .padding(Padding::from([26.0, 34.0]))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(card_background)),
                     border: Border {
-                        radius: 12.0.into(),
+                        radius: 16.0.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -109,8 +129,8 @@ impl OverlaySurface {
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.91, 0.84, 0.96, 0.7))),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(scrim_background)),
                     ..Default::default()
                 })
                 .into()

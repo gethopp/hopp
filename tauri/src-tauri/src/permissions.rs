@@ -27,6 +27,9 @@ trait PermissionsTrait {
     /// Checks if screen capture/recording permission is granted.
     fn screenshare() -> bool;
 
+    /// Requests screen capture/recording permission.
+    fn request_screenshare() -> bool;
+
     /// Checks if accessibility permission is granted.
     fn accessibility() -> bool;
 
@@ -69,6 +72,16 @@ pub fn has_ungranted_permissions() -> bool {
 /// - **Others**: Returns `true` (no restriction)
 pub fn screenshare() -> bool {
     PlatformPermissions::screenshare()
+}
+
+/// Requests screen sharing/recording permission.
+///
+/// # Platform Implementation
+///
+/// - **macOS**: Uses Core Graphics `ScreenCaptureAccess::request()`
+/// - **Others**: Returns `true` (no restriction)
+pub fn request_screenshare() -> bool {
+    PlatformPermissions::request_screenshare()
 }
 
 /// Checks if accessibility permission is granted.

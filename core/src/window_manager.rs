@@ -441,6 +441,19 @@ impl<'a> WindowManager<'a> {
         }
     }
 
+    pub fn focus_window(&self, window_id: winit::window::WindowId) -> bool {
+        if let Some(entry) = self
+            .windows
+            .iter()
+            .find(|entry| entry.window.id() == window_id)
+        {
+            entry.window.focus_window();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn hide_screen_selection(&mut self) {
         for entry in &mut self.windows {
             entry.gfx.set_screen_selection(false);

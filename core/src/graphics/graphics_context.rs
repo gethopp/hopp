@@ -4,9 +4,7 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
-use crate::graphics::{
-    graphics_context::RedrawThreadCommands::Activity, graphics_window_context::ContextManager,
-};
+use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
 use crate::UserEvent;
@@ -376,6 +374,8 @@ impl<'a> GraphicsContext<'a> {
 
         self.click_animation_renderer.update();
 
+        let window_focused = self.window.has_focus();
+
         self.iced_renderer.draw(
             &output,
             &view,
@@ -383,6 +383,7 @@ impl<'a> GraphicsContext<'a> {
             &self.click_animation_renderer,
             position_translator,
             self.screen_selection,
+            window_focused,
         );
 
         self.window.pre_present_notify();

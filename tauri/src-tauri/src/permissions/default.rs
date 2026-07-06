@@ -8,6 +8,11 @@ impl PermissionsTrait for PlatformPermissions {
         true
     }
 
+    fn request_screenshare() -> bool {
+        log::info!("Default screenshare permission request");
+        true
+    }
+
     fn accessibility() -> bool {
         log::info!("Default accessibility permission check");
         true
