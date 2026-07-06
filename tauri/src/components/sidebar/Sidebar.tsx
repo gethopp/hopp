@@ -122,10 +122,10 @@ const DownloadNewVersionButton = () => {
           onClick={() => {
             setUpdateInProgress(true);
             if (OS === "macos" && hasPendingUpdate()) {
-              void installAndRelaunch();
+              installAndRelaunch();
               return;
             }
-            void downloadAndRelaunch();
+            downloadAndRelaunch();
           }}
           disabled={updateInProgress}
         >
@@ -184,7 +184,7 @@ const TrialCountdownAvatarFill = ({ user }: { user: components["schemas"]["Priva
       throttle(
         () => {
           if (user.is_admin) {
-            void openUrl(new URL("/subscription", Constants.webAppUrl).toString());
+            openUrl(new URL("/subscription", Constants.webAppUrl).toString());
           } else {
             toast("Contact your admin to manage your team's subscription.", { duration: 3000 });
           }

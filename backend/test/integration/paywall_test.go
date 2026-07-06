@@ -134,16 +134,17 @@ func TestHardPaywall_PreCutoffTeam_KeepsFreeTrial(t *testing.T) {
 // never applied. An empty status means no subscription row at all.
 func TestHardPaywall_PostCutoffAccessByStatus(t *testing.T) {
 	cases := []struct {
-		name   string
-		status models.SubscriptionStatus
-		isPro  bool
+		name    string
+		status  models.SubscriptionStatus
+		isPro   bool
+		isTrial bool
 	}{
-		{"no subscription", "", false},
-		{"trialing", models.StatusTrialing, true},
-		{"active", models.StatusActive, true},
-		{"canceled", models.StatusCanceled, false},
-		{"past_due", models.StatusPastDue, false},
-		{"incomplete", models.StatusIncomplete, false},
+		{"no subscription", "", false, false},
+		{"trialing", models.StatusTrialing, true, true},
+		{"active", models.StatusActive, true, false},
+		{"canceled", models.StatusCanceled, false, false},
+		{"past_due", models.StatusPastDue, false, false},
+		{"incomplete", models.StatusIncomplete, false, false},
 	}
 
 	for i, tc := range cases {
@@ -160,8 +161,15 @@ func TestHardPaywall_PostCutoffAccessByStatus(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.isPro, result.IsPro)
-			assert.False(t, result.IsTrial, "post-cutoff teams never get the legacy free trial")
-			assert.Nil(t, result.TrialEndsAt)
+			// The legacy CreatedAt-based free trial never applies post-cutoff;
+			// only a card-on-file (trialing) subscription surfaces the trial
+			// countdown, with its end date derived from the Stripe period.
+			assert.Equal(t, tc.isTrial, result.IsTrial)
+			if tc.isTrial {
+				assert.NotNil(t, result.TrialEndsAt, "trialing sub exposes the trial end date")
+			} else {
+				assert.Nil(t, result.TrialEndsAt)
+			}
 		})
 	}
 }

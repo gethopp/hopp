@@ -222,7 +222,7 @@ export function Onboarding() {
                 <span className="h-px flex-1 bg-slate-200" />
               </div>
 
-              <div className="space-y-1 ml-6">
+              <div className="space-y-1 text-center">
                 <h3 className="text-md font-semibold">Want to join an existing team?</h3>
                 <p className="text-sm text-muted-foreground">You'll need an invite link from a teammate.</p>
               </div>
@@ -275,7 +275,7 @@ export function Onboarding() {
                   Back
                 </Button>
                 <Button type="button" onClick={handleStartTrial} disabled={checkoutLoading}>
-                  {checkoutLoading ? "Redirecting to Stripe..." : "Add payment method"}
+                  {checkoutLoading ? "Redirecting to Stripe" : "Add payment method"}
                 </Button>
               </div>
             </div>

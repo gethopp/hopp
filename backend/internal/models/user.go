@@ -308,7 +308,13 @@ func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*User
 	}
 
 	if sub != nil && sub.IsActive() {
-		return &UserWithSubscription{User: *user, IsPro: true}, nil
+		result := &UserWithSubscription{User: *user, IsPro: true}
+		if sub.Status == StatusTrialing {
+			trialEndsAt := sub.CurrentPeriodEnd
+			result.IsTrial = true
+			result.TrialEndsAt = &trialEndsAt
+		}
+		return result, nil
 	}
 
 	// Teams created on/after the cutoff get no free trial. Access requires an
