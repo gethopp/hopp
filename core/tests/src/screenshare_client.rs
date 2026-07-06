@@ -80,10 +80,16 @@ pub fn request_screenshare(
     });
     sender.send(message).unwrap();
 
-    match event_socket.responses.recv_timeout(Duration::from_secs(5)) {
-        Ok(_message) => Ok(()),
+    match event_socket.events.recv_timeout(Duration::from_secs(5)) {
+        Ok(Message::StartScreenShareResult(Ok(()))) => Ok(()),
+        Ok(Message::StartScreenShareResult(Err(e))) => {
+            Err(io::Error::other(format!("StartScreenShare failed: {e}")))
+        }
+        Ok(msg) => Err(io::Error::other(format!(
+            "Unexpected response to StartScreenShare: {msg:?}"
+        ))),
         Err(e) => Err(io::Error::other(format!(
-            "Failed to receive message: {e:?}"
+            "Failed to receive StartScreenShareResult: {e:?}"
         ))),
     }
 }

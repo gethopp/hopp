@@ -29,6 +29,7 @@ import { useEndCall } from "@/lib/hooks";
 import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { getAllWindows } from "@tauri-apps/api/window";
 import { sounds } from "@/constants/sounds";
 
 const Colors = {
@@ -96,6 +97,24 @@ export function CallCenter() {
       if (!callTokens) return;
       handleEndCallRef.current();
       toast.error("Failed to establish connection");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<string>("core_screenshare_failed", async () => {
+      const windows = await getAllWindows();
+      const main = windows.find((w) => w.label === "main");
+      if (main) {
+        const focused = await main.isFocused();
+        if (!focused) {
+          await main.show();
+          await main.setFocus();
+        }
+      }
+      toast.error("Failed to start screen sharing", { duration: 2500 });
     });
     return () => {
       unlisten.then((fn) => fn());

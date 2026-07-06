@@ -1060,13 +1060,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(room_service) = self.room_service.as_ref() {
                         room_service.send_participants_snapshot();
                     }
-                }
-
-                if let Err(e) = self
-                    .socket
-                    .send(Message::StartScreenShareResult(result_message))
-                {
-                    error!("user_event: Error sending start screen share result: {e:?}");
+                } else {
+                    if let Err(e) = self
+                        .socket
+                        .send(Message::StartScreenShareResult(result_message))
+                    {
+                        error!("user_event: Error sending start screen share result: {e:?}");
+                    }
                 }
             }
             UserEvent::StopScreenShare => {

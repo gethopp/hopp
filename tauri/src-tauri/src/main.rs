@@ -1148,6 +1148,15 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to emit mic audio level: {e:?}");
                 }
             }
+            Message::StartScreenShareResult(Err(error)) => {
+                log::error!("forward_core_events: screen share failed: {error}");
+                if let Err(e) = app.emit("core_screenshare_failed", &error) {
+                    log::error!("forward_core_events: failed to emit screen share failed: {e:?}");
+                }
+            }
+            Message::StartScreenShareResult(Ok(())) => {
+                log::info!("forward_core_events: screen share started");
+            }
             Message::DrawingDisabled => {
                 log::info!("forward_core_events: drawing disabled");
                 let data = app.state::<Mutex<AppData>>();

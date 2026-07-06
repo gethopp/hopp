@@ -230,8 +230,7 @@ impl Message {
     pub fn is_response(&self) -> bool {
         matches!(
             self,
-            Message::StartScreenShareResult(_)
-                | Message::CallStartResult(_)
+            Message::CallStartResult(_)
                 | Message::AudioDeviceList(_)
                 | Message::StartAudioCaptureResult(_)
                 | Message::CameraList(_)
@@ -556,16 +555,16 @@ mod tests {
     }
 
     #[test]
-    fn test_send_recv_response() {
+    fn test_send_recv_screen_share_result_event() {
         let ((server_sender, _server_events), (_client_sender, client_events)) = test_pair();
 
-        // Send a response-type message from server to client
+        // Send StartScreenShareResult as an event (not response)
         server_sender
             .send(Message::StartScreenShareResult(Ok(())))
             .unwrap();
 
         let msg = client_events
-            .responses
+            .events
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg, Message::StartScreenShareResult(_)));
@@ -595,7 +594,7 @@ mod tests {
             .send(Message::CallStartResult(Ok(())))
             .unwrap();
 
-        // Events: GetAvailableContent, Ping, CallStart, CallEnd
+        // Events: GetAvailableContent, Ping, StartScreenShareResult, CallStart, CallEnd
         let msg1 = server_events
             .events
             .recv_timeout(Duration::from_secs(5))
@@ -606,6 +605,11 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg2, Message::Ping));
+        let msg3 = server_events
+            .events
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(msg3, Message::StartScreenShareResult(_)));
         let msg5 = server_events
             .events
             .recv_timeout(Duration::from_secs(5))
@@ -617,12 +621,7 @@ mod tests {
             .unwrap();
         assert!(matches!(msg6, Message::CallEnd));
 
-        // Responses: StartScreenShareResult, CallStartResult
-        let msg4 = server_events
-            .responses
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
-        assert!(matches!(msg4, Message::StartScreenShareResult(_)));
+        // Responses: CallStartResult
         let msg7 = server_events
             .responses
             .recv_timeout(Duration::from_secs(5))
