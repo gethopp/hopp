@@ -99,30 +99,40 @@ impl OverlaySurface {
             } else {
                 Color::from_rgba(0.12, 0.08, 0.27, 0.58)
             };
+            let title_size = if window_focused { 26.0 } else { 24.0 };
+            let helper_size = if window_focused { 18.0 } else { 16.0 };
+            let text_spacing = if window_focused { 16.0 } else { 14.0 };
+            let box_width = if window_focused { 460.0 } else { 420.0 };
+            let box_padding = if window_focused {
+                Padding::from([30.0, 40.0])
+            } else {
+                Padding::from([26.0, 34.0])
+            };
 
             let box_text = column![
                 text("Click anywhere to select this screen or press Enter")
-                    .size(24.0)
+                    .size(title_size)
                     .color(Color::from_rgb(0.98, 0.96, 1.0))
                     .font(GEIST_REGULAR),
-                text("Move your cursor to the display you'd like to share and click. Press ESC to cancel.")
-                    .size(16.0)
+                text("Move your cursor to the display you'd like to share (or use the arrows) and click. Press ESC to cancel.")
+                    .size(helper_size)
                     .color(Color::from_rgb(0.89, 0.84, 0.98))
                     .font(GEIST_REGULAR),
             ]
-            .spacing(14.0)
-            .max_width(420.0);
+            .spacing(text_spacing)
+            .max_width(box_width);
 
-            let box_container = container(box_text)
-                .padding(Padding::from([26.0, 34.0]))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(card_background)),
-                    border: Border {
-                        radius: 16.0.into(),
+            let box_container =
+                container(box_text)
+                    .padding(box_padding)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(card_background)),
+                        border: Border {
+                            radius: 16.0.into(),
+                            ..Default::default()
+                        },
                         ..Default::default()
-                    },
-                    ..Default::default()
-                });
+                    });
 
             container(box_container)
                 .width(Length::Fill)

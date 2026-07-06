@@ -2294,20 +2294,51 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. }
-                if self.screen_selection_active
-                    && event.state.is_pressed()
-                    && matches!(event.logical_key, Key::Named(NamedKey::Escape)) =>
+                if self.screen_selection_active && event.state.is_pressed() =>
             {
-                log::info!("window_event: Escape, cancelling screen selection");
-                self.cancel_screen_selection();
-            }
-            WindowEvent::KeyboardInput { event, .. }
-                if self.screen_selection_active
-                    && event.state.is_pressed()
-                    && matches!(event.logical_key, Key::Named(NamedKey::Enter)) =>
-            {
-                log::info!("window_event: Enter, selecting focused screen");
-                self.select_screen_selection_window(event_loop, window_id);
+                match event.logical_key {
+                    Key::Named(NamedKey::Escape) => {
+                        log::info!("window_event: Escape, cancelling screen selection");
+                        self.cancel_screen_selection();
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        log::info!("window_event: Enter, selecting focused screen");
+                        self.select_screen_selection_window(event_loop, window_id);
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        if let Some(window_manager) = self.window_manager.as_ref() {
+                            window_manager.focus_window_in_direction(
+                                window_id,
+                                window_manager::ScreenSelectionNavigationDirection::Left,
+                            );
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        if let Some(window_manager) = self.window_manager.as_ref() {
+                            window_manager.focus_window_in_direction(
+                                window_id,
+                                window_manager::ScreenSelectionNavigationDirection::Right,
+                            );
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if let Some(window_manager) = self.window_manager.as_ref() {
+                            window_manager.focus_window_in_direction(
+                                window_id,
+                                window_manager::ScreenSelectionNavigationDirection::Up,
+                            );
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        if let Some(window_manager) = self.window_manager.as_ref() {
+                            window_manager.focus_window_in_direction(
+                                window_id,
+                                window_manager::ScreenSelectionNavigationDirection::Down,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
             }
             WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
