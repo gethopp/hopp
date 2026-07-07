@@ -260,6 +260,7 @@ const getUserSettings = async () => {
     start_camera_on_call: boolean;
     start_mic_on_call: boolean;
     noise_cancellation_enabled: boolean;
+    screen_share_resolution: "P1080" | "P1440" | "P4K";
     hopp_server_url: string | null;
   }>("get_user_settings");
 };

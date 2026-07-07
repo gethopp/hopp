@@ -70,7 +70,7 @@ use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
     CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    SentryMetadata, SocketSender,
+    ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -106,8 +106,6 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
-const SCREEN_SHARE_4K_WIDTH: f64 = 4096.0;
-const SCREEN_SHARE_4K_HEIGHT: f64 = 2160.0;
 const REMOTE_CONTROL_ENABLED: bool = true;
 
 #[derive(Error, Debug)]
@@ -235,6 +233,7 @@ pub struct Application<'a> {
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
+    screen_share_resolution: ScreenShareResolution,
     clipboard_controller: Option<ClipboardController>,
     screen_selection_active: bool,
 }
@@ -322,6 +321,7 @@ impl<'a> Application<'a> {
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
+            screen_share_resolution: ScreenShareResolution::P4K,
             clipboard_controller,
             screen_selection_active: false,
         })
@@ -763,15 +763,14 @@ impl<'a> Application<'a> {
 
         let content_id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
 
+        let resolution = self.screen_share_resolution.extent();
+
         Some(ScreenShareMessage {
             content: Content {
                 content_type: ContentType::Display,
                 id: content_id,
             },
-            resolution: socket_lib::Extent {
-                width: SCREEN_SHARE_4K_WIDTH,
-                height: SCREEN_SHARE_4K_HEIGHT,
-            },
+            resolution,
         })
     }
 }
@@ -1545,6 +1544,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: SetNoiseCancellation({enabled})");
                 self.noise_cancellation_enabled
                     .store(enabled, std::sync::atomic::Ordering::Relaxed);
+            }
+            UserEvent::SetScreenShareResolution(resolution) => {
+                log::info!("user_event: SetScreenShareResolution({resolution:?})");
+                self.screen_share_resolution = resolution;
             }
             UserEvent::SetTelemetryEnabled(enabled) => {
                 log::info!("user_event: SetTelemetryEnabled({enabled})");
@@ -2492,6 +2495,7 @@ pub enum UserEvent {
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
+    SetScreenShareResolution(ScreenShareResolution),
     SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
@@ -2645,6 +2649,9 @@ impl RenderEventLoop {
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
+                    }
+                    Message::SetScreenShareResolution(resolution) => {
+                        UserEvent::SetScreenShareResolution(resolution)
                     }
                     Message::SetTelemetryEnabled(enabled) => {
                         UserEvent::SetTelemetryEnabled(enabled)

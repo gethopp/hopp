@@ -4,7 +4,8 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenShareResolution,
+    SentryMetadata,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -649,8 +650,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 740.0,
-            height: 800.0,
+            width: 800.0,
+            height: 840.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -848,6 +849,21 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
         .update_user_setting(|settings| settings.noise_cancellation_enabled = enabled);
     if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
         log::error!("set_noise_cancellation: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
+fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareResolution) {
+    log::info!("set_screen_share_resolution: {resolution:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|settings| settings.screen_share_resolution = resolution);
+    if let Err(e) = data
+        .sender
+        .send(Message::SetScreenShareResolution(resolution))
+    {
+        log::error!("set_screen_share_resolution: failed to send: {e:?}");
     }
 }
 
@@ -1309,6 +1325,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
+            let screen_share_resolution = app_state.user_settings().screen_share_resolution;
+            if let Err(e) = sender.send(Message::SetScreenShareResolution(screen_share_resolution)) {
+                log::error!("Failed to send initial screen_share_resolution: {e:?}");
+            }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
             }
@@ -1631,6 +1651,7 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
+            set_screen_share_resolution,
             list_microphones,
             select_microphone,
             list_webcams,

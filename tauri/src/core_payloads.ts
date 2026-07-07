@@ -84,12 +84,15 @@ export interface CoreParticipantState {
   is_screensharing: boolean;
 }
 
+export type ScreenShareResolution = "P1080" | "P1440" | "P4K";
+
 export interface UserSettings {
   call_feedback_popup: boolean;
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
   noise_cancellation_enabled: boolean;
+  screen_share_resolution: ScreenShareResolution;
   hopp_server_url: string | null;
   shortcut_toggle_mic: string;
   shortcut_toggle_camera: string;
@@ -204,6 +207,7 @@ export interface CommandMap {
   unmute_mic: { args: void; return: void };
   toggle_mic: { args: void; return: void };
   set_noise_cancellation: { args: { enabled: boolean }; return: void };
+  set_screen_share_resolution: { args: { resolution: ScreenShareResolution }; return: void };
   list_microphones: { args: void; return: AudioDevice[] };
   select_microphone: { args: { deviceName: string }; return: void };
 

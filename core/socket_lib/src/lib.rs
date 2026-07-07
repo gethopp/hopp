@@ -21,6 +21,32 @@ pub struct Extent {
     pub height: f64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum ScreenShareResolution {
+    P1080,
+    P1440,
+    P4K,
+}
+
+impl ScreenShareResolution {
+    pub fn extent(self) -> Extent {
+        match self {
+            ScreenShareResolution::P1080 => Extent {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            ScreenShareResolution::P1440 => Extent {
+                width: 2560.0,
+                height: 1440.0,
+            },
+            ScreenShareResolution::P4K => Extent {
+                width: 4096.0,
+                height: 2160.0,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WindowFrameMessage {
     pub origin_x: f64,
@@ -221,6 +247,7 @@ pub enum Message {
     DrawingDisabled,
     ExitRequested,
     SetNoiseCancellation(bool),
+    SetScreenShareResolution(ScreenShareResolution),
     SetTelemetryEnabled(bool),
     /// Microphone RMS level in [0.0, 1.0], emitted ~1 Hz from core capturer.
     MicrophoneAudioLevel(f32),
