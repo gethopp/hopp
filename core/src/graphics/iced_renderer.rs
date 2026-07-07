@@ -22,6 +22,17 @@ use iced_canvas::OverlaySurface;
 use super::click_animation::ClickAnimationRenderer;
 use super::participant::ParticipantsManager;
 
+#[derive(Clone, Copy)]
+pub struct DrawArgs<'a> {
+    pub frame: &'a wgpu::SurfaceTexture,
+    pub view: &'a wgpu::TextureView,
+    pub participants: &'a ParticipantsManager,
+    pub click_animation_renderer: &'a ClickAnimationRenderer,
+    pub position_translator: &'a dyn Fn(Position) -> Position,
+    pub screen_selection: bool,
+    pub window_focused: bool,
+}
+
 pub struct IcedRenderer {
     renderer: Renderer,
     viewport: Viewport,
@@ -77,16 +88,17 @@ impl IcedRenderer {
         );
     }
 
-    pub fn draw(
-        &mut self,
-        frame: &wgpu::SurfaceTexture,
-        view: &wgpu::TextureView,
-        participants: &ParticipantsManager,
-        click_animation_renderer: &ClickAnimationRenderer,
-        position_translator: &dyn Fn(Position) -> Position,
-        screen_selection: bool,
-        window_focused: bool,
-    ) {
+    pub fn draw(&mut self, args: DrawArgs) {
+        let DrawArgs {
+            frame,
+            view,
+            participants,
+            click_animation_renderer,
+            position_translator,
+            screen_selection,
+            window_focused,
+        } = args;
+
         let mut interface = UserInterface::build(
             self.overlay_surface.view(
                 participants,

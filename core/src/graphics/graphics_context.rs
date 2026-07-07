@@ -375,15 +375,15 @@ impl<'a> GraphicsContext<'a> {
 
         let window_focused = self.window.has_focus();
 
-        self.iced_renderer.draw(
-            &output,
-            &view,
-            &self.participants_manager,
-            &self.click_animation_renderer,
+        self.iced_renderer.draw(iced_renderer::DrawArgs {
+            frame: &output,
+            view: &view,
+            participants: &self.participants_manager,
+            click_animation_renderer: &self.click_animation_renderer,
             position_translator,
-            self.screen_selection,
+            screen_selection: self.screen_selection,
             window_focused,
-        );
+        });
 
         self.window.pre_present_notify();
 
