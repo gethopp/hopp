@@ -70,11 +70,13 @@ function ResolutionRow({
       <div className="flex flex-col gap-2">
         {screenShareResolutionItems.map((item) => (
           <label key={item.id} className="flex items-start gap-2 cursor-pointer">
-            <Checkbox
-              className="mt-0.5 rounded border-gray-300 dark:border-gray-600"
+            <input
+              type="radio"
+              name="screen-share-resolution"
+              className="mt-0.5 size-4 cursor-pointer accent-slate-700 dark:accent-slate-300"
               checked={value === item.id}
-              onCheckedChange={(checked) => {
-                if (checked === true && value !== item.id) {
+              onChange={(event) => {
+                if (event.target.checked && value !== item.id) {
                   onValueChange(item.id);
                 }
               }}
