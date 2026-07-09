@@ -1,11 +1,12 @@
-use iced::widget::canvas;
-use iced::{mouse, Length, Rectangle, Theme};
+use iced::widget::{canvas, column, container, text};
+use iced::{mouse, Alignment, Background, Border, Color, Length, Padding, Rectangle, Theme};
 use iced_wgpu::core::Element;
 
 #[path = "marker.rs"]
 mod marker;
 use marker::Marker;
 
+use crate::components::fonts::GEIST_REGULAR;
 use crate::graphics::graphics_context::click_animation::ClickAnimationRenderer;
 use crate::graphics::graphics_context::participant::ParticipantsManager;
 use crate::utils::geometry::Position;
@@ -84,15 +85,75 @@ impl OverlaySurface {
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
         position_translator: &'a dyn Fn(Position) -> Position,
+        screen_selection: bool,
+        window_focused: bool,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
-        canvas(OverlaySurfaceCanvas::new(
-            &self.marker,
-            participants,
-            click_animation_renderer,
-            position_translator,
-        ))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        if screen_selection {
+            let card_background = if window_focused {
+                Color::from_rgba(0.28, 0.12, 0.58, 0.98)
+            } else {
+                Color::from_rgba(0.42, 0.20, 0.80, 0.88)
+            };
+            let scrim_background = if window_focused {
+                Color::from_rgba(0.08, 0.05, 0.20, 0.80)
+            } else {
+                Color::from_rgba(0.12, 0.08, 0.27, 0.58)
+            };
+            let title_size = if window_focused { 26.0 } else { 24.0 };
+            let helper_size = if window_focused { 18.0 } else { 16.0 };
+            let text_spacing = if window_focused { 16.0 } else { 14.0 };
+            let box_width = if window_focused { 460.0 } else { 420.0 };
+            let box_padding = if window_focused {
+                Padding::from([30.0, 40.0])
+            } else {
+                Padding::from([26.0, 34.0])
+            };
+
+            let box_text = column![
+                text("Click anywhere to select this screen or press Enter")
+                    .size(title_size)
+                    .color(Color::from_rgb(0.98, 0.96, 1.0))
+                    .font(GEIST_REGULAR),
+                text("Move your cursor to the display you'd like to share (or use the arrows) and click. Press ESC to cancel.")
+                    .size(helper_size)
+                    .color(Color::from_rgb(0.89, 0.84, 0.98))
+                    .font(GEIST_REGULAR),
+            ]
+            .spacing(text_spacing)
+            .max_width(box_width);
+
+            let box_container =
+                container(box_text)
+                    .padding(box_padding)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(card_background)),
+                        border: Border {
+                            radius: 16.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+
+            container(box_container)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(scrim_background)),
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            canvas(OverlaySurfaceCanvas::new(
+                &self.marker,
+                participants,
+                click_animation_renderer,
+                position_translator,
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        }
     }
 }

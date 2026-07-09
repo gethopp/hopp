@@ -945,12 +945,12 @@ impl CameraWindow {
                 }
             }
             CameraMessage::ScreenShare => {
-                log::info!("CameraWindow: screen share -> OpenContentPicker");
+                log::info!("CameraWindow: screen share -> GetAvailableContent");
                 if let Err(e) = self
                     .event_loop_proxy
-                    .send_event(UserEvent::OpenContentPicker)
+                    .send_event(UserEvent::GetAvailableContent)
                 {
-                    log::error!("CameraWindow: failed to send OpenContentPicker event: {e:?}");
+                    log::error!("CameraWindow: failed to send GetAvailableContent event: {e:?}");
                 }
             }
             CameraMessage::VideoToggle => {

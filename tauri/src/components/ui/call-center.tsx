@@ -29,6 +29,7 @@ import { useEndCall } from "@/lib/hooks";
 import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { getAllWindows } from "@tauri-apps/api/window";
 import { sounds } from "@/constants/sounds";
 
 const Colors = {
@@ -102,6 +103,24 @@ export function CallCenter() {
     };
   }, []);
 
+  useEffect(() => {
+    const unlisten = listen<string>("core_screenshare_failed", async () => {
+      const windows = await getAllWindows();
+      const main = windows.find((w) => w.label === "main");
+      if (main) {
+        const focused = await main.isFocused();
+        if (!focused) {
+          await main.show();
+          await main.setFocus();
+        }
+      }
+      toast.error("Failed to start screen sharing", { duration: 2500 });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   if (!callTokens) return null;
 
   return (
@@ -155,7 +174,7 @@ export function CallCenter() {
                 })}
               </span>
             </div>
-            : <div className="w-full text-center mb-4">
+          : <div className="w-full text-center mb-4">
               <span className="text-xs font-medium">Pairing</span>{" "}
               <span className="text-xs muted font-medium">
                 started{" "}
@@ -199,9 +218,9 @@ export function CallCenter() {
                       }}
                       state={
                         controllerCursorState ? "active"
-                          : !accessibilityPermission ?
-                            "deactivated"
-                            : "neutral"
+                        : !accessibilityPermission ?
+                          "deactivated"
+                        : "neutral"
                       }
                       size="unsized"
                       className="size-9"
@@ -292,7 +311,7 @@ function CallParticipants() {
           isLocal: true,
           isMicrophoneEnabled: callTokens?.hasAudioEnabled ?? true,
         }
-        : null;
+      : null;
 
     const remoteEntries = coreParticipants
       .filter((p) => p.connected)
@@ -332,7 +351,7 @@ function CallParticipants() {
                       alt={`${participant.user.first_name} ${participant.user.last_name}`}
                       className="size-full object-cover"
                     />
-                    : <span className="text-[10px] font-medium text-emerald-700">
+                  : <span className="text-[10px] font-medium text-emerald-700">
                       {participant.user.first_name[0]}
                       {participant.user.last_name[0]}
                     </span>
@@ -351,7 +370,7 @@ function CallParticipants() {
                   )}
                 </div>
               </>
-              : <>
+            : <>
                 <div className="size-8 rounded-md bg-slate-200 flex items-center justify-center shrink-0">
                   <span className="text-xs font-medium text-slate-600">?</span>
                 </div>
@@ -476,7 +495,7 @@ function DrawingEnableButton() {
             >
               {drawingEnabled ?
                 <PiCursorBold className="size-4" />
-                : <PiScribbleLoopBold className="size-4" />}
+              : <PiScribbleLoopBold className="size-4" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{drawingEnabled ? "Disable drawing" : "Enable drawing"}</TooltipContent>
@@ -619,7 +638,7 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
                     level={callTokens?.micLevel ?? 0}
                     className={`size-4 ${Colors.mic.icon} relative z-10`}
                   />
-                  : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
+                : <LuMicOff className={`size-4 ${Colors.deactivatedIcon} relative z-10`} />}
               </div>
             }
             state={hasAudioEnabled ? "active" : "neutral"}
@@ -676,7 +695,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
     if (!callTokens) return;
 
     if (callTokens.role === ParticipantRole.NONE || callTokens.role === ParticipantRole.CONTROLLER) {
-      tauriUtils.createContentPickerWindow();
+      tauriUtils.getAvailableContent();
     } else if (callTokens.role === ParticipantRole.SHARER) {
       setCallTokens({
         ...callTokens,
@@ -689,7 +708,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
 
   const changeScreenShare = useCallback(() => {
     if (!callTokens) return;
-    tauriUtils.createContentPickerWindow();
+    tauriUtils.getAvailableContent();
   }, [callTokens]);
 
   return (
@@ -701,7 +720,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
             icon={
               callTokens?.role === ParticipantRole.SHARER ?
                 <LuScreenShareOff className={`size-4 ${Colors.screen.icon}`} />
-                : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
+              : <LuScreenShare className={`size-4 ${Colors.deactivatedIcon}`} />
             }
             state={callTokens?.role === ParticipantRole.SHARER ? "active" : "neutral"}
             size="unsized"
@@ -853,7 +872,7 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
             icon={
               cameraEnabled ?
                 <LuVideo className={`size-4 ${Colors.camera.icon}`} />
-                : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
+              : <LuVideoOff className={`size-4 ${Colors.deactivatedIcon}`} />
             }
             state={cameraEnabled ? "active" : "neutral"}
             size="unsized"

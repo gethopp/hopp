@@ -1,31 +1,11 @@
 #[cfg(target_os = "macos")]
 use winit::platform::macos::MonitorHandleExtMacOS;
 
-use crate::{
-    capture::capturer::{MonitorId, ScreenshareExt},
-    utils::geometry::Extent,
-};
+use crate::capture::capturer::{MonitorId, ScreenshareExt};
 
 pub struct ScreenshareFunctions {}
 
 impl ScreenshareExt for ScreenshareFunctions {
-    fn get_monitor_size(monitors: &[winit::monitor::MonitorHandle], input_id: u32) -> Extent {
-        for monitor in monitors {
-            if monitor.native_id() == input_id {
-                let monitor_size = monitor.size();
-                return Extent {
-                    width: monitor_size.width as f64,
-                    height: monitor_size.height as f64,
-                };
-            }
-        }
-
-        Extent {
-            width: 0.,
-            height: 0.,
-        }
-    }
-
     fn get_selected_monitor(
         monitors: &[winit::monitor::MonitorHandle],
         input_id: u32,
@@ -41,6 +21,10 @@ impl ScreenshareExt for ScreenshareFunctions {
 
     fn get_monitor_id(monitor: &winit::monitor::MonitorHandle) -> MonitorId {
         MonitorId::Numeric(monitor.native_id())
+    }
+
+    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u32> {
+        Some(monitor.native_id())
     }
 }
 

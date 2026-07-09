@@ -5,7 +5,7 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { typedInvoke } from "@/core_payloads";
+import { typedInvoke, type ScreenShareResolution } from "@/core_payloads";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { tauriUtils } from "@/windows/window-utils";
 import { OS, URLS } from "@/constants";
@@ -13,6 +13,12 @@ import posthog from "posthog-js";
 import useStore from "@/store/store";
 
 const queryClient = new QueryClient();
+
+const screenShareResolutionItems = [
+  { id: "P1080", title: "1080p", description: "Lowest latency" },
+  { id: "P1440", title: "1440p", description: "Balance latency and resolution" },
+  { id: "P4K", title: "4K", description: "Maximum resolution" },
+] satisfies Array<{ id: ScreenShareResolution; title: string; description: string }>;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -45,6 +51,44 @@ function CheckboxRow({
         <span className="text-sm text-gray-500 dark:text-gray-400">{description}</span>
       </div>
     </label>
+  );
+}
+
+function ResolutionRow({
+  value,
+  onValueChange,
+}: {
+  value: ScreenShareResolution;
+  onValueChange: (value: ScreenShareResolution) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Screen share resolution</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">Choose stream quality for screen sharing</span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {screenShareResolutionItems.map((item) => (
+          <label key={item.id} className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="screen-share-resolution"
+              className="mt-0.5 size-4 cursor-pointer accent-slate-700 dark:accent-slate-300"
+              checked={value === item.id}
+              onChange={(event) => {
+                if (event.target.checked && value !== item.id) {
+                  onValueChange(item.id);
+                }
+              }}
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{item.title}</span>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{item.description}</span>
+            </div>
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -125,7 +169,7 @@ function ShortcutRow({
       >
         {recording ?
           <span className="text-gray-400 dark:text-gray-500 text-xs">Recording...</span>
-          : <span className="text-gray-600 dark:text-gray-400 text-s">{formatAccel(value)}</span>}
+        : <span className="text-gray-600 dark:text-gray-400 text-s">{formatAccel(value)}</span>}
       </Button>
     </div>
   );
@@ -162,9 +206,9 @@ function SettingsWindow() {
       for (const other of others) {
         const otherVal =
           other === "mic" ? settings.shortcut_toggle_mic
-            : other === "camera" ? settings.shortcut_toggle_camera
-              : other === "screenshare" ? settings.shortcut_toggle_screenshare
-                : settings.shortcut_end_call;
+          : other === "camera" ? settings.shortcut_toggle_camera
+          : other === "screenshare" ? settings.shortcut_toggle_screenshare
+          : settings.shortcut_end_call;
         if (otherVal === accel) {
           await typedInvoke(setters[other], { accel: "" });
         }
@@ -242,6 +286,20 @@ function SettingsWindow() {
                 checked={settings.noise_cancellation_enabled}
                 onCheckedChange={(v) => {
                   typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
+            </div>
+          </div>
+
+          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
+            <h3 className="text-base font-medium text-black dark:text-white">Screen share settings</h3>
+            <div className="flex flex-col gap-3">
+              <ResolutionRow
+                value={settings.screen_share_resolution}
+                onValueChange={(resolution) => {
+                  typedInvoke("set_screen_share_resolution", { resolution }).then(() => refetchSettings());
                 }}
               />
             </div>

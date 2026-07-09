@@ -158,6 +158,8 @@ pub struct GraphicsContext<'a> {
     surface_format: wgpu::TextureFormat,
     surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_present_mode: wgpu::PresentMode,
+
+    screen_selection: bool,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -250,6 +252,7 @@ impl<'a> GraphicsContext<'a> {
             surface_format,
             surface_alpha_mode,
             surface_present_mode,
+            screen_selection: false,
         })
     }
 
@@ -263,6 +266,10 @@ impl<'a> GraphicsContext<'a> {
 
     pub(crate) fn surface_format(&self) -> wgpu::TextureFormat {
         self.surface_format
+    }
+
+    pub fn set_screen_selection(&mut self, screen_selection: bool) {
+        self.screen_selection = screen_selection;
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
@@ -366,13 +373,17 @@ impl<'a> GraphicsContext<'a> {
 
         self.click_animation_renderer.update();
 
-        self.iced_renderer.draw(
-            &output,
-            &view,
-            &self.participants_manager,
-            &self.click_animation_renderer,
+        let window_focused = self.window.has_focus();
+
+        self.iced_renderer.draw(iced_renderer::DrawArgs {
+            frame: &output,
+            view: &view,
+            participants: &self.participants_manager,
+            click_animation_renderer: &self.click_animation_renderer,
             position_translator,
-        );
+            screen_selection: self.screen_selection,
+            window_focused,
+        });
 
         self.window.pre_present_notify();
 

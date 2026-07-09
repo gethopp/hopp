@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::components::fonts as fonts_mod;
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::geometry::Position;
 use iced::Renderer;
@@ -20,6 +21,17 @@ use iced_canvas::OverlaySurface;
 
 use super::click_animation::ClickAnimationRenderer;
 use super::participant::ParticipantsManager;
+
+#[derive(Clone, Copy)]
+pub struct DrawArgs<'a> {
+    pub frame: &'a wgpu::SurfaceTexture,
+    pub view: &'a wgpu::TextureView,
+    pub participants: &'a ParticipantsManager,
+    pub click_animation_renderer: &'a ClickAnimationRenderer,
+    pub position_translator: &'a dyn Fn(Position) -> Position,
+    pub screen_selection: bool,
+    pub window_focused: bool,
+}
 
 pub struct IcedRenderer {
     renderer: Renderer,
@@ -49,6 +61,7 @@ impl IcedRenderer {
         );
         let clipboard = Clipboard::connect(window.clone());
         let overlay_surface = OverlaySurface::new(texture_path);
+        fonts_mod::load_fonts();
         let wgpu_renderer = iced_wgpu::Renderer::new(engine, Font::default(), Pixels::from(16));
         let renderer = Renderer::Primary(wgpu_renderer);
         Self {
@@ -75,17 +88,25 @@ impl IcedRenderer {
         );
     }
 
-    pub fn draw(
-        &mut self,
-        frame: &wgpu::SurfaceTexture,
-        view: &wgpu::TextureView,
-        participants: &ParticipantsManager,
-        click_animation_renderer: &ClickAnimationRenderer,
-        position_translator: &dyn Fn(Position) -> Position,
-    ) {
+    pub fn draw(&mut self, args: DrawArgs) {
+        let DrawArgs {
+            frame,
+            view,
+            participants,
+            click_animation_renderer,
+            position_translator,
+            screen_selection,
+            window_focused,
+        } = args;
+
         let mut interface = UserInterface::build(
-            self.overlay_surface
-                .view(participants, click_animation_renderer, position_translator),
+            self.overlay_surface.view(
+                participants,
+                click_animation_renderer,
+                position_translator,
+                screen_selection,
+                window_focused,
+            ),
             self.viewport.logical_size(),
             user_interface::Cache::default(),
             &mut self.renderer,

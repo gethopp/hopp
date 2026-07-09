@@ -42,7 +42,6 @@ export default defineConfig(async () => {
       rollupOptions: {
         input: {
           main: resolve(__dirname, "index.html"),
-          contentPicker: resolve(__dirname, "contentPicker.html"),
           permissions: resolve(__dirname, "permissions.html"),
           trayNotification: resolve(__dirname, "trayNotification.html"),
           feedback: resolve(__dirname, "feedback.html"),

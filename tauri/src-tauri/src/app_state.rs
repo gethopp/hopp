@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
-pub use socket_lib::StoredMode;
+pub use socket_lib::{ScreenShareResolution, StoredMode};
 
 fn default_true() -> bool {
     true
+}
+
+fn default_screen_share_resolution() -> ScreenShareResolution {
+    ScreenShareResolution::P4K
 }
 
 /// User-facing settings exposed in the Settings window.
@@ -15,6 +19,8 @@ pub struct UserSettings {
     pub start_mic_on_call: bool,
     #[serde(default = "default_noise_cancellation_enabled")]
     pub noise_cancellation_enabled: bool,
+    #[serde(default = "default_screen_share_resolution")]
+    pub screen_share_resolution: ScreenShareResolution,
     pub hopp_server_url: Option<String>,
     pub shortcut_toggle_mic: Option<String>,
     pub shortcut_toggle_camera: Option<String>,
@@ -34,6 +40,7 @@ impl Default for UserSettings {
             start_camera_on_call: false,
             start_mic_on_call: true,
             noise_cancellation_enabled: true,
+            screen_share_resolution: ScreenShareResolution::P4K,
             hopp_server_url: None,
             shortcut_toggle_mic: None,
             shortcut_toggle_camera: None,

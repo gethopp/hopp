@@ -4,8 +4,8 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    AudioCaptureMessage, AudioDevice, CameraDevice, CaptureContent, Content, DrawingEnabled,
-    Extent, Message, ScreenShareMessage, SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenShareResolution,
+    SentryMetadata,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -34,56 +34,6 @@ use std::{env, sync::Arc};
 use tauri::PhysicalPosition;
 
 #[tauri::command(async)]
-async fn screenshare(
-    app: tauri::AppHandle,
-    content: Content,
-    resolution: Extent,
-    accessibility_permission: bool,
-) -> Result<(), String> {
-    log::info!("screenshare: content: {content:?}, resolution: {resolution:?}");
-
-    /*
-     * If the user was previously a controller, we need to hide the viewing
-     * window, to hide the delay from requesting the screen share to
-     * screen share starting and the viewing window automatically being closed.
-     */
-    let window = app.get_webview_window("screenshare");
-    if let Some(window) = window {
-        log::info!("screenshare: closing window");
-        let _ = window.hide();
-    }
-
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data
-        .sender
-        .send(Message::StartScreenShare(ScreenShareMessage {
-            content,
-            resolution,
-            accessibility_permission,
-        }))
-    {
-        log::error!("screenshare: failed to send message: {e:?}");
-        return Err("Failed to send message to hopp_core".to_string());
-    }
-
-    match recv_expected_response(&data.event_socket, |msg| match msg {
-        Message::StartScreenShareResult(r) => Ok(r),
-        other => Err(other),
-    }) {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => {
-            log::error!("screenshare: failed to start screenshare");
-            Err(e)
-        }
-        Err(e) => {
-            log::error!("screenshare: failed to receive message: {e:?}");
-            Err("Failed to receive message from hopp_core".to_string())
-        }
-    }
-}
-
-#[tauri::command(async)]
 async fn open_stats_window(app: tauri::AppHandle) {
     log::info!("open_stats_window");
     let data = app.state::<Mutex<AppData>>();
@@ -104,33 +54,16 @@ async fn stop_sharing(app: tauri::AppHandle) {
 }
 
 #[tauri::command(async)]
-async fn get_available_content(app: tauri::AppHandle) -> Vec<CaptureContent> {
-    log::info!("get_available_content");
+async fn get_available_content(app: tauri::AppHandle) -> Result<(), String> {
+    log::info!("get_available_content: open core screen selection");
+
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::GetAvailableContent) {
+
+    data.sender.send(Message::GetAvailableContent).map_err(|e| {
         log::error!("get_available_content: failed to send message: {e:?}");
-        return vec![];
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
-        Message::AvailableContent(c) => Ok(c),
-        other => Err(other),
-    }) {
-        Ok(content) => {
-            for c in &content.content {
-                log::info!(
-                    "get_available_content: possible content {}, content {:?}",
-                    c.title,
-                    c.content
-                );
-            }
-            content.content
-        }
-        Err(e) => {
-            log::error!("get_available_content: recv failed: {e:?}");
-            vec![]
-        }
-    }
+        "Failed to start screen selection".to_string()
+    })
 }
 
 #[tauri::command(async)]
@@ -330,17 +263,9 @@ fn open_screenshare_settings(_app: tauri::AppHandle) {
 }
 
 #[tauri::command(async)]
-async fn trigger_screenshare_permission(app: tauri::AppHandle) -> bool {
+async fn trigger_screenshare_permission(_app: tauri::AppHandle) -> bool {
     log::info!("trigger_screenshare_permission");
-    let content = get_available_content(app.clone()).await;
-    let mut has_content = false;
-    for c in content {
-        if !c.base64.is_empty() {
-            has_content = true;
-            break;
-        }
-    }
-    has_content
+    permissions::request_screenshare()
 }
 
 #[tauri::command(async)]
@@ -544,30 +469,6 @@ fn get_livekit_url(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command(async)]
-async fn create_content_picker_window(app: tauri::AppHandle) -> Result<(), String> {
-    log::info!("create_content_picker_window");
-
-    hopp::create_media_window(
-        &app,
-        hopp::MediaWindowConfig {
-            label: "contentPicker",
-            title: "Content picker",
-            url: "contentPicker.html",
-            width: 800.0,
-            height: 450.0,
-            resizable: true,
-            always_on_top: true,
-            content_protected: false,
-            maximizable: false,
-            minimizable: true,
-            decorations: true,
-            transparent: false,
-            background_color: None,
-        },
-    )
-}
-
-#[tauri::command(async)]
 fn set_sentry_metadata(app: tauri::AppHandle, user_id: String, app_version: String) {
     log::info!("set_sentry_metadata");
     sentry_utils::init_metadata(user_id.clone(), app_version.clone());
@@ -749,8 +650,8 @@ async fn create_settings_window(app: tauri::AppHandle) -> Result<(), String> {
             label: "settings",
             title: "Settings",
             url: "settings.html",
-            width: 740.0,
-            height: 800.0,
+            width: 800.0,
+            height: 840.0,
             resizable: false,
             always_on_top: false,
             content_protected: false,
@@ -948,6 +849,21 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
         .update_user_setting(|settings| settings.noise_cancellation_enabled = enabled);
     if let Err(e) = data.sender.send(Message::SetNoiseCancellation(enabled)) {
         log::error!("set_noise_cancellation: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
+fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareResolution) {
+    log::info!("set_screen_share_resolution: {resolution:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|settings| settings.screen_share_resolution = resolution);
+    if let Err(e) = data
+        .sender
+        .send(Message::SetScreenShareResolution(resolution))
+    {
+        log::error!("set_screen_share_resolution: failed to send: {e:?}");
     }
 }
 
@@ -1202,29 +1118,6 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 let mut data = data.lock().unwrap();
                 data.app_state.set_last_mode(mode);
             }
-            Message::OpenContentPicker => {
-                log::info!("forward_core_events: open content picker");
-                if let Err(e) = hopp::create_media_window(
-                    &app,
-                    hopp::MediaWindowConfig {
-                        label: "contentPicker",
-                        title: "Content picker",
-                        url: "contentPicker.html",
-                        width: 800.0,
-                        height: 450.0,
-                        resizable: true,
-                        always_on_top: true,
-                        content_protected: false,
-                        maximizable: false,
-                        minimizable: true,
-                        decorations: true,
-                        transparent: false,
-                        background_color: None,
-                    },
-                ) {
-                    log::error!("forward_core_events: failed to open content picker: {e}");
-                }
-            }
             Message::RoomConnectionFailed(reason) => {
                 log::error!("forward_core_events: room connection failed: {reason}");
                 if let Err(e) = app.emit("core_room_connection_failed", &reason) {
@@ -1270,6 +1163,15 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 if let Err(e) = app.emit("core_mic_audio_level", &level) {
                     log::error!("forward_core_events: failed to emit mic audio level: {e:?}");
                 }
+            }
+            Message::StartScreenShareResult(Err(error)) => {
+                log::error!("forward_core_events: screen share failed: {error}");
+                if let Err(e) = app.emit("core_screenshare_failed", &error) {
+                    log::error!("forward_core_events: failed to emit screen share failed: {e:?}");
+                }
+            }
+            Message::StartScreenShareResult(Ok(())) => {
+                log::info!("forward_core_events: screen share started");
             }
             Message::DrawingDisabled => {
                 log::info!("forward_core_events: drawing disabled");
@@ -1422,6 +1324,10 @@ fn main() {
             let noise_cancellation_enabled = app_state.user_settings().noise_cancellation_enabled;
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
+            }
+            let screen_share_resolution = app_state.user_settings().screen_share_resolution;
+            if let Err(e) = sender.send(Message::SetScreenShareResolution(screen_share_resolution)) {
+                log::error!("Failed to send initial screen_share_resolution: {e:?}");
             }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
@@ -1687,7 +1593,6 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            screenshare,
             stop_sharing,
             get_available_content,
             store_token_cmd,
@@ -1722,7 +1627,6 @@ fn main() {
             get_livekit_url,
             get_camera_permission,
             open_camera_settings,
-            create_content_picker_window,
             set_sentry_metadata,
             call_started,
             set_tray_notification,
@@ -1747,6 +1651,7 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
+            set_screen_share_resolution,
             list_microphones,
             select_microphone,
             list_webcams,

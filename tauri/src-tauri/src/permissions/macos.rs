@@ -16,6 +16,12 @@ impl PermissionsTrait for PlatformPermissions {
         access.preflight()
     }
 
+    fn request_screenshare() -> bool {
+        log::info!("macOS screenshare permission request");
+        let access = ScreenCaptureAccess;
+        access.request()
+    }
+
     fn accessibility() -> bool {
         log::info!("macOS accessibility permission check");
 

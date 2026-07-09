@@ -143,6 +143,14 @@ impl From<WindowManagerError> for ServerError {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ScreenSelectionNavigationDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 struct WindowEntry<'a> {
     window: Arc<Window>,
     monitor_id: MonitorId,
@@ -254,7 +262,7 @@ impl<'a> WindowManager<'a> {
     pub fn show_window(
         &mut self,
         monitor: &MonitorHandle,
-        _event_loop: &ActiveEventLoop,
+        set_active_window: bool,
     ) -> Result<Arc<Window>, WindowManagerError> {
         let target_id = ScreenshareFunctions::get_monitor_id(monitor);
         log::info!(
@@ -310,13 +318,17 @@ impl<'a> WindowManager<'a> {
         let fullscreen_size = entry.window.inner_size();
         entry.gfx.resize(fullscreen_size);
 
-        entry
-            .gfx
-            .add_participant("local".to_string(), "Me ", true)
-            .map_err(|_| WindowManagerError::WindowCreationError)?;
-
+        if set_active_window {
+            entry
+                .gfx
+                .add_participant("local".to_string(), "Me ", true)
+                .map_err(|_| WindowManagerError::WindowCreationError)?;
+            self.active_monitor_id = Some(target_id);
+        } else {
+            entry.gfx.set_screen_selection(true);
+            let _ = entry.gfx.window().set_cursor_hittest(true);
+        }
         entry.window.set_visible(true);
-        self.active_monitor_id = Some(target_id);
 
         Ok(entry.window.clone())
     }
@@ -344,6 +356,13 @@ impl<'a> WindowManager<'a> {
                 .find(|entry| &entry.monitor_id == active_id)?
                 .gfx,
         )
+    }
+
+    pub fn all_gfx_mut(&mut self) -> Vec<&mut GraphicsContext<'a>> {
+        self.windows
+            .iter_mut()
+            .map(|entry| &mut entry.gfx)
+            .collect()
     }
 
     pub fn hide_active_window(&mut self) {
@@ -390,6 +409,27 @@ impl<'a> WindowManager<'a> {
         })
     }
 
+    pub fn monitor_id_for_window(&self, window_id: winit::window::WindowId) -> Option<MonitorId> {
+        self.windows
+            .iter()
+            .find(|entry| entry.window.id() == window_id)
+            .map(|entry| entry.monitor_id.clone())
+    }
+
+    pub fn resize_window(
+        &mut self,
+        window_id: winit::window::WindowId,
+        new_size: winit::dpi::PhysicalSize<u32>,
+    ) {
+        if let Some(entry) = self
+            .windows
+            .iter_mut()
+            .find(|entry| entry.window.id() == window_id)
+        {
+            entry.gfx.resize(new_size);
+        }
+    }
+
     pub fn resize_active_window(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         let active_id = match self.active_monitor_id.as_ref() {
             Some(id) => id.clone(),
@@ -397,6 +437,141 @@ impl<'a> WindowManager<'a> {
         };
         if let Some(entry) = self.windows.iter_mut().find(|e| e.monitor_id == active_id) {
             entry.gfx.resize(new_size);
+        }
+    }
+
+    pub fn show_screen_selection(&mut self, event_loop: &ActiveEventLoop) {
+        log::info!("show_screen_selection");
+        let monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
+        for monitor in monitors.iter() {
+            let res = self.show_window(monitor, false);
+            log::info!("{:?}", res);
+        }
+
+        if let Some(monitor) = event_loop
+            .primary_monitor()
+            .or_else(|| monitors.first().cloned())
+        {
+            if !self.focus_monitor(&monitor) {
+                log::warn!("show_screen_selection: failed to focus primary monitor window");
+            }
+        }
+    }
+
+    pub fn focus_window(&self, window_id: winit::window::WindowId) -> bool {
+        if let Some(entry) = self
+            .windows
+            .iter()
+            .find(|entry| entry.window.id() == window_id)
+        {
+            entry.window.focus_window();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn focus_monitor(&self, monitor: &MonitorHandle) -> bool {
+        let monitor_id = ScreenshareFunctions::get_monitor_id(monitor);
+        if let Some(entry) = self
+            .windows
+            .iter()
+            .find(|entry| entry.monitor_id == monitor_id)
+        {
+            entry.window.focus_window();
+            for entry in &self.windows {
+                entry.gfx.trigger_render();
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn focus_window_in_direction(
+        &self,
+        current_window_id: winit::window::WindowId,
+        direction: ScreenSelectionNavigationDirection,
+    ) -> bool {
+        let mut entries: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(|entry| {
+                let position = entry.window.outer_position().ok()?;
+                let logical_position: LogicalPosition<f64> =
+                    position.to_logical(entry.window.scale_factor());
+
+                Some((entry.window.id(), logical_position.x, logical_position.y))
+            })
+            .collect();
+
+        if entries.len() < 2 {
+            return false;
+        }
+
+        match direction {
+            ScreenSelectionNavigationDirection::Left
+            | ScreenSelectionNavigationDirection::Right => {
+                entries.sort_by(|a, b| a.1.total_cmp(&b.1));
+                if entries.windows(2).any(|pair| pair[0].1 == pair[1].1) {
+                    return false;
+                }
+            }
+            ScreenSelectionNavigationDirection::Up | ScreenSelectionNavigationDirection::Down => {
+                entries.sort_by(|a, b| a.2.total_cmp(&b.2));
+                if entries.windows(2).any(|pair| pair[0].2 == pair[1].2) {
+                    return false;
+                }
+            }
+        }
+
+        let Some(current_index) = entries
+            .iter()
+            .position(|(window_id, _, _)| *window_id == current_window_id)
+        else {
+            return false;
+        };
+
+        let target_index = match direction {
+            ScreenSelectionNavigationDirection::Left | ScreenSelectionNavigationDirection::Up => {
+                if current_index == 0 {
+                    entries.len() - 1
+                } else {
+                    current_index - 1
+                }
+            }
+            ScreenSelectionNavigationDirection::Right
+            | ScreenSelectionNavigationDirection::Down => (current_index + 1) % entries.len(),
+        };
+
+        let target_window_id = entries[target_index].0;
+        let Some(target_entry) = self
+            .windows
+            .iter()
+            .find(|entry| entry.window.id() == target_window_id)
+        else {
+            return false;
+        };
+
+        target_entry.window.focus_window();
+        for entry in &self.windows {
+            entry.gfx.trigger_render();
+        }
+
+        true
+    }
+
+    pub fn hide_screen_selection(&mut self) {
+        for entry in &mut self.windows {
+            entry.gfx.set_screen_selection(false);
+            #[cfg(target_os = "macos")]
+            {
+                entry.window.set_simple_fullscreen(false);
+                remove_miniaturizable_style(&entry.window);
+            }
+            let _ = entry.window.set_cursor_hittest(false);
+            entry.window.set_visible(false);
+            entry.gfx.resize(winit::dpi::PhysicalSize::new(1, 1));
         }
     }
 
