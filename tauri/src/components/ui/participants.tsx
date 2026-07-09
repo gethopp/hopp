@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import Fuse from "fuse.js";
 import { Input } from "./input";
 import { HiMagnifyingGlass } from "react-icons/hi2";
+import { useAPI } from "@/services/query";
 
 interface ParticipantsProps {
   teammates: components["schemas"]["BaseUser"][];
@@ -23,6 +24,11 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [filteredTeammates, setFilteredTeammates] = useState(teammates);
+
+  const { useQuery } = useAPI();
+  const { data: rooms } = useQuery("get", "/api/auth/rooms", undefined, {
+    staleTime: 10_000,
+  });
 
   useEffect(() => {
     if (searchQuery === "") {
@@ -53,7 +59,7 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
         <h3 className="muted text-xs text-slate-500 font-medium mb-2">Online ({onlineTeammates.length})</h3>
         <div className="flex flex-col gap-2">
           {onlineTeammates.map((teammate) => (
-            <ParticipantRow key={teammate.id} user={teammate} />
+            <ParticipantRow key={teammate.id} user={teammate} rooms={rooms || []} />
           ))}
         </div>
       </div>
@@ -63,7 +69,7 @@ export const Participants = ({ teammates }: ParticipantsProps) => {
         <ScrollArea className="max-h-full overflow-y-auto mb-4">
           <div className="flex flex-col gap-2">
             {offlineTeammates.map((teammate) => (
-              <ParticipantRow key={teammate.id} user={teammate} />
+              <ParticipantRow key={teammate.id} user={teammate} rooms={rooms || []} />
             ))}
           </div>
         </ScrollArea>
