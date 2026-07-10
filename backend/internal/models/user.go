@@ -274,7 +274,7 @@ type UserWithSubscription struct {
 // created on or after it get no free trial and must have an active/trialing
 // Stripe subscription (a card-on-file trial) to access the product for the first time
 // (they can still cancel anytime, and then will see a limited dashboard).
-var hardPaywallCutoff = time.Date(2026, time.June, 20, 0, 0, 0, 0, time.UTC)
+var hardPaywallCutoff = time.Date(2026, time.July, 10, 16, 30, 0, 0, time.UTC)
 
 // IsTeamPostCutoff reports whether a team is subject to the hard paywall (created
 // on or after the cutoff date).
