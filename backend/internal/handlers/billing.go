@@ -40,6 +40,9 @@ type SubscriptionResponse struct {
 	CurrentPeriodEnd  *time.Time                `json:"current_period_end,omitempty"`
 	CancelAtPeriodEnd *bool                     `json:"cancel_at_period_end,omitempty"`
 	IsAdmin           bool                      `json:"is_admin"`
+	// RequiresPaymentMethod is true for post-cutoff teams that have no active
+	// subscription and must add a card (via onboarding) to access the product.
+	RequiresPaymentMethod bool `json:"requires_payment_method"`
 }
 
 // BillingSettingsRequest represents the request body for updating billing settings
@@ -80,7 +83,6 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 		PriceID  string `json:"price_id,omitempty"`
 		Tier     string `json:"tier" validate:"required"`
 		Interval string `json:"interval" validate:"omitempty,oneof=monthly yearly"`
-		Referral string `json:"referral,omitempty"`
 	}
 
 	if err := c.Bind(&req); err != nil {
@@ -193,10 +195,26 @@ func (bh *BillingHandler) CreateCheckoutSession(c echo.Context) error {
 		},
 	}
 
-	// Pass Rewardful referral ID for affiliate tracking (only if present)
-	// Stripe raises an error if client_reference_id is blank
-	if req.Referral != "" {
-		params.ClientReferenceID = stripe.String(req.Referral)
+	// Card-required trial: start a trial so the user isn't charged today, but
+	// always collect a payment method so a card is on file. When the trial ends
+	// without a payment method, Stripe cancels the subscription.
+	//
+	// The trial is granted ONLY on a team's first-ever subscription. A
+	// subscription row persists after cancellation, so any returning team (one
+	// that already has a row) is charged immediately. This prevents a
+	// cancel -> re-trial loop where a team could stay free forever.
+	isFirstSubscription := existingSub == nil
+	if bh.Config.Stripe.TrialPeriodDays > 0 && isFirstSubscription {
+		params.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
+			TrialPeriodDays: stripe.Int64(bh.Config.Stripe.TrialPeriodDays),
+			TrialSettings: &stripe.CheckoutSessionSubscriptionDataTrialSettingsParams{
+				EndBehavior: &stripe.CheckoutSessionSubscriptionDataTrialSettingsEndBehaviorParams{
+					MissingPaymentMethod: stripe.String("cancel"),
+				},
+			},
+		}
+		// Force card collection even though a trial is active.
+		params.PaymentMethodCollection = stripe.String("always")
 	}
 
 	session, err := checkoutsession.New(params)
@@ -306,14 +324,36 @@ func (bh *BillingHandler) GetSubscriptionStatus(c echo.Context) error {
 			IsAdmin:           user.IsAdmin,
 		}
 	} else {
+		// No subscription record. Pre-cutoff teams are on the legacy free trial,
+		// but post-cutoff teams get no trial and are blocked until they add a card.
+		// Report a non-trialing status for the latter so clients don't treat a
+		// blocked team as if a trial were already running (stays consistent with
+		// models.GetUserWithSubscription, where these teams are IsPro=false and
+		// IsTrial=false). Self-hosted deployments without Stripe keep the legacy
+		// behavior since IsStripeEnabled() is false.
+		status := models.StatusTrialing
+		if bh.Config.IsStripeEnabled() && models.IsTeamPostCutoff(team) {
+			status = models.StatusIncomplete
+		}
 		subscriptionResponse = SubscriptionResponse{
-			Status:            models.StatusTrialing,
+			Status:            status,
 			ManualUpgrade:     team.IsManualUpgrade,
 			CurrentPeriodEnd:  nil,
 			CancelAtPeriodEnd: nil,
 			IsAdmin:           user.IsAdmin,
 		}
 	}
+
+	// Post-cutoff teams that have NEVER set up billing must add a card via the
+	// blocking onboarding flow. We key this off the absence of a subscription
+	// record (not just an inactive one): a team that previously checked out and
+	// later canceled keeps its row, so it is sent to the dashboard + Subscription
+	// page to re-subscribe instead of being force-redirected back to onboarding.
+	// Access to calls is still gated separately by GetUserWithSubscription.
+	subscriptionResponse.RequiresPaymentMethod = bh.Config.IsStripeEnabled() &&
+		!team.IsManualUpgrade &&
+		subscription == nil &&
+		models.IsTeamPostCutoff(team)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"subscription": subscriptionResponse,
@@ -344,6 +384,8 @@ func (bh *BillingHandler) HandleWebhook(c echo.Context) error {
 		err = bh.handleSubscriptionCreated(c, event)
 	case "customer.subscription.updated":
 		err = bh.handleSubscriptionUpdated(c, event)
+	case "customer.subscription.deleted":
+		err = bh.handleSubscriptionDeleted(c, event)
 	case "checkout.session.completed":
 		err = bh.handleCheckoutSessionCompleted(c, event)
 	case "invoice.payment_succeeded":
@@ -388,36 +430,47 @@ func (bh *BillingHandler) handleSubscriptionUpdated(c echo.Context, event stripe
 		return nil
 	}
 
-	if subscription.CancelAtPeriodEnd {
+	wasCancelAtPeriodEnd := event.GetPreviousValue("cancel_at_period_end") == "true"
+	dbSub.CancelAtPeriodEnd = subscription.CancelAtPeriodEnd
+
+	switch {
+	case subscription.CancelAtPeriodEnd:
+		// Scheduled cancellation. In our model a cancellation revokes access
+		// immediately (IsActive() is false for canceled), matching the product
+		// behavior: cancel -> no more calls, dashboard still visible, can
+		// re-subscribe. Notify only on the transition to avoid duplicate emails
+		// on subsequent updated events.
 		dbSub.Status = models.StatusCanceled
-		if err := bh.DB.Save(dbSub).Error; err != nil {
-			c.Logger().Errorf("Failed to save subscription: %v", err)
-			return err
+		if !wasCancelAtPeriodEnd {
+			_ = notifications.SendTelegramNotification(fmt.Sprintf("Team ID: %s - subscription cancelled", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
+
+			adminUser, err := models.GetAdminUserForTeam(bh.DB, dbSub.TeamID)
+			if err != nil {
+				c.Logger().Errorf("Failed to get admin user for team: %v", err)
+			} else if adminUser != nil && bh.EmailClient != nil {
+				c.Logger().Infof("Sending subscription cancellation email to admin user: %s", adminUser.Email)
+				bh.EmailClient.SendSubscriptionCancellationEmail(adminUser)
+				_ = notifications.SendTelegramNotification(fmt.Sprintf("🥲🥲🥲 Team ID: %s - subscription cancelled", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
+			}
 		}
-
-		_ = notifications.SendTelegramNotification(fmt.Sprintf("Team ID: %s - subscription cancelled", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
-
-		// Send email to admin user for acknowledgement of cancellation
-		adminUser, err := models.GetAdminUserForTeam(bh.DB, dbSub.TeamID)
-		if err != nil {
-			c.Logger().Errorf("Failed to get admin user for team: %v", err)
-		} else if adminUser != nil && bh.EmailClient != nil {
-			c.Logger().Infof("Sending subscription cancellation email to admin user: %s", adminUser.Email)
-			bh.EmailClient.SendSubscriptionCancellationEmail(adminUser)
-			_ = notifications.SendTelegramNotification(fmt.Sprintf("🥲🥲🥲 Team ID: %s - subscription cancelled", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
-		}
-	}
-
-	// Revoking cancelled subscription
-	if !subscription.CancelAtPeriodEnd && event.GetPreviousValue("cancel_at_period_end") == "true" {
-		dbSub.Status = models.StatusActive
-		if err := bh.DB.Save(dbSub).Error; err != nil {
-			c.Logger().Errorf("Failed to save subscription: %v", err)
-			return err
-		}
-
+	case wasCancelAtPeriodEnd:
+		// Cancellation reverted via the billing portal: restore the real status
+		// (trialing or active).
+		dbSub.Status = mapStripeSubscriptionStatus(subscription.Status)
 		c.Logger().Infof("Revoking cancelled subscription: %s", subscription.ID)
 		_ = notifications.SendTelegramNotification(fmt.Sprintf("Team ID: %s - subscription cancellation revoked", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
+	default:
+		// No pending-cancellation flag change. Sync the real Stripe status so
+		// transitions we don't trigger ourselves are reflected: a card-on-file
+		// trial that Stripe cancels for a missing payment method (trialing ->
+		// canceled), past_due, etc. Without this the DB could stay "trialing"
+		// after the trial ends and keep granting access.
+		dbSub.Status = mapStripeSubscriptionStatus(subscription.Status)
+	}
+
+	if subscription.CanceledAt != 0 {
+		canceledAt := time.Unix(subscription.CanceledAt, 0)
+		dbSub.CanceledAt = &canceledAt
 	}
 
 	// Refresh period dates and billing interval from Stripe so renewals
@@ -435,14 +488,72 @@ func (bh *BillingHandler) handleSubscriptionUpdated(c echo.Context, event stripe
 				dbSub.BillingInterval = models.IntervalMonthly
 			}
 		}
+	}
 
-		if err := bh.DB.Save(dbSub).Error; err != nil {
-			c.Logger().Errorf("Failed to save subscription period/interval update: %v", err)
-			return err
-		}
+	if err := bh.DB.Save(dbSub).Error; err != nil {
+		c.Logger().Errorf("Failed to save subscription update: %v", err)
+		return err
 	}
 
 	return nil
+}
+
+// handleSubscriptionDeleted marks a subscription as canceled when Stripe fully
+// deletes it (e.g., end of a canceled period, or a card-on-file trial that ends
+// without a valid payment method). The row is kept so the team can re-subscribe
+// and so we retain the Stripe customer ID; access is revoked via IsActive().
+func (bh *BillingHandler) handleSubscriptionDeleted(c echo.Context, event stripe.Event) error {
+	var subscription stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &subscription); err != nil {
+		return err
+	}
+
+	dbSub, err := models.GetSubscriptionByStripeID(bh.DB, subscription.ID)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		c.Logger().Errorf("Failed to get subscription by stripe ID: %v", err)
+		return err
+	}
+	if dbSub == nil {
+		return nil
+	}
+
+	dbSub.Status = models.StatusCanceled
+	canceledAt := time.Now()
+	if subscription.CanceledAt != 0 {
+		canceledAt = time.Unix(subscription.CanceledAt, 0)
+	}
+	dbSub.CanceledAt = &canceledAt
+
+	if err := bh.DB.Save(dbSub).Error; err != nil {
+		c.Logger().Errorf("Failed to save deleted subscription: %v", err)
+		return err
+	}
+
+	_ = notifications.SendTelegramNotification(fmt.Sprintf("Team ID: %s - subscription deleted", strconv.Itoa(int(dbSub.TeamID))), bh.Config)
+	return nil
+}
+
+// mapStripeSubscriptionStatus converts a Stripe subscription status into our
+// internal SubscriptionStatus. Unknown statuses default to active so access is
+// not accidentally revoked.
+func mapStripeSubscriptionStatus(status stripe.SubscriptionStatus) models.SubscriptionStatus {
+	switch status {
+	case stripe.SubscriptionStatusTrialing:
+		return models.StatusTrialing
+	case stripe.SubscriptionStatusActive:
+		return models.StatusActive
+	case stripe.SubscriptionStatusPastDue:
+		return models.StatusPastDue
+	case stripe.SubscriptionStatusCanceled, stripe.SubscriptionStatusUnpaid:
+		return models.StatusCanceled
+	case stripe.SubscriptionStatusIncomplete, stripe.SubscriptionStatusIncompleteExpired:
+		return models.StatusIncomplete
+	default:
+		return models.StatusActive
+	}
 }
 
 func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event stripe.Event) error {
@@ -500,7 +611,8 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 		}
 	}
 
-	// Update subscription fields
+	// Update subscription fields. The real status is set from the Stripe
+	// subscription below (trialing vs active); default to active as a fallback.
 	dbSub.Status = models.StatusActive
 	dbSub.Tier = tier
 
@@ -518,13 +630,19 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 		c.Logger().Errorf("Failed to fetch full subscription from Stripe: %v", err)
 		dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
 		dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0)
-	} else if len(fullSub.Items.Data) > 0 {
-		item := fullSub.Items.Data[0]
-		dbSub.CurrentPeriodStart = time.Unix(item.CurrentPeriodStart, 0)
-		dbSub.CurrentPeriodEnd = time.Unix(item.CurrentPeriodEnd, 0)
 	} else {
-		dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
-		dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0)
+		// Persist the real Stripe status so card-on-file trials are stored as
+		// "trialing" instead of "active". Both count as access via IsActive().
+		dbSub.Status = mapStripeSubscriptionStatus(fullSub.Status)
+
+		if len(fullSub.Items.Data) > 0 {
+			item := fullSub.Items.Data[0]
+			dbSub.CurrentPeriodStart = time.Unix(item.CurrentPeriodStart, 0)
+			dbSub.CurrentPeriodEnd = time.Unix(item.CurrentPeriodEnd, 0)
+		} else {
+			dbSub.CurrentPeriodStart = time.Unix(session.Created, 0)
+			dbSub.CurrentPeriodEnd = time.Unix(session.Created, 0).AddDate(0, 1, 0)
+		}
 	}
 	dbSub.CancelAtPeriodEnd = session.Subscription.CancelAtPeriodEnd
 
@@ -557,8 +675,13 @@ func (bh *BillingHandler) handleCheckoutSessionCompleted(c echo.Context, event s
 	if err != nil {
 		c.Logger().Errorf("Failed to get admin user for team: %v", err)
 	} else if adminUser != nil && bh.EmailClient != nil {
-		c.Logger().Infof("Sending subscription confirmation email to admin user: %s", adminUser.Email)
-		bh.EmailClient.SendSubscriptionConfirmationEmail(adminUser)
+		if dbSub.Status == models.StatusTrialing {
+			c.Logger().Infof("Sending subscription trial email to admin user: %s", adminUser.Email)
+			bh.EmailClient.SendSubscriptionTrialEmail(adminUser)
+		} else {
+			c.Logger().Infof("Sending subscription confirmation email to admin user: %s", adminUser.Email)
+			bh.EmailClient.SendSubscriptionConfirmationEmail(adminUser)
+		}
 	}
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("💸💸💸 Team ID: %s - subscription activated", strconv.Itoa(int(dbSub.TeamID))), bh.Config)

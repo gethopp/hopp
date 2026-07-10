@@ -12,6 +12,7 @@ import (
 	"hopp-backend/internal/notifications"
 	"hopp-backend/internal/redisutil"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -360,24 +361,35 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		}
 	}
 
-	if req.TeamName != "" {
-		// Create a new team
-		team := models.Team{
-			Name: req.TeamName,
+	// Non-invited signups become team admins. Auto-create a placeholder team so
+	// TeamID/IsAdmin and all downstream assumptions stay intact; the real team
+	// name is collected later during onboarding (PATCH /api/auth/team). This
+	// mirrors the social-signup "{FirstName}-Team" fallback and avoids teamless
+	// users. Team creation and the user insert run in one transaction so a failed
+	// user insert (e.g. duplicate email) can't leave an orphan team behind.
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if u.TeamID == nil {
+			teamName := strings.TrimSpace(req.TeamName)
+			if teamName == "" {
+				teamName = fmt.Sprintf("%s-Team", u.FirstName)
+			}
+			team := models.Team{Name: teamName}
+			if err := tx.Create(&team).Error; err != nil {
+				return err
+			}
+			u.TeamID = &team.ID
+			u.IsAdmin = true
 		}
-		h.DB.Create(&team)
-		u.TeamID = &team.ID
-		u.IsAdmin = true
-	}
 
-	result := h.DB.Create(u)
-	if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
+		return tx.Create(u).Error
+	})
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return echo.NewHTTPError(409, "user with this email already exists")
 	}
 
 	// Handle other potential errors during creation
-	if result.Error != nil {
-		c.Logger().Errorf("Failed to create user: %v", result.Error)
+	if err != nil {
+		c.Logger().Errorf("Failed to create user: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create user")
 	}
 
@@ -669,6 +681,51 @@ func (h *AuthHandler) UpdateName(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, user)
+}
+
+// UpdateTeam updates the authenticated admin's team. Currently only the team
+// name can be changed. Used by onboarding to rename the placeholder team created
+// at signup.
+func (h *AuthHandler) UpdateTeam(c echo.Context) error {
+	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	if !isAuthenticated {
+		return c.String(http.StatusUnauthorized, "Unauthorized")
+	}
+
+	if user.TeamID == nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
+	}
+
+	if !user.IsAdmin {
+		return echo.NewHTTPError(http.StatusForbidden, "Only team admins can update the team")
+	}
+
+	type UpdateTeamRequest struct {
+		Name string `json:"name" validate:"required"`
+	}
+
+	req := new(UpdateTeamRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Team name is required")
+	}
+
+	team, err := models.GetTeamByID(h.DB, strconv.Itoa(int(*user.TeamID)))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get team")
+	}
+
+	team.Name = req.Name
+	if err := h.DB.Save(team).Error; err != nil {
+		c.Logger().Error("Failed to update team:", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update team")
+	}
+
+	return c.JSON(http.StatusOK, team)
 }
 
 // GetInviteUUID generates or returns an existing team invitation UUID for the authenticated user's team

@@ -391,6 +391,7 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/authenticate-app", auth.AuthenticateApp)
 	protectedAPI.GET("/user", auth.User)
 	protectedAPI.PUT("/update-user-name", auth.UpdateName)
+	protectedAPI.PATCH("/team", auth.UpdateTeam)
 	protectedAPI.GET("/teammates", auth.Teammates)
 	protectedAPI.DELETE("/teammates/:userId", auth.RemoveTeammate)
 

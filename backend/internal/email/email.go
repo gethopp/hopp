@@ -18,6 +18,7 @@ type EmailClient interface {
 	SendTeamInvitationEmail(inviterName, teamName, inviteLink, toEmail string)
 	SendTeamRemovalEmail(user *models.User, oldTeamName, newTeamName string)
 	SendSubscriptionConfirmationEmail(user *models.User)
+	SendSubscriptionTrialEmail(user *models.User)
 	SendSubscriptionCancellationEmail(user *models.User)
 	SendInvoiceEmail(toEmail string, data InvoiceEmailData)
 }
@@ -191,7 +192,29 @@ func (c *ResendEmailClient) SendSubscriptionConfirmationEmail(user *models.User)
 
 	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
-	subject := "Welcome to Hopp Pro! 🎉"
+	subject := "Welcome to Hopp Pro 🎉"
+
+	c.SendAsync(user.Email, subject, htmlBody)
+}
+
+// SendSubscriptionTrialEmail sends the email for a newly started card-on-file
+// trial (distinct from a paid subscription confirmation/re-activation).
+func (c *ResendEmailClient) SendSubscriptionTrialEmail(user *models.User) {
+	if user == nil {
+		c.logger.Error("Cannot send subscription trial email to nil user")
+		return
+	}
+
+	// Read the template file
+	templateBytes, err := os.ReadFile("web/emails/hopp-subscription-trial.html")
+	if err != nil {
+		c.logger.Errorf("Failed to read subscription trial email template: %v", err)
+		return
+	}
+
+	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
+
+	subject := "Your Hopp Pro trial has started 🎉"
 
 	c.SendAsync(user.Email, subject, htmlBody)
 }

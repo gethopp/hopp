@@ -15,7 +15,6 @@ import clsx from "clsx";
 import { Switch } from "@/components/ui/switch";
 import { FaCheck } from "react-icons/fa";
 import { PrimaryCTA } from "@/components/ui/atomic/Buttons";
-import { getRewardfulReferral } from "@/lib/rewardful";
 
 type SubscriptionResponse = components["schemas"]["SubscriptionResponse"];
 
@@ -85,13 +84,10 @@ export function Subscription() {
 
     setActionLoading(tier);
     try {
-      const referral = getRewardfulReferral();
-
       const response = await createCheckoutSessionMutation.mutateAsync({
         body: {
           tier: tier as "paid",
           interval,
-          ...(referral && { referral }),
         },
       });
 
@@ -194,13 +190,8 @@ export function Subscription() {
   const getTier = (subscription: SubscriptionResponse): string => {
     if (subscription.manual_upgrade) return "paid";
     if (subscription.status === "active") return "paid";
-
-    // If subscription is canceled but still within the current period, treat as paid
-    if (subscription.status === "canceled" && subscription.current_period_end) {
-      const periodEnd = new Date(subscription.current_period_end);
-      const now = new Date();
-      if (periodEnd > now) return "paid";
-    }
+    // A card-on-file trial is on the paid plan (just not billed yet).
+    if (subscription.status === "trialing") return "paid";
 
     return "free";
   };
@@ -242,20 +233,18 @@ export function Subscription() {
     );
   }
 
-  // Helper function to check if user has an active subscription (including canceled but still within period)
+  // Whether to show the "manage your subscription" view (vs the upgrade/pricing
+  // page). Trialing teams have a card on file and manage/cancel from here.
+  // Canceled subscriptions intentionally fall through to the upgrade page so the
+  // team can re-subscribe (access to calls is revoked on cancel).
   const hasActiveSubscription = (subscription: SubscriptionResponse): boolean => {
     if (subscription.manual_upgrade) return true;
     if (subscription.status === "active") return true;
-
-    // If subscription is canceled but still within the current period, treat as active
-    if (subscription.status === "canceled" && subscription.current_period_end) {
-      const periodEnd = new Date(subscription.current_period_end);
-      const now = new Date();
-      return periodEnd > now;
-    }
-
+    if (subscription.status === "trialing") return true;
     return false;
   };
+
+  const isTrialing = subscriptionStatus?.status === "trialing";
 
   // If user has an active subscription (including canceled but still within period), show subscription details
   if (subscriptionStatus && hasActiveSubscription(subscriptionStatus)) {
@@ -289,13 +278,7 @@ export function Subscription() {
                 <p className="text-sm w-full flex flex-row justify-between">
                   <span className="font-medium">Status:</span>{" "}
                   <Badge className="ml-auto" variant={getTierBadgeVariant(getTier(subscriptionStatus))}>
-                    {(
-                      subscriptionStatus.status === "canceled" &&
-                      subscriptionStatus.current_period_end &&
-                      new Date(subscriptionStatus.current_period_end) > new Date()
-                    ) ?
-                      "Active (Canceled)"
-                    : subscriptionStatus.status}
+                    {isTrialing ? "Trial" : subscriptionStatus.status}
                   </Badge>
                 </p>
                 {subscriptionStatus.manual_upgrade && (
@@ -305,9 +288,7 @@ export function Subscription() {
                 )}
                 {subscriptionStatus.current_period_end && (
                   <p className="text-sm w-full flex flex-row justify-between">
-                    <span className="font-medium">
-                      {subscriptionStatus.status === "canceled" ? "Subscription ends:" : "Next billing date:"}
-                    </span>{" "}
+                    <span className="font-medium">{isTrialing ? "Trial ends:" : "Next billing date:"}</span>{" "}
                     <span className="font-normal text-slate-500">
                       {new Date(subscriptionStatus.current_period_end).toLocaleDateString()}
                     </span>
@@ -325,17 +306,21 @@ export function Subscription() {
           </CardContent>
         </Card>
 
-        {subscriptionStatus.status === "canceled" &&
-          subscriptionStatus.current_period_end &&
-          new Date(subscriptionStatus.current_period_end) > new Date() && (
-            <Alert variant="default" className="max-w-md">
-              <HiExclamationCircle className="size-5 -mt-1.5" />
-              <AlertTitle>Cancelled subscription</AlertTitle>
-              <AlertDescription>
-                You subscription has been canceled but remains active until the end of your current billing period.
-              </AlertDescription>
-            </Alert>
-          )}
+        {isTrialing && (
+          <Alert variant="default" className="max-w-md">
+            <HiExclamationCircle className="size-5 -mt-1.5" />
+            <AlertTitle>You're on a free trial</AlertTitle>
+            <AlertDescription>
+              You won't be charged until your trial ends
+              {subscriptionStatus.current_period_end ?
+                ` on ${new Date(subscriptionStatus.current_period_end).toLocaleDateString()}`
+              : ""}
+              .
+              <br />
+              You can cancel anytime from "Manage subscription". Canceling stops calls immediately.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Invoice Settings */}
         <Card className="max-w-md">
@@ -393,6 +378,8 @@ export function Subscription() {
   const displayPrice = billingInterval === "yearly" ? `$${YEARLY_PER_MONTH}` : `$${MONTHLY_PRICE}`;
   const billingNote =
     billingInterval === "yearly" ? `Billed as $${YEARLY_PRICE}/year/user - save 2 months` : "Billed monthly";
+
+  const wasCanceled = subscriptionStatus?.status === "canceled";
 
   return (
     <div className="relative isolate bg-white px-6 py-12 sm:py-16 lg:px-8">
@@ -486,6 +473,15 @@ export function Subscription() {
           </PrimaryCTA>
         </div>
       </div>
+      {wasCanceled && (
+        <Alert variant="default" className="mx-auto mt-18 mb-8 max-w-md text-left">
+          <HiExclamationCircle className="size-5 -mt-1.5" />
+          <AlertTitle>Your subscription was canceled</AlertTitle>
+          <AlertDescription>
+            Your team no longer has access to calls. Re-subscribe below to restore access.
+          </AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }

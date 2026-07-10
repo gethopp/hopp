@@ -269,6 +269,19 @@ type UserWithSubscription struct {
 	TrialEndsAt *time.Time `json:"trial_ends_at,omitempty"`
 }
 
+// hardPaywallCutoff is the launch date of the card-required trial. Teams created
+// before this date keep the legacy free trial derived from team.CreatedAt; teams
+// created on or after it get no free trial and must have an active/trialing
+// Stripe subscription (a card-on-file trial) to access the product for the first time
+// (they can still cancel anytime, and then will see a limited dashboard).
+var hardPaywallCutoff = time.Date(2026, time.June, 20, 0, 0, 0, 0, time.UTC)
+
+// IsTeamPostCutoff reports whether a team is subject to the hard paywall (created
+// on or after the cutoff date).
+func IsTeamPostCutoff(team *Team) bool {
+	return !team.CreatedAt.Before(hardPaywallCutoff)
+}
+
 // GetUserWithSubscription returns a user with subscription information.
 // When stripeEnabled is false (self-hosted deployments without Stripe), every
 // user is treated as Pro and the trial is bypassed.
@@ -295,7 +308,21 @@ func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*User
 	}
 
 	if sub != nil && sub.IsActive() {
-		return &UserWithSubscription{User: *user, IsPro: true}, nil
+		result := &UserWithSubscription{User: *user, IsPro: true}
+		if sub.Status == StatusTrialing {
+			trialEndsAt := sub.CurrentPeriodEnd
+			result.IsTrial = true
+			result.TrialEndsAt = &trialEndsAt
+		}
+		return result, nil
+	}
+
+	// Teams created on/after the cutoff get no free trial. Access requires an
+	// active/trialing Stripe subscription (handled above). This makes
+	// checkUserHasAccess return false so the existing 402 paths enforce the
+	// paywall without any new middleware.
+	if IsTeamPostCutoff(team) {
+		return &UserWithSubscription{User: *user, IsPro: false, IsTrial: false}, nil
 	}
 
 	const trialDays = 14
