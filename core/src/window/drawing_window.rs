@@ -150,6 +150,8 @@ pub struct DrawingWindow {
     left_mouse_pressed: bool,
     current_path_id: u64,
     last_cursor_position: Option<(f64, f64)>,
+    draw_y_scale: f64,
+    draw_y_offset: f64,
     draw_persist: bool,
     participants_manager: ParticipantsManager,
     redraw_thread: Option<std::thread::JoinHandle<()>>,
@@ -273,7 +275,7 @@ impl DrawingWindow {
         let (redraw_tx, redraw_rx) = std::sync::mpsc::channel();
         let redraw_thread = Some(spawn_redraw_thread(redraw_rx, window.clone()));
 
-        let s = Self {
+        let mut s = Self {
             window,
             surface,
             device,
@@ -288,6 +290,8 @@ impl DrawingWindow {
             left_mouse_pressed: false,
             current_path_id: 0,
             last_cursor_position: None,
+            draw_y_scale: 1.0,
+            draw_y_offset: 0.0,
             draw_persist: permanent,
             participants_manager,
             redraw_thread,
@@ -297,6 +301,7 @@ impl DrawingWindow {
             #[cfg(not(target_os = "macos"))]
             custom_cursor_pencil,
         };
+        s.update_draw_y_transform();
         Ok(s)
     }
 
@@ -345,6 +350,7 @@ impl DrawingWindow {
         self.cache = Some(Cache::default());
         self.window.set_visible(true);
         self.window.focus_window();
+        self.update_draw_y_transform();
         self.window.request_redraw();
     }
 
@@ -396,6 +402,47 @@ impl DrawingWindow {
         }
     }
 
+    fn update_draw_y_transform(&mut self) {
+        let Some(monitor) = self.window.current_monitor() else {
+            log::warn!("DrawingWindow: current monitor unavailable; using identity Y transform");
+            self.draw_y_scale = 1.0;
+            self.draw_y_offset = 0.0;
+            return;
+        };
+        let Ok(window_position) = self.window.inner_position() else {
+            log::warn!("DrawingWindow: inner position unavailable; using identity Y transform");
+            self.draw_y_scale = 1.0;
+            self.draw_y_offset = 0.0;
+            return;
+        };
+        let window_size = self.window.inner_size();
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        if monitor_size.height == 0 {
+            log::warn!("DrawingWindow: monitor height is zero; using identity Y transform");
+            self.draw_y_scale = 1.0;
+            self.draw_y_offset = 0.0;
+            return;
+        }
+
+        self.draw_y_scale = window_size.height as f64 / monitor_size.height as f64;
+        self.draw_y_offset =
+            (window_position.y - monitor_position.y) as f64 / monitor_size.height as f64;
+        log::info!(
+            "DrawingWindow: updated draw Y transform scale={:.6} offset={:.6} window_y={} window_height={} monitor_y={} monitor_height={}",
+            self.draw_y_scale,
+            self.draw_y_offset,
+            window_position.y,
+            window_size.height,
+            monitor_position.y,
+            monitor_size.height,
+        );
+    }
+
+    fn draw_payload_y(&self, local_y: f64) -> f64 {
+        (local_y * self.draw_y_scale + self.draw_y_offset).clamp(0.0, 1.0)
+    }
+
     fn view<'a>(
         participants: &'a ParticipantsManager,
     ) -> iced::Element<'a, DrawingMessage, Theme, iced::Renderer> {
@@ -429,8 +476,10 @@ impl DrawingWindow {
                         drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                         Position { x: pct_x, y: pct_y },
                     );
-                    input_event =
-                        Some(DrawingWindowInputEvent::DrawAddPoint { x: pct_x, y: pct_y });
+                    input_event = Some(DrawingWindowInputEvent::DrawAddPoint {
+                        x: pct_x,
+                        y: self.draw_payload_y(pct_y),
+                    });
                     self.signal_activity();
                 }
             }
@@ -445,7 +494,10 @@ impl DrawingWindow {
                             drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                             Position { x: lx, y: ly },
                         );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd { x: lx, y: ly });
+                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
+                            x: lx,
+                            y: self.draw_payload_y(ly),
+                        });
                     }
                     self.left_mouse_pressed = false;
                     self.signal_activity();
@@ -462,7 +514,10 @@ impl DrawingWindow {
                             drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                             Position { x: lx, y: ly },
                         );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd { x: lx, y: ly });
+                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
+                            x: lx,
+                            y: self.draw_payload_y(ly),
+                        });
                     }
                     self.left_mouse_pressed = false;
                     self.signal_activity();
@@ -495,7 +550,7 @@ impl DrawingWindow {
                         );
                         input_event = Some(DrawingWindowInputEvent::DrawStart {
                             x: pct_x,
-                            y: pct_y,
+                            y: self.draw_payload_y(pct_y),
                             path_id: self.current_path_id,
                         });
                         self.signal_activity();
@@ -505,7 +560,10 @@ impl DrawingWindow {
                             drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
                             Position { x: pct_x, y: pct_y },
                         );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd { x: pct_x, y: pct_y });
+                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
+                            x: pct_x,
+                            y: self.draw_payload_y(pct_y),
+                        });
                         self.signal_activity();
                     }
                 } else if *button == winit::event::MouseButton::Right
@@ -527,6 +585,7 @@ impl DrawingWindow {
             }
             WindowEvent::Resized(new_size) => {
                 if new_size.width > 0 && new_size.height > 0 {
+                    self.update_draw_y_transform();
                     self.surface.configure(
                         &self.device,
                         &wgpu::SurfaceConfiguration {
@@ -546,6 +605,9 @@ impl DrawingWindow {
                     );
                     self.signal_activity();
                 }
+            }
+            WindowEvent::Moved(_) => {
+                self.update_draw_y_transform();
             }
             WindowEvent::RedrawRequested => {
                 let cleared = self.redraw();
