@@ -170,6 +170,7 @@ components:
         - manual_upgrade
         - is_admin
         - requires_payment_method
+        - has_stripe_subscription
       properties:
         status:
           type: string
@@ -200,6 +201,13 @@ components:
             Whether the team must add a payment method to access the product
             (post-cutoff team with no active/trialing subscription). Drives the
             blocking onboarding/paywall gate for admins.
+        has_stripe_subscription:
+          type: boolean
+          description: >-
+            Whether a real Stripe subscription row exists for the team, i.e. the
+            billing portal can be opened. False for legacy (pre-cutoff) trial
+            teams and manual-upgrade teams, which have no Stripe subscription to
+            manage.
 
     CreateCheckoutSessionRequest:
       type: object

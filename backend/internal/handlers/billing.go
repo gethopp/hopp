@@ -43,6 +43,11 @@ type SubscriptionResponse struct {
 	// RequiresPaymentMethod is true for post-cutoff teams that have no active
 	// subscription and must add a card (via onboarding) to access the product.
 	RequiresPaymentMethod bool `json:"requires_payment_method"`
+	// HasStripeSubscription is true only when a real Stripe subscription row
+	// exists for the team, i.e. the billing portal can be opened. Legacy
+	// (pre-cutoff) trial teams and manual-upgrade teams have no Stripe row, so
+	// clients must not offer "Manage subscription" for them.
+	HasStripeSubscription bool `json:"has_stripe_subscription"`
 }
 
 // BillingSettingsRequest represents the request body for updating billing settings
@@ -354,6 +359,9 @@ func (bh *BillingHandler) GetSubscriptionStatus(c echo.Context) error {
 		!team.IsManualUpgrade &&
 		subscription == nil &&
 		models.IsTeamPostCutoff(team)
+
+	// Only a real Stripe subscription row can be managed via the billing portal.
+	subscriptionResponse.HasStripeSubscription = subscription != nil
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"subscription": subscriptionResponse,
