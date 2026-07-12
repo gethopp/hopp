@@ -234,13 +234,16 @@ export function Subscription() {
   }
 
   // Whether to show the "manage your subscription" view (vs the upgrade/pricing
-  // page). Trialing teams have a card on file and manage/cancel from here.
-  // Canceled subscriptions intentionally fall through to the upgrade page so the
-  // team can re-subscribe (access to calls is revoked on cancel).
+  // page). A card-on-file trialing/active team manages/cancels from here.
+  // Legacy (pre-cutoff) trial teams report a "trialing" status but have no
+  // Stripe subscription (has_stripe_subscription === false), so they fall
+  // through to the pricing page to start a real subscription instead of hitting
+  // a broken billing portal. Canceled subscriptions also intentionally fall
+  // through to the upgrade page so the team can re-subscribe.
   const hasActiveSubscription = (subscription: SubscriptionResponse): boolean => {
     if (subscription.manual_upgrade) return true;
-    if (subscription.status === "active") return true;
-    if (subscription.status === "trialing") return true;
+    if (subscription.status === "active" && subscription.has_stripe_subscription) return true;
+    if (subscription.status === "trialing" && subscription.has_stripe_subscription) return true;
     return false;
   };
 
@@ -295,13 +298,15 @@ export function Subscription() {
                   </p>
                 )}
               </div>
-              <Button
-                onClick={handleManageBilling}
-                disabled={actionLoading === "portal"}
-                className="flex items-center gap-2"
-              >
-                {actionLoading === "portal" ? "Loading..." : "Manage subscription"}
-              </Button>
+              {subscriptionStatus.has_stripe_subscription && (
+                <Button
+                  onClick={handleManageBilling}
+                  disabled={actionLoading === "portal"}
+                  className="flex items-center gap-2"
+                >
+                  {actionLoading === "portal" ? "Loading..." : "Manage subscription"}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -2660,6 +2660,8 @@ export interface components {
       is_admin: boolean;
       /** @description Whether the team must add a payment method to access the product (post-cutoff team with no active/trialing subscription). Drives the blocking onboarding/paywall gate for admins. */
       requires_payment_method: boolean;
+      /** @description Whether a real Stripe subscription row exists for the team, i.e. the billing portal can be opened. False for legacy (pre-cutoff) trial teams and manual-upgrade teams, which have no Stripe subscription to manage. */
+      has_stripe_subscription: boolean;
     };
     CreateCheckoutSessionRequest: {
       /**
