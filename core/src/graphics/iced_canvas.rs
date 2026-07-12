@@ -1,4 +1,4 @@
-use iced::widget::{canvas, column, container, text};
+use iced::widget::{canvas, column, container, text, Space};
 use iced::{mouse, Alignment, Background, Border, Color, Length, Padding, Rectangle, Theme};
 use iced_wgpu::core::Element;
 
@@ -89,50 +89,36 @@ impl OverlaySurface {
         window_focused: bool,
     ) -> Element<'a, Message, Theme, iced::Renderer> {
         if screen_selection {
-            let card_background = if window_focused {
-                Color::from_rgba(0.28, 0.12, 0.58, 0.98)
-            } else {
-                Color::from_rgba(0.42, 0.20, 0.80, 0.88)
-            };
-            let scrim_background = if window_focused {
-                Color::from_rgba(0.08, 0.05, 0.20, 0.80)
-            } else {
-                Color::from_rgba(0.12, 0.08, 0.27, 0.58)
-            };
-            let title_size = if window_focused { 26.0 } else { 24.0 };
-            let helper_size = if window_focused { 18.0 } else { 16.0 };
-            let text_spacing = if window_focused { 16.0 } else { 14.0 };
-            let box_width = if window_focused { 460.0 } else { 420.0 };
-            let box_padding = if window_focused {
-                Padding::from([30.0, 40.0])
-            } else {
-                Padding::from([26.0, 34.0])
-            };
+            if !window_focused {
+                return Space::new().width(Length::Fill).height(Length::Fill).into();
+            }
+
+            let card_background = Color::from_rgba(0.28, 0.12, 0.58, 0.98);
+            let scrim_background = Color::from_rgba(0.08, 0.05, 0.20, 0.80);
 
             let box_text = column![
                 text("Click anywhere to select this screen or press Enter")
-                    .size(title_size)
+                    .size(26.0)
                     .color(Color::from_rgb(0.98, 0.96, 1.0))
                     .font(GEIST_REGULAR),
                 text("Move your cursor to the display you'd like to share (or use the arrows) and click. Press ESC to cancel.")
-                    .size(helper_size)
+                    .size(18.0)
                     .color(Color::from_rgb(0.89, 0.84, 0.98))
                     .font(GEIST_REGULAR),
             ]
-            .spacing(text_spacing)
-            .max_width(box_width);
+            .spacing(16.0)
+            .max_width(460.0);
 
-            let box_container =
-                container(box_text)
-                    .padding(box_padding)
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(card_background)),
-                        border: Border {
-                            radius: 16.0.into(),
-                            ..Default::default()
-                        },
+            let box_container = container(box_text)
+                .padding(Padding::from([30.0, 40.0]))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(card_background)),
+                    border: Border {
+                        radius: 16.0.into(),
                         ..Default::default()
-                    });
+                    },
+                    ..Default::default()
+                });
 
             container(box_container)
                 .width(Length::Fill)
