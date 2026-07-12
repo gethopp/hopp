@@ -239,8 +239,8 @@ struct ControllerCursor {
      */
     clicked: bool,
     mode: CursorMode,
-    /// Caches mode before controllers are globally disabled.
-    /// `Some` = controllers disabled, `None` = controllers enabled.
+    /// Stores the logical mode while controllers are globally disabled.
+    /// `mode` remains the visual mode; Normal is coerced to Pointer while disabled.
     cached_mode: Option<CursorMode>,
     has_control: bool,
     identity: String,
@@ -287,6 +287,10 @@ impl ControllerCursor {
     fn set_mode(&mut self, mode: CursorMode) {
         if self.cached_mode.is_some() {
             self.cached_mode = Some(mode);
+            self.mode = match mode {
+                CursorMode::Normal => CursorMode::Pointer,
+                mode => mode,
+            };
         } else {
             self.mode = mode;
         }
@@ -296,7 +300,9 @@ impl ControllerCursor {
         if self.cached_mode.is_none() {
             self.cached_mode = Some(self.mode);
         }
-        self.mode = CursorMode::Pointer;
+        if self.mode == CursorMode::Normal {
+            self.mode = CursorMode::Pointer;
+        }
     }
 
     fn enable(&mut self) {
@@ -940,8 +946,8 @@ impl CursorController {
     /// Enables or disables input processing for all controllers.
     ///
     /// This function controls whether remote controllers can interact with the
-    /// local system. When enabled, cursors show in Normal mode. When disabled,
-    /// cursors show in Pointer mode (interaction blocked).
+    /// local system. When disabled, Normal cursors show in Pointer mode
+    /// (interaction blocked), while explicit drawing/click modes stay visible.
     ///
     /// # Parameters
     ///
