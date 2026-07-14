@@ -91,6 +91,7 @@ export interface UserSettings {
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
+  remote_control_enabled: boolean;
   noise_cancellation_enabled: boolean;
   screen_share_resolution: ScreenShareResolution;
   hopp_server_url: string | null;
@@ -195,6 +196,7 @@ export interface CommandMap {
   set_auto_update_enabled: { args: { enabled: boolean }; return: void };
   set_start_camera_on_call: { args: { enabled: boolean }; return: void };
   set_start_mic_on_call: { args: { enabled: boolean }; return: void };
+  set_remote_control_enabled: { args: { enabled: boolean }; return: void };
   set_shortcut_toggle_mic: { args: { accel: string }; return: void };
   set_shortcut_toggle_camera: { args: { accel: string }; return: void };
   set_shortcut_toggle_screenshare: { args: { accel: string }; return: void };

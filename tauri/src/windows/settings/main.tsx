@@ -296,6 +296,14 @@ function SettingsWindow() {
           <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
             <h3 className="text-base font-medium text-black dark:text-white">Screen share settings</h3>
             <div className="flex flex-col gap-3">
+              <CheckboxRow
+                title="Enable remote control by default"
+                description="Allow teammates to control your computer when screen sharing starts"
+                checked={settings.remote_control_enabled}
+                onCheckedChange={(v) => {
+                  typedInvoke("set_remote_control_enabled", { enabled: v }).then(() => refetchSettings());
+                }}
+              />
               <ResolutionRow
                 value={settings.screen_share_resolution}
                 onValueChange={(resolution) => {

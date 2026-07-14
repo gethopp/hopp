@@ -60,6 +60,14 @@ async fn get_available_content(app: tauri::AppHandle) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
 
+    let remote_control_enabled = data.app_state.user_settings().remote_control_enabled;
+    data.sender
+        .send(Message::ControllerCursorEnabled(remote_control_enabled))
+        .map_err(|e| {
+            log::error!("get_available_content: failed to apply remote control setting: {e:?}");
+            "Failed to apply remote control setting".to_string()
+        })?;
+
     data.sender.send(Message::GetAvailableContent).map_err(|e| {
         log::error!("get_available_content: failed to send message: {e:?}");
         "Failed to start screen selection".to_string()
@@ -812,6 +820,17 @@ fn set_start_mic_on_call(app: tauri::AppHandle, enabled: bool) {
     let mut data = data.lock().unwrap();
     data.app_state
         .update_user_setting(|s| s.start_mic_on_call = enabled);
+}
+
+#[tauri::command(async)]
+fn set_remote_control_enabled(app: tauri::AppHandle, enabled: bool) {
+    log::info!("set_remote_control_enabled: {enabled}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|s| s.remote_control_enabled = enabled);
+    drop(data);
+    set_controller_cursor(app, enabled);
 }
 
 #[tauri::command(async)]
@@ -1641,6 +1660,7 @@ fn main() {
             set_auto_update_enabled,
             set_start_camera_on_call,
             set_start_mic_on_call,
+            set_remote_control_enabled,
             set_shortcut_toggle_mic,
             set_shortcut_toggle_camera,
             set_shortcut_toggle_screenshare,

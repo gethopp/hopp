@@ -65,18 +65,17 @@ export function CallCenter() {
   const fetchAccessibilityPermission = async () => {
     const permission = await tauriUtils.getControlPermission();
     setAccessibilityPermission(permission);
-    setControllerCursorState(permission);
+    const enabled = permission && (userSettings?.remote_control_enabled ?? false);
+    setControllerCursorState(enabled);
 
-    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
-      setTimeout(() => {
-        tauriUtils.setControllerCursor(permission);
-      }, 2000);
+    if (callTokens?.role === ParticipantRole.SHARER && userSettings) {
+      tauriUtils.setControllerCursor(enabled);
     }
   };
 
   useEffect(() => {
     fetchAccessibilityPermission();
-  }, [callTokens?.role]);
+  }, [callTokens?.role, userSettings?.remote_control_enabled]);
 
   useEffect(() => {
     const unlisten = listen("core_call_ended", () => {

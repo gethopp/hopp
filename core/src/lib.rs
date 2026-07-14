@@ -106,8 +106,6 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
-const REMOTE_CONTROL_ENABLED: bool = true;
-
 #[derive(Error, Debug)]
 pub enum ServerError {
     #[error("Livekit room service not found")]
@@ -144,6 +142,11 @@ struct RemoteControl {
 }
 
 impl RemoteControl {
+    fn set_enabled(&mut self, enabled: bool) {
+        self.cursor_controller.set_controllers_enabled(enabled);
+        self.keyboard_controller.set_enabled(enabled);
+    }
+
     /// Renders a complete frame by updating cursors, hiding inactive ones, clearing expired paths, and drawing.
     ///
     /// # Returns
@@ -234,6 +237,7 @@ pub struct Application<'a> {
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
     screen_share_resolution: ScreenShareResolution,
+    remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
     screen_selection_active: bool,
 }
@@ -322,6 +326,7 @@ impl<'a> Application<'a> {
             hang_protection_counter,
             start_camera_on_call: false,
             screen_share_resolution: ScreenShareResolution::P4K,
+            remote_control_enabled: true,
             clipboard_controller,
             screen_selection_active: false,
         })
@@ -413,7 +418,7 @@ impl<'a> Application<'a> {
                 width: screenshare_input.resolution.width,
                 height: screenshare_input.resolution.height,
             },
-            !REMOTE_CONTROL_ENABLED,
+            !self.remote_control_enabled,
             buffer_source,
             scale,
         );
@@ -434,7 +439,7 @@ impl<'a> Application<'a> {
 
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, REMOTE_CONTROL_ENABLED);
+        let res = self.create_overlay_window(monitor, self.remote_control_enabled);
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -719,22 +724,25 @@ impl<'a> Application<'a> {
         let redraw_sender = gfx.redraw_sender();
         let clock = gfx.clock();
 
+        // Keep the input infrastructure available so remote control can be
+        // enabled later without recreating the overlay.
         let cursor_controller = CursorController::new(
             overlay_window,
             redraw_sender,
             self.event_loop_proxy.clone(),
-            remote_control_enabled,
+            true,
             clock,
-        );
-        if let Err(error) = cursor_controller {
+        )
+        .map_err(|error| {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");
-            return Err(ServerError::CursorControllerCreationError);
-        }
-
-        self.remote_control = Some(RemoteControl {
-            cursor_controller: cursor_controller.unwrap(),
+            ServerError::CursorControllerCreationError
+        })?;
+        let mut remote_control = RemoteControl {
+            cursor_controller,
             keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
-        });
+        };
+        remote_control.set_enabled(remote_control_enabled);
+        self.remote_control = Some(remote_control);
 
         Ok(())
     }
@@ -831,23 +839,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::ControllerCursorEnabled(enabled) => {
                 log::debug!("user_event: cursor enabled: {enabled:?}");
-                if self.remote_control.is_none() {
-                    log::warn!("user_event: remote control is none cursor enabled ");
+                self.remote_control_enabled = enabled;
+                let Some(remote_control) = self.remote_control.as_mut() else {
+                    log::debug!(
+                        "user_event: saved remote control preference for the next screen share"
+                    );
                     return;
-                }
-                if self.room_service.is_none() {
+                };
+                let Some(room_service) = self.room_service.as_ref() else {
                     log::warn!("user_event: room service is none cursor enabled");
                     return;
-                }
-                let remote_control = &mut self.remote_control.as_mut().unwrap();
-                let cursor_controller = &mut remote_control.cursor_controller;
-                cursor_controller.set_controllers_enabled(enabled);
-                let keyboard_controller = &mut remote_control.keyboard_controller;
-                keyboard_controller.set_enabled(enabled);
-                self.room_service
-                    .as_ref()
-                    .unwrap()
-                    .publish_controller_cursor_enabled(enabled);
+                };
+                remote_control.set_enabled(enabled);
+                room_service.publish_controller_cursor_enabled(enabled);
             }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
@@ -1895,10 +1899,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     self.previous_controllers_enabled = previous_controllers_enabled;
 
                     // Disable remote control
-                    remote_control
-                        .cursor_controller
-                        .set_controllers_enabled(false);
-                    remote_control.keyboard_controller.set_enabled(false);
+                    remote_control.set_enabled(false);
 
                     let draw_mode = room_service::DrawingMode::Draw(room_service::DrawSettings {
                         permanent: drawing_enabled.permanent,
@@ -1944,12 +1945,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                                 // Restore remote control to previous state
                                 let remote_control = self.remote_control.as_mut().unwrap();
-                                remote_control
-                                    .cursor_controller
-                                    .set_controllers_enabled(previous_controllers_enabled);
-                                remote_control
-                                    .keyboard_controller
-                                    .set_enabled(previous_controllers_enabled);
+                                remote_control.set_enabled(previous_controllers_enabled);
 
                                 if let Some(room_service) = &self.room_service {
                                     room_service
@@ -1967,12 +1963,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
 
                     // Restore remote control to previous state
-                    remote_control
-                        .cursor_controller
-                        .set_controllers_enabled(self.previous_controllers_enabled);
-                    remote_control
-                        .keyboard_controller
-                        .set_enabled(self.previous_controllers_enabled);
+                    remote_control.set_enabled(self.previous_controllers_enabled);
 
                     if let Some(room_service) = &self.room_service {
                         room_service.publish_drawing_mode(room_service::DrawingMode::Disabled);
