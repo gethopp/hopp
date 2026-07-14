@@ -844,14 +844,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .set_include_cursor(!enabled);
 
-                let Some(remote_control) = self.remote_control.as_mut() else {
+                if let Some(remote_control) = self.remote_control.as_mut() {
+                    if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
+                        remote_control.set_enabled(enabled);
+                    }
+                } else {
                     log::debug!(
                         "user_event: saved remote control preference for the next screen share"
                     );
-                    return;
-                };
-                if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
-                    remote_control.set_enabled(enabled);
                 }
 
                 if let Some(room_service) = self.room_service.as_ref() {

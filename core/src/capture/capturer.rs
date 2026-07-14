@@ -204,14 +204,27 @@ impl Capturer {
     /// Updates whether the active stream includes the system cursor.
     /// Restarts the stream only when the policy changes.
     pub fn set_include_cursor(&mut self, include_cursor: bool) {
-        let Some(stream) = self.active_stream.as_mut() else {
+        let Some(mut stream) = self.active_stream.take() else {
             return;
         };
         if !stream.set_include_cursor(include_cursor) {
+            self.active_stream = Some(stream);
             return;
         }
 
-        self.restart_stream();
+        log::info!("set_include_cursor: applying cursor policy change");
+        let Ok(mut stream) = stream.copy() else {
+            log::error!("set_include_cursor: failed to copy capture stream");
+            let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
+            return;
+        };
+        let source_id = stream.source_id();
+        if let Err(error) = stream.start_capture(source_id) {
+            log::error!("set_include_cursor: failed to restart capture stream: {error:?}");
+            let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
+            return;
+        }
+        self.active_stream = Some(stream);
     }
 
     /// Signals the capture thread to stop and releases the active stream.
