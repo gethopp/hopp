@@ -201,6 +201,19 @@ impl Capturer {
         Ok(())
     }
 
+    /// Updates whether the active stream includes the system cursor.
+    /// Restarts the stream only when the policy changes.
+    pub fn set_include_cursor(&mut self, include_cursor: bool) {
+        let Some(stream) = self.active_stream.as_mut() else {
+            return;
+        };
+        if !stream.set_include_cursor(include_cursor) {
+            return;
+        }
+
+        self.restart_stream();
+    }
+
     /// Signals the capture thread to stop and releases the active stream.
     /// The thread is detached and will exit on its own.
     /// Safe to call when no stream is active (no-op).

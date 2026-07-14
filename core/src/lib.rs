@@ -220,7 +220,6 @@ pub struct Application<'a> {
     socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    previous_controllers_enabled: bool,
     controller_draw_persist: bool,
     last_mode: Option<socket_lib::StoredMode>,
     window_manager: Option<window_manager::WindowManager<'a>>,
@@ -309,7 +308,6 @@ impl<'a> Application<'a> {
             socket_responses,
             room_service: None,
             event_loop_proxy,
-            previous_controllers_enabled: false,
             controller_draw_persist: false,
             last_mode: None,
             window_manager: None,
@@ -840,18 +838,25 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ControllerCursorEnabled(enabled) => {
                 log::debug!("user_event: cursor enabled: {enabled:?}");
                 self.remote_control_enabled = enabled;
+
+                self.screen_capturer
+                    .lock()
+                    .unwrap()
+                    .set_include_cursor(!enabled);
+
                 let Some(remote_control) = self.remote_control.as_mut() else {
                     log::debug!(
                         "user_event: saved remote control preference for the next screen share"
                     );
                     return;
                 };
-                let Some(room_service) = self.room_service.as_ref() else {
-                    log::warn!("user_event: room service is none cursor enabled");
-                    return;
-                };
-                remote_control.set_enabled(enabled);
-                room_service.publish_controller_cursor_enabled(enabled);
+                if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
+                    remote_control.set_enabled(enabled);
+                }
+
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.publish_controller_cursor_enabled(enabled);
+                }
             }
             UserEvent::Keystroke(keystroke_data) => {
                 log::debug!("user_event: keystroke: {keystroke_data:?}");
@@ -1893,11 +1898,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
                     let remote_control = self.remote_control.as_mut().unwrap();
 
-                    // Store the current controller state before disabling
-                    let previous_controllers_enabled =
-                        remote_control.cursor_controller.is_controllers_enabled();
-                    self.previous_controllers_enabled = previous_controllers_enabled;
-
                     // Disable remote control
                     remote_control.set_enabled(false);
 
@@ -1943,9 +1943,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             Err(e) => {
                                 log::error!("Failed to create drawing window: {e:?}");
 
-                                // Restore remote control to previous state
+                                // Restore the saved remote control preference
                                 let remote_control = self.remote_control.as_mut().unwrap();
-                                remote_control.set_enabled(previous_controllers_enabled);
+                                remote_control.set_enabled(self.remote_control_enabled);
 
                                 if let Some(room_service) = &self.room_service {
                                     room_service
@@ -1962,8 +1962,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         room_service.publish_draw_clear_all_paths();
                     }
 
-                    // Restore remote control to previous state
-                    remote_control.set_enabled(self.previous_controllers_enabled);
+                    // Restore the saved remote control preference
+                    remote_control.set_enabled(self.remote_control_enabled);
 
                     if let Some(room_service) = &self.room_service {
                         room_service.publish_drawing_mode(room_service::DrawingMode::Disabled);

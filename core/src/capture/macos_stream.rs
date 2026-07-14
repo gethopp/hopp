@@ -287,6 +287,14 @@ impl Stream {
         self.source_id
     }
 
+    pub fn set_include_cursor(&mut self, include_cursor: bool) -> bool {
+        if self.include_cursor == include_cursor {
+            return false;
+        }
+        self.include_cursor = include_cursor;
+        true
+    }
+
     pub fn get_stream_extent(&self) -> Extent {
         *self.output_extent.lock().unwrap()
     }
