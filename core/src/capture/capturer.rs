@@ -188,12 +188,7 @@ impl Capturer {
             self.active_stream = None;
         }
 
-        let mut stream = Stream::new(
-            stream_resolution,
-            scale,
-            self.tx.clone(),
-            buffer_source,
-        )?;
+        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), buffer_source)?;
 
         stream.start_capture(content.id)?;
         self.active_stream = Some(stream);

@@ -739,11 +739,7 @@ impl CursorController {
 
             controller.set_position(global_position, local_position);
             if controller.has_control() {
-                let mut cursor_simulator = self
-                    .remote_control
-                    .cursor_simulator
-                    .lock()
-                    .unwrap();
+                let mut cursor_simulator = self.remote_control.cursor_simulator.lock().unwrap();
                 cursor_simulator.simulate_cursor_movement(global_position, controller.clicked());
             }
             break;
@@ -791,11 +787,7 @@ impl CursorController {
                 controller.set_clicked(click_data.down);
             }
 
-            let mut cursor_simulator = self
-                .remote_control
-                .cursor_simulator
-                .lock()
-                .unwrap();
+            let mut cursor_simulator = self.remote_control.cursor_simulator.lock().unwrap();
             /* Take the cursor to the controller's position. */
             cursor_simulator.simulate_cursor_movement(global_position, false);
             cursor_simulator.simulate_click(click_data);
@@ -817,11 +809,7 @@ impl CursorController {
         drop(controllers_cursors);
 
         /* Show the sharer cursor. */
-        let mut sharer_cursor = self
-            .remote_control
-            .sharer_cursor
-            .lock()
-            .unwrap();
+        let mut sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
         if sharer_cursor.has_control() && control_changed {
             sharer_cursor.show();
         }
@@ -867,11 +855,7 @@ impl CursorController {
                 controller.hide();
             }
 
-            let mut cursor_simulator = self
-                .remote_control
-                .cursor_simulator
-                .lock()
-                .unwrap();
+            let mut cursor_simulator = self.remote_control.cursor_simulator.lock().unwrap();
             cursor_simulator.simulate_cursor_movement(controller.global_position(), false);
             cursor_simulator.simulate_scroll(delta);
 
@@ -892,11 +876,7 @@ impl CursorController {
         drop(controllers_cursors);
 
         /* Show the sharer cursor. */
-        let mut sharer_cursor = self
-            .remote_control
-            .sharer_cursor
-            .lock()
-            .unwrap();
+        let mut sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
         if sharer_cursor.has_control() && control_changed {
             sharer_cursor.show();
         }
@@ -944,11 +924,7 @@ impl CursorController {
         };
 
         if any_had_control {
-            let mut sharer_cursor = self
-                .remote_control
-                .sharer_cursor
-                .lock()
-                .unwrap();
+            let mut sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
             sharer_cursor.hide(false);
         }
     }
@@ -982,11 +958,7 @@ impl CursorController {
         };
 
         if had_control {
-            let mut sharer_cursor = self
-                .remote_control
-                .sharer_cursor
-                .lock()
-                .unwrap();
+            let mut sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
             sharer_cursor.hide(false);
         }
     }
