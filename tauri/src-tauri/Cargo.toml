@@ -37,6 +37,7 @@ tauri-plugin-updater = "2.7.1"
 
 [dependencies]
 tauri = { version = "2.6.1", features = ["macos-private-api", "tray-icon", "image-ico"] }
+tray-icon = { git = "https://github.com/gethopp/tray-icon", branch = "handle_macos_27" }
 tauri-plugin-positioner = { version = "2.0.0", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -63,6 +64,9 @@ thiserror = "2.0.12"
 sysinfo = "0.35.2"
 tauri-plugin-opener = "2"
 window-vibrancy = "0.6.0"
+
+[patch.crates-io]
+tray-icon = { git = "https://github.com/gethopp/tray-icon", branch = "handle_macos_27" }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
