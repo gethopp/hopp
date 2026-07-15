@@ -557,9 +557,8 @@ struct RemoteControl {
 /// Constructor returns `CursorControllerError` with specific failure reasons:
 /// - `MouseObserverCreationFailed`: Platform mouse capture initialization failed
 pub struct CursorController {
-    /// Objects that are used for remote control. When accessibility permission is not granted,
-    /// this is None.
-    remote_control: Option<RemoteControl>,
+    /// Objects used for remote control and the sharer's virtual cursor.
+    remote_control: RemoteControl,
     /// Cursors for the remote controllers.
     ///
     /// LOCK ORDER: this mutex MUST NOT be held when locking
@@ -596,7 +595,6 @@ impl CursorController {
     /// * `overlay_window` - Shared overlay window for coordinate transformations
     /// * `redraw_thread_sender` - Sender for triggering redraws
     /// * `event_loop_proxy` - Event loop proxy for sending cursor position updates
-    /// * `accessibility_permission` - Whether accessibility permissions are granted
     /// * `clock` - Clock for time tracking
     ///
     /// # Returns
@@ -607,40 +605,31 @@ impl CursorController {
         overlay_window: Arc<OverlayWindow>,
         redraw_thread_sender: Sender<RedrawThreadCommands>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-        accessibility_permission: bool,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, CursorControllerError> {
         let controllers_cursors = Arc::new(Mutex::new(vec![]));
-        let remote_control = if accessibility_permission {
-            let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
-            let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
-                CursorState::new(redraw_thread_sender.clone(), clock.clone()),
-                event_loop_proxy.clone(),
-                overlay_window.clone(),
-                cursor_simulator.clone(),
-                controllers_cursors.clone(),
-            )));
-
-            let mouse_observer = MouseObserver::new(sharer_cursor.clone());
-            if mouse_observer.is_err() {
-                error!("CursorController::new: error creating mouse observer");
-                return Err(CursorControllerError::MouseObserverCreationFailed);
-            }
-            let mouse_observer = mouse_observer.unwrap();
-
-            Some(RemoteControl {
-                sharer_cursor,
-                cursor_simulator,
-                _mouse_observer: mouse_observer,
-            })
-        } else {
-            None
+        let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
+        let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
+            CursorState::new(redraw_thread_sender.clone(), clock.clone()),
+            event_loop_proxy.clone(),
+            overlay_window.clone(),
+            cursor_simulator.clone(),
+            controllers_cursors.clone(),
+        )));
+        let mouse_observer = MouseObserver::new(sharer_cursor.clone()).map_err(|_| {
+            log::error!("CursorController::new: error creating mouse observer");
+            CursorControllerError::MouseObserverCreationFailed
+        })?;
+        let remote_control = RemoteControl {
+            sharer_cursor,
+            cursor_simulator,
+            _mouse_observer: mouse_observer,
         };
 
         Ok(Self {
             remote_control,
             controllers_cursors,
-            controllers_cursors_enabled: accessibility_permission,
+            controllers_cursors_enabled: true,
             overlay_window,
             redraw_thread_sender,
             event_loop_proxy,
@@ -749,11 +738,9 @@ impl CursorController {
             let global_position = self.overlay_window.translate_to_global(x, y);
 
             controller.set_position(global_position, local_position);
-            if controller.has_control() && self.remote_control.is_some() {
+            if controller.has_control() {
                 let mut cursor_simulator = self
                     .remote_control
-                    .as_ref()
-                    .unwrap()
                     .cursor_simulator
                     .lock()
                     .unwrap();
@@ -775,11 +762,6 @@ impl CursorController {
     /// * `identity` - Session ID identifying which controller is clicking
     pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, identity: &str) {
         debug!("mouse_click_controller: {click_data:?}");
-        if self.remote_control.is_none() {
-            log::warn!("mouse_click_controller: remote control is none");
-            return;
-        }
-
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -811,8 +793,6 @@ impl CursorController {
 
             let mut cursor_simulator = self
                 .remote_control
-                .as_ref()
-                .unwrap()
                 .cursor_simulator
                 .lock()
                 .unwrap();
@@ -839,8 +819,6 @@ impl CursorController {
         /* Show the sharer cursor. */
         let mut sharer_cursor = self
             .remote_control
-            .as_ref()
-            .unwrap()
             .sharer_cursor
             .lock()
             .unwrap();
@@ -872,11 +850,6 @@ impl CursorController {
     pub fn scroll_controller(&mut self, delta: ScrollDelta, identity: &str) {
         debug!("scroll_controller: {delta:?}");
 
-        if self.remote_control.is_none() {
-            log::warn!("scroll_controller: remote control is none");
-            return;
-        }
-
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -896,8 +869,6 @@ impl CursorController {
 
             let mut cursor_simulator = self
                 .remote_control
-                .as_ref()
-                .unwrap()
                 .cursor_simulator
                 .lock()
                 .unwrap();
@@ -923,8 +894,6 @@ impl CursorController {
         /* Show the sharer cursor. */
         let mut sharer_cursor = self
             .remote_control
-            .as_ref()
-            .unwrap()
             .sharer_cursor
             .lock()
             .unwrap();
@@ -954,11 +923,6 @@ impl CursorController {
     /// * `enabled` - Whether to enable (true) or disable (false) input for all controllers
     pub fn set_controllers_enabled(&mut self, enabled: bool) {
         log::info!("set_controllers_enabled: {enabled}");
-        if self.remote_control.is_none() {
-            log::warn!("set_controllers_enabled: remote control is none");
-            return;
-        }
-
         let any_had_control = {
             let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
             self.controllers_cursors_enabled = enabled;
@@ -982,8 +946,6 @@ impl CursorController {
         if any_had_control {
             let mut sharer_cursor = self
                 .remote_control
-                .as_ref()
-                .unwrap()
                 .sharer_cursor
                 .lock()
                 .unwrap();
@@ -1022,8 +984,6 @@ impl CursorController {
         if had_control {
             let mut sharer_cursor = self
                 .remote_control
-                .as_ref()
-                .unwrap()
                 .sharer_cursor
                 .lock()
                 .unwrap();
@@ -1045,14 +1005,11 @@ impl CursorController {
         participants_manager: &mut crate::graphics::graphics_context::participant::ParticipantsManager,
     ) {
         // Update sharer cursor
-        if let Some(remote_control) = &self.remote_control {
-            let sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
-            if sharer_cursor.visible() {
-                participants_manager
-                    .set_cursor_position("local", Some(sharer_cursor.local_position()));
-            } else {
-                participants_manager.set_cursor_position("local", None);
-            }
+        let sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
+        if sharer_cursor.visible() {
+            participants_manager.set_cursor_position("local", Some(sharer_cursor.local_position()));
+        } else {
+            participants_manager.set_cursor_position("local", None);
         }
 
         // Update controller cursors
@@ -1072,20 +1029,6 @@ impl CursorController {
         self.overlay_window.clone()
     }
 
-    /// Triggers a click animation at the specified position for a given controller.
-    ///
-    /// This method handles the visual click animation feedback when a controller
-    /// with pointer mode enabled performs a click action. It sends the necessary
-    /// events to update the graphics and trigger the animation sequence.
-    ///
-    /// # Parameters
-    ///
-    /// * `position` - The position where the click animation should be displayed
-    /// * `identity` - Session ID of the controller triggering the animation
-    pub fn is_controllers_enabled(&self) -> bool {
-        self.controllers_cursors_enabled
-    }
-
     /// Hides cursors that have been inactive for longer than `CURSOR_HIDE_TIMEOUT`.
     ///
     /// This should be called during each redraw cycle, similar to how
@@ -1100,9 +1043,7 @@ impl CursorController {
             }
         }
 
-        if let Some(remote_control) = &self.remote_control {
-            let mut sharer_cursor = remote_control.sharer_cursor.lock().unwrap();
-            sharer_cursor.cursor_state.hide_if_expired();
-        }
+        let mut sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
+        sharer_cursor.cursor_state.hide_if_expired();
     }
 }

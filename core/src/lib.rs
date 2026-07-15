@@ -416,7 +416,6 @@ impl<'a> Application<'a> {
                 width: screenshare_input.resolution.width,
                 height: screenshare_input.resolution.height,
             },
-            !self.remote_control_enabled,
             buffer_source,
             scale,
         );
@@ -722,13 +721,10 @@ impl<'a> Application<'a> {
         let redraw_sender = gfx.redraw_sender();
         let clock = gfx.clock();
 
-        // Keep the input infrastructure available so remote control can be
-        // enabled later without recreating the overlay.
         let cursor_controller = CursorController::new(
             overlay_window,
             redraw_sender,
             self.event_loop_proxy.clone(),
-            true,
             clock,
         )
         .map_err(|error| {
@@ -838,11 +834,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::ControllerCursorEnabled(enabled) => {
                 log::debug!("user_event: cursor enabled: {enabled:?}");
                 self.remote_control_enabled = enabled;
-
-                self.screen_capturer
-                    .lock()
-                    .unwrap()
-                    .set_include_cursor(!enabled);
 
                 if let Some(remote_control) = self.remote_control.as_mut() {
                     if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {

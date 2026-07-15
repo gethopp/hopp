@@ -44,7 +44,6 @@ pub struct Stream {
     stream_resolution: Extent,
     source_id: u32,
     failures_count: Arc<Mutex<u64>>,
-    include_cursor: bool,
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
 }
@@ -54,7 +53,6 @@ impl Stream {
         stream_resolution: Extent,
         scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
-        include_cursor: bool,
         buffer_source: NativeVideoSource,
     ) -> Result<Self, CapturerError> {
         Ok(Stream {
@@ -66,7 +64,6 @@ impl Stream {
             stream_resolution,
             source_id: 0,
             failures_count: Arc::new(Mutex::new(0)),
-            include_cursor,
             output_extent: Arc::new(Mutex::new(Extent {
                 width: 0.,
                 height: 0.,
@@ -120,7 +117,7 @@ impl Stream {
             .with_width(stream_width)
             .with_height(stream_height)
             .with_pixel_format(PixelFormat::YCbCr_420v)
-            .with_shows_cursor(self.include_cursor)
+            .with_shows_cursor(false)
             .with_fps(60);
 
         let filter = SCContentFilter::create()
@@ -273,7 +270,6 @@ impl Stream {
             stream_resolution: self.stream_resolution,
             source_id: self.source_id,
             failures_count: self.failures_count.clone(),
-            include_cursor: self.include_cursor,
             output_extent: self.output_extent.clone(),
             scale: self.scale,
         })
@@ -285,14 +281,6 @@ impl Stream {
 
     pub fn source_id(&self) -> u32 {
         self.source_id
-    }
-
-    pub fn set_include_cursor(&mut self, include_cursor: bool) -> bool {
-        if self.include_cursor == include_cursor {
-            return false;
-        }
-        self.include_cursor = include_cursor;
-        true
     }
 
     pub fn get_stream_extent(&self) -> Extent {

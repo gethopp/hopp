@@ -157,7 +157,6 @@ impl Capturer {
     /// # Parameters
     /// - `content`: The content source to capture (display or window with display_id)
     /// - `stream_resolution`: The resolution of the stream buffer
-    /// - `include_cursor`: Whether to include the cursor in the capture
     ///
     /// # Returns
     /// - `Ok(())`: Successfully started the capture stream
@@ -177,11 +176,12 @@ impl Capturer {
         &mut self,
         content: Content,
         stream_resolution: Extent,
-        include_cursor: bool,
         buffer_source: NativeVideoSource,
         scale: f64,
     ) -> Result<(), CapturerError> {
-        log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor} scale: {scale}");
+        log::info!(
+            "start_capture: content {content:?} resolution: {stream_resolution:?} scale: {scale}"
+        );
         if self.active_stream.is_some() {
             log::warn!("start_capture: active stream, stopping it");
             self.active_stream.as_mut().unwrap().stop_capture();
@@ -192,39 +192,12 @@ impl Capturer {
             stream_resolution,
             scale,
             self.tx.clone(),
-            include_cursor,
             buffer_source,
         )?;
 
         stream.start_capture(content.id)?;
         self.active_stream = Some(stream);
         Ok(())
-    }
-
-    /// Updates whether the active stream includes the system cursor.
-    /// Restarts the stream only when the policy changes.
-    pub fn set_include_cursor(&mut self, include_cursor: bool) {
-        let Some(mut stream) = self.active_stream.take() else {
-            return;
-        };
-        if !stream.set_include_cursor(include_cursor) {
-            self.active_stream = Some(stream);
-            return;
-        }
-
-        log::info!("set_include_cursor: applying cursor policy change");
-        let Ok(mut stream) = stream.copy() else {
-            log::error!("set_include_cursor: failed to copy capture stream");
-            let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
-            return;
-        };
-        let source_id = stream.source_id();
-        if let Err(error) = stream.start_capture(source_id) {
-            log::error!("set_include_cursor: failed to restart capture stream: {error:?}");
-            let _ = self.event_loop_proxy.send_event(UserEvent::StopScreenShare);
-            return;
-        }
-        self.active_stream = Some(stream);
     }
 
     /// Signals the capture thread to stop and releases the active stream.
