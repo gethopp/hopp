@@ -62,21 +62,20 @@ export function CallCenter() {
     toast.success("Room link copied to clipboard");
   };
 
-  const fetchAccessibilityPermission = async () => {
-    const permission = await tauriUtils.getControlPermission();
-    setAccessibilityPermission(permission);
-    setControllerCursorState(permission);
-
-    if (callTokens?.role === ParticipantRole.SHARER && (!permission || (permission && !accessibilityPermission))) {
-      setTimeout(() => {
-        tauriUtils.setControllerCursor(permission);
-      }, 2000);
-    }
-  };
-
   useEffect(() => {
+    const fetchAccessibilityPermission = async () => {
+      const permission = await tauriUtils.getControlPermission();
+      setAccessibilityPermission(permission);
+      const enabled = permission && (userSettings?.remote_control_enabled ?? true);
+      setControllerCursorState(enabled);
+
+      if (callTokens?.role === ParticipantRole.SHARER && userSettings) {
+        tauriUtils.setControllerCursor(enabled);
+      }
+    };
+
     fetchAccessibilityPermission();
-  }, [callTokens?.role]);
+  }, [callTokens?.role, userSettings]);
 
   useEffect(() => {
     const unlisten = listen("core_call_ended", () => {

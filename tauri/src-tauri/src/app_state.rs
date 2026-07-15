@@ -17,6 +17,8 @@ pub struct UserSettings {
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
+    #[serde(default = "default_true")]
+    pub remote_control_enabled: bool,
     #[serde(default = "default_noise_cancellation_enabled")]
     pub noise_cancellation_enabled: bool,
     #[serde(default = "default_screen_share_resolution")]
@@ -39,6 +41,7 @@ impl Default for UserSettings {
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
             start_mic_on_call: true,
+            remote_control_enabled: true,
             noise_cancellation_enabled: true,
             screen_share_resolution: ScreenShareResolution::P4K,
             hopp_server_url: None,

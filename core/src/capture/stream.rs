@@ -298,9 +298,6 @@ pub struct Stream {
     /// When this reaches MAX_STREAM_FAILURES_BEFORE_EXIT, the process exits
     /// to trigger application restart.
     failures_count: Arc<Mutex<u64>>,
-
-    /// Whether to include the cursor in the capture
-    include_cursor: bool,
 }
 
 impl Stream {
@@ -310,7 +307,6 @@ impl Stream {
     /// - `stream_resolution`: The resolution of the stream buffer
     /// - `_scale`: Display scale factor (currently unused but reserved for future scaling)
     /// - `tx`: Channel sender for communicating runtime messages back to the main capturer
-    /// - `include_cursor`: Whether to include the cursor in the capture
     ///
     /// # Returns
     /// - `Ok(Stream)`: Successfully created stream ready for capture
@@ -319,7 +315,6 @@ impl Stream {
         stream_resolution: Extent,
         _scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
-        include_cursor: bool,
         buffer_source: NativeVideoSource,
     ) -> Result<Self, CapturerError> {
         let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
@@ -359,7 +354,6 @@ impl Stream {
             stream_resolution,
             source_id: 0,
             failures_count,
-            include_cursor,
         })
     }
 
@@ -478,7 +472,6 @@ impl Stream {
             stream_resolution: self.stream_resolution,
             source_id: self.source_id,
             failures_count: self.failures_count.clone(),
-            include_cursor: self.include_cursor,
         };
 
         Ok(new_stream)

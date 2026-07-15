@@ -157,7 +157,6 @@ impl Capturer {
     /// # Parameters
     /// - `content`: The content source to capture (display or window with display_id)
     /// - `stream_resolution`: The resolution of the stream buffer
-    /// - `include_cursor`: Whether to include the cursor in the capture
     ///
     /// # Returns
     /// - `Ok(())`: Successfully started the capture stream
@@ -177,24 +176,19 @@ impl Capturer {
         &mut self,
         content: Content,
         stream_resolution: Extent,
-        include_cursor: bool,
         buffer_source: NativeVideoSource,
         scale: f64,
     ) -> Result<(), CapturerError> {
-        log::info!("start_capture: content {content:?} resolution: {stream_resolution:?} include_cursor: {include_cursor} scale: {scale}");
+        log::info!(
+            "start_capture: content {content:?} resolution: {stream_resolution:?} scale: {scale}"
+        );
         if self.active_stream.is_some() {
             log::warn!("start_capture: active stream, stopping it");
             self.active_stream.as_mut().unwrap().stop_capture();
             self.active_stream = None;
         }
 
-        let mut stream = Stream::new(
-            stream_resolution,
-            scale,
-            self.tx.clone(),
-            include_cursor,
-            buffer_source,
-        )?;
+        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), buffer_source)?;
 
         stream.start_capture(content.id)?;
         self.active_stream = Some(stream);
