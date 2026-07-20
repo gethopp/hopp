@@ -1127,13 +1127,11 @@ impl ScreensharingWindow {
                                     });
                                 }
                             }
-                            winit::event::MouseButton::Right => {
-                                if down && self.state.draw_persist {
-                                    self.participants_manager.draw_clear_all_paths(
-                                        drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                                    );
-                                    input_events.push(ScreenShareInputEvent::DrawClearAllPaths);
-                                }
+                            winit::event::MouseButton::Right if down && self.state.draw_persist => {
+                                self.participants_manager.draw_clear_all_paths(
+                                    drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                );
+                                input_events.push(ScreenShareInputEvent::DrawClearAllPaths);
                             }
                             _ => {}
                         }

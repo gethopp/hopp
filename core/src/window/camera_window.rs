@@ -334,7 +334,7 @@ impl CameraWindow {
             .and_then(|p| p.get("local").map(|info| info.camera_active()))
             .unwrap_or(false);
         let state = CameraState {
-            viewport_size: IcedSize::new(logical.width as f32, logical.height as f32),
+            viewport_size: IcedSize::new(logical.width, logical.height),
             camera_active,
             selected_mic_name: active_mic_name,
             ..Default::default()
@@ -1801,9 +1801,9 @@ fn create_participant_grid<'a>(
     // Calculate actual grid dimensions
     let actual_cols = tiles_per_row.min(participant_count);
     let grid_content_width =
-        (tile_size * actual_cols as f32) + (TILE_SPACING * (actual_cols - 1).max(0) as f32);
+        (tile_size * actual_cols as f32) + (TILE_SPACING * (actual_cols - 1) as f32);
     let grid_content_height =
-        (tile_size * num_rows as f32) + (TILE_SPACING * (num_rows - 1).max(0) as f32);
+        (tile_size * num_rows as f32) + (TILE_SPACING * (num_rows - 1) as f32);
 
     // Calculate dynamic padding to center the grid within the grid area (below header)
     let grid_area_height = available_size.height - header_offset;

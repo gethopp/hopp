@@ -311,6 +311,7 @@ define_class!(
                                     rotation: VideoRotation::VideoRotation0,
                                     buffer: I420Buffer::new(cur_stream_w, cur_stream_h),
                                     timestamp_us: 0,
+                                    frame_metadata: None,
                                 });
                                 state.prev_stream_w = cur_stream_w;
                                 state.prev_stream_h = cur_stream_h;
@@ -335,6 +336,7 @@ define_class!(
                                 rotation: VideoRotation::VideoRotation0,
                                 buffer: i420,
                                 timestamp_us: state.capture_start.elapsed().as_micros() as i64,
+                                frame_metadata: None,
                             };
                             state.buffer_source.capture_frame(&frame);
                             write_frame(&frame.buffer);

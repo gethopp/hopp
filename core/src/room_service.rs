@@ -279,6 +279,8 @@ impl RoomService {
         livekit_server_url: String,
         socket: socket_lib::SocketSender,
     ) -> Result<Self, std::io::Error> {
+        livekit::webrtc::enable_zero_playout_delay().map_err(std::io::Error::other)?;
+
         let async_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
@@ -2656,11 +2658,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
             RoomEvent::ConnectionQualityChanged {
                 quality,
                 participant,
-            } => {
-                if participant.identity().as_str() == user_identity {
-                    log::info!("Connection quality changed: {:?}", quality);
-                    *connection_quality.lock().unwrap() = Some(quality);
-                }
+            } if participant.identity().as_str() == user_identity => {
+                log::info!("Connection quality changed: {:?}", quality);
+                *connection_quality.lock().unwrap() = Some(quality);
             }
             _ => {}
         }

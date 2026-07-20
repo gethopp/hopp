@@ -35,16 +35,18 @@ static mut EVENT_CALLBACK: Option<EventCallback> = None;
 
 unsafe extern "system" fn mouse_hook(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code < 0 {
-        return CallNextHookEx(None, n_code, w_param, l_param);
+        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
 
-    let mouse_struct = *(l_param.0 as *const MSLLHOOKSTRUCT);
+    // SAFETY: Windows supplies a valid MSLLHOOKSTRUCT pointer for this hook callback.
+    let mouse_struct = unsafe { *(l_param.0 as *const MSLLHOOKSTRUCT) };
     let event_type = w_param.0 as u32;
 
     log::debug!("mouse_hook: n_code: {n_code}, event: {event_type}, l_param: {mouse_struct:?}");
 
     #[allow(static_mut_refs)]
-    let keep = if let Some(callback) = EVENT_CALLBACK.as_mut() {
+    // SAFETY: The hook thread exclusively owns and invokes the installed callback.
+    let keep = if let Some(callback) = unsafe { EVENT_CALLBACK.as_mut() } {
         let x = mouse_struct.pt.x;
         let y = mouse_struct.pt.y;
         callback(x, y, event_type, mouse_struct.dwExtraInfo)
@@ -57,7 +59,7 @@ unsafe extern "system" fn mouse_hook(n_code: i32, w_param: WPARAM, l_param: LPAR
         return LRESULT(1);
     }
 
-    CallNextHookEx(None, n_code, w_param, l_param)
+    unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
 }
 
 enum EventProcessingCommand {

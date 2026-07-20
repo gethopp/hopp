@@ -69,6 +69,7 @@ impl StreamBuffer {
             rotation: VideoRotation::VideoRotation0,
             buffer: NV12Buffer::new(width, height),
             timestamp_us: 0,
+            frame_metadata: None,
         };
         StreamBuffer { video_frame }
     }
@@ -181,7 +182,9 @@ fn create_capture_callback(
                 resolution.width as u32,
                 resolution.height as u32,
             );
-            log::info!("capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}");
+            log::info!(
+                "capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}"
+            );
             let mut stream_buffer = stream_buffer.lock().unwrap();
             *stream_buffer = StreamBuffer::new(stream_width, stream_height);
         };

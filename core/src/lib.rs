@@ -2252,11 +2252,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let cleared_path_ids = remote_control.render_frame(gfx);
 
                 // Publish cleared paths to room service
-                if !cleared_path_ids.is_empty() && self.room_service.is_some() {
-                    self.room_service
-                        .as_ref()
-                        .unwrap()
-                        .publish_draw_clear_paths(cleared_path_ids);
+                match self.room_service.as_ref() {
+                    Some(room_service) if !cleared_path_ids.is_empty() => {
+                        room_service.publish_draw_clear_paths(cleared_path_ids);
+                    }
+                    _ => {}
                 }
             }
             WindowEvent::MouseInput {
