@@ -1,4 +1,4 @@
-use crate::utils::geometry::{Extent, Frame, aspect_fit};
+use crate::utils::geometry::{aspect_fit, Extent, Frame};
 use livekit::webrtc::{
     desktop_capturer::{
         CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
@@ -8,7 +8,7 @@ use livekit::webrtc::{
     prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 
 use super::CapturerError;
 

@@ -5,9 +5,9 @@
 //! to convert SVGs to PNGs at construction time.
 
 use crate::utils::geometry::Position;
-use crate::utils::svg_renderer::{SvgRenderError, UserBadgeKind, render_user_badge_to_png};
-use iced::Rectangle;
+use crate::utils::svg_renderer::{render_user_badge_to_png, SvgRenderError, UserBadgeKind};
 use iced::widget::canvas::Frame;
+use iced::Rectangle;
 use std::time::{Duration, Instant};
 
 const PENCIL_BADGE_LOGICAL_HEIGHT: f32 = 75.0;
@@ -83,7 +83,7 @@ impl Cursor {
                 pencil_dims.height() as f32 / 2.5,
             ),
         );
-        let pencil_scale = pencil_cursor.1.1 / PENCIL_BADGE_LOGICAL_HEIGHT;
+        let pencil_scale = pencil_cursor.1 .1 / PENCIL_BADGE_LOGICAL_HEIGHT;
         let pencil_hotspot = (
             PENCIL_TIP_LOGICAL.0 * pencil_scale,
             PENCIL_TIP_LOGICAL.1 * pencil_scale,
@@ -119,11 +119,11 @@ impl Cursor {
 
     /// Hides the cursor if it hasn't been updated within `timeout`.
     pub fn hide_if_expired(&mut self, timeout: Duration) {
-        if let Some(last) = self.last_update
-            && last.elapsed() > timeout
-        {
-            self.position = None;
-            self.last_update = None;
+        if let Some(last) = self.last_update {
+            if last.elapsed() > timeout {
+                self.position = None;
+                self.last_update = None;
+            }
         }
     }
 

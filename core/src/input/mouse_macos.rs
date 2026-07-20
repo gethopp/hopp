@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use crate::{MouseClickData, ScrollDelta, input::mouse::SharerCursor, utils::geometry::Position};
+use crate::{input::mouse::SharerCursor, utils::geometry::Position, MouseClickData, ScrollDelta};
 
 use core_foundation::{
     base::TCFType,
     mach_port::CFMachPortInvalidate,
-    runloop::{CFRunLoop, kCFRunLoopCommonModes, kCFRunLoopDefaultMode},
+    runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop},
 };
 use core_graphics::{
     display::{CGPoint, CGWarpMouseCursorPosition},
@@ -19,7 +19,7 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 
-use super::{CUSTOM_MOUSE_EVENT, CursorSimulatorFunctions};
+use super::{CursorSimulatorFunctions, CUSTOM_MOUSE_EVENT};
 
 const EVENT_TAP_DURATION_MS: u64 = 250;
 

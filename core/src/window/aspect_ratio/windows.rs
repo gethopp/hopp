@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use winit::window::Window;
 
-use super::{WindowConstant, calculate_max_window_size, min_window_size_for_aspect};
+use super::{calculate_max_window_size, min_window_size_for_aspect, WindowConstant};
 use crate::utils::geometry::{Extent, Position};
 
 struct WindowAspectState {
@@ -42,11 +42,14 @@ unsafe extern "system" fn aspect_ratio_subclass_proc(
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    let state = &*(ref_data as *const WindowAspectState);
+    // SAFETY: `ref_data` comes from `Arc::into_raw` when this subclass is installed and
+    // remains alive until `WM_NCDESTROY` removes the subclass and reclaims that reference.
+    let state = unsafe { &*(ref_data as *const WindowAspectState) };
 
     match msg {
         WM_SIZING => {
-            let rect = &mut *(lparam.0 as *mut RECT);
+            // SAFETY: Win32 guarantees that `WM_SIZING` supplies a writable `RECT` in `lparam`.
+            let rect = unsafe { &mut *(lparam.0 as *mut RECT) };
             let aspect = state.content_aspect();
             let scale = state.scale_factor();
 
@@ -55,9 +58,11 @@ unsafe extern "system" fn aspect_ratio_subclass_proc(
             let min_w = WindowConstant::MIN_WIDTH * scale;
 
             let mut client_rect = RECT::default();
-            let _ = GetClientRect(hwnd, &mut client_rect);
+            // SAFETY: `hwnd` is the valid window handle supplied to this subclass callback.
+            let _ = unsafe { GetClientRect(hwnd, &mut client_rect) };
             let mut window_rect = RECT::default();
-            let _ = GetWindowRect(hwnd, &mut window_rect);
+            // SAFETY: `hwnd` is the valid window handle supplied to this subclass callback.
+            let _ = unsafe { GetWindowRect(hwnd, &mut window_rect) };
             let chrome_w = ((window_rect.right - window_rect.left)
                 - (client_rect.right - client_rect.left)) as f64;
             let chrome_h = ((window_rect.bottom - window_rect.top)
@@ -95,14 +100,22 @@ unsafe extern "system" fn aspect_ratio_subclass_proc(
             return LRESULT(1);
         }
         WM_NCDESTROY => {
-            let _ =
-                RemoveWindowSubclass(hwnd, Some(aspect_ratio_subclass_proc), ASPECT_SUBCLASS_ID);
-            drop(Arc::from_raw(ref_data as *const WindowAspectState));
+            // SAFETY: the subclass is still installed, and this reclaims the single Arc
+            // reference transferred with `Arc::into_raw` when it was installed.
+            unsafe {
+                let _ = RemoveWindowSubclass(
+                    hwnd,
+                    Some(aspect_ratio_subclass_proc),
+                    ASPECT_SUBCLASS_ID,
+                );
+                drop(Arc::from_raw(ref_data as *const WindowAspectState));
+            }
         }
         _ => {}
     }
 
-    DefSubclassProc(hwnd, msg, wparam, lparam)
+    // SAFETY: forwarding the untouched callback arguments is required by the subclass contract.
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
 pub struct AspectRatioEnforcer {

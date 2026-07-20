@@ -1,4 +1,4 @@
-use super::{WindowConstant, calculate_max_window_size, min_window_size_for_aspect};
+use super::{calculate_max_window_size, min_window_size_for_aspect, WindowConstant};
 use crate::utils::geometry::{Extent, Position};
 use winit::window::Window;
 

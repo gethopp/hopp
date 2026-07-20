@@ -1,12 +1,12 @@
-use super::{KeyModifier, KeyboardEventTrait, KeyboardLayoutTrait, get_modifiers};
+use super::{get_modifiers, KeyModifier, KeyboardEventTrait, KeyboardLayoutTrait};
 
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
-        GetKeyboardLayout, GetKeyboardState, HKL, INPUT, INPUT_0, INPUT_KEYBOARD,
-        KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
-        MapVirtualKeyExW, SendInput, ToUnicode, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_CONTROL,
-        VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT,
-        VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_SHIFT, VK_TAB, VK_UP,
+        GetKeyboardLayout, GetKeyboardState, MapVirtualKeyExW, SendInput, ToUnicode, HKL, INPUT,
+        INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+        MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
+        VK_ESCAPE, VK_HOME, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN,
+        VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_SHIFT, VK_TAB, VK_UP,
     },
     WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
 };

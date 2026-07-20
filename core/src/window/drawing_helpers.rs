@@ -65,8 +65,8 @@ pub(crate) fn create_macos_cursor(
     hotspot_x: f64,
     hotspot_y: f64,
 ) -> objc2::rc::Retained<objc2_app_kit::NSCursor> {
-    use objc2::AnyThread;
     use objc2::rc::Retained;
+    use objc2::AnyThread;
     use objc2_app_kit::{NSBitmapImageRep, NSCursor, NSImage, NSImageRep};
     use objc2_foundation::{NSPoint, NSSize};
 

@@ -1,9 +1,9 @@
 use livekit::track::RemoteVideoTrack;
 use livekit::webrtc::video_frame::I420Buffer;
 use livekit::webrtc::video_stream::native::NativeVideoStream;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
@@ -214,12 +214,11 @@ pub async fn process_video_stream(
                         frame_counter += 1;
                         manager.advance_write();
 
-                        if let Some(tx) = &redraw_tx
-                            && let Err(e) =
-                                tx.send(crate::window::screensharing_window::RedrawCommand::ForceRedraw)
-                        {
-                            log::error!("process_video_stream: failed to send redraw command: {e:?}");
-                            break;
+                        if let Some(tx) = &redraw_tx {
+                            if let Err(e) = tx.send(crate::window::screensharing_window::RedrawCommand::ForceRedraw) {
+                                log::error!("process_video_stream: failed to send redraw command: {e:?}");
+                                break;
+                            }
                         }
                     }
                     Ok(None) => {

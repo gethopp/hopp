@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use super::CursorSimulatorFunctions;
-use crate::{MouseClickData, ScrollDelta, input::mouse::SharerCursor, utils::geometry::Position};
+use crate::{input::mouse::SharerCursor, utils::geometry::Position, MouseClickData, ScrollDelta};
 
 use crate::overlay_window::OverlayWindow;
 

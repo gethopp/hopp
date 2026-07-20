@@ -1,4 +1,4 @@
-use iced::{Rectangle, Renderer, widget::canvas};
+use iced::{widget::canvas, Rectangle, Renderer};
 
 pub struct Marker {
     marker: iced_core::image::Handle,

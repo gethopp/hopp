@@ -4,13 +4,13 @@
 //! such as cursors and markers on top of shared screen content. It uses wgpu for
 //! hardware-accelerated rendering with proper alpha blending and transparent window support.
 
-use crate::UserEvent;
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
+use crate::UserEvent;
 use std::sync::{
-    Arc,
     mpsc::{Receiver, Sender},
+    Arc,
 };
 use std::time::Instant;
 use thiserror::Error;

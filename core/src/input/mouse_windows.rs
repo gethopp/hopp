@@ -1,31 +1,30 @@
 use std::sync::{
-    Arc, Mutex,
     mpsc::{self, Sender},
+    Arc, Mutex,
 };
 
-use crate::{MouseClickData, ScrollDelta, utils::geometry::Position};
+use crate::{utils::geometry::Position, MouseClickData, ScrollDelta};
 
 use windows::Win32::{
     Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WAIT_TIMEOUT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Input::KeyboardAndMouse::{
-            INPUT, INPUT_0, INPUT_MOUSE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE,
-            MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
-            MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
-            MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+            MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
+            MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetSystemMetrics, MSG, MSLLHOOKSTRUCT,
-            MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
-            SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL, WM_MOUSEMOVE,
-            WM_MOUSEWHEEL,
+            CallNextHookEx, DispatchMessageW, GetSystemMetrics, MsgWaitForMultipleObjects,
+            PeekMessageW, SetCursorPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+            MSG, MSLLHOOKSTRUCT, PM_REMOVE, QS_ALLINPUT, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WH_MOUSE_LL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
         },
     },
 };
 
-use super::{CUSTOM_MOUSE_EVENT, CursorSimulatorFunctions, SharerCursor};
+use super::{CursorSimulatorFunctions, SharerCursor, CUSTOM_MOUSE_EVENT};
 
 // This is safe to do because the callback is not accessed after the hook is set up. It
 // could fail only during destruction if a mouse event is received at the same time.
@@ -36,16 +35,18 @@ static mut EVENT_CALLBACK: Option<EventCallback> = None;
 
 unsafe extern "system" fn mouse_hook(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code < 0 {
-        return CallNextHookEx(None, n_code, w_param, l_param);
+        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
 
-    let mouse_struct = *(l_param.0 as *const MSLLHOOKSTRUCT);
+    // SAFETY: Windows supplies a valid MSLLHOOKSTRUCT pointer for this hook callback.
+    let mouse_struct = unsafe { *(l_param.0 as *const MSLLHOOKSTRUCT) };
     let event_type = w_param.0 as u32;
 
     log::debug!("mouse_hook: n_code: {n_code}, event: {event_type}, l_param: {mouse_struct:?}");
 
     #[allow(static_mut_refs)]
-    let keep = if let Some(callback) = EVENT_CALLBACK.as_mut() {
+    // SAFETY: The hook thread exclusively owns and invokes the installed callback.
+    let keep = if let Some(callback) = unsafe { EVENT_CALLBACK.as_mut() } {
         let x = mouse_struct.pt.x;
         let y = mouse_struct.pt.y;
         callback(x, y, event_type, mouse_struct.dwExtraInfo)
@@ -58,7 +59,7 @@ unsafe extern "system" fn mouse_hook(n_code: i32, w_param: WPARAM, l_param: LPAR
         return LRESULT(1);
     }
 
-    CallNextHookEx(None, n_code, w_param, l_param)
+    unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
 }
 
 enum EventProcessingCommand {

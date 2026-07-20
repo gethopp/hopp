@@ -3,7 +3,7 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
-use crate::{STREAM_FAILURE_EXIT_CODE, UserEvent, utils::geometry::Extent};
+use crate::{utils::geometry::Extent, UserEvent, STREAM_FAILURE_EXIT_CODE};
 
 /// Platform-agnostic monitor identifier.
 ///
@@ -20,7 +20,7 @@ pub enum MonitorId {
     /// Position-based identifier (Linux fallback)
     Position(PhysicalPosition<i32>),
 }
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 
 #[cfg_attr(target_os = "macos", path = "macos_stream.rs")]
 #[cfg_attr(not(target_os = "macos"), path = "stream.rs")]

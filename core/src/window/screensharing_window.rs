@@ -10,24 +10,24 @@
 //! - Shadow tokens for consistent depth
 //! - Pill-shaped control buttons with solid/gradient backgrounds
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant as StdInstant};
 
 use iced::mouse;
-use iced::widget::{Space, canvas, column, container, row, shader, stack, text};
+use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
 use iced::{
-    Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle, Shadow,
-    Vector, gradient,
+    gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
+    Shadow, Vector,
 };
 use iced_core::clipboard::Kind;
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
-use iced_winit::core::{Event, Size, Theme, window};
-use iced_winit::runtime::UserInterface;
+use iced_winit::core::{window, Event, Size, Theme};
 use iced_winit::runtime::user_interface::Cache;
-use iced_winit::{Clipboard, conversion};
+use iced_winit::runtime::UserInterface;
+use iced_winit::{conversion, Clipboard};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState};
@@ -38,11 +38,11 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use thiserror::Error;
 
 use super::aspect_ratio::{
-    AspectRatioEnforcer, WindowConstant, calculate_max_window_size, default_window_size,
-    min_window_size,
+    calculate_max_window_size, default_window_size, min_window_size, AspectRatioEnforcer,
+    WindowConstant,
 };
 use super::drawing_helpers;
-use crate::components::dropdown::{DropdownItemDef, dropdown_overlay, dropdown_trigger_button};
+use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
     self as seg_ctrl_mod, SegmentedButton, SegmentedControlAnim,
@@ -267,19 +267,15 @@ fn spawn_redraw_thread(
     redraw_in_progress: Arc<AtomicBool>,
     window: Arc<Window>,
 ) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        loop {
-            match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
-                Ok(RedrawCommand::ForceRedraw) => {
-                    if !redraw_in_progress.load(Ordering::Acquire) {
-                        window.request_redraw();
-                    }
+    std::thread::spawn(move || loop {
+        match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
+            Ok(RedrawCommand::ForceRedraw) => {
+                if !redraw_in_progress.load(Ordering::Acquire) {
+                    window.request_redraw();
                 }
-                Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    break;
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
             }
+            Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
         }
     })
 }
@@ -1249,16 +1245,16 @@ impl ScreensharingWindow {
             } => {
                 // Intercept Cmd+Q to gracefully exit instead of hard quit
                 #[cfg(target_os = "macos")]
-                if key_event.state.is_pressed()
-                    && self.modifiers.super_key()
-                    && let Key::Character(ref ch) = key_event.logical_key
-                    && ch.as_ref() == "q"
-                {
-                    log::info!("ScreensharingWindow: caught Cmd+Q, requesting exit");
-                    let _ = self
-                        .event_loop_proxy
-                        .send_event(crate::UserEvent::ExitRequested);
-                    return input_events;
+                if key_event.state.is_pressed() && self.modifiers.super_key() {
+                    if let Key::Character(ref ch) = key_event.logical_key {
+                        if ch.as_ref() == "q" {
+                            log::info!("ScreensharingWindow: caught Cmd+Q, requesting exit");
+                            let _ = self
+                                .event_loop_proxy
+                                .send_event(crate::UserEvent::ExitRequested);
+                            return input_events;
+                        }
+                    }
                 }
 
                 if self.mouse_in_participant_area
@@ -1377,109 +1373,112 @@ impl ScreensharingWindow {
 
         // Convert winit event to iced event
         // TODO check if we have to throttle this, we might get too many mouse events
-        if !is_redraw
-            && let Some(iced_event) = conversion::window_event(
+        if !is_redraw {
+            if let Some(iced_event) = conversion::window_event(
                 event.clone(),
                 self.window.scale_factor() as f32,
                 self.modifiers,
-            )
-        {
-            if let Event::Mouse(mouse_event) = iced_event {
-                self.cursor = match mouse_event {
-                    iced::mouse::Event::CursorMoved { position } => {
-                        mouse::Cursor::Available(position)
-                    }
-                    iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                    _ => self.cursor,
-                };
-            }
-
-            // Build user interface, process the event, and collect messages
-            let mut messages: Vec<ScreensharingMessage> = Vec::new();
-
-            let cache = self.cache.take().unwrap_or_default();
-            let mut interface = UserInterface::build(
-                Self::view(
-                    &self.state,
-                    &self.screen_share_buffer,
-                    &self.participants_manager,
-                    &self.click_animation_renderer,
-                    true,
-                ),
-                self.viewport.logical_size(),
-                cache,
-                &mut self.renderer,
-            );
-
-            let iced_event = conversion::window_event(
-                event.clone(),
-                self.window.scale_factor() as f32,
-                self.modifiers,
-            );
-            if let Some(ev) = iced_event {
-                let (_, statuses) = interface.update(
-                    &[ev],
-                    self.cursor,
-                    &mut self.renderer,
-                    &mut self.clipboard,
-                    &mut messages,
-                );
-                let _ = statuses;
-            }
-
-            self.cache = Some(interface.into_cache());
-
-            // Process collected messages
-            for msg in messages {
-                match &msg {
-                    ScreensharingMessage::TabSelected(id) => {
-                        let tab = match *id {
-                            "draw" => ScreenShareTab::Draw,
-                            "point" => ScreenShareTab::Point,
-                            _ => ScreenShareTab::Control,
-                        };
-                        let mode = match tab {
-                            ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
-                                crate::room_service::DrawSettings {
-                                    permanent: self.state.draw_persist,
-                                },
-                            ),
-                            ScreenShareTab::Point => {
-                                crate::room_service::DrawingMode::ClickAnimation
-                            }
-                            ScreenShareTab::Control => crate::room_service::DrawingMode::Disabled,
-                        };
-                        if mode == crate::room_service::DrawingMode::Disabled
-                            || mode == crate::room_service::DrawingMode::ClickAnimation
-                        {
-                            self.participants_manager
-                                .draw_clear_all_paths(drawing_helpers::LOCAL_PARTICIPANT_IDENTITY);
+            ) {
+                if let Event::Mouse(mouse_event) = iced_event {
+                    self.cursor = match mouse_event {
+                        iced::mouse::Event::CursorMoved { position } => {
+                            mouse::Cursor::Available(position)
                         }
-                        self.participants_manager.set_drawing_mode(
-                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            mode.clone(),
-                        );
-                        self.state.left_mouse_pressed = false;
-                        input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
-                    }
-                    ScreensharingMessage::DropdownItemClicked(index) => {
-                        let permanent = *index == 1;
-                        let mode = crate::room_service::DrawingMode::Draw(
-                            crate::room_service::DrawSettings { permanent },
-                        );
-                        self.participants_manager.set_drawing_mode(
-                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            mode.clone(),
-                        );
-                        input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
-                    }
-                    _ => {}
+                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                        _ => self.cursor,
+                    };
                 }
-                self.update(msg);
-            }
 
-            // Tick animation; keep requesting redraws while it runs.
-            seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
+                // Build user interface, process the event, and collect messages
+                let mut messages: Vec<ScreensharingMessage> = Vec::new();
+
+                let cache = self.cache.take().unwrap_or_default();
+                let mut interface = UserInterface::build(
+                    Self::view(
+                        &self.state,
+                        &self.screen_share_buffer,
+                        &self.participants_manager,
+                        &self.click_animation_renderer,
+                        true,
+                    ),
+                    self.viewport.logical_size(),
+                    cache,
+                    &mut self.renderer,
+                );
+
+                let iced_event = conversion::window_event(
+                    event.clone(),
+                    self.window.scale_factor() as f32,
+                    self.modifiers,
+                );
+                if let Some(ev) = iced_event {
+                    let (_, statuses) = interface.update(
+                        &[ev],
+                        self.cursor,
+                        &mut self.renderer,
+                        &mut self.clipboard,
+                        &mut messages,
+                    );
+                    let _ = statuses;
+                }
+
+                self.cache = Some(interface.into_cache());
+
+                // Process collected messages
+                for msg in messages {
+                    match &msg {
+                        ScreensharingMessage::TabSelected(id) => {
+                            let tab = match *id {
+                                "draw" => ScreenShareTab::Draw,
+                                "point" => ScreenShareTab::Point,
+                                _ => ScreenShareTab::Control,
+                            };
+                            let mode = match tab {
+                                ScreenShareTab::Draw => crate::room_service::DrawingMode::Draw(
+                                    crate::room_service::DrawSettings {
+                                        permanent: self.state.draw_persist,
+                                    },
+                                ),
+                                ScreenShareTab::Point => {
+                                    crate::room_service::DrawingMode::ClickAnimation
+                                }
+                                ScreenShareTab::Control => {
+                                    crate::room_service::DrawingMode::Disabled
+                                }
+                            };
+                            if mode == crate::room_service::DrawingMode::Disabled
+                                || mode == crate::room_service::DrawingMode::ClickAnimation
+                            {
+                                self.participants_manager.draw_clear_all_paths(
+                                    drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                );
+                            }
+                            self.participants_manager.set_drawing_mode(
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                mode.clone(),
+                            );
+                            self.state.left_mouse_pressed = false;
+                            input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
+                        }
+                        ScreensharingMessage::DropdownItemClicked(index) => {
+                            let permanent = *index == 1;
+                            let mode = crate::room_service::DrawingMode::Draw(
+                                crate::room_service::DrawSettings { permanent },
+                            );
+                            self.participants_manager.set_drawing_mode(
+                                drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+                                mode.clone(),
+                            );
+                            input_events.push(ScreenShareInputEvent::DrawingModeChanged(mode));
+                        }
+                        _ => {}
+                    }
+                    self.update(msg);
+                }
+
+                // Tick animation; keep requesting redraws while it runs.
+                seg_ctrl_mod::tick_animation(&mut self.state.tab_anim);
+            }
         }
 
         // Handle winit-specific events
@@ -1507,10 +1506,7 @@ impl ScreensharingWindow {
                             // Stale/reordered event while programmatic resize in flight — skip.
                             log::info!(
                                 "ScreensharingWindow: ignoring stale resize {:.1}x{:.1} (waiting for {:.1}x{:.1})",
-                                logical.width,
-                                logical.height,
-                                target_w,
-                                target_h
+                                logical.width, logical.height, target_w, target_h
                             );
                         }
                     } else if self.state.last_stream_width == 0 {
@@ -2084,10 +2080,10 @@ impl ScreensharingWindow {
 impl ScreensharingWindow {
     /// Sends the Stop command and drops the redraw thread handle (detach).
     pub fn stop_redraw_thread(&mut self) {
-        if self.redraw_thread.take().is_some()
-            && let Err(e) = self.redraw_tx.send(RedrawCommand::Stop)
-        {
-            log::error!("ScreensharingWindow::stop_redraw_thread: failed to send Stop: {e:?}");
+        if self.redraw_thread.take().is_some() {
+            if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
+                log::error!("ScreensharingWindow::stop_redraw_thread: failed to send Stop: {e:?}");
+            }
         }
     }
 }

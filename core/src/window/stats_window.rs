@@ -1,17 +1,17 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant as StdInstant};
 
-use iced::widget::{Space, column, container, text};
+use iced::widget::{column, container, text, Space};
 use iced::{Color, Element, Length, Pixels, Size, Theme};
-use iced_wgpu::Engine;
 use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::{Shell, Viewport};
-use iced_winit::Clipboard;
+use iced_wgpu::Engine;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
-use iced_winit::core::{Event, window as iced_window};
-use iced_winit::runtime::UserInterface;
+use iced_winit::core::{window as iced_window, Event};
 use iced_winit::runtime::user_interface::Cache;
+use iced_winit::runtime::UserInterface;
+use iced_winit::Clipboard;
 use livekit::participant::ConnectionQuality;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;

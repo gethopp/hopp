@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use iced::Rectangle;
 use iced::mouse;
 use iced::widget::shader;
+use iced::Rectangle;
 use iced_wgpu::primitive;
 use wgpu;
 

@@ -1,13 +1,13 @@
 use std::{
-    sync::{Arc, Mutex, mpsc::Sender},
+    sync::{mpsc::Sender, Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use crate::{
-    MouseClickData, ScrollDelta, UserEvent,
-    graphics::graphics_context::{RedrawThreadCommands, participant::cursor::CursorMode},
+    graphics::graphics_context::{participant::cursor::CursorMode, RedrawThreadCommands},
     overlay_window::OverlayWindow,
     utils::{clock::Clock, geometry::Position},
+    MouseClickData, ScrollDelta, UserEvent,
 };
 
 use log::{debug, error};
@@ -222,10 +222,10 @@ impl CursorState {
     }
 
     fn hide_if_expired(&mut self) {
-        if let Some(last_show) = self.last_show_time
-            && self.clock.now().duration_since(last_show) > CURSOR_HIDE_TIMEOUT
-        {
-            self.hide();
+        if let Some(last_show) = self.last_show_time {
+            if self.clock.now().duration_since(last_show) > CURSOR_HIDE_TIMEOUT {
+                self.hide();
+            }
         }
     }
 }

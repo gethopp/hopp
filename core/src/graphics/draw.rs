@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use iced::widget::canvas::{Cache, Frame, Geometry, Stroke, path, stroke};
+use iced::widget::canvas::{path, stroke, Cache, Frame, Geometry, Stroke};
 use iced::{Color, Point, Rectangle, Renderer};
 
 use crate::{room_service::DrawingMode, utils::geometry::Position};
@@ -124,10 +124,10 @@ impl Draw {
         log::info!("clear_path: clearing path {}", path_id);
 
         // Clear current path if it matches
-        if let Some(in_progress) = &self.in_progress_path
-            && in_progress.path_id == path_id
-        {
-            self.in_progress_path = None;
+        if let Some(in_progress) = &self.in_progress_path {
+            if in_progress.path_id == path_id {
+                self.in_progress_path = None;
+            }
         }
 
         // Remove from completed paths
@@ -202,11 +202,11 @@ impl Draw {
         frame: &mut Frame,
         translate: &dyn Fn(Position) -> Position,
     ) {
-        if let Some(in_progress) = &self.in_progress_path
-            && let Some(path) = Self::build_path(&in_progress.points, translate)
-        {
-            frame.stroke(&path, self.make_outline_stroke());
-            frame.stroke(&path, self.make_stroke());
+        if let Some(in_progress) = &self.in_progress_path {
+            if let Some(path) = Self::build_path(&in_progress.points, translate) {
+                frame.stroke(&path, self.make_outline_stroke());
+                frame.stroke(&path, self.make_stroke());
+            }
         }
     }
 

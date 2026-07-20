@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use iced::widget::{Space, button, container, row, stack, text, tooltip};
+use iced::widget::{button, container, row, stack, text, tooltip, Space};
 use iced::{Alignment, Background, Border, Color, Length, Padding, Shadow, Theme};
 
 use crate::components::fonts::ICONS_FONT;
@@ -71,10 +71,10 @@ pub fn start_animation(
 
 /// Clear the animation once finished.
 pub fn tick_animation(anim: &mut Option<SegmentedControlAnim>) {
-    if let Some(a) = anim
-        && a.started_at.elapsed().as_millis() >= ANIM_DURATION_MS
-    {
-        *anim = None;
+    if let Some(a) = anim {
+        if a.started_at.elapsed().as_millis() >= ANIM_DURATION_MS {
+            *anim = None;
+        }
     }
 }
 

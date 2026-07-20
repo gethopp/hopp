@@ -1,8 +1,8 @@
 use log::info;
 use objc2_core_audio::{
-    AudioObjectAddPropertyListener, AudioObjectPropertyAddress, AudioObjectRemovePropertyListener,
     kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+    AudioObjectAddPropertyListener, AudioObjectPropertyAddress, AudioObjectRemovePropertyListener,
 };
 use std::ffi::c_void;
 use std::ptr::NonNull;

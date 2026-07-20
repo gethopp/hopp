@@ -2,13 +2,13 @@ use livekit::webrtc::{
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
-use nokhwa::Camera;
 use nokhwa::pixel_format::RgbFormat;
 use nokhwa::utils::{
     ApiBackend, CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType,
     Resolution,
 };
-use std::sync::{Arc, Mutex, mpsc};
+use nokhwa::Camera;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::livekit::video::VideoBufferManager;

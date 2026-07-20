@@ -7,14 +7,15 @@ use livekit::webrtc::{
     video_source::native::NativeVideoSource,
 };
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 use dispatch2::DispatchQueue;
 use objc2::{
-    AnyThread, DefinedClass, define_class, exception, msg_send,
+    define_class, exception, msg_send,
     rc::Retained,
     runtime::{AnyObject, NSObjectProtocol, ProtocolObject},
+    AnyThread, DefinedClass,
 };
 use objc2_av_foundation::{
     AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceDiscoverySession, AVCaptureDeviceInput,
@@ -24,13 +25,14 @@ use objc2_av_foundation::{
 };
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
-    CVPixelBufferGetBaseAddress, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType,
-    CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
-    CVPixelBufferUnlockBaseAddress, kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
+    kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
     kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
-    kCVPixelFormatType_422YpCbCr8_yuvs, kCVReturnSuccess,
+    kCVPixelFormatType_422YpCbCr8_yuvs, kCVReturnSuccess, CVPixelBufferGetBaseAddress,
+    CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
+    CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType,
+    CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+    CVPixelBufferUnlockBaseAddress,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSString};
 
@@ -407,8 +409,6 @@ impl CameraStream {
         }
     }
 
-    // SAFETY: The caller upholds this macOS-only constructor's Objective-C/CoreFoundation invariants.
-    #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn new_inner(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -482,12 +482,15 @@ impl CameraStream {
         let frame_rate_ranges = active_format.videoSupportedFrameRateRanges();
         if let Some((frame_duration, actual_fps)) =
             frame_duration_for_target_fps(&frame_rate_ranges, target_fps)
-            && let Ok(()) = device.lockForConfiguration()
         {
-            device.setActiveVideoMinFrameDuration(frame_duration);
-            device.setActiveVideoMaxFrameDuration(frame_duration);
-            device.unlockForConfiguration();
-            log::info!("Camera frame duration set (≈{actual_fps:.2} fps, requested {target_fps})",);
+            if let Ok(()) = device.lockForConfiguration() {
+                device.setActiveVideoMinFrameDuration(frame_duration);
+                device.setActiveVideoMaxFrameDuration(frame_duration);
+                device.unlockForConfiguration();
+                log::info!(
+                    "Camera frame duration set (≈{actual_fps:.2} fps, requested {target_fps})",
+                );
+            }
         }
 
         // Request first supported pixel format from device's available list.
