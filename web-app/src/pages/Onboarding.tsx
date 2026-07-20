@@ -234,6 +234,10 @@ export function Onboarding() {
                   Add a payment method to unlock Hopp. You won't be charged today and your card is only billed when the{" "}
                   {TRIAL_DAYS}-day trial ends, and you can cancel anytime before then with one click.
                 </p>
+                <p className="mt-3 text-base font-bold text-gray-900">
+                  Only one team member needs to add a credit card. After that, you can invite everyone else, and they
+                  can join with the invite link without having to add a credit card.
+                </p>
                 <TooltipProvider delayDuration={0.2}>
                   <Tooltip>
                     <TooltipTrigger asChild>
