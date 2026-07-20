@@ -31,6 +31,11 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
 @group(0) @binding(2) var u_tex: texture_2d<f32>;
 @group(0) @binding(3) var v_tex: texture_2d<f32>;
 
+// Gaussian luminance sharpening inspired by LumaSharpen:
+// https://github.com/cyrie/Stormshade/blob/master/reshade-shaders/Shaders/LumaSharpen.fx
+const SHARPNESS: f32 = 0.9;
+const HALO_ALLOWANCE: f32 = 0.10;
+
 struct Params {
     src_w: u32,
     src_h: u32,
@@ -65,6 +70,15 @@ fn yuv_to_rgb(y: f32, u: f32, v: f32) -> vec3<f32> {
     let g = 1.164 * c - 0.213 * d - 0.533 * e;
     let b = 1.164 * c + 2.112 * d;
     return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn sample_luma(source_uv: vec2<f32>) -> f32 {
+    let bounded_uv = clamp(source_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let y_uv = vec2<f32>(
+        bounded_uv.x * f32(params.src_w) / f32(params.y_tex_w),
+        bounded_uv.y,
+    );
+    return textureSample(y_tex, samp, y_uv).r * 1.164;
 }
 
 @fragment
@@ -107,6 +121,31 @@ fn fs_main(in_: VSOut) -> @location(0) vec4<f32> {
 
     let rgb = yuv_to_rgb(y, u, v);
 
+    let source_texel = vec2<f32>(1.0 / src_w, 1.0 / src_h);
+    let center_luma = y * 1.164;
+    let neighbors = vec4<f32>(
+        sample_luma(crop_uv + vec2<f32>(0.0, -source_texel.y)),
+        sample_luma(crop_uv + vec2<f32>(0.0, source_texel.y)),
+        sample_luma(crop_uv + vec2<f32>(source_texel.x, 0.0)),
+        sample_luma(crop_uv + vec2<f32>(-source_texel.x, 0.0)),
+    );
+    let corners = vec4<f32>(
+        sample_luma(crop_uv + vec2<f32>(-source_texel.x, -source_texel.y)),
+        sample_luma(crop_uv + vec2<f32>(source_texel.x, -source_texel.y)),
+        sample_luma(crop_uv + vec2<f32>(-source_texel.x, source_texel.y)),
+        sample_luma(crop_uv + vec2<f32>(source_texel.x, source_texel.y)),
+    );
+    let gaussian_blur =
+        (4.0 * center_luma + 2.0 * dot(neighbors, vec4<f32>(1.0)) + dot(corners, vec4<f32>(1.0))) / 16.0;
+    let local_min = min(center_luma, min(min(neighbors.x, neighbors.y), min(neighbors.z, neighbors.w)));
+    let local_max = max(center_luma, max(max(neighbors.x, neighbors.y), max(neighbors.z, neighbors.w)));
+    let delta = clamp(
+        (center_luma - gaussian_blur) * SHARPNESS,
+        local_min - center_luma - HALO_ALLOWANCE,
+        local_max - center_luma + HALO_ALLOWANCE,
+    );
+    let sharpened_rgb = clamp(rgb + vec3<f32>(delta), vec3<f32>(0.0), vec3<f32>(1.0));
+
     // Optional rounded-corner mask. When radius is <= 0, skip masking entirely.
     // We intentionally use two paths:
     // - Camera tiles (stretch_to_fill == 0): use CPU-provided tile_w/tile_h.
@@ -129,5 +168,5 @@ fn fs_main(in_: VSOut) -> @location(0) vec4<f32> {
         alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
     }
 
-    return vec4<f32>(rgb * alpha, alpha);
+    return vec4<f32>(sharpened_rgb * alpha, alpha);
 }
