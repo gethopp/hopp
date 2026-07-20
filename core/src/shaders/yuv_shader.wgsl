@@ -31,6 +31,8 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
 @group(0) @binding(2) var u_tex: texture_2d<f32>;
 @group(0) @binding(3) var v_tex: texture_2d<f32>;
 
+// Gaussian luminance sharpening inspired by LumaSharpen:
+// https://github.com/cyrie/Stormshade/blob/master/reshade-shaders/Shaders/LumaSharpen.fx
 const SHARPNESS: f32 = 0.9;
 const HALO_ALLOWANCE: f32 = 0.10;
 
