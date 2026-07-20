@@ -1,6 +1,6 @@
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use socket_lib::{CameraDevice, Message, SocketSender};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use crate::livekit::video::VideoBufferManager;

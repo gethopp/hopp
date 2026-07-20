@@ -2,13 +2,13 @@ use livekit::webrtc::{
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
+use nokhwa::Camera;
 use nokhwa::pixel_format::RgbFormat;
 use nokhwa::utils::{
     ApiBackend, CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType,
     Resolution,
 };
-use nokhwa::Camera;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::livekit::video::VideoBufferManager;
@@ -184,7 +184,9 @@ impl CameraStream {
                     needs_scaling = cur_stream_w != width || cur_stream_h != height;
                     prev_stream_w = cur_stream_w;
                     prev_stream_h = cur_stream_h;
-                    log::info!("CameraStream: target changed to {cur_stream_w}x{cur_stream_h} @ {cur_fps}fps");
+                    log::info!(
+                        "CameraStream: target changed to {cur_stream_w}x{cur_stream_h} @ {cur_fps}fps"
+                    );
                 }
 
                 match camera.frame() {

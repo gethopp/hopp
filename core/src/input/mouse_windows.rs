@@ -1,30 +1,31 @@
 use std::sync::{
-    mpsc::{self, Sender},
     Arc, Mutex,
+    mpsc::{self, Sender},
 };
 
-use crate::{utils::geometry::Position, MouseClickData, ScrollDelta};
+use crate::{MouseClickData, ScrollDelta, utils::geometry::Position};
 
 use windows::Win32::{
     Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WAIT_TIMEOUT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
-            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-            MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
-            MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+            INPUT, INPUT_0, INPUT_MOUSE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE,
+            MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
+            MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+            MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetSystemMetrics, MsgWaitForMultipleObjects,
-            PeekMessageW, SetCursorPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-            MSG, MSLLHOOKSTRUCT, PM_REMOVE, QS_ALLINPUT, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WH_MOUSE_LL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+            CallNextHookEx, DispatchMessageW, GetSystemMetrics, MSG, MSLLHOOKSTRUCT,
+            MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXVIRTUALSCREEN,
+            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
+            SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL, WM_MOUSEMOVE,
+            WM_MOUSEWHEEL,
         },
     },
 };
 
-use super::{CursorSimulatorFunctions, SharerCursor, CUSTOM_MOUSE_EVENT};
+use super::{CUSTOM_MOUSE_EVENT, CursorSimulatorFunctions, SharerCursor};
 
 // This is safe to do because the callback is not accessed after the hook is set up. It
 // could fail only during destruction if a mouse event is received at the same time.

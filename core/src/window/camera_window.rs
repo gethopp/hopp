@@ -17,20 +17,20 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use iced::widget::{
-    button, column, container, mouse_area, row, shader, stack, svg, text, tooltip, Space,
+    Space, button, column, container, mouse_area, row, shader, stack, svg, text, tooltip,
 };
 use iced::{
-    gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
-    Size as IcedSize,
+    Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Shadow,
+    Size as IcedSize, gradient,
 };
 use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
-use iced_winit::core::{window, Event, Size, Theme};
-use iced_winit::runtime::user_interface::Cache;
+use iced_winit::core::{Event, Size, Theme, window};
 use iced_winit::runtime::UserInterface;
-use iced_winit::{conversion, Clipboard};
+use iced_winit::runtime::user_interface::Cache;
+use iced_winit::{Clipboard, conversion};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
@@ -38,10 +38,11 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use thiserror::Error;
 
+use crate::UserEvent;
 use crate::audio::capturer::list_audio_inputs;
 use crate::camera::capturer::CameraCapturer;
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
-use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
+use crate::components::split_button::{SplitButtonItem, split_button, split_button_dropdown_wrap};
 use crate::components::toast::{self, ToastPosition, ToastState};
 use crate::graphics::graphics_window_context::{
     ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
@@ -51,7 +52,6 @@ use crate::livekit::participant::ParticipantInfo;
 use crate::livekit::video::VideoBufferManager;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
-use crate::UserEvent;
 use socket_lib::CameraStartMessage;
 
 /// Initial camera window dimensions (logical pixels).
@@ -334,7 +334,7 @@ impl CameraWindow {
             .and_then(|p| p.get("local").map(|info| info.camera_active()))
             .unwrap_or(false);
         let state = CameraState {
-            viewport_size: IcedSize::new(logical.width as f32, logical.height as f32),
+            viewport_size: IcedSize::new(logical.width, logical.height),
             camera_active,
             selected_mic_name: active_mic_name,
             ..Default::default()
@@ -498,55 +498,55 @@ impl CameraWindow {
         // Process interactive events (mouse, keyboard, etc.) through the iced pipeline.
         // Skip RedrawRequested — redraw() builds its own UI internally, so processing
         // it here would double-build the widget tree on every frame.
-        if !is_redraw {
-            if let Some(iced_event) = conversion::window_event(
+        if !is_redraw
+            && let Some(iced_event) = conversion::window_event(
                 event.clone(),
                 self.window.scale_factor() as f32,
                 self.modifiers,
-            ) {
-                if let Event::Mouse(mouse_event) = iced_event {
-                    self.cursor = match mouse_event {
-                        iced::mouse::Event::CursorMoved { position } => {
-                            mouse::Cursor::Available(position)
-                        }
-                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                        _ => self.cursor,
-                    };
-                }
+            )
+        {
+            if let Event::Mouse(mouse_event) = iced_event {
+                self.cursor = match mouse_event {
+                    iced::mouse::Event::CursorMoved { position } => {
+                        mouse::Cursor::Available(position)
+                    }
+                    iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                    _ => self.cursor,
+                };
+            }
 
-                // Build user interface, process the event, and collect messages
-                let mut messages: Vec<CameraMessage> = Vec::new();
+            // Build user interface, process the event, and collect messages
+            let mut messages: Vec<CameraMessage> = Vec::new();
 
-                let cache = self.cache.take().unwrap_or_default();
-                let mut interface = UserInterface::build(
-                    Self::view(&self.state, &self.participants, true, &mut HashMap::new()),
-                    self.viewport.logical_size(),
-                    cache,
+            let cache = self.cache.take().unwrap_or_default();
+            let mut interface = UserInterface::build(
+                Self::view(&self.state, &self.participants, true, &mut HashMap::new()),
+                self.viewport.logical_size(),
+                cache,
+                &mut self.renderer,
+            );
+
+            let iced_event = conversion::window_event(
+                event.clone(),
+                self.window.scale_factor() as f32,
+                self.modifiers,
+            );
+            if let Some(ev) = iced_event {
+                let (_, statuses) = interface.update(
+                    &[ev],
+                    self.cursor,
                     &mut self.renderer,
+                    &mut self.clipboard,
+                    &mut messages,
                 );
+                let _ = statuses;
+            }
 
-                let iced_event = conversion::window_event(
-                    event.clone(),
-                    self.window.scale_factor() as f32,
-                    self.modifiers,
-                );
-                if let Some(ev) = iced_event {
-                    let (_, statuses) = interface.update(
-                        &[ev],
-                        self.cursor,
-                        &mut self.renderer,
-                        &mut self.clipboard,
-                        &mut messages,
-                    );
-                    let _ = statuses;
-                }
+            self.cache = Some(interface.into_cache());
 
-                self.cache = Some(interface.into_cache());
-
-                // Process collected messages
-                for msg in messages {
-                    self.update(msg);
-                }
+            // Process collected messages
+            for msg in messages {
+                self.update(msg);
             }
         }
 
@@ -556,18 +556,16 @@ impl CameraWindow {
             event: ref key_event,
             ..
         } = event
+            && key_event.state.is_pressed()
+            && self.modifiers.super_key()
+            && let winit::keyboard::Key::Character(ref ch) = key_event.logical_key
+            && ch.as_ref() == "q"
         {
-            if key_event.state.is_pressed() && self.modifiers.super_key() {
-                if let winit::keyboard::Key::Character(ref ch) = key_event.logical_key {
-                    if ch.as_ref() == "q" {
-                        log::info!("CameraWindow: caught Cmd+Q, requesting exit");
-                        let _ = self
-                            .event_loop_proxy
-                            .send_event(crate::UserEvent::ExitRequested);
-                        return;
-                    }
-                }
-            }
+            log::info!("CameraWindow: caught Cmd+Q, requesting exit");
+            let _ = self
+                .event_loop_proxy
+                .send_event(crate::UserEvent::ExitRequested);
+            return;
         }
 
         // Intercept Cmd+P (macOS) / Ctrl+P (Windows/Linux) to pin to corner
@@ -575,25 +573,23 @@ impl CameraWindow {
             event: ref key_event,
             ..
         } = event
+            && key_event.state.is_pressed()
         {
-            if key_event.state.is_pressed() {
-                let is_pin_modifier = if cfg!(target_os = "macos") {
-                    self.modifiers.super_key()
+            let is_pin_modifier = if cfg!(target_os = "macos") {
+                self.modifiers.super_key()
+            } else {
+                self.modifiers.control_key()
+            };
+            if is_pin_modifier
+                && let winit::keyboard::Key::Character(ref ch) = key_event.logical_key
+                && ch.as_ref() == "p"
+            {
+                if self.state.is_compact {
+                    self.unpin();
                 } else {
-                    self.modifiers.control_key()
-                };
-                if is_pin_modifier {
-                    if let winit::keyboard::Key::Character(ref ch) = key_event.logical_key {
-                        if ch.as_ref() == "p" {
-                            if self.state.is_compact {
-                                self.unpin();
-                            } else {
-                                self.pin_to_corner();
-                            }
-                            return;
-                        }
-                    }
+                    self.pin_to_corner();
                 }
+                return;
             }
         }
 
@@ -630,13 +626,14 @@ impl CameraWindow {
 
                     if self.resize_timer.is_none() {
                         self.resize_timer = Some(Instant::now() + Duration::from_secs(5));
-                        if self.screensharing_active {
-                            if let Err(e) = self
+                        if self.screensharing_active
+                            && let Err(e) = self
                                 .redraw_tx
                                 .send(RedrawCommand::SetScreensharingActive(false))
-                            {
-                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
-                            }
+                        {
+                            log::error!(
+                                "CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}"
+                            );
                         }
                     }
 
@@ -644,17 +641,18 @@ impl CameraWindow {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(timer) = self.resize_timer {
-                    if Instant::now() >= timer {
-                        self.resize_timer = None;
-                        if self.screensharing_active {
-                            if let Err(e) = self
-                                .redraw_tx
-                                .send(RedrawCommand::SetScreensharingActive(true))
-                            {
-                                log::error!("CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}");
-                            }
-                        }
+                if let Some(timer) = self.resize_timer
+                    && Instant::now() >= timer
+                {
+                    self.resize_timer = None;
+                    if self.screensharing_active
+                        && let Err(e) = self
+                            .redraw_tx
+                            .send(RedrawCommand::SetScreensharingActive(true))
+                    {
+                        log::error!(
+                            "CameraWindow::handle_window_event: failed to send SetScreensharingActive: {e:?}"
+                        );
                     }
                 }
                 self.redraw();
@@ -1801,9 +1799,9 @@ fn create_participant_grid<'a>(
     // Calculate actual grid dimensions
     let actual_cols = tiles_per_row.min(participant_count);
     let grid_content_width =
-        (tile_size * actual_cols as f32) + (TILE_SPACING * (actual_cols - 1).max(0) as f32);
+        (tile_size * actual_cols as f32) + (TILE_SPACING * (actual_cols - 1) as f32);
     let grid_content_height =
-        (tile_size * num_rows as f32) + (TILE_SPACING * (num_rows - 1).max(0) as f32);
+        (tile_size * num_rows as f32) + (TILE_SPACING * (num_rows - 1) as f32);
 
     // Calculate dynamic padding to center the grid within the grid area (below header)
     let grid_area_height = available_size.height - header_offset;

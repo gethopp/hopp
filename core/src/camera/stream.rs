@@ -65,4 +65,4 @@ pub enum CameraStreamMessage {
 #[cfg_attr(target_os = "macos", path = "stream_macos.rs")]
 mod platform;
 
-pub use platform::{list_devices, CameraStream};
+pub use platform::{CameraStream, list_devices};

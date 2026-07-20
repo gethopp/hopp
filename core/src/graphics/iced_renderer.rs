@@ -7,11 +7,11 @@ use iced::Renderer;
 use iced::{Font, Pixels};
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::mouse;
-use iced_winit::core::{renderer, time::Instant, window, Event, Theme};
+use iced_winit::core::{Event, Theme, renderer, time::Instant, window};
 use iced_winit::{
-    core::Size,
-    runtime::{user_interface, UserInterface},
     Clipboard,
+    core::Size,
+    runtime::{UserInterface, user_interface},
 };
 use winit::window::Window;
 

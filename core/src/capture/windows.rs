@@ -2,8 +2,8 @@ use winit::platform::windows::MonitorHandleExtWindows;
 
 use crate::capture::capturer::{MonitorId, ScreenshareExt};
 
+use windows::Win32::Graphics::Gdi::{DISPLAY_DEVICEW, EnumDisplayDevicesW};
 use windows::core::PCWSTR;
-use windows::Win32::Graphics::Gdi::{EnumDisplayDevicesW, DISPLAY_DEVICEW};
 
 pub struct ScreenshareFunctions {}
 

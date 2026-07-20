@@ -1,4 +1,4 @@
-use crate::utils::geometry::{aspect_fit, Extent, Frame};
+use crate::utils::geometry::{Extent, Frame, aspect_fit};
 use livekit::webrtc::{
     desktop_capturer::{
         CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
@@ -8,7 +8,7 @@ use livekit::webrtc::{
     prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use super::CapturerError;
 
@@ -182,7 +182,9 @@ fn create_capture_callback(
                 resolution.width as u32,
                 resolution.height as u32,
             );
-            log::info!("capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}");
+            log::info!(
+                "capture_callback: Scaling framebuffer to {stream_width}x{stream_height} input: {frame_width}x{frame_height}"
+            );
             let mut stream_buffer = stream_buffer.lock().unwrap();
             *stream_buffer = StreamBuffer::new(stream_width, stream_height);
         };

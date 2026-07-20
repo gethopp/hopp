@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
@@ -9,20 +9,20 @@ use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
-use thread_priority::{set_current_thread_priority, ThreadPriority};
+use thread_priority::{ThreadPriority, set_current_thread_priority};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::audio::mixer::SharedProcessor;
 use crate::livekit::audio::AudioPublisher;
 use crate::livekit::participant::ParticipantInfo;
-use crate::livekit::video::{process_video_stream, VideoBufferManager};
+use crate::livekit::video::{VideoBufferManager, process_video_stream};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use winit::event_loop::EventLoopProxy;
 
 use crate::snapshot_sender::SnapshotSender;
-use crate::{audio, ParticipantData, UserEvent};
+use crate::{ParticipantData, UserEvent, audio};
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -157,18 +157,18 @@ impl RoomServiceInner {
     async fn clear(&self) {
         {
             let mut inner_room = self.room.lock().await;
-            if let Some(room) = inner_room.take() {
-                if let Err(e) = room.close().await {
-                    log::error!("RoomServiceInner::clear: Failed to close room: {e:?}");
-                }
+            if let Some(room) = inner_room.take()
+                && let Err(e) = room.close().await
+            {
+                log::error!("RoomServiceInner::clear: Failed to close room: {e:?}");
             }
         }
         {
             let mut inner_video_room = self.video_room.lock().await;
-            if let Some(video_room) = inner_video_room.take() {
-                if let Err(e) = video_room.close().await {
-                    log::error!("RoomServiceInner::clear: Failed to close video room: {e:?}");
-                }
+            if let Some(video_room) = inner_video_room.take()
+                && let Err(e) = video_room.close().await
+            {
+                log::error!("RoomServiceInner::clear: Failed to close video room: {e:?}");
             }
         }
         {
@@ -715,10 +715,10 @@ impl RoomService {
 
     /// Returns whether the local audio track is currently muted.
     pub fn is_audio_muted(&self) -> bool {
-        if let Ok(participants) = self.inner.participants.read() {
-            if let Some(local) = participants.get("local") {
-                return local.muted();
-            }
+        if let Ok(participants) = self.inner.participants.read()
+            && let Some(local) = participants.get("local")
+        {
+            return local.muted();
         }
         true
     }
@@ -1452,10 +1452,10 @@ async fn room_service_commands(
             RoomServiceCommand::MuteAudioTrack => {
                 if let Some(publisher) = audio_publisher.as_ref() {
                     publisher.mute();
-                    if let Ok(mut participants) = inner.participants.write() {
-                        if let Some(local) = participants.get_mut("local") {
-                            local.set_muted(true);
-                        }
+                    if let Ok(mut participants) = inner.participants.write()
+                        && let Some(local) = participants.get_mut("local")
+                    {
+                        local.set_muted(true);
                     }
 
                     inner.snapshot_sender.send_participants_snapshot();
@@ -1468,10 +1468,10 @@ async fn room_service_commands(
             RoomServiceCommand::UnmuteAudioTrack => {
                 if let Some(publisher) = audio_publisher.as_ref() {
                     publisher.unmute();
-                    if let Ok(mut participants) = inner.participants.write() {
-                        if let Some(local) = participants.get_mut("local") {
-                            local.set_muted(false);
-                        }
+                    if let Ok(mut participants) = inner.participants.write()
+                        && let Some(local) = participants.get_mut("local")
+                    {
+                        local.set_muted(false);
                     }
 
                     inner.snapshot_sender.send_participants_snapshot();
@@ -2041,7 +2041,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         if let Err(e) = event_loop_proxy
                             .send_event(UserEvent::LocalParticipantInControl(in_control))
                         {
-                            log::error!("handle_room_events: Failed to send LocalParticipantInControl: {e:?}");
+                            log::error!(
+                                "handle_room_events: Failed to send LocalParticipantInControl: {e:?}"
+                            );
                         }
                     } else {
                         log::warn!(
@@ -2208,12 +2210,12 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     participants_guard.values().any(|info| info.camera_active())
                 };
 
-                if !any_camera_active_after {
-                    if let Err(e) = event_loop_proxy.send_event(UserEvent::CloseCameraWindow) {
-                        log::error!(
-                            "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
-                        );
-                    }
+                if !any_camera_active_after
+                    && let Err(e) = event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
+                {
+                    log::error!(
+                        "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                    );
                 }
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
@@ -2291,14 +2293,13 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             }
                             guard.values().any(|info| info.camera_active())
                         };
-                        if !any_camera_active {
-                            if let Err(e) =
+                        if !any_camera_active
+                            && let Err(e) =
                                 event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
-                            {
-                                log::error!(
-                                    "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
-                                );
-                            }
+                        {
+                            log::error!(
+                                "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                            );
                         }
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
@@ -2356,7 +2357,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         if let Err(e) =
                             event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
                         {
-                            log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
+                            log::error!(
+                                "handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}"
+                            );
                         }
                     }
                     _ => {}
@@ -2447,7 +2450,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 let participant_identity = participant.identity().as_str().to_string();
 
                 if participant_identity == video_participant_identity {
-                    log::debug!("handle_room_events: Skipping track subscribed event from video participant");
+                    log::debug!(
+                        "handle_room_events: Skipping track subscribed event from video participant"
+                    );
                     continue;
                 }
 
@@ -2544,7 +2549,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 let participant_identity = participant.identity().as_str().to_string();
 
                 if participant_identity == video_participant_identity {
-                    log::debug!("handle_room_events: Skipping track unsubscribed event from video participant");
+                    log::debug!(
+                        "handle_room_events: Skipping track unsubscribed event from video participant"
+                    );
                     continue;
                 }
 
@@ -2563,14 +2570,13 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                     }
                                     guard.values().any(|info| info.camera_active())
                                 };
-                                if !any_camera_active {
-                                    if let Err(e) =
+                                if !any_camera_active
+                                    && let Err(e) =
                                         event_loop_proxy.send_event(UserEvent::CloseCameraWindow)
-                                    {
-                                        log::error!(
-                                            "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
-                                        );
-                                    }
+                                {
+                                    log::error!(
+                                        "handle_room_events: Failed to send CloseCameraWindow event: {e:?}"
+                                    );
                                 }
                             }
                             TrackSource::Screenshare => {
@@ -2658,11 +2664,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
             RoomEvent::ConnectionQualityChanged {
                 quality,
                 participant,
-            } => {
-                if participant.identity().as_str() == user_identity {
-                    log::info!("Connection quality changed: {:?}", quality);
-                    *connection_quality.lock().unwrap() = Some(quality);
-                }
+            } if participant.identity().as_str() == user_identity => {
+                log::info!("Connection quality changed: {:?}", quality);
+                *connection_quality.lock().unwrap() = Some(quality);
             }
             _ => {}
         }

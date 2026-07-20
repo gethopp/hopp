@@ -1,10 +1,10 @@
 use livekit::webrtc::native::audio_resampler::AudioResampler;
-use rodio::microphone::{self, Input, MicrophoneBuilder};
 use rodio::Source;
+use rodio::microphone::{self, Input, MicrophoneBuilder};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 
 const TARGET_SAMPLE_RATE: u32 = 16000;

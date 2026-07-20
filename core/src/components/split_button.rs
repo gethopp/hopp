@@ -1,6 +1,6 @@
 //! Split button: main action + optional chevron dropdown hit area (Iced).
 
-use iced::widget::{button, column, container, row, stack, text, Space};
+use iced::widget::{Space, button, column, container, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Length, Padding, Shadow, Theme};
 use iced_wgpu::core::widget::text as text_widget;
 

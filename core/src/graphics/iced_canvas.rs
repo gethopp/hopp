@@ -1,5 +1,5 @@
-use iced::widget::{canvas, column, container, text, Space};
-use iced::{mouse, Alignment, Background, Border, Color, Length, Padding, Rectangle, Theme};
+use iced::widget::{Space, canvas, column, container, text};
+use iced::{Alignment, Background, Border, Color, Length, Padding, Rectangle, Theme, mouse};
 use iced_wgpu::core::Element;
 
 #[path = "marker.rs"]

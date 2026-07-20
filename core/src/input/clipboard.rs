@@ -1,5 +1,5 @@
-use crate::room_service;
 use crate::KeystrokeData;
+use crate::room_service;
 use crate::{KeyboardController, KeyboardLayout};
 use thiserror::Error;
 

@@ -1,5 +1,5 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::StreamConfig;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::native::audio_mixer::{self, AudioMixer};

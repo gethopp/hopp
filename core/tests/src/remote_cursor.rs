@@ -2,7 +2,7 @@ use crate::events::{ClientEvent, ClientPoint, MouseClickData, WheelDelta};
 use crate::livekit_utils;
 use crate::screenshare_client;
 use livekit::prelude::*;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use socket_lib::Message;
 use std::{io, time::Duration};
 use tokio::time::sleep;

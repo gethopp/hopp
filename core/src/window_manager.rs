@@ -94,11 +94,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowExtWindows;
 
+use crate::ServerError;
+use crate::UserEvent;
 use crate::capture::capturer::{MonitorId, ScreenshareExt, ScreenshareFunctions};
 use crate::graphics::graphics_context::GraphicsContext;
 use crate::graphics::graphics_window_context::ContextManager;
-use crate::ServerError;
-use crate::UserEvent;
 
 // Constants for magic numbers
 /// Initial size for the overlay window (width and height in logical pixels)
@@ -225,14 +225,13 @@ impl<'a> WindowManager<'a> {
             window.set_has_shadow(false);
 
             // Needed for the overlay window to follow space changes.
-            if let Ok(raw_handle) = window.window_handle() {
-                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
-                    let ns_view: Option<Retained<NSView>> =
-                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
-                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
-                        ns_window
-                            .setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
-                    }
+            if let Ok(raw_handle) = window.window_handle()
+                && let RawWindowHandle::AppKit(handle) = raw_handle.as_raw()
+            {
+                let ns_view: Option<Retained<NSView>> =
+                    unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+                if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+                    ns_window.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces);
                 }
             }
         }
@@ -451,10 +450,9 @@ impl<'a> WindowManager<'a> {
         if let Some(monitor) = event_loop
             .primary_monitor()
             .or_else(|| monitors.first().cloned())
+            && !self.focus_monitor(&monitor)
         {
-            if !self.focus_monitor(&monitor) {
-                log::warn!("show_screen_selection: failed to focus primary monitor window");
-            }
+            log::warn!("show_screen_selection: failed to focus primary monitor window");
         }
     }
 

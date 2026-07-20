@@ -1,4 +1,4 @@
-use crate::utils::geometry::{aspect_fit, Extent, Frame};
+use crate::utils::geometry::{Extent, Frame, aspect_fit};
 use livekit::webrtc::{
     prelude::{NV12Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
@@ -8,7 +8,7 @@ use screencapturekit::{
     prelude::*,
     stream::delegate_trait::StreamCallbacks,
 };
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use super::CapturerError;
 
@@ -248,10 +248,10 @@ impl Stream {
     }
 
     pub fn stop_capture(&mut self) {
-        if let Some(ref stream) = self.sc_stream {
-            if let Err(e) = stream.stop_capture() {
-                log::warn!("stop_capture: SCK stop error: {e}");
-            }
+        if let Some(ref stream) = self.sc_stream
+            && let Err(e) = stream.stop_capture()
+        {
+            log::warn!("stop_capture: SCK stop error: {e}");
         }
         self.sc_stream = None;
     }

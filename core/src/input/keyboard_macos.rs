@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 use std::os::raw::c_void;
 
-use super::{get_modifiers, KeyModifier, KeyboardEventTrait, KeyboardLayoutTrait};
+use super::{KeyModifier, KeyboardEventTrait, KeyboardLayoutTrait, get_modifiers};
 
 use core_foundation::{
     base::{OSStatus, TCFType},
@@ -38,7 +38,7 @@ pub type CFNotificationCallback = Option<
     ),
 >;
 
-extern "C" {
+unsafe extern "C" {
     #[allow(non_upper_case_globals)]
     static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     //static kTISNotifySelectcallbackedKeyboardInputSourceChanged: CFStringRef;

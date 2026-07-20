@@ -57,10 +57,10 @@ pub(crate) mod overlay_window;
 pub(crate) mod window_manager;
 pub(crate) mod windows;
 
-use camera::capturer::{poll_camera_stream, CameraCapturer};
-use capture::capturer::{poll_stream, Capturer, ScreenshareExt, ScreenshareFunctions};
-use graphics::graphics_context::participant::CursorMode;
+use camera::capturer::{CameraCapturer, poll_camera_stream};
+use capture::capturer::{Capturer, ScreenshareExt, ScreenshareFunctions, poll_stream};
 use graphics::graphics_context::GraphicsContext;
+use graphics::graphics_context::participant::CursorMode;
 use graphics::graphics_window_context::ContextManager;
 use input::clipboard::ClipboardController;
 use input::keyboard::{KeyboardController, KeyboardLayout};
@@ -156,10 +156,8 @@ impl RemoteControl {
             .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
-        let translator = self
-            .cursor_controller
-            .get_overlay_window()
-            .create_position_translator();
+        let overlay_window = self.cursor_controller.get_overlay_window();
+        let translator = overlay_window.create_position_translator();
         gfx.draw(&translator);
         cleared_path_ids
     }
@@ -446,22 +444,21 @@ impl<'a> Application<'a> {
         let room_service = self.room_service.as_ref().unwrap();
         if let (Some(window_manager), Some(remote_control)) =
             (self.window_manager.as_mut(), self.remote_control.as_mut())
+            && let Some(gfx) = window_manager.active_gfx_mut()
         {
-            if let Some(gfx) = window_manager.active_gfx_mut() {
-                let existing_participants = room_service.get_participants();
-                for participant in &existing_participants {
-                    if let Err(e) =
-                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
-                    {
-                        log::error!(
-                            "Failed to create cursor for participant {}: {e}",
-                            participant.identity
-                        );
-                    } else {
-                        remote_control
-                            .cursor_controller
-                            .add_controller(participant.identity.clone());
-                    }
+            let existing_participants = room_service.get_participants();
+            for participant in &existing_participants {
+                if let Err(e) =
+                    gfx.add_participant(participant.identity.clone(), &participant.name, false)
+                {
+                    log::error!(
+                        "Failed to create cursor for participant {}: {e}",
+                        participant.identity
+                    );
+                } else {
+                    remote_control
+                        .cursor_controller
+                        .add_controller(participant.identity.clone());
                 }
             }
         }
@@ -688,7 +685,9 @@ impl<'a> Application<'a> {
         let window_position = match window_outer_position {
             Ok(position) => position,
             Err(error) => {
-                log::error!("create_overlay_window: Error getting window position {error:?} using monitor's");
+                log::error!(
+                    "create_overlay_window: Error getting window position {error:?} using monitor's"
+                );
                 selected_monitor.position()
             }
         };
@@ -808,16 +807,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sid.as_str(),
                     );
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.set_cursor_position(
-                            sid.as_str(),
-                            Some(Position {
-                                x: x as f64,
-                                y: y as f64,
-                            }),
-                        );
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.set_cursor_position(
+                        sid.as_str(),
+                        Some(Position {
+                            x: x as f64,
+                            y: y as f64,
+                        }),
+                    );
                 }
             }
             UserEvent::MouseClick(data, sid) => {
@@ -993,7 +992,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                 from_socket: false,
                             });
                             if res.is_err() {
-                                log::error!("user_event: CreateRoomResult failed to queue StartCamera: {res:?}");
+                                log::error!(
+                                    "user_event: CreateRoomResult failed to queue StartCamera: {res:?}"
+                                );
                             }
                         }
                     }
@@ -1024,10 +1025,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(cam) = self.camera_window.as_mut() {
                         cam.reset_renderer(&mut cm.camera_context);
                     }
-                    if let Some(screensharing_win) = self.screensharing_window.as_mut() {
-                        if screensharing_win.is_visible() {
-                            screensharing_win.reset_renderer(&mut cm.screensharing_context);
-                        }
+                    if let Some(screensharing_win) = self.screensharing_window.as_mut()
+                        && screensharing_win.is_visible()
+                    {
+                        screensharing_win.reset_renderer(&mut cm.screensharing_context);
                     }
                     if let Some(dw) = self.drawing_window.as_mut() {
                         dw.reset_renderer(&mut cm.drawing_context);
@@ -1151,33 +1152,31 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 if let (Some(window_manager), Some(remote_control)) =
                     (self.window_manager.as_mut(), self.remote_control.as_mut())
+                    && let Some(gfx) = window_manager.active_gfx_mut()
                 {
-                    if let Some(gfx) = window_manager.active_gfx_mut() {
-                        let identity = participant.identity.clone();
-                        let name = participant.name.clone();
+                    let identity = participant.identity.clone();
+                    let name = participant.name.clone();
 
-                        // Add participant to draw manager first (assigns color)
-                        if let Err(e) = gfx.add_participant(identity.clone(), &name, false) {
-                            log::error!("Failed to create cursor for participant {identity}: {e}");
-                        } else {
-                            // Then add to cursor controller for state tracking
-                            remote_control.cursor_controller.add_controller(identity);
-                        }
+                    // Add participant to draw manager first (assigns color)
+                    if let Err(e) = gfx.add_participant(identity.clone(), &name, false) {
+                        log::error!("Failed to create cursor for participant {identity}: {e}");
+                    } else {
+                        // Then add to cursor controller for state tracking
+                        remote_control.cursor_controller.add_controller(identity);
                     }
                 }
 
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        if let Err(e) = screensharing_window.add_participant(
-                            participant.identity.clone(),
-                            &participant.name,
-                            false,
-                        ) {
-                            log::error!(
-                                "user_event: failed to add participant to screensharing window: {e:?}"
-                            );
-                        }
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                    && let Err(e) = screensharing_window.add_participant(
+                        participant.identity.clone(),
+                        &participant.name,
+                        false,
+                    )
+                {
+                    log::error!(
+                        "user_event: failed to add participant to screensharing window: {e:?}"
+                    );
                 }
             }
             UserEvent::ParticipantDisconnected(participant) => {
@@ -1194,10 +1193,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         gfx.remove_participant(participant.identity.as_str());
                     }
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.remove_participant(participant.identity.as_str());
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.remove_participant(participant.identity.as_str());
                 }
             }
             UserEvent::LivekitServerUrl(url) => {
@@ -1238,10 +1237,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::LocalParticipantInControl(in_control) => {
                 log::debug!("user_event: local participant in control: {in_control}");
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.set_local_participant_in_control(in_control);
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.set_local_participant_in_control(in_control);
                 }
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
@@ -1267,25 +1266,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         add_to_clipboard_data.is_copy,
                         &mut remote_control.keyboard_controller,
                     );
-                if let Some(text) = clipboard_text {
-                    if let Some(room_service) = &self.room_service {
-                        let bytes = text.as_bytes();
-                        const MAX_PACKET: usize = 15 * 1024;
-                        let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
-                        for i in 0..total_packets {
-                            let start = (i as usize) * MAX_PACKET;
-                            let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
-                            room_service.publish_clipboard_data(
-                                room_service::ClipboardDataPayload {
-                                    requester_sid: requester_identity.clone(),
-                                    data: Some(room_service::ClipboardPayload {
-                                        packet_id: i,
-                                        total_packets,
-                                        data: bytes[start..end].to_vec(),
-                                    }),
-                                },
-                            );
-                        }
+                if let Some(text) = clipboard_text
+                    && let Some(room_service) = &self.room_service
+                {
+                    let bytes = text.as_bytes();
+                    const MAX_PACKET: usize = 15 * 1024;
+                    let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
+                    for i in 0..total_packets {
+                        let start = (i as usize) * MAX_PACKET;
+                        let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                        room_service.publish_clipboard_data(room_service::ClipboardDataPayload {
+                            requester_sid: requester_identity.clone(),
+                            data: Some(room_service::ClipboardPayload {
+                                packet_id: i,
+                                total_packets,
+                                data: bytes[start..end].to_vec(),
+                            }),
+                        });
                     }
                 }
             }
@@ -1337,10 +1334,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
                     }
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
                 }
             }
             UserEvent::DrawStart(point, path_id, sid) => {
@@ -1361,11 +1358,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sid.as_str(),
                     );
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.draw_start(sid.as_str(), pos, path_id);
-                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.draw_start(sid.as_str(), pos, path_id);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
                 }
             }
             UserEvent::DrawAddPoint(point, sid) => {
@@ -1386,11 +1383,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sid.as_str(),
                     );
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.draw_add_point(sid.as_str(), pos);
-                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.draw_add_point(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
                 }
             }
             UserEvent::DrawEnd(point, sid) => {
@@ -1411,11 +1408,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sid.as_str(),
                     );
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.draw_end(sid.as_str(), pos);
-                        screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.draw_end(sid.as_str(), pos);
+                    screensharing_window.set_cursor_position(sid.as_str(), Some(pos));
                 }
             }
             UserEvent::DrawClearPath(path_id, sid) => {
@@ -1428,10 +1425,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.draw_clear_path(sid.as_str(), path_id);
                     gfx.trigger_render();
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.draw_clear_path(sid.as_str(), path_id);
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.draw_clear_path(sid.as_str(), path_id);
                 }
             }
             UserEvent::DrawClearAllPaths(sid) => {
@@ -1444,10 +1441,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.draw_clear_all_paths(sid.as_str());
                     gfx.trigger_render();
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.draw_clear_all_paths(sid.as_str());
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.draw_clear_all_paths(sid.as_str());
                 }
             }
             UserEvent::ClickAnimationFromParticipant(point, sid) => {
@@ -1466,13 +1463,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         y: point.y,
                     });
                 }
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.trigger_click_animation(Position {
-                            x: point.x,
-                            y: point.y,
-                        });
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.trigger_click_animation(Position {
+                        x: point.x,
+                        y: point.y,
+                    });
                 }
             }
             UserEvent::ListAudioDevices => {
@@ -1504,22 +1501,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                                 .map(|s| s.to_string()),
                         );
                     }
-                    if !from_socket {
-                        if let Some(device_name) = self.audio_capturer.active_device_name() {
-                            if let Err(e) = self
-                                .socket
-                                .send(Message::ActiveMicChanged(device_name.to_string()))
-                            {
-                                error!("user_event: Error sending ActiveMicChanged: {e:?}");
-                            }
-                        }
+                    if !from_socket
+                        && let Some(device_name) = self.audio_capturer.active_device_name()
+                        && let Err(e) = self
+                            .socket
+                            .send(Message::ActiveMicChanged(device_name.to_string()))
+                    {
+                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
                     }
                 }
 
-                if from_socket {
-                    if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
-                        error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
-                    }
+                if from_socket
+                    && let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result))
+                {
+                    error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
                 }
             }
 
@@ -1583,11 +1578,15 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     {
                         Ok(Message::PreferredCamera(name)) => name,
                         Ok(other) => {
-                            log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
+                            log::warn!(
+                                "user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}"
+                            );
                             None
                         }
                         Err(_) => {
-                            log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
+                            log::warn!(
+                                "user_event: StartCamera: timeout waiting for preferred camera, using default"
+                            );
                             None
                         }
                     }
@@ -1644,21 +1643,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let Some(cam) = &mut self.camera_window {
                         cam.show_error_toast("Failed to start camera");
                     }
-                    if from_socket {
-                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
-                        {
-                            error!("user_event: Error sending StartCameraResult: {e:?}");
-                        }
+                    if from_socket
+                        && let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
+                    {
+                        error!("user_event: Error sending StartCameraResult: {e:?}");
                     }
                     room_service.send_participants_snapshot();
                     return;
                 }
 
                 // Send success result via socket
-                if from_socket {
-                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
-                        error!("user_event: Error sending StartCameraResult: {e:?}");
-                    }
+                if from_socket && let Err(e) = self.socket.send(Message::StartCameraResult(Ok(())))
+                {
+                    error!("user_event: Error sending StartCameraResult: {e:?}");
                 }
 
                 // Unmute camera track (fire-and-forget)
@@ -1673,13 +1670,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     cam.set_camera_active(true, actual_name.clone());
                 }
 
-                if !from_socket {
-                    if let Some(name) = &actual_name {
-                        if let Err(e) = self.socket.send(Message::ActiveCameraChanged(name.clone()))
-                        {
-                            error!("user_event: Error sending ActiveCameraChanged: {e:?}");
-                        }
-                    }
+                if !from_socket
+                    && let Some(name) = &actual_name
+                    && let Err(e) = self.socket.send(Message::ActiveCameraChanged(name.clone()))
+                {
+                    error!("user_event: Error sending ActiveCameraChanged: {e:?}");
                 }
 
                 room_service.send_participants_snapshot();
@@ -1761,10 +1756,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 } else {
                     log::warn!("user_event: Room service not available");
                 }
-                if let Some(screensharing_window) = &self.screensharing_window {
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.publish_drawing_mode(screensharing_window.drawing_mode());
-                    }
+                if let Some(screensharing_window) = &self.screensharing_window
+                    && let Some(room_service) = self.room_service.as_ref()
+                {
+                    room_service.publish_drawing_mode(screensharing_window.drawing_mode());
                 }
                 self.set_screensharing_active(true);
             }
@@ -1789,17 +1784,17 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::BringWindowsToFront => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
-                if let Some(screen_sharing_window) = &mut self.screensharing_window {
-                    if screen_sharing_window.is_visible() {
-                        screen_sharing_window.focus_window();
-                        focused = true;
-                    }
+                if let Some(screen_sharing_window) = &mut self.screensharing_window
+                    && screen_sharing_window.is_visible()
+                {
+                    screen_sharing_window.focus_window();
+                    focused = true;
                 }
-                if let Some(cam) = &self.camera_window {
-                    if cam.is_visible() {
-                        cam.focus_window();
-                        focused = true;
-                    }
+                if let Some(cam) = &self.camera_window
+                    && cam.is_visible()
+                {
+                    cam.focus_window();
+                    focused = true;
                 }
                 if let Err(e) = self
                     .socket
@@ -1811,10 +1806,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             // TODO(@konsalex): We need to rethink how to tackle this,
             // as a new-joiner in a Room will not have access to this
             UserEvent::SharerControlEnabled(enabled) => {
-                if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.set_remote_control_allowed(enabled);
-                    }
+                if let Some(screensharing_window) = &mut self.screensharing_window
+                    && screensharing_window.is_visible()
+                {
+                    screensharing_window.set_remote_control_allowed(enabled);
                 }
             }
             UserEvent::DefaultOutputDeviceChanged => {
@@ -1834,13 +1829,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .map(|s| s.to_string()),
                     );
                 }
-                if let Some(device_name) = self.audio_capturer.active_device_name() {
-                    if let Err(e) = self
+                if let Some(device_name) = self.audio_capturer.active_device_name()
+                    && let Err(e) = self
                         .socket
                         .send(Message::ActiveMicChanged(device_name.to_string()))
-                    {
-                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
-                    }
+                {
+                    error!("user_event: Error sending ActiveMicChanged: {e:?}");
                 }
             }
             UserEvent::AudioCaptureError => {
@@ -1853,13 +1847,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .map(|s| s.to_string()),
                     );
                 }
-                if let Some(device_name) = self.audio_capturer.active_device_name() {
-                    if let Err(e) = self
+                if let Some(device_name) = self.audio_capturer.active_device_name()
+                    && let Err(e) = self
                         .socket
                         .send(Message::ActiveMicChanged(device_name.to_string()))
-                    {
-                        error!("user_event: Error sending ActiveMicChanged: {e:?}");
-                    }
+                {
+                    error!("user_event: Error sending ActiveMicChanged: {e:?}");
                 }
             }
             UserEvent::SharerDrawPersistChanged(persist) => {
@@ -2021,198 +2014,183 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         event: WindowEvent,
     ) {
         // Route to camera window if it matches
-        if let Some(camera) = &mut self.camera_window {
-            if camera.window_id() == window_id {
-                camera.handle_window_event(event);
-                return;
-            }
+        if let Some(camera) = &mut self.camera_window
+            && camera.window_id() == window_id
+        {
+            camera.handle_window_event(event);
+            return;
         }
 
         // Route to drawing window if it matches
-        if let Some(drawing) = &mut self.drawing_window {
-            if drawing.window_id() == window_id {
-                let input_event = drawing.handle_window_event(event);
-                if let Some(event) = input_event {
-                    if matches!(
-                        event,
-                        window::drawing_window::DrawingWindowInputEvent::Escape
-                    ) {
-                        let _ = self
-                            .event_loop_proxy
-                            .send_event(UserEvent::LocalDrawingEnabled(
-                                socket_lib::DrawingEnabled { permanent: false },
-                            ));
-                    }
-                    if let Some(rs) = &self.room_service {
-                        match event {
-                            window::drawing_window::DrawingWindowInputEvent::DrawStart {
-                                x,
-                                y,
+        if let Some(drawing) = &mut self.drawing_window
+            && drawing.window_id() == window_id
+        {
+            let input_event = drawing.handle_window_event(event);
+            if let Some(event) = input_event {
+                if matches!(
+                    event,
+                    window::drawing_window::DrawingWindowInputEvent::Escape
+                ) {
+                    let _ = self
+                        .event_loop_proxy
+                        .send_event(UserEvent::LocalDrawingEnabled(socket_lib::DrawingEnabled {
+                            permanent: false,
+                        }));
+                }
+                if let Some(rs) = &self.room_service {
+                    match event {
+                        window::drawing_window::DrawingWindowInputEvent::DrawStart {
+                            x,
+                            y,
+                            path_id,
+                        } => {
+                            rs.publish_draw_start(crate::room_service::DrawPathPoint {
+                                point: crate::room_service::ClientPoint { x, y },
                                 path_id,
-                            } => {
-                                rs.publish_draw_start(crate::room_service::DrawPathPoint {
-                                    point: crate::room_service::ClientPoint { x, y },
-                                    path_id,
-                                });
-                            }
-                            window::drawing_window::DrawingWindowInputEvent::DrawAddPoint {
-                                x,
-                                y,
-                            } => {
-                                rs.publish_draw_add_point(crate::room_service::ClientPoint {
-                                    x,
-                                    y,
-                                });
-                            }
-                            window::drawing_window::DrawingWindowInputEvent::DrawEnd { x, y } => {
-                                rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
-                            }
-                            window::drawing_window::DrawingWindowInputEvent::DrawClearAllPaths => {
-                                rs.publish_draw_clear_all_paths();
-                            }
-                            window::drawing_window::DrawingWindowInputEvent::DrawClearPaths(
-                                ids,
-                            ) => {
-                                rs.publish_draw_clear_paths(ids);
-                            }
-                            window::drawing_window::DrawingWindowInputEvent::Escape => {}
+                            });
                         }
+                        window::drawing_window::DrawingWindowInputEvent::DrawAddPoint { x, y } => {
+                            rs.publish_draw_add_point(crate::room_service::ClientPoint { x, y });
+                        }
+                        window::drawing_window::DrawingWindowInputEvent::DrawEnd { x, y } => {
+                            rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
+                        }
+                        window::drawing_window::DrawingWindowInputEvent::DrawClearAllPaths => {
+                            rs.publish_draw_clear_all_paths();
+                        }
+                        window::drawing_window::DrawingWindowInputEvent::DrawClearPaths(ids) => {
+                            rs.publish_draw_clear_paths(ids);
+                        }
+                        window::drawing_window::DrawingWindowInputEvent::Escape => {}
                     }
                 }
-                return;
             }
+            return;
         }
 
         // Route to stats window if it matches
-        if let Some(sw) = &mut self.stats_window {
-            if sw.window_id() == window_id {
-                sw.handle_window_event(event);
-                return;
-            }
+        if let Some(sw) = &mut self.stats_window
+            && sw.window_id() == window_id
+        {
+            sw.handle_window_event(event);
+            return;
         }
 
         // Route to screensharing window if it matches
-        if let Some(screen_sharing_window) = &mut self.screensharing_window {
-            if screen_sharing_window.window_id() == window_id {
-                let input_events = screen_sharing_window.handle_window_event(event);
-                for event in input_events {
-                    if let Some(rs) = &self.room_service {
-                        match event {
-                            ScreenShareInputEvent::CursorMoved { x, y } => {
-                                rs.publish_cursor_position(x, y, true);
-                            }
-                            ScreenShareInputEvent::MouseClick(data) => {
-                                rs.publish_mouse_click(data);
-                            }
-                            ScreenShareInputEvent::Scroll(data) => {
-                                rs.publish_wheel_event(data);
-                            }
-                            ScreenShareInputEvent::KeyInput(data) => {
-                                rs.publish_keystroke(data);
-                            }
-                            ScreenShareInputEvent::DrawStart { x, y, path_id } => {
-                                rs.publish_draw_start(crate::room_service::DrawPathPoint {
-                                    point: crate::room_service::ClientPoint { x, y },
-                                    path_id,
-                                });
-                            }
-                            ScreenShareInputEvent::DrawAddPoint { x, y } => {
-                                rs.publish_draw_add_point(crate::room_service::ClientPoint {
-                                    x,
-                                    y,
-                                });
-                            }
-                            ScreenShareInputEvent::DrawEnd { x, y } => {
-                                rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
-                            }
-                            ScreenShareInputEvent::DrawClearAllPaths => {
-                                rs.publish_draw_clear_all_paths();
-                            }
-                            ScreenShareInputEvent::DrawClearPaths(ids) => {
-                                rs.publish_draw_clear_paths(ids);
-                            }
-                            ScreenShareInputEvent::ClickAnimation { x, y } => {
-                                rs.publish_click_animation(crate::room_service::ClientPoint {
-                                    x,
-                                    y,
-                                });
-                            }
-                            ScreenShareInputEvent::AddToClipboard { is_copy } => {
-                                rs.publish_add_to_clipboard(
-                                    crate::room_service::AddToClipboardData { is_copy },
-                                );
-                            }
-                            ScreenShareInputEvent::PasteFromClipboard(text) => match text {
-                                Some(clipboard_text) => {
-                                    log::debug!("PasteFromClipboard: {:?}", clipboard_text);
-                                    let bytes = clipboard_text.as_bytes();
-                                    const MAX_PACKET: usize = 15 * 1024;
-                                    let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
-                                    for i in 0..total_packets {
-                                        let start = (i as usize) * MAX_PACKET;
-                                        let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
-                                        let chunk = bytes[start..end].to_vec();
-                                        rs.publish_paste_from_clipboard(
-                                            crate::room_service::PasteFromClipboardData {
-                                                data: Some(crate::room_service::ClipboardPayload {
-                                                    packet_id: i,
-                                                    total_packets,
-                                                    data: chunk,
-                                                }),
-                                            },
-                                        );
-                                    }
-                                }
-                                None => {
+        if let Some(screen_sharing_window) = &mut self.screensharing_window
+            && screen_sharing_window.window_id() == window_id
+        {
+            let input_events = screen_sharing_window.handle_window_event(event);
+            for event in input_events {
+                if let Some(rs) = &self.room_service {
+                    match event {
+                        ScreenShareInputEvent::CursorMoved { x, y } => {
+                            rs.publish_cursor_position(x, y, true);
+                        }
+                        ScreenShareInputEvent::MouseClick(data) => {
+                            rs.publish_mouse_click(data);
+                        }
+                        ScreenShareInputEvent::Scroll(data) => {
+                            rs.publish_wheel_event(data);
+                        }
+                        ScreenShareInputEvent::KeyInput(data) => {
+                            rs.publish_keystroke(data);
+                        }
+                        ScreenShareInputEvent::DrawStart { x, y, path_id } => {
+                            rs.publish_draw_start(crate::room_service::DrawPathPoint {
+                                point: crate::room_service::ClientPoint { x, y },
+                                path_id,
+                            });
+                        }
+                        ScreenShareInputEvent::DrawAddPoint { x, y } => {
+                            rs.publish_draw_add_point(crate::room_service::ClientPoint { x, y });
+                        }
+                        ScreenShareInputEvent::DrawEnd { x, y } => {
+                            rs.publish_draw_end(crate::room_service::ClientPoint { x, y });
+                        }
+                        ScreenShareInputEvent::DrawClearAllPaths => {
+                            rs.publish_draw_clear_all_paths();
+                        }
+                        ScreenShareInputEvent::DrawClearPaths(ids) => {
+                            rs.publish_draw_clear_paths(ids);
+                        }
+                        ScreenShareInputEvent::ClickAnimation { x, y } => {
+                            rs.publish_click_animation(crate::room_service::ClientPoint { x, y });
+                        }
+                        ScreenShareInputEvent::AddToClipboard { is_copy } => {
+                            rs.publish_add_to_clipboard(crate::room_service::AddToClipboardData {
+                                is_copy,
+                            });
+                        }
+                        ScreenShareInputEvent::PasteFromClipboard(text) => match text {
+                            Some(clipboard_text) => {
+                                log::debug!("PasteFromClipboard: {:?}", clipboard_text);
+                                let bytes = clipboard_text.as_bytes();
+                                const MAX_PACKET: usize = 15 * 1024;
+                                let total_packets = bytes.len().div_ceil(MAX_PACKET) as u64;
+                                for i in 0..total_packets {
+                                    let start = (i as usize) * MAX_PACKET;
+                                    let end = ((i as usize + 1) * MAX_PACKET).min(bytes.len());
+                                    let chunk = bytes[start..end].to_vec();
                                     rs.publish_paste_from_clipboard(
-                                        crate::room_service::PasteFromClipboardData { data: None },
+                                        crate::room_service::PasteFromClipboardData {
+                                            data: Some(crate::room_service::ClipboardPayload {
+                                                packet_id: i,
+                                                total_packets,
+                                                data: chunk,
+                                            }),
+                                        },
                                     );
                                 }
-                            },
-                            ScreenShareInputEvent::DrawingModeChanged(mode) => {
-                                if mode == crate::room_service::DrawingMode::Disabled
-                                    || mode == crate::room_service::DrawingMode::ClickAnimation
-                                {
-                                    rs.publish_draw_clear_all_paths();
-                                }
-                                if let crate::room_service::DrawingMode::Draw(settings) = &mode {
-                                    if settings.permanent != self.controller_draw_persist {
-                                        self.controller_draw_persist = settings.permanent;
-                                        if let Err(e) =
-                                            self.socket.send(Message::ControllerDrawPersistChanged(
-                                                settings.permanent,
-                                            ))
-                                        {
-                                            log::error!("Failed to send ControllerDrawPersistChanged: {e:?}");
-                                        }
-                                    }
-                                }
-                                let stored = match &mode {
-                                    crate::room_service::DrawingMode::Draw(settings) => {
-                                        socket_lib::StoredMode::Draw {
-                                            permanent: settings.permanent,
-                                        }
-                                    }
-                                    crate::room_service::DrawingMode::ClickAnimation => {
-                                        socket_lib::StoredMode::ClickAnimation
-                                    }
-                                    _ => socket_lib::StoredMode::RemoteControl,
-                                };
-                                if self.last_mode.as_ref() != Some(&stored) {
-                                    self.last_mode = Some(stored.clone());
-                                    if let Err(e) =
-                                        self.socket.send(Message::LastModeChanged(stored))
-                                    {
-                                        log::error!("Failed to send LastModeChanged: {e:?}");
-                                    }
-                                }
-                                rs.publish_drawing_mode(mode);
                             }
+                            None => {
+                                rs.publish_paste_from_clipboard(
+                                    crate::room_service::PasteFromClipboardData { data: None },
+                                );
+                            }
+                        },
+                        ScreenShareInputEvent::DrawingModeChanged(mode) => {
+                            if mode == crate::room_service::DrawingMode::Disabled
+                                || mode == crate::room_service::DrawingMode::ClickAnimation
+                            {
+                                rs.publish_draw_clear_all_paths();
+                            }
+                            if let crate::room_service::DrawingMode::Draw(settings) = &mode
+                                && settings.permanent != self.controller_draw_persist
+                            {
+                                self.controller_draw_persist = settings.permanent;
+                                if let Err(e) = self
+                                    .socket
+                                    .send(Message::ControllerDrawPersistChanged(settings.permanent))
+                                {
+                                    log::error!(
+                                        "Failed to send ControllerDrawPersistChanged: {e:?}"
+                                    );
+                                }
+                            }
+                            let stored = match &mode {
+                                crate::room_service::DrawingMode::Draw(settings) => {
+                                    socket_lib::StoredMode::Draw {
+                                        permanent: settings.permanent,
+                                    }
+                                }
+                                crate::room_service::DrawingMode::ClickAnimation => {
+                                    socket_lib::StoredMode::ClickAnimation
+                                }
+                                _ => socket_lib::StoredMode::RemoteControl,
+                            };
+                            if self.last_mode.as_ref() != Some(&stored) {
+                                self.last_mode = Some(stored.clone());
+                                if let Err(e) = self.socket.send(Message::LastModeChanged(stored)) {
+                                    log::error!("Failed to send LastModeChanged: {e:?}");
+                                }
+                            }
+                            rs.publish_drawing_mode(mode);
                         }
                     }
                 }
-                return;
             }
+            return;
         }
 
         match event {
@@ -2252,11 +2230,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 let cleared_path_ids = remote_control.render_frame(gfx);
 
                 // Publish cleared paths to room service
-                if !cleared_path_ids.is_empty() && self.room_service.is_some() {
-                    self.room_service
-                        .as_ref()
-                        .unwrap()
-                        .publish_draw_clear_paths(cleared_path_ids);
+                if !cleared_path_ids.is_empty()
+                    && let Some(room_service) = self.room_service.as_ref()
+                {
+                    room_service.publish_draw_clear_paths(cleared_path_ids);
                 }
             }
             WindowEvent::MouseInput {
@@ -2267,10 +2244,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.select_screen_selection_window(event_loop, window_id);
             }
             WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
-                if let Some(window_manager) = self.window_manager.as_ref() {
-                    if !window_manager.focus_window(window_id) {
-                        log::warn!("window_event: failed to focus screen selection window");
-                    }
+                if let Some(window_manager) = self.window_manager.as_ref()
+                    && !window_manager.focus_window(window_id)
+                {
+                    log::warn!("window_event: failed to focus screen selection window");
                 }
                 if let Some(window_manager) = self.window_manager.as_mut() {
                     for gfx in window_manager.all_gfx_mut() {

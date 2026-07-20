@@ -39,7 +39,7 @@ pub fn pick_transparent_alpha_mode(caps: &wgpu::SurfaceCapabilities) -> wgpu::Co
 #[cfg(target_os = "macos")]
 pub fn apply_macos_vibrancy(window: &winit::window::Window, corner_radius: f64) {
     use objc2::rc::Retained;
-    use objc2::{msg_send, AnyThread, ClassType, MainThreadMarker, MainThreadOnly};
+    use objc2::{AnyThread, ClassType, MainThreadMarker, MainThreadOnly, msg_send};
     use objc2_app_kit::{
         NSAppearance, NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSImage, NSView,
         NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,

@@ -1,13 +1,13 @@
 use log::info;
 use std::sync::Arc;
-use windows::core::implement;
 use windows::Win32::Media::Audio::{
-    eCapture, eRender, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
-    IMMNotificationClient_Impl, MMDeviceEnumerator, DEVICE_STATE,
+    DEVICE_STATE, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
+    IMMNotificationClient_Impl, MMDeviceEnumerator, eCapture, eRender,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
+use windows::core::implement;
 use winit::event_loop::EventLoopProxy;
 
 use super::DeviceKind;

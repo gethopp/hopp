@@ -22,7 +22,7 @@
 //! dropdown_overlay(base_element, menu, Msg::Dismiss, top_offset, right_pad)
 //! ```
 
-use iced::widget::{button, column, container, row, stack, svg, text, Space};
+use iced::widget::{Space, button, column, container, row, stack, svg, text};
 use iced::{Alignment, Background, Border, Color, Length, Padding, Shadow, Theme};
 use iced_wgpu::core::widget::text as text_widget;
 

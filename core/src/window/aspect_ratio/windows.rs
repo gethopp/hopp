@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use winit::window::Window;
 
-use super::{calculate_max_window_size, min_window_size_for_aspect, WindowConstant};
+use super::{WindowConstant, calculate_max_window_size, min_window_size_for_aspect};
 use crate::utils::geometry::{Extent, Position};
 
 struct WindowAspectState {

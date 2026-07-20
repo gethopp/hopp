@@ -6,10 +6,10 @@ use iced_wgpu::core::mouse;
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
-use iced_winit::core::{window, Event, Size};
-use iced_winit::runtime::user_interface::Cache;
+use iced_winit::core::{Event, Size, window};
 use iced_winit::runtime::UserInterface;
-use iced_winit::{conversion, Clipboard};
+use iced_winit::runtime::user_interface::Cache;
+use iced_winit::{Clipboard, conversion};
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -65,7 +65,7 @@ fn spawn_redraw_thread(
         loop {
             match redraw_rx.recv_timeout(redraw_interval) {
                 Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    break
+                    break;
                 }
                 Ok(RedrawCommand::Activity) => {
                     if last_activity_time.elapsed() < redraw_interval {
@@ -190,13 +190,13 @@ impl DrawingWindow {
             use objc2::rc::Retained;
             use objc2_app_kit::NSView;
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            if let Ok(raw_handle) = window.window_handle() {
-                if let RawWindowHandle::AppKit(handle) = raw_handle.as_raw() {
-                    let ns_view: Option<Retained<NSView>> =
-                        unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
-                    if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
-                        ns_window.disableCursorRects();
-                    }
+            if let Ok(raw_handle) = window.window_handle()
+                && let RawWindowHandle::AppKit(handle) = raw_handle.as_raw()
+            {
+                let ns_view: Option<Retained<NSView>> =
+                    unsafe { Retained::retain(handle.ns_view.as_ptr().cast()) };
+                if let Some(ns_window) = ns_view.and_then(|v| v.window()) {
+                    ns_window.disableCursorRects();
                 }
             }
         }
@@ -577,10 +577,10 @@ impl DrawingWindow {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state.is_pressed() {
-                    if let Key::Named(NamedKey::Escape) = event.logical_key {
-                        input_event = Some(DrawingWindowInputEvent::Escape);
-                    }
+                if event.state.is_pressed()
+                    && let Key::Named(NamedKey::Escape) = event.logical_key
+                {
+                    input_event = Some(DrawingWindowInputEvent::Escape);
                 }
             }
             WindowEvent::Resized(new_size) => {
@@ -621,49 +621,49 @@ impl DrawingWindow {
             _ => {}
         }
 
-        if !matches!(event, WindowEvent::RedrawRequested) {
-            if let Some(iced_event) = conversion::window_event(
+        if !matches!(event, WindowEvent::RedrawRequested)
+            && let Some(iced_event) = conversion::window_event(
                 event.clone(),
                 self.window.scale_factor() as f32,
                 self.modifiers,
-            ) {
-                if let Event::Mouse(mouse_event) = iced_event {
-                    self.cursor = match mouse_event {
-                        iced::mouse::Event::CursorMoved { position } => {
-                            mouse::Cursor::Available(position)
-                        }
-                        iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
-                        _ => self.cursor,
-                    };
-                }
-
-                let mut messages: Vec<DrawingMessage> = Vec::new();
-
-                let cache = self.cache.take().unwrap_or_default();
-                let mut interface = UserInterface::build(
-                    Self::view(&self.participants_manager),
-                    self.viewport.logical_size(),
-                    cache,
-                    &mut self.renderer,
-                );
-
-                let iced_event = conversion::window_event(
-                    event.clone(),
-                    self.window.scale_factor() as f32,
-                    self.modifiers,
-                );
-                if let Some(ev) = iced_event {
-                    let (_, _) = interface.update(
-                        &[ev],
-                        self.cursor,
-                        &mut self.renderer,
-                        &mut self.clipboard,
-                        &mut messages,
-                    );
-                }
-
-                self.cache = Some(interface.into_cache());
+            )
+        {
+            if let Event::Mouse(mouse_event) = iced_event {
+                self.cursor = match mouse_event {
+                    iced::mouse::Event::CursorMoved { position } => {
+                        mouse::Cursor::Available(position)
+                    }
+                    iced::mouse::Event::CursorLeft => mouse::Cursor::Unavailable,
+                    _ => self.cursor,
+                };
             }
+
+            let mut messages: Vec<DrawingMessage> = Vec::new();
+
+            let cache = self.cache.take().unwrap_or_default();
+            let mut interface = UserInterface::build(
+                Self::view(&self.participants_manager),
+                self.viewport.logical_size(),
+                cache,
+                &mut self.renderer,
+            );
+
+            let iced_event = conversion::window_event(
+                event.clone(),
+                self.window.scale_factor() as f32,
+                self.modifiers,
+            );
+            if let Some(ev) = iced_event {
+                let (_, _) = interface.update(
+                    &[ev],
+                    self.cursor,
+                    &mut self.renderer,
+                    &mut self.clipboard,
+                    &mut messages,
+                );
+            }
+
+            self.cache = Some(interface.into_cache());
         }
 
         if let WindowEvent::ModifiersChanged(new_modifiers) = event {

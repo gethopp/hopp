@@ -10,7 +10,7 @@
 use std::time::Instant;
 
 use iced::widget::{container, text};
-use iced::{gradient, Alignment, Background, Border, Color, Length, Padding, Radians, Theme};
+use iced::{Alignment, Background, Border, Color, Length, Padding, Radians, Theme, gradient};
 
 use crate::windows::colors::ColorToken;
 
@@ -47,10 +47,10 @@ pub fn show_toast(text: String, display_duration_ms: u128, position: ToastPositi
 
 /// Auto-clear the toast once the full lifecycle (fade-in + display + fade-out) has elapsed.
 pub fn tick_toast(state: &mut Option<ToastState>) {
-    if let Some(s) = state {
-        if s.shown_at.elapsed().as_millis() >= FADE_IN_MS + s.display_duration_ms + FADE_OUT_MS {
-            *state = None;
-        }
+    if let Some(s) = state
+        && s.shown_at.elapsed().as_millis() >= FADE_IN_MS + s.display_duration_ms + FADE_OUT_MS
+    {
+        *state = None;
     }
 }
 

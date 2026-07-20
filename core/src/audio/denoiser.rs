@@ -1,7 +1,7 @@
 use realfft::RealFftPlanner;
 use rustfft::num_complex::Complex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tract_core::internal::tract_ndarray::{Array, IxDyn};
 use tract_onnx::prelude::*;
 
