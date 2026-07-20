@@ -141,6 +141,7 @@ impl CameraStream {
                 rotation: VideoRotation::VideoRotation0,
                 buffer: I420Buffer::new(1, 1),
                 timestamp_us: 0,
+                frame_metadata: None,
             };
             let mut needs_scaling = false;
 
@@ -178,6 +179,7 @@ impl CameraStream {
                         rotation: VideoRotation::VideoRotation0,
                         buffer: I420Buffer::new(cur_stream_w, cur_stream_h),
                         timestamp_us: 0,
+                        frame_metadata: None,
                     };
                     needs_scaling = cur_stream_w != width || cur_stream_h != height;
                     prev_stream_w = cur_stream_w;
@@ -242,6 +244,7 @@ impl CameraStream {
                                         rotation: VideoRotation::VideoRotation0,
                                         buffer: i420,
                                         timestamp_us: capture_start.elapsed().as_micros() as i64,
+                                        frame_metadata: None,
                                     };
                                     buffer_source.capture_frame(&frame);
                                     write_frame(&frame.buffer);

@@ -69,6 +69,7 @@ impl StreamBuffer {
             rotation: VideoRotation::VideoRotation0,
             buffer: NV12Buffer::new(width, height),
             timestamp_us: 0,
+            frame_metadata: None,
         };
         StreamBuffer { video_frame }
     }
