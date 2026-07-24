@@ -5,10 +5,14 @@ use livekit::webrtc::{
 };
 use screencapturekit::{
     cm::{CMSampleBufferExt, CMSampleBufferSCExt, IOSurfaceLockOptions},
+    error::SCStreamErrorCode,
     prelude::*,
     stream::delegate_trait::StreamCallbacks,
 };
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 
 use super::CapturerError;
 
@@ -129,16 +133,25 @@ impl Stream {
         let error_tx = self.permanent_error_tx.clone();
         let stop_tx = self.permanent_error_tx.clone();
         let error_failures_count = self.failures_count.clone();
+        let stream_failed = Arc::new(AtomicBool::new(false));
+        let stop_stream_failed = stream_failed.clone();
         let delegate = StreamCallbacks::new()
             .on_error(move |error| {
+                if error.stream_error_code() == Some(SCStreamErrorCode::UserStopped) {
+                    return;
+                }
+
+                stream_failed.store(true, Ordering::Release);
                 log::error!("SCStream error: {error}");
                 *error_failures_count.lock().unwrap() += 1;
                 let _ = error_tx.send(StreamRuntimeMessage::Failed);
             })
             .on_stop(move |error| {
-                if let Some(msg) = error {
-                    log::info!("SCStream stopped with error: {msg}");
-                    let _ = stop_tx.send(StreamRuntimeMessage::UserStoppedCapture);
+                if !stop_stream_failed.load(Ordering::Acquire) {
+                    if let Some(msg) = error {
+                        log::info!("SCStream stopped by user: {msg}");
+                        let _ = stop_tx.send(StreamRuntimeMessage::UserStoppedCapture);
+                    }
                 }
             });
 
