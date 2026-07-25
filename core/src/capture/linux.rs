@@ -5,7 +5,7 @@ pub struct ScreenshareFunctions {}
 impl ScreenshareExt for ScreenshareFunctions {
     fn get_selected_monitor(
         monitors: &[winit::monitor::MonitorHandle],
-        _input_id: u32,
+        _input_id: u64,
     ) -> winit::monitor::MonitorHandle {
         monitors[0].clone()
     }
@@ -14,7 +14,7 @@ impl ScreenshareExt for ScreenshareFunctions {
         MonitorId::Position(monitor.position())
     }
 
-    fn capture_content_id_for_monitor(_monitor: &winit::monitor::MonitorHandle) -> Option<u32> {
+    fn capture_content_id_for_monitor(_monitor: &winit::monitor::MonitorHandle) -> Option<u64> {
         Some(0)
     }
 }

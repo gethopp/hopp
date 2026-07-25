@@ -18,7 +18,7 @@ pub fn connect_socket() -> io::Result<(SocketSender, EventSocket)> {
 
 /// Returns the screen content id to capture, read from the `HOPP_TEST_SCREEN_ID`
 /// environment variable. Falls back to `0` if unset.
-fn screen_id() -> u32 {
+fn screen_id() -> u64 {
     env::var("HOPP_TEST_SCREEN_ID")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -67,7 +67,7 @@ pub fn call_end(sender: &SocketSender) -> io::Result<()> {
 pub fn request_screenshare(
     sender: &SocketSender,
     event_socket: &EventSocket,
-    content_id: u32,
+    content_id: u64,
     width: f64,
     height: f64,
 ) -> io::Result<()> {
@@ -77,6 +77,8 @@ pub fn request_screenshare(
             id: content_id,
         },
         resolution: Extent { width, height },
+        monitor_id: Some(content_id),
+        window_frame: None,
     });
     sender.send(message).unwrap();
 

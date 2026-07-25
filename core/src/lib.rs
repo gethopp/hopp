@@ -29,7 +29,15 @@ pub mod camera {
 
 pub mod capture {
     pub mod capturer;
+    pub mod sources;
+    pub mod thumbnail;
+    #[cfg(target_os = "macos")]
+    pub mod window_bounds_macos;
+    #[cfg(target_os = "macos")]
+    pub mod window_focus_macos;
 }
+
+pub mod screen_selection;
 
 pub mod graphics {
     pub mod graphics_context;
@@ -69,8 +77,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenShareResolution, SentryMetadata, SocketSender,
+    CallStartMessage, CameraStartMessage, ContentType, Message, ScreenShareMessage,
+    ScreenShareResolution, SentryMetadata, SocketSender, WindowFrame,
 };
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -93,9 +101,12 @@ use window::screensharing_window::ScreenShareInputEvent;
 #[cfg(target_os = "macos")]
 use winit::platform::macos::EventLoopBuilderExtMacOS;
 
+use crate::graphics::graphics_context::iced_renderer::ScreenSelectionMessage;
 use crate::overlay_window::DisplayInfo;
 use crate::room_service::DrawingMode;
+use crate::screen_selection::{ScreenSelectionState, ScreenSelectionTab};
 use crate::utils::geometry::Position;
+use crate::window_manager::ScreenSelectionNavigationDirection;
 
 /// Process exit code for errors
 const PROCESS_EXIT_CODE_ERROR: i32 = 1;
@@ -156,11 +167,10 @@ impl RemoteControl {
             .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
-        let translator = self
-            .cursor_controller
-            .get_overlay_window()
-            .create_position_translator();
-        gfx.draw(&translator);
+        let overlay = self.cursor_controller.get_overlay_window();
+        let translator = overlay.create_position_translator();
+        let marker_content = overlay.sharing_frame_logical();
+        gfx.draw(&translator, marker_content);
         cleared_path_ids
     }
 }
@@ -239,6 +249,7 @@ pub struct Application<'a> {
     remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
     screen_selection_active: bool,
+    screen_selection_state: Option<ScreenSelectionState>,
 }
 
 #[derive(Error, Debug)]
@@ -327,11 +338,12 @@ impl<'a> Application<'a> {
             remote_control_enabled: true,
             clipboard_controller,
             screen_selection_active: false,
+            screen_selection_state: None,
         })
     }
 
     fn start_screen_selection(&mut self, event_loop: &ActiveEventLoop) {
-        log::info!("start_screen_selection: opening screen selection overlays");
+        log::info!("start_screen_selection: opening share source picker");
 
         let Some(window_manager) = self.window_manager.as_mut() else {
             log::error!("start_screen_selection: window manager not initialized");
@@ -346,8 +358,13 @@ impl<'a> Application<'a> {
             log::warn!("start_screen_selection: context manager not initialized");
         }
 
+        let monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
+        let selection = ScreenSelectionState::new(&monitors);
+        let ui = selection.ui_snapshot();
+        self.screen_selection_state = Some(selection);
         self.screen_selection_active = true;
         window_manager.show_screen_selection(event_loop);
+        window_manager.update_screen_selection_ui(Some(ui));
     }
 
     /// Initiates a screen sharing session with the specified configuration.
@@ -407,8 +424,23 @@ impl<'a> Application<'a> {
             }
         };
 
-        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
+        let monitor_id = screenshare_input
+            .monitor_id
+            .unwrap_or(screenshare_input.content.id);
+        let monitor = screen_capturer.get_selected_monitor(&monitors, monitor_id);
         let scale = monitor.scale_factor();
+
+        let window_frame = screenshare_input
+            .window_frame
+            .map(|frame| Frame {
+                origin_x: frame.origin_x,
+                origin_y: frame.origin_y,
+                extent: Extent {
+                    width: frame.width,
+                    height: frame.height,
+                },
+            })
+            .unwrap_or_default();
 
         let res = screen_capturer.start_capture(
             screenshare_input.content,
@@ -418,6 +450,7 @@ impl<'a> Application<'a> {
             },
             buffer_source,
             scale,
+            monitor.position(),
         );
         if let Err(error) = res {
             log::error!("screenshare: error starting capture: {error:?}");
@@ -436,7 +469,7 @@ impl<'a> Application<'a> {
 
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, self.remote_control_enabled);
+        let res = self.create_overlay_window(monitor, self.remote_control_enabled, window_frame);
         if let Err(e) = res {
             self.stop_screenshare();
             log::error!("screenshare: error creating overlay window: {e:?}");
@@ -621,30 +654,174 @@ impl<'a> Application<'a> {
             window_manager.hide_screen_selection();
         }
         self.screen_selection_active = false;
+        self.screen_selection_state = None;
     }
 
-    fn select_screen_selection_window(
+    fn refresh_screen_selection_ui(&mut self) {
+        let ui = self
+            .screen_selection_state
+            .as_ref()
+            .map(ScreenSelectionState::ui_snapshot);
+        if let Some(window_manager) = self.window_manager.as_mut() {
+            window_manager.update_screen_selection_ui(ui);
+        }
+    }
+
+    /// Focuses the selection overlay for `window_id` and, on the Screens tab,
+    /// syncs the selected display to that monitor.
+    fn focus_screen_selection_window(
         &mut self,
         event_loop: &ActiveEventLoop,
         window_id: winit::window::WindowId,
     ) {
-        let Some(message) = self.screenshare_message_for_window(event_loop, window_id) else {
-            log::error!("select_screen_selection_window: failed to resolve selected screen");
+        let Some(window_manager) = self.window_manager.as_ref() else {
             return;
+        };
+
+        if !window_manager.focus_window(window_id) {
+            log::warn!("focus_screen_selection_window: failed to focus window");
+            return;
+        }
+
+        let Some(monitor_id) = window_manager.monitor_id_for_window(window_id) else {
+            return;
+        };
+
+        let monitor_content_id = event_loop.available_monitors().find_map(|monitor| {
+            if ScreenshareFunctions::get_monitor_id(&monitor) == monitor_id {
+                ScreenshareFunctions::capture_content_id_for_monitor(&monitor)
+            } else {
+                None
+            }
+        });
+
+        let mut selection_changed = false;
+        if let (Some(monitor_content_id), Some(selection)) =
+            (monitor_content_id, self.screen_selection_state.as_mut())
+        {
+            selection_changed = selection.select_display_for_monitor(monitor_content_id);
+        }
+
+        if selection_changed {
+            self.refresh_screen_selection_ui();
+        } else if let Some(window_manager) = self.window_manager.as_mut() {
+            for gfx in window_manager.all_gfx_mut() {
+                gfx.trigger_render();
+            }
+        }
+    }
+
+    fn navigate_screen_selection(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        direction: ScreenSelectionNavigationDirection,
+    ) {
+        let on_windows_tab = self
+            .screen_selection_state
+            .as_ref()
+            .is_some_and(|selection| selection.tab == ScreenSelectionTab::Windows);
+
+        // On the Windows tab, vertical arrows move the window list; horizontal
+        // arrows (and all arrows on Screens) move focus across monitors.
+        if on_windows_tab
+            && matches!(
+                direction,
+                ScreenSelectionNavigationDirection::Up | ScreenSelectionNavigationDirection::Down
+            )
+        {
+            let delta = match direction {
+                ScreenSelectionNavigationDirection::Up => -1,
+                ScreenSelectionNavigationDirection::Down => 1,
+                _ => 0,
+            };
+            if let Some(selection) = self.screen_selection_state.as_mut() {
+                selection.move_selection(delta);
+            }
+            self.refresh_screen_selection_ui();
+            return;
+        }
+
+        let Some(target_window_id) = self.window_manager.as_ref().and_then(|window_manager| {
+            window_manager.focus_window_in_direction(window_id, direction)
+        }) else {
+            return;
+        };
+
+        self.focus_screen_selection_window(event_loop, target_window_id);
+    }
+
+    fn handle_screen_selection_message(&mut self, message: ScreenSelectionMessage) {
+        match message {
+            ScreenSelectionMessage::SelectTab(tab) => {
+                if let Some(selection) = self.screen_selection_state.as_mut() {
+                    selection.set_tab(tab);
+                }
+                self.refresh_screen_selection_ui();
+            }
+            ScreenSelectionMessage::ShareItem(index) => {
+                if let Some(selection) = self.screen_selection_state.as_mut() {
+                    if !selection.select_index(index) {
+                        return;
+                    }
+                }
+                self.confirm_screen_selection();
+            }
+            ScreenSelectionMessage::Cancel => {
+                self.cancel_screen_selection();
+            }
+        }
+    }
+
+    fn confirm_screen_selection(&mut self) {
+        let Some(source) = self
+            .screen_selection_state
+            .as_ref()
+            .and_then(ScreenSelectionState::selected)
+            .cloned()
+        else {
+            log::warn!("confirm_screen_selection: no source selected");
+            return;
+        };
+
+        #[cfg(target_os = "macos")]
+        if source.content.content_type == ContentType::Window {
+            crate::capture::window_focus_macos::activate_window(source.content.id);
+        }
+
+        let resolution = self.screen_share_resolution.extent();
+        let window_frame = if source.content.content_type == ContentType::Window
+            && source.frame.extent.width > 0.
+            && source.frame.extent.height > 0.
+        {
+            Some(WindowFrame {
+                origin_x: source.frame.origin_x,
+                origin_y: source.frame.origin_y,
+                width: source.frame.extent.width,
+                height: source.frame.extent.height,
+            })
+        } else {
+            None
+        };
+
+        let message = ScreenShareMessage {
+            content: source.content,
+            resolution,
+            monitor_id: Some(source.monitor_content_id),
+            window_frame,
         };
 
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
         self.screen_selection_active = false;
+        self.screen_selection_state = None;
 
         if let Err(error) = self
             .event_loop_proxy
             .send_event(UserEvent::ScreenShare(message))
         {
-            log::error!(
-                "select_screen_selection_window: failed to send ScreenShare event: {error:?}"
-            );
+            log::error!("confirm_screen_selection: failed to send ScreenShare event: {error:?}");
         }
     }
 
@@ -652,9 +829,10 @@ impl<'a> Application<'a> {
         &mut self,
         selected_monitor: MonitorHandle,
         remote_control_enabled: bool,
+        window_frame: Frame,
     ) -> Result<(), ServerError> {
         log::info!(
-            "create_overlay_window: selected_monitor: {selected_monitor:?} {remote_control_enabled}",
+            "create_overlay_window: selected_monitor: {selected_monitor:?} {remote_control_enabled} frame: {window_frame}",
         );
 
         let window = self
@@ -670,8 +848,6 @@ impl<'a> Application<'a> {
         let window_size = window.inner_size();
         let window_outer_position = window.outer_position();
 
-        /* Hardcode window frame to zero as we only support displays for now.*/
-        let window_frame = Frame::default();
         let scaled = {
             #[cfg(target_os = "macos")]
             {
@@ -747,33 +923,6 @@ impl<'a> Application<'a> {
             wm.hide_active_window();
         }
         self.remote_control = None;
-    }
-
-    fn screenshare_message_for_window(
-        &self,
-        event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
-    ) -> Option<ScreenShareMessage> {
-        let clicked_monitor_id = self
-            .window_manager
-            .as_ref()?
-            .monitor_id_for_window(window_id)?;
-
-        let monitor = event_loop
-            .available_monitors()
-            .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == clicked_monitor_id)?;
-
-        let content_id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
-
-        let resolution = self.screen_share_resolution.extent();
-
-        Some(ScreenShareMessage {
-            content: Content {
-                content_type: ContentType::Display,
-                id: content_id,
-            },
-            resolution,
-        })
     }
 }
 
@@ -1069,8 +1218,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::debug!("user_event: Screen share: {data:?}");
                 if let Some(ref mut wm) = self.window_manager {
                     wm.hide_screen_selection();
-                    self.screen_selection_active = false;
                 }
+                self.screen_selection_active = false;
+                self.screen_selection_state = None;
                 let monitors = event_loop
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
@@ -2228,7 +2378,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     let all_gfx = window_manager.all_gfx_mut();
                     for gfx in all_gfx {
                         let dummy_translator = move |pos: Position| pos;
-                        gfx.draw(&dummy_translator);
+                        gfx.draw(&dummy_translator, None);
                     }
 
                     return;
@@ -2248,6 +2398,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 };
 
+                // Sync live capture bounds so corner marks track the shared window.
+                if let Ok(capturer) = self.screen_capturer.lock() {
+                    if let Some(frame) = capturer.get_capture_frame() {
+                        remote_control
+                            .cursor_controller
+                            .get_overlay_window()
+                            .set_sharing_window_frame(frame);
+                    }
+                }
+
                 // Render frame with cursor updates, auto-clear, and drawing
                 let cleared_path_ids = remote_control.render_frame(gfx);
 
@@ -2259,24 +2419,28 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     _ => {}
                 }
             }
+            WindowEvent::CursorMoved { position, .. } if self.screen_selection_active => {
+                if let Some(window_manager) = self.window_manager.as_mut() {
+                    window_manager.set_selection_cursor(window_id, position);
+                }
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } if self.screen_selection_active => {
-                self.select_screen_selection_window(event_loop, window_id);
+                self.focus_screen_selection_window(event_loop, window_id);
+                let messages = self
+                    .window_manager
+                    .as_mut()
+                    .map(|window_manager| window_manager.handle_selection_click(window_id))
+                    .unwrap_or_default();
+                for message in messages {
+                    self.handle_screen_selection_message(message);
+                }
             }
             WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
-                if let Some(window_manager) = self.window_manager.as_ref() {
-                    if !window_manager.focus_window(window_id) {
-                        log::warn!("window_event: failed to focus screen selection window");
-                    }
-                }
-                if let Some(window_manager) = self.window_manager.as_mut() {
-                    for gfx in window_manager.all_gfx_mut() {
-                        gfx.trigger_render();
-                    }
-                }
+                self.focus_screen_selection_window(event_loop, window_id);
             }
             WindowEvent::KeyboardInput { event, .. }
                 if self.screen_selection_active && event.state.is_pressed() =>
@@ -2287,40 +2451,43 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         self.cancel_screen_selection();
                     }
                     Key::Named(NamedKey::Enter) => {
-                        log::info!("window_event: Enter, selecting focused screen");
-                        self.select_screen_selection_window(event_loop, window_id);
+                        log::info!("window_event: Enter, confirming share selection");
+                        self.focus_screen_selection_window(event_loop, window_id);
+                        self.confirm_screen_selection();
+                    }
+                    Key::Named(NamedKey::Tab) => {
+                        if let Some(selection) = self.screen_selection_state.as_mut() {
+                            selection.toggle_tab();
+                        }
+                        self.refresh_screen_selection_ui();
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
-                        if let Some(window_manager) = self.window_manager.as_ref() {
-                            window_manager.focus_window_in_direction(
-                                window_id,
-                                window_manager::ScreenSelectionNavigationDirection::Left,
-                            );
-                        }
+                        self.navigate_screen_selection(
+                            event_loop,
+                            window_id,
+                            ScreenSelectionNavigationDirection::Left,
+                        );
                     }
                     Key::Named(NamedKey::ArrowRight) => {
-                        if let Some(window_manager) = self.window_manager.as_ref() {
-                            window_manager.focus_window_in_direction(
-                                window_id,
-                                window_manager::ScreenSelectionNavigationDirection::Right,
-                            );
-                        }
+                        self.navigate_screen_selection(
+                            event_loop,
+                            window_id,
+                            ScreenSelectionNavigationDirection::Right,
+                        );
                     }
                     Key::Named(NamedKey::ArrowUp) => {
-                        if let Some(window_manager) = self.window_manager.as_ref() {
-                            window_manager.focus_window_in_direction(
-                                window_id,
-                                window_manager::ScreenSelectionNavigationDirection::Up,
-                            );
-                        }
+                        self.navigate_screen_selection(
+                            event_loop,
+                            window_id,
+                            ScreenSelectionNavigationDirection::Up,
+                        );
                     }
                     Key::Named(NamedKey::ArrowDown) => {
-                        if let Some(window_manager) = self.window_manager.as_ref() {
-                            window_manager.focus_window_in_direction(
-                                window_id,
-                                window_manager::ScreenSelectionNavigationDirection::Down,
-                            );
-                        }
+                        self.navigate_screen_selection(
+                            event_loop,
+                            window_id,
+                            ScreenSelectionNavigationDirection::Down,
+                        );
                     }
                     _ => {}
                 }

@@ -1,4 +1,5 @@
 use crate::utils::geometry::{aspect_fit, Extent, Frame};
+use crate::UserEvent;
 use livekit::webrtc::{
     prelude::{NV12Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
@@ -8,9 +9,13 @@ use screencapturekit::{
     prelude::*,
     stream::delegate_trait::StreamCallbacks,
 };
+use socket_lib::{Content, ContentType};
 use std::sync::{mpsc, Arc, Mutex};
+use winit::dpi::PhysicalPosition;
+use winit::event_loop::EventLoopProxy;
 
 use super::CapturerError;
+use crate::capture::window_bounds_macos;
 
 #[allow(dead_code)]
 pub enum StreamRuntimeMessage {
@@ -43,18 +48,23 @@ pub struct Stream {
     buffer_source: NativeVideoSource,
     frame: Arc<Mutex<Frame>>,
     stream_resolution: Extent,
-    source_id: u32,
+    content: Content,
     failures_count: Arc<Mutex<u64>>,
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
+    display_position: PhysicalPosition<i32>,
+    event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl Stream {
     pub fn new(
         stream_resolution: Extent,
         scale: f64,
+        display_position: PhysicalPosition<i32>,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
+        content_type: ContentType,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, CapturerError> {
         Ok(Stream {
             sc_stream: None,
@@ -63,36 +73,69 @@ impl Stream {
             buffer_source,
             frame: Arc::new(Mutex::new(Frame::default())),
             stream_resolution,
-            source_id: 0,
+            content: Content {
+                content_type,
+                id: 0,
+            },
             failures_count: Arc::new(Mutex::new(0)),
             output_extent: Arc::new(Mutex::new(Extent {
                 width: 0.,
                 height: 0.,
             })),
             scale,
+            display_position,
+            event_loop_proxy,
         })
     }
 
-    pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
-        log::info!("macos_stream::start_capture: Starting capture for id: {id}");
+    pub fn start_capture(&mut self, content: Content) -> Result<(), CapturerError> {
+        log::info!("macos_stream::start_capture: Starting capture for {content}");
 
-        let content = SCShareableContent::get().map_err(|e| {
+        let shareable = SCShareableContent::get().map_err(|e| {
             log::error!("start_capture: Failed to get shareable content: {e}");
             CapturerError::DesktopCapturerCreationError
         })?;
 
-        let displays = content.displays();
-        if displays.is_empty() {
-            return Err(CapturerError::CaptureSourceListEmpty);
-        }
+        let (native_width, native_height, filter) = match content.content_type {
+            ContentType::Display => {
+                let displays = shareable.displays();
+                if displays.is_empty() {
+                    return Err(CapturerError::CaptureSourceListEmpty);
+                }
+                let display = displays
+                    .into_iter()
+                    .find(|d| d.display_id() as u64 == content.id)
+                    .ok_or(CapturerError::SelectedSourceNotFound)?;
+                let native_width = (display.width() as f64 * self.scale) as u32;
+                let native_height = (display.height() as f64 * self.scale) as u32;
+                let filter = SCContentFilter::create()
+                    .with_display(&display)
+                    .with_excluding_windows(&[])
+                    .build();
+                (native_width, native_height, filter)
+            }
+            ContentType::Window => {
+                let window = shareable
+                    .windows()
+                    .into_iter()
+                    .find(|w| w.window_id() as u64 == content.id)
+                    .ok_or(CapturerError::SelectedSourceNotFound)?;
+                let frame = window.frame();
+                let native_width = (frame.size.width * self.scale).round().max(1.0) as u32;
+                let native_height = (frame.size.height * self.scale).round().max(1.0) as u32;
+                // Seed overlay bounds from CGWindowList (top-left Quartz space).
+                if let Some(seed) = window_bounds_macos::display_local_frame_on_monitor(
+                    window.window_id(),
+                    self.scale,
+                    self.display_position,
+                ) {
+                    *self.frame.lock().unwrap() = seed;
+                }
+                let filter = SCContentFilter::create().with_window(&window).build();
+                (native_width, native_height, filter)
+            }
+        };
 
-        let display = displays
-            .into_iter()
-            .find(|d| d.display_id() == id)
-            .ok_or(CapturerError::SelectedSourceNotFound)?;
-
-        let native_width = (display.width() as f64 * self.scale) as u32;
-        let native_height = (display.height() as f64 * self.scale) as u32;
         let (stream_width, stream_height) = aspect_fit(
             native_width,
             native_height,
@@ -100,7 +143,7 @@ impl Stream {
             self.stream_resolution.height as u32,
         );
         log::info!(
-            "start_capture: output {stream_width}x{stream_height} from display {native_width}x{native_height} (scale: {})",
+            "start_capture: output {stream_width}x{stream_height} from source {native_width}x{native_height} (scale: {})",
             self.scale
         );
 
@@ -120,11 +163,6 @@ impl Stream {
             .with_pixel_format(PixelFormat::YCbCr_420v)
             .with_shows_cursor(false)
             .with_fps(60);
-
-        let filter = SCContentFilter::create()
-            .with_display(&display)
-            .with_excluding_windows(&[])
-            .build();
 
         let error_tx = self.permanent_error_tx.clone();
         let stop_tx = self.permanent_error_tx.clone();
@@ -146,6 +184,15 @@ impl Stream {
         let buffer_source = self.buffer_source.clone();
         let failures_count = self.failures_count.clone();
         let frame_arc = self.frame.clone();
+        let scale = self.scale;
+        let event_loop_proxy = self.event_loop_proxy.clone();
+        let track_window_id = matches!(content.content_type, ContentType::Window).then_some(content.id);
+        let last_window_query = Mutex::new(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .unwrap_or_else(std::time::Instant::now),
+        );
+        let display_position = self.display_position;
         let capture_start = std::time::Instant::now();
 
         let handler = move |sample: CMSampleBuffer, of_type: SCStreamOutputType| {
@@ -196,14 +243,51 @@ impl Stream {
                 return;
             }
 
-            // Update frame metadata
-            {
-                if let Some(content_rect) = sample.content_rect() {
+            // Keep overlay markers glued to the shared window as it moves/resizes.
+            // Window shares: CGWindowList bounds (top-left Quartz → display-local physical).
+            // Display shares: SCK content_rect (top-left display points).
+            let next_frame = if let Some(window_id) = track_window_id {
+                let should_query = {
+                    let mut last = last_window_query.lock().unwrap();
+                    if last.elapsed() >= std::time::Duration::from_millis(50) {
+                        *last = std::time::Instant::now();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if should_query {
+                    window_bounds_macos::display_local_frame_on_monitor(
+                        window_id as u32,
+                        scale,
+                        display_position,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                sample.content_rect().map(|content_rect| Frame {
+                    origin_x: content_rect.origin.x * scale,
+                    origin_y: content_rect.origin.y * scale,
+                    extent: Extent {
+                        width: content_rect.size.width * scale,
+                        height: content_rect.size.height * scale,
+                    },
+                })
+            };
+
+            if let Some(next) = next_frame {
+                let changed = {
                     let mut frame = frame_arc.lock().unwrap();
-                    frame.origin_x = content_rect.origin.x;
-                    frame.origin_y = content_rect.origin.y;
-                    frame.extent.width = content_rect.size.width;
-                    frame.extent.height = content_rect.size.height;
+                    if *frame != next {
+                        *frame = next;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if changed {
+                    let _ = event_loop_proxy.send_event(UserEvent::RequestRedraw);
                 }
             }
 
@@ -243,7 +327,7 @@ impl Stream {
         })?;
 
         self.sc_stream = Some(sc_stream);
-        self.source_id = id;
+        self.content = content;
         Ok(())
     }
 
@@ -269,10 +353,12 @@ impl Stream {
             buffer_source: self.buffer_source.clone(),
             frame: self.frame.clone(),
             stream_resolution: self.stream_resolution,
-            source_id: self.source_id,
+            content: self.content,
             failures_count: self.failures_count.clone(),
             output_extent: self.output_extent.clone(),
             scale: self.scale,
+            display_position: self.display_position,
+            event_loop_proxy: self.event_loop_proxy.clone(),
         })
     }
 
@@ -280,11 +366,16 @@ impl Stream {
         *self.failures_count.lock().unwrap()
     }
 
-    pub fn source_id(&self) -> u32 {
-        self.source_id
+    pub fn capture_content(&self) -> Content {
+        self.content
     }
 
     pub fn get_stream_extent(&self) -> Extent {
         *self.output_extent.lock().unwrap()
+    }
+
+    /// Live capture bounds in physical pixels (updated as the shared window moves).
+    pub fn get_capture_frame(&self) -> Frame {
+        *self.frame.lock().unwrap()
     }
 }

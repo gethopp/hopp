@@ -3,7 +3,10 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
-use crate::{utils::geometry::Extent, UserEvent, STREAM_FAILURE_EXIT_CODE};
+use crate::{
+    utils::geometry::{Extent, Frame},
+    UserEvent, STREAM_FAILURE_EXIT_CODE,
+};
 
 /// Platform-agnostic monitor identifier.
 ///
@@ -61,6 +64,10 @@ pub enum CapturerError {
     /// Couldn't find selected source.
     #[error("Couldn't find selected source")]
     SelectedSourceNotFound,
+
+    /// Capture source type is not supported on this platform.
+    #[error("Unsupported capture content type")]
+    UnsupportedContentType,
 }
 
 /// Platform-specific extensions for screen sharing and monitor management.
@@ -79,7 +86,7 @@ pub trait ScreenshareExt {
     /// # Returns
     /// The `MonitorHandle` for the specified monitor. If the monitor ID is not found,
     /// returns the first available monitor as a fallback.
-    fn get_selected_monitor(monitors: &[MonitorHandle], input_id: u32) -> MonitorHandle;
+    fn get_selected_monitor(monitors: &[MonitorHandle], input_id: u64) -> MonitorHandle;
 
     /// Returns a platform-agnostic identifier for the given monitor.
     ///
@@ -92,7 +99,7 @@ pub trait ScreenshareExt {
 
     /// Reverse mapping: returns the capture content id (used by `Content.id`)
     /// for the given monitor, or `None` if it cannot be resolved.
-    fn capture_content_id_for_monitor(monitor: &MonitorHandle) -> Option<u32>;
+    fn capture_content_id_for_monitor(monitor: &MonitorHandle) -> Option<u64>;
 }
 
 /// Main interface for managing screen capture operations and stream lifecycle.
@@ -178,6 +185,7 @@ impl Capturer {
         stream_resolution: Extent,
         buffer_source: NativeVideoSource,
         scale: f64,
+        display_position: winit::dpi::PhysicalPosition<i32>,
     ) -> Result<(), CapturerError> {
         log::info!(
             "start_capture: content {content:?} resolution: {stream_resolution:?} scale: {scale}"
@@ -188,9 +196,17 @@ impl Capturer {
             self.active_stream = None;
         }
 
-        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), buffer_source)?;
+        let mut stream = Stream::new(
+            stream_resolution,
+            scale,
+            display_position,
+            self.tx.clone(),
+            buffer_source,
+            content.content_type,
+            self.event_loop_proxy.clone(),
+        )?;
 
-        stream.start_capture(content.id)?;
+        stream.start_capture(content)?;
         self.active_stream = Some(stream);
         Ok(())
     }
@@ -261,7 +277,8 @@ impl Capturer {
                 // So we just sleep and retry a few times in case it's a temporary error.
                 // If we can't restart the stream after 10 retries, we exit the process
                 // and inform the user to restart the application.
-                let mut res = new_stream.start_capture(new_stream.source_id());
+                let restart_content = new_stream.capture_content();
+                let mut res = new_stream.start_capture(restart_content);
                 for i in 0..MAX_STREAM_FAILURES_BEFORE_EXIT {
                     if res.is_ok() {
                         break;
@@ -285,7 +302,7 @@ impl Capturer {
                             std::process::exit(STREAM_FAILURE_EXIT_CODE);
                         }
                     };
-                    res = new_stream.start_capture(new_stream.source_id());
+                    res = new_stream.start_capture(new_stream.capture_content());
                 }
 
                 if let Err(ref e) = res {
@@ -336,7 +353,7 @@ impl Capturer {
         }
     }
 
-    pub fn get_selected_monitor(&self, monitors: &[MonitorHandle], input_id: u32) -> MonitorHandle {
+    pub fn get_selected_monitor(&self, monitors: &[MonitorHandle], input_id: u64) -> MonitorHandle {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             ScreenshareFunctions::get_selected_monitor(monitors, input_id)
@@ -391,6 +408,18 @@ impl Capturer {
         Extent {
             width: 0.,
             height: 0.,
+        }
+    }
+
+    /// Live capture bounds in physical pixels relative to the shared display.
+    /// Empty/zero when no stream is active or still starting.
+    pub fn get_capture_frame(&self) -> Option<Frame> {
+        let stream = self.active_stream.as_ref()?;
+        let frame = stream.get_capture_frame();
+        if frame.extent.width <= 0.0 || frame.extent.height <= 0.0 {
+            None
+        } else {
+            Some(frame)
         }
     }
 }

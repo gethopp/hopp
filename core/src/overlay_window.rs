@@ -6,6 +6,7 @@
 //! accurate coordinate mapping for virtual cursors.
 
 use core::fmt;
+use std::sync::Mutex;
 
 use winit::dpi::PhysicalPosition;
 
@@ -32,8 +33,8 @@ pub struct DisplayInfo {
 /// It is used for properly showing the virtual cursor in the correct position and
 /// translating to global coordinates from display local when simulating mouse events.
 pub struct OverlayWindow {
-    /* The frame of the window/display being shared. */
-    sharing_window_frame: Frame,
+    /* The frame of the window/display being shared (physical pixels, display-local). */
+    sharing_window_frame: Mutex<Frame>,
     /* The window's dimensions in pixels. */
     extent: Extent,
     /* The window's position in global coordinates (pixels). */
@@ -53,14 +54,14 @@ impl OverlayWindow {
     /// A new `OverlayWindow` instance with default values.
     pub fn default() -> Self {
         Self {
-            sharing_window_frame: Frame {
+            sharing_window_frame: Mutex::new(Frame {
                 origin_x: 0.,
                 origin_y: 0.,
                 extent: Extent {
                     width: 0.0,
                     height: 0.0,
                 },
-            },
+            }),
             extent: Extent {
                 width: 0.0,
                 height: 0.0,
@@ -102,12 +103,22 @@ impl OverlayWindow {
         scaled: bool,
     ) -> Self {
         Self {
-            sharing_window_frame,
+            sharing_window_frame: Mutex::new(sharing_window_frame),
             extent,
             position,
             display_info,
             scaled,
         }
+    }
+
+    /// Updates the shared-content frame so overlays (markers, cursor mapping) track
+    /// a moving/resizing window.
+    pub fn set_sharing_window_frame(&self, frame: Frame) {
+        *self.sharing_window_frame.lock().unwrap() = frame;
+    }
+
+    fn sharing_frame(&self) -> Frame {
+        *self.sharing_window_frame.lock().unwrap()
     }
 
     /// Translates window local percentage coordinates to screen percentage coordinates.
@@ -131,20 +142,19 @@ impl OverlayWindow {
     pub fn translate_location(&self, x: f64, y: f64) -> Position {
         log::debug!("translate_location: x: {x}, y: {y}");
 
-        if self.sharing_window_frame.extent.width == 0.0
-            || self.sharing_window_frame.extent.height == 0.0
-        {
+        let sharing = self.sharing_frame();
+        if sharing.extent.width == 0.0 || sharing.extent.height == 0.0 {
             log::debug!("translate_point: client_frame extent is 0.0");
             return Position { x, y };
         }
 
         /* The following is unused. It will be needed when we support individual window sharing. */
-        let width_ratio = self.sharing_window_frame.extent.width / self.extent.width;
-        let width_offset = self.sharing_window_frame.origin_x / self.extent.width;
+        let width_ratio = sharing.extent.width / self.extent.width;
+        let width_offset = sharing.origin_x / self.extent.width;
         let x = x * width_ratio + width_offset;
 
-        let height_ratio = (self.sharing_window_frame.extent.height / self.extent.height).min(1.0);
-        let height_offset = self.sharing_window_frame.origin_y / self.extent.height;
+        let height_ratio = (sharing.extent.height / self.extent.height).min(1.0);
+        let height_offset = sharing.origin_y / self.extent.height;
         let y = y * height_ratio + height_offset;
 
         if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
@@ -177,12 +187,24 @@ impl OverlayWindow {
     /// - macOS expects coordinates in points (scaled) for control commands
     /// - Windows expects coordinates in pixels (unscaled)
     pub fn translate_to_global(&self, x: f64, y: f64) -> Position {
-        // This doesn't work in window local click, only works when sharing display
-        // Here in y the menubar heigh is included.
-        let mut x = x * self.display_info.display_extent.width
-            + (self.display_info.display_position.x as f64);
-        let mut y = y * self.display_info.display_extent.height
-            + (self.display_info.display_position.y as f64);
+        let sharing = self.sharing_frame();
+        let (mut x, mut y) = if sharing.extent.width > 0.0 && sharing.extent.height > 0.0 {
+            // Shared content is a window sub-rect of the display.
+            let x = sharing.origin_x
+                + x * sharing.extent.width
+                + self.display_info.display_position.x as f64;
+            let y = sharing.origin_y
+                + y * sharing.extent.height
+                + self.display_info.display_position.y as f64;
+            (x, y)
+        } else {
+            // Full-display share: percentages map across the whole monitor.
+            let x = x * self.display_info.display_extent.width
+                + (self.display_info.display_position.x as f64);
+            let y = y * self.display_info.display_extent.height
+                + (self.display_info.display_position.y as f64);
+            (x, y)
+        };
         /*
          * macOS expects the coords in points (scaled) in control commands while windows
          * expects them unscaled.
@@ -270,6 +292,35 @@ impl OverlayWindow {
         }
     }
 
+    /// Returns the shared-content rectangle in logical (points) coordinates
+    /// relative to the overlay, or `None` when sharing a full display.
+    pub fn sharing_frame_logical(&self) -> Option<Frame> {
+        let sharing = self.sharing_frame();
+        if sharing.extent.width <= 0.0 || sharing.extent.height <= 0.0 {
+            return None;
+        }
+
+        let scale = if self.display_info.display_scale > 0.0 {
+            self.display_info.display_scale
+        } else {
+            1.0
+        };
+
+        // Frame is display-local physical; convert to overlay-local logical in case the
+        // fullscreen overlay origin differs slightly from the monitor origin.
+        let offset_x = self.position.x as f64 - self.display_info.display_position.x as f64;
+        let offset_y = self.position.y as f64 - self.display_info.display_position.y as f64;
+
+        Some(Frame {
+            origin_x: (sharing.origin_x - offset_x) / scale,
+            origin_y: (sharing.origin_y - offset_y) / scale,
+            extent: Extent {
+                width: sharing.extent.width / scale,
+                height: sharing.extent.height / scale,
+            },
+        })
+    }
+
     /// Creates a closure that translates percentage positions (0.0–1.0) to logical pixel positions.
     pub fn create_position_translator(&self) -> impl Fn(Position) -> Position {
         let width = self.display_info.display_extent.width / self.display_info.display_scale;
@@ -286,12 +337,12 @@ impl fmt::Display for OverlayWindow {
         write!(
             f,
             "sharing_window_frame: {}, extent: {}, display_extent: {}, position: {:?}, display_position: {:?}, display_scale: {}",
-            self.sharing_window_frame,
+            self.sharing_frame(),
             self.extent,
             self.display_info.display_extent,
             self.position,
             self.display_info.display_position,
-            self.display_info.display_scale,
+            self.display_info.display_scale
         )
     }
 }

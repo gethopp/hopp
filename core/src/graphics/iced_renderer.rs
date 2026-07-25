@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::components::fonts as fonts_mod;
 use crate::graphics::graphics_window_context::ContextManager;
+use crate::screen_selection::ScreenSelectionUi;
 use crate::utils::geometry::Position;
 use iced::Renderer;
 use iced::{Font, Pixels};
@@ -13,14 +14,17 @@ use iced_winit::{
     runtime::{user_interface, UserInterface},
     Clipboard,
 };
+use winit::dpi::PhysicalPosition;
 use winit::window::Window;
 
 #[path = "iced_canvas.rs"]
 mod iced_canvas;
-use iced_canvas::OverlaySurface;
+use iced_canvas::{Message as SelectionMessage, OverlaySurface};
 
 use super::click_animation::ClickAnimationRenderer;
 use super::participant::ParticipantsManager;
+
+pub use iced_canvas::Message as ScreenSelectionMessage;
 
 #[derive(Clone, Copy)]
 pub struct DrawArgs<'a> {
@@ -29,8 +33,9 @@ pub struct DrawArgs<'a> {
     pub participants: &'a ParticipantsManager,
     pub click_animation_renderer: &'a ClickAnimationRenderer,
     pub position_translator: &'a dyn Fn(Position) -> Position,
-    pub screen_selection: bool,
+    pub screen_selection: Option<&'a ScreenSelectionUi>,
     pub window_focused: bool,
+    pub marker_content: Option<iced::Rectangle>,
 }
 
 pub struct IcedRenderer {
@@ -88,6 +93,51 @@ impl IcedRenderer {
         );
     }
 
+    pub fn set_cursor_position(&mut self, position: PhysicalPosition<f64>, scale_factor: f64) {
+        let logical = iced::Point::new(
+            (position.x / scale_factor) as f32,
+            (position.y / scale_factor) as f32,
+        );
+        self.cursor = mouse::Cursor::Available(logical);
+    }
+
+    /// Runs a left-click through the selection UI and returns iced messages.
+    pub fn handle_selection_click(
+        &mut self,
+        selection: &ScreenSelectionUi,
+        participants: &ParticipantsManager,
+        click_animation_renderer: &ClickAnimationRenderer,
+    ) -> Vec<SelectionMessage> {
+        let mut messages = Vec::new();
+        let identity = |p: Position| p;
+        let mut interface = UserInterface::build(
+            self.overlay_surface.view(
+                participants,
+                click_animation_renderer,
+                &identity,
+                Some(selection),
+                true,
+                None,
+            ),
+            self.viewport.logical_size(),
+            user_interface::Cache::default(),
+            &mut self.renderer,
+        );
+
+        let events = [
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ];
+        let _ = interface.update(
+            &events,
+            self.cursor,
+            &mut self.renderer,
+            &mut self.clipboard,
+            &mut messages,
+        );
+        messages
+    }
+
     pub fn draw(&mut self, args: DrawArgs) {
         let DrawArgs {
             frame,
@@ -97,6 +147,7 @@ impl IcedRenderer {
             position_translator,
             screen_selection,
             window_focused,
+            marker_content,
         } = args;
 
         let mut interface = UserInterface::build(
@@ -106,6 +157,7 @@ impl IcedRenderer {
                 position_translator,
                 screen_selection,
                 window_focused,
+                marker_content,
             ),
             self.viewport.logical_size(),
             user_interface::Cache::default(),

@@ -86,29 +86,46 @@ pub struct KeystrokeMessage {
     pub down: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentType {
     Display,
+    Window,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct Content {
     pub content_type: ContentType,
-    pub id: u32,
+    pub id: u64,
 }
 
 impl fmt::Display for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.content_type {
             ContentType::Display => write!(f, "Display {}", self.id),
+            ContentType::Window => write!(f, "Window {}", self.id),
         }
     }
+}
+
+/// Frame of a shared window relative to its containing monitor (physical pixels).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
+pub struct WindowFrame {
+    pub origin_x: f64,
+    pub origin_y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScreenShareMessage {
     pub content: Content,
     pub resolution: Extent,
+    /// Capture id of the monitor hosting the share. Equals `content.id` for displays.
+    #[serde(default)]
+    pub monitor_id: Option<u64>,
+    /// Present when sharing a window; omitted/None for full-display shares.
+    #[serde(default)]
+    pub window_frame: Option<WindowFrame>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

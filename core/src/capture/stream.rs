@@ -1,4 +1,5 @@
 use crate::utils::geometry::{aspect_fit, Extent, Frame};
+use crate::UserEvent;
 use livekit::webrtc::{
     desktop_capturer::{
         CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
@@ -8,7 +9,9 @@ use livekit::webrtc::{
     prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
+use socket_lib::{Content, ContentType};
 use std::sync::{mpsc, Arc, Mutex};
+use winit::event_loop::EventLoopProxy;
 
 use super::CapturerError;
 
@@ -98,6 +101,7 @@ fn create_capture_callback(
     desktop_frame: Arc<Mutex<Frame>>,
     tx: mpsc::Sender<StreamRuntimeMessage>,
     failures_count: Arc<Mutex<u64>>,
+    event_loop_proxy: EventLoopProxy<UserEvent>,
 ) -> impl FnMut(Result<DesktopFrame, CaptureError>) {
     let mut capture_buffer = NV12Buffer::new(1, 1);
     let mut stream_failed = false;
@@ -166,6 +170,7 @@ fn create_capture_callback(
                 frame.extent.height = frame_height as f64;
                 frame.origin_x = frame_left as f64;
                 frame.origin_y = frame_top as f64;
+                let _ = event_loop_proxy.send_event(UserEvent::RequestRedraw);
             }
         }
 
@@ -292,8 +297,8 @@ pub struct Stream {
     /// The resolution of the stream buffer.
     stream_resolution: Extent,
 
-    /// Identifier of the capture source (display or window ID).
-    source_id: u32,
+    /// Identifier of the capture source (display or window).
+    content: Content,
 
     /// Counter tracking consecutive stream failures for health monitoring.
     ///
@@ -301,6 +306,9 @@ pub struct Stream {
     /// When this reaches MAX_STREAM_FAILURES_BEFORE_EXIT, the process exits
     /// to trigger application restart.
     failures_count: Arc<Mutex<u64>>,
+
+    /// Proxy used to request overlay redraws when the shared window moves.
+    event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl Stream {
@@ -317,9 +325,18 @@ impl Stream {
     pub fn new(
         stream_resolution: Extent,
         _scale: f64,
+        _display_position: winit::dpi::PhysicalPosition<i32>,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
+        content_type: ContentType,
+        event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, CapturerError> {
+        #[cfg(target_os = "linux")]
+        if content_type == ContentType::Window {
+            log::error!("Stream::new: window capture is not supported on Linux");
+            return Err(CapturerError::UnsupportedContentType);
+        }
+
         let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
         let frame = Arc::new(Mutex::new(Frame {
             origin_x: 0.,
@@ -331,8 +348,13 @@ impl Stream {
         }));
         let failures_count = Arc::new(Mutex::new(0));
 
+        let source_type = match content_type {
+            ContentType::Display => DesktopCaptureSourceType::Screen,
+            ContentType::Window => DesktopCaptureSourceType::Window,
+        };
+
         #[allow(unused_mut)]
-        let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+        let mut options = DesktopCapturerOptions::new(source_type);
         #[cfg(target_os = "macos")]
         {
             options.set_sck_system_picker(false);
@@ -355,27 +377,35 @@ impl Stream {
             buffer_source,
             frame,
             stream_resolution,
-            source_id: 0,
+            content: Content {
+                content_type,
+                id: 0,
+            },
             failures_count,
+            event_loop_proxy,
         })
     }
 
     /// Starts capturing frames from the specified source.
     ///
     /// # Parameters
-    /// - `id`: The identifier of the capture source (display or window ID)
+    /// - `content`: The content source to capture (display or window)
     ///
     /// # Behavior
     /// - Finds the capture source matching the provided ID from available sources
-    /// - Falls back to the first available source if the specified ID is not found
     /// - Spawns a background worker thread that continuously captures frames
     /// - Begins the frame capture loop at FRAME_CAPTURE_INTERVAL_MS intervals
     ///
     /// # Notes
     /// This method should only be called when the stream is not already capturing.
     /// The capture thread will run until `stop_capture()` is called.
-    pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
-        log::info!("stream::start_capture: Starting capture for id: {id}");
+    pub fn start_capture(&mut self, content: Content) -> Result<(), CapturerError> {
+        #[cfg(target_os = "linux")]
+        if content.content_type == ContentType::Window {
+            return Err(CapturerError::UnsupportedContentType);
+        }
+
+        log::info!("stream::start_capture: Starting capture for {content}");
         let callback = create_capture_callback(
             self.buffer_source.clone(),
             self.stream_resolution,
@@ -383,6 +413,7 @@ impl Stream {
             self.frame.clone(),
             self.permanent_error_tx.clone(),
             self.failures_count.clone(),
+            self.event_loop_proxy.clone(),
         );
         let mut capturer = self.capturer.lock().unwrap();
         let sources = capturer.get_source_list();
@@ -391,15 +422,15 @@ impl Stream {
         }
         let mut source = sources[0].clone();
         for s in sources {
-            if s.id() == (id as u64) {
+            if s.id() == content.id {
                 source = s;
                 break;
             }
         }
-        if source.id() != (id as u64) {
+        if source.id() != content.id {
             return Err(CapturerError::SelectedSourceNotFound);
         }
-        self.source_id = id;
+        self.content = content;
         capturer.start_capture(Some(source), callback);
         let (tx, rx) = mpsc::channel();
         let capturer_clone = self.capturer.clone();
@@ -449,8 +480,13 @@ impl Stream {
             self.stop_capture();
         }
 
+        let source_type = match self.content.content_type {
+            ContentType::Display => DesktopCaptureSourceType::Screen,
+            ContentType::Window => DesktopCaptureSourceType::Window,
+        };
+
         #[allow(unused_mut)]
-        let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Screen);
+        let mut options = DesktopCapturerOptions::new(source_type);
         #[cfg(target_os = "macos")]
         {
             options.set_sck_system_picker(false);
@@ -473,8 +509,9 @@ impl Stream {
             buffer_source: self.buffer_source.clone(),
             frame: self.frame.clone(),
             stream_resolution: self.stream_resolution,
-            source_id: self.source_id,
+            content: self.content,
             failures_count: self.failures_count.clone(),
+            event_loop_proxy: self.event_loop_proxy.clone(),
         };
 
         Ok(new_stream)
@@ -495,18 +532,9 @@ impl Stream {
         *self.failures_count.lock().unwrap()
     }
 
-    /// Returns the identifier of the capture source.
-    ///
-    /// # Returns
-    /// The ID of the display or window that this stream is currently configured
-    /// to capture from. This corresponds to the ID passed to `start_capture()`.
-    ///
-    /// # Use Cases
-    /// Used for identifying which source a stream is associated with, particularly
-    /// useful when managing multiple streams or when restarting streams to ensure
-    /// they reconnect to the same source.
-    pub fn source_id(&self) -> u32 {
-        self.source_id
+    /// Returns the content source this stream is configured to capture.
+    pub fn capture_content(&self) -> Content {
+        self.content
     }
 
     pub fn get_stream_extent(&self) -> Extent {
@@ -515,6 +543,11 @@ impl Stream {
             width: stream_buffer.video_frame.buffer.width() as f64,
             height: stream_buffer.video_frame.buffer.height() as f64,
         }
+    }
+
+    /// Live capture bounds in physical pixels (updated as the shared window moves).
+    pub fn get_capture_frame(&self) -> Frame {
+        *self.frame.lock().unwrap()
     }
 
     #[cfg(target_os = "linux")]

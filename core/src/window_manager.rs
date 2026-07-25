@@ -325,7 +325,6 @@ impl<'a> WindowManager<'a> {
                 .map_err(|_| WindowManagerError::WindowCreationError)?;
             self.active_monitor_id = Some(target_id);
         } else {
-            entry.gfx.set_screen_selection(true);
             let _ = entry.gfx.window().set_cursor_hittest(true);
         }
         entry.window.set_visible(true);
@@ -416,6 +415,31 @@ impl<'a> WindowManager<'a> {
             .map(|entry| entry.monitor_id.clone())
     }
 
+    pub fn set_selection_cursor(
+        &mut self,
+        window_id: winit::window::WindowId,
+        position: winit::dpi::PhysicalPosition<f64>,
+    ) {
+        if let Some(entry) = self
+            .windows
+            .iter_mut()
+            .find(|entry| entry.window.id() == window_id)
+        {
+            entry.gfx.set_selection_cursor(position);
+        }
+    }
+
+    pub fn handle_selection_click(
+        &mut self,
+        window_id: winit::window::WindowId,
+    ) -> Vec<crate::graphics::graphics_context::iced_renderer::ScreenSelectionMessage> {
+        self.windows
+            .iter_mut()
+            .find(|entry| entry.window.id() == window_id)
+            .map(|entry| entry.gfx.handle_selection_click())
+            .unwrap_or_default()
+    }
+
     pub fn resize_window(
         &mut self,
         window_id: winit::window::WindowId,
@@ -458,6 +482,18 @@ impl<'a> WindowManager<'a> {
         }
     }
 
+    pub fn update_screen_selection_ui(
+        &mut self,
+        ui: Option<crate::screen_selection::ScreenSelectionUi>,
+    ) {
+        for entry in &mut self.windows {
+            if entry.window.is_visible().unwrap_or(false) && self.active_monitor_id.is_none() {
+                entry.gfx.set_screen_selection(ui.clone());
+                entry.gfx.trigger_render();
+            }
+        }
+    }
+
     pub fn focus_window(&self, window_id: winit::window::WindowId) -> bool {
         if let Some(entry) = self
             .windows
@@ -492,10 +528,11 @@ impl<'a> WindowManager<'a> {
         &self,
         current_window_id: winit::window::WindowId,
         direction: ScreenSelectionNavigationDirection,
-    ) -> bool {
+    ) -> Option<winit::window::WindowId> {
         let mut entries: Vec<_> = self
             .windows
             .iter()
+            .filter(|entry| entry.window.is_visible().unwrap_or(false))
             .filter_map(|entry| {
                 let position = entry.window.outer_position().ok()?;
                 let logical_position: LogicalPosition<f64> =
@@ -506,7 +543,7 @@ impl<'a> WindowManager<'a> {
             .collect();
 
         if entries.len() < 2 {
-            return false;
+            return None;
         }
 
         match direction {
@@ -514,23 +551,20 @@ impl<'a> WindowManager<'a> {
             | ScreenSelectionNavigationDirection::Right => {
                 entries.sort_by(|a, b| a.1.total_cmp(&b.1));
                 if entries.windows(2).any(|pair| pair[0].1 == pair[1].1) {
-                    return false;
+                    return None;
                 }
             }
             ScreenSelectionNavigationDirection::Up | ScreenSelectionNavigationDirection::Down => {
                 entries.sort_by(|a, b| a.2.total_cmp(&b.2));
                 if entries.windows(2).any(|pair| pair[0].2 == pair[1].2) {
-                    return false;
+                    return None;
                 }
             }
         }
 
-        let Some(current_index) = entries
+        let current_index = entries
             .iter()
-            .position(|(window_id, _, _)| *window_id == current_window_id)
-        else {
-            return false;
-        };
+            .position(|(window_id, _, _)| *window_id == current_window_id)?;
 
         let target_index = match direction {
             ScreenSelectionNavigationDirection::Left | ScreenSelectionNavigationDirection::Up => {
@@ -545,25 +579,22 @@ impl<'a> WindowManager<'a> {
         };
 
         let target_window_id = entries[target_index].0;
-        let Some(target_entry) = self
+        let target_entry = self
             .windows
             .iter()
-            .find(|entry| entry.window.id() == target_window_id)
-        else {
-            return false;
-        };
+            .find(|entry| entry.window.id() == target_window_id)?;
 
         target_entry.window.focus_window();
         for entry in &self.windows {
             entry.gfx.trigger_render();
         }
 
-        true
+        Some(target_window_id)
     }
 
     pub fn hide_screen_selection(&mut self) {
         for entry in &mut self.windows {
-            entry.gfx.set_screen_selection(false);
+            entry.gfx.set_screen_selection(None);
             #[cfg(target_os = "macos")]
             {
                 entry.window.set_simple_fullscreen(false);

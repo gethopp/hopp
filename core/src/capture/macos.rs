@@ -8,11 +8,11 @@ pub struct ScreenshareFunctions {}
 impl ScreenshareExt for ScreenshareFunctions {
     fn get_selected_monitor(
         monitors: &[winit::monitor::MonitorHandle],
-        input_id: u32,
+        input_id: u64,
     ) -> winit::monitor::MonitorHandle {
         let mut selected_monitor = monitors[0].clone();
         for monitor in monitors {
-            if monitor.native_id() == input_id {
+            if monitor.native_id() as u64 == input_id {
                 selected_monitor = monitor.clone();
             }
         }
@@ -23,8 +23,8 @@ impl ScreenshareExt for ScreenshareFunctions {
         MonitorId::Numeric(monitor.native_id())
     }
 
-    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u32> {
-        Some(monitor.native_id())
+    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u64> {
+        Some(monitor.native_id() as u64)
     }
 }
 

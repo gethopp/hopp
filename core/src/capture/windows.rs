@@ -10,10 +10,10 @@ pub struct ScreenshareFunctions {}
 impl ScreenshareExt for ScreenshareFunctions {
     fn get_selected_monitor(
         monitors: &[winit::monitor::MonitorHandle],
-        input_id: u32,
+        input_id: u64,
     ) -> winit::monitor::MonitorHandle {
         let mut selected_monitor = monitors[0].clone();
-        let input_monitor_name = get_display_index(input_id);
+        let input_monitor_name = get_display_index(input_id as u32);
         for monitor in monitors {
             if monitor.native_id() == input_monitor_name {
                 selected_monitor = monitor.clone();
@@ -27,9 +27,9 @@ impl ScreenshareExt for ScreenshareFunctions {
         MonitorId::Named(monitor.native_id())
     }
 
-    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u32> {
+    fn capture_content_id_for_monitor(monitor: &winit::monitor::MonitorHandle) -> Option<u64> {
         let monitor_name = monitor.native_id();
-        let mut index = 0;
+        let mut index = 0u32;
 
         loop {
             let display_name = get_display_index(index);
@@ -38,7 +38,7 @@ impl ScreenshareExt for ScreenshareFunctions {
             }
 
             if display_name == monitor_name {
-                return Some(index);
+                return Some(index as u64);
             }
 
             index += 1;
@@ -46,7 +46,6 @@ impl ScreenshareExt for ScreenshareFunctions {
     }
 }
 
-// TODO: Change name to this.
 fn get_display_index(input_id: u32) -> String {
     unsafe {
         let mut display_device = DISPLAY_DEVICEW {

@@ -159,7 +159,7 @@ pub struct GraphicsContext<'a> {
     surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_present_mode: wgpu::PresentMode,
 
-    screen_selection: bool,
+    screen_selection: Option<crate::screen_selection::ScreenSelectionUi>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -252,7 +252,7 @@ impl<'a> GraphicsContext<'a> {
             surface_format,
             surface_alpha_mode,
             surface_present_mode,
-            screen_selection: false,
+            screen_selection: None,
         })
     }
 
@@ -268,8 +268,29 @@ impl<'a> GraphicsContext<'a> {
         self.surface_format
     }
 
-    pub fn set_screen_selection(&mut self, screen_selection: bool) {
+    pub fn set_screen_selection(
+        &mut self,
+        screen_selection: Option<crate::screen_selection::ScreenSelectionUi>,
+    ) {
         self.screen_selection = screen_selection;
+    }
+
+    pub fn set_selection_cursor(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        self.iced_renderer
+            .set_cursor_position(position, self.window.scale_factor());
+    }
+
+    pub fn handle_selection_click(
+        &mut self,
+    ) -> Vec<crate::graphics::graphics_context::iced_renderer::ScreenSelectionMessage> {
+        let Some(selection) = self.screen_selection.clone() else {
+            return Vec::new();
+        };
+        self.iced_renderer.handle_selection_click(
+            &selection,
+            &self.participants_manager,
+            &self.click_animation_renderer,
+        )
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
@@ -359,7 +380,11 @@ impl<'a> GraphicsContext<'a> {
     /// If frame acquisition fails (e.g., surface lost), the method logs the error
     /// and returns early without crashing. This provides resilience against
     /// temporary graphics driver issues or window state changes.
-    pub fn draw(&mut self, position_translator: &dyn Fn(Position) -> Position) {
+    pub fn draw(
+        &mut self,
+        position_translator: &dyn Fn(Position) -> Position,
+        marker_content: Option<crate::utils::geometry::Frame>,
+    ) {
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(e) => {
@@ -374,6 +399,12 @@ impl<'a> GraphicsContext<'a> {
         self.click_animation_renderer.update();
 
         let window_focused = self.window.has_focus();
+        let marker_content = marker_content.map(|frame| iced::Rectangle {
+            x: frame.origin_x as f32,
+            y: frame.origin_y as f32,
+            width: frame.extent.width as f32,
+            height: frame.extent.height as f32,
+        });
 
         self.iced_renderer.draw(iced_renderer::DrawArgs {
             frame: &output,
@@ -381,8 +412,9 @@ impl<'a> GraphicsContext<'a> {
             participants: &self.participants_manager,
             click_animation_renderer: &self.click_animation_renderer,
             position_translator,
-            screen_selection: self.screen_selection,
+            screen_selection: self.screen_selection.as_ref(),
             window_focused,
+            marker_content,
         });
 
         self.window.pre_present_notify();
