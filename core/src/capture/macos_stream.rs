@@ -204,7 +204,7 @@ impl Stream {
                     self.stream_resolution.width as u32,
                     self.stream_resolution.height as u32,
                 );
-                (width & !1, height & !1, filter, true)
+                (width, height, filter, true)
             }
         };
         if stream_width < 2 || stream_height < 2 {
@@ -446,5 +446,37 @@ impl Stream {
 
     pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
         matches!(self.source.content_type, ContentType::Window).then(|| self.frame.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crops_odd_source_dimensions_to_even_nv12_output() {
+        let crop = nv12_crop_rect(CGRect::new(1.0, 1.0, 6.0, 4.0), 1.0, 8, 6).unwrap();
+        assert_eq!(
+            crop,
+            CropRect {
+                x: 2,
+                y: 2,
+                width: 4,
+                height: 2,
+            }
+        );
+        assert_eq!(
+            CropRect::full_frame(5, 3),
+            Some(CropRect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2,
+            })
+        );
+
+        let buffer = NV12Buffer::new(crop.width as u32, crop.height as u32);
+        assert_eq!(buffer.strides(), (4, 4));
+        assert_eq!(buffer.data().1.len(), 4);
     }
 }
