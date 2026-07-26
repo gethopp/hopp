@@ -799,6 +799,30 @@ impl<'a> Application<'a> {
             id,
         })
     }
+
+    fn window_content_for_selection_window(
+        &self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+    ) -> Option<Content> {
+        #[cfg(target_os = "macos")]
+        {
+            let overlay_display =
+                self.display_content_for_selection_window(event_loop, window_id)?;
+            let id = ScreenshareFunctions::window_under_cursor(overlay_display.id)?;
+
+            Some(Content {
+                content_type: ContentType::Window,
+                id,
+            })
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (event_loop, window_id);
+            None
+        }
+    }
 }
 
 impl Drop for Application<'_> {
@@ -2313,16 +2337,23 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if self
-                .screen_selection
-                .is_some_and(|selection| selection.mode == SelectionMode::Screen) =>
-            {
-                if let Some(content) =
-                    self.display_content_for_selection_window(event_loop, window_id)
-                {
-                    self.select_source(content);
-                } else {
-                    log::error!("window_event: failed to resolve selected source");
+            } if self.screen_selection.is_some() => {
+                let mode = self.screen_selection.unwrap().mode;
+                let content = match mode {
+                    SelectionMode::Screen => {
+                        self.display_content_for_selection_window(event_loop, window_id)
+                    }
+                    SelectionMode::Window => {
+                        self.window_content_for_selection_window(event_loop, window_id)
+                    }
+                };
+
+                match (mode, content) {
+                    (_, Some(content)) => self.select_source(content),
+                    (SelectionMode::Screen, None) => {
+                        log::error!("window_event: failed to resolve selected screen");
+                    }
+                    (SelectionMode::Window, None) => {}
                 }
             }
             WindowEvent::CursorEntered { .. } if self.screen_selection.is_some() => {
