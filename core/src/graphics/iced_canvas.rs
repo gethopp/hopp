@@ -59,7 +59,7 @@ impl<'a, Message> canvas::Program<Message> for OverlaySurfaceCanvas<'a> {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut geometries = vec![self.marker.draw(renderer, bounds)];
+        let mut geometries = vec![self.marker.draw(renderer, bounds, self.position_translator)];
         geometries.extend(
             self.participants
                 .draw(renderer, bounds, self.position_translator),
