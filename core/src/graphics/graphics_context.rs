@@ -7,8 +7,7 @@
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
-use crate::SelectionMode;
-use crate::UserEvent;
+use crate::{SelectionMode, SelectionOverlayState, UserEvent};
 use std::sync::{
     mpsc::{Receiver, Sender},
     Arc,
@@ -161,7 +160,7 @@ pub struct GraphicsContext<'a> {
     surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_present_mode: wgpu::PresentMode,
 
-    screen_selection: Option<SelectionMode>,
+    screen_selection: Option<SelectionOverlayState>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -270,7 +269,7 @@ impl<'a> GraphicsContext<'a> {
         self.surface_format
     }
 
-    pub(crate) fn set_screen_selection(&mut self, screen_selection: Option<SelectionMode>) {
+    pub(crate) fn set_screen_selection(&mut self, screen_selection: Option<SelectionOverlayState>) {
         self.screen_selection = screen_selection;
     }
 
@@ -282,7 +281,10 @@ impl<'a> GraphicsContext<'a> {
         let result = self.iced_renderer.handle_screen_selection_event(
             event,
             self.window.scale_factor() as f32,
-            mode,
+            self.screen_selection.unwrap_or(SelectionOverlayState {
+                mode,
+                border_frame: None,
+            }),
             self.window.has_focus(),
         );
         self.window.request_redraw();

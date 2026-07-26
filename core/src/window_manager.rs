@@ -98,8 +98,9 @@ use winit::platform::windows::WindowExtWindows;
 use crate::capture::capturer::{MonitorId, ScreenshareExt, ScreenshareFunctions};
 use crate::graphics::graphics_context::GraphicsContext;
 use crate::graphics::graphics_window_context::ContextManager;
+use crate::utils::geometry::Frame;
 use crate::UserEvent;
-use crate::{SelectionMode, ServerError};
+use crate::{SelectionMode, SelectionOverlayState, ServerError};
 
 // Constants for magic numbers
 /// Initial size for the overlay window (width and height in logical pixels)
@@ -326,7 +327,10 @@ impl<'a> WindowManager<'a> {
                 .map_err(|_| WindowManagerError::WindowCreationError)?;
             self.active_monitor_id = Some(target_id);
         } else {
-            entry.gfx.set_screen_selection(Some(SelectionMode::Screen));
+            entry.gfx.set_screen_selection(Some(SelectionOverlayState {
+                mode: SelectionMode::Screen,
+                border_frame: None,
+            }));
             let _ = entry.gfx.window().set_cursor_hittest(true);
         }
         entry.window.set_visible(true);
@@ -379,9 +383,21 @@ impl<'a> WindowManager<'a> {
             .unwrap_or((false, None))
     }
 
-    pub fn update_screen_selection(&mut self, mode: SelectionMode) {
+    pub fn update_screen_selection(&mut self, mode: SelectionMode, hovered_frame: Option<Frame>) {
         for entry in &mut self.windows {
-            entry.gfx.set_screen_selection(Some(mode));
+            let border_frame = hovered_frame.and_then(|mut frame| {
+                let position: LogicalPosition<f64> = entry
+                    .window
+                    .outer_position()
+                    .ok()?
+                    .to_logical(entry.window.scale_factor());
+                frame.origin_x -= position.x;
+                frame.origin_y -= position.y;
+                Some(frame)
+            });
+            entry
+                .gfx
+                .set_screen_selection(Some(SelectionOverlayState { mode, border_frame }));
             entry.gfx.trigger_render();
         }
     }

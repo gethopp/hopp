@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::components::fonts as fonts_mod;
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::geometry::Position;
-use crate::SelectionMode;
+use crate::{SelectionMode, SelectionOverlayState};
 use iced::Renderer;
 use iced::{Font, Pixels};
 use iced_wgpu::graphics::Viewport;
@@ -33,7 +33,7 @@ pub(crate) struct DrawArgs<'a> {
     pub(crate) participants: &'a ParticipantsManager,
     pub(crate) click_animation_renderer: &'a ClickAnimationRenderer,
     pub(crate) position_translator: &'a dyn Fn(Position) -> Position,
-    pub(crate) screen_selection: Option<SelectionMode>,
+    pub(crate) screen_selection: Option<SelectionOverlayState>,
     pub(crate) window_focused: bool,
 }
 
@@ -98,7 +98,7 @@ impl IcedRenderer {
         &mut self,
         event: &WindowEvent,
         scale_factor: f32,
-        mode: SelectionMode,
+        screen_selection: SelectionOverlayState,
         window_focused: bool,
     ) -> (bool, Option<SelectionMode>) {
         let Some(iced_event) =
@@ -119,7 +119,7 @@ impl IcedRenderer {
 
         let mut messages = Vec::new();
         let mut interface = UserInterface::build(
-            OverlaySurface::screen_selection_view(mode, window_focused),
+            OverlaySurface::screen_selection_view(screen_selection, window_focused),
             self.viewport.logical_size(),
             self.cache.take().unwrap_or_default(),
             &mut self.renderer,

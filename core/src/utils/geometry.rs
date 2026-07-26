@@ -4,7 +4,9 @@ use std::cmp::max;
 use serde::{Deserialize, Serialize};
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize)]
+#[derive(
+    Debug, Copy, Clone, PartialEq, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize,
+)]
 pub struct Extent {
     pub width: f64,
     pub height: f64,
@@ -17,7 +19,7 @@ impl fmt::Display for Extent {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Copy, Clone, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Frame {
     pub origin_x: f64,
     pub origin_y: f64,
