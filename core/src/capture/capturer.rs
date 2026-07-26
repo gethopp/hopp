@@ -3,7 +3,10 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
-use crate::{utils::geometry::Extent, UserEvent, STREAM_FAILURE_EXIT_CODE};
+use crate::{
+    utils::geometry::{Extent, Frame},
+    UserEvent, STREAM_FAILURE_EXIT_CODE,
+};
 
 /// Platform-agnostic monitor identifier.
 ///
@@ -332,6 +335,10 @@ impl Capturer {
         self.active_stream.is_some()
     }
 
+    pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
+        self.active_stream.as_ref()?.frame()
+    }
+
     /// Signals the runtime stream monitoring thread to terminate.
     ///
     /// # Behavior
@@ -438,6 +445,12 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
                 let _ = capturer
                     .event_loop_proxy
                     .send_event(UserEvent::StopScreenShare);
+            }
+            Ok(StreamRuntimeMessage::FrameChanged) => {
+                let capturer = capturer.lock().unwrap();
+                let _ = capturer
+                    .event_loop_proxy
+                    .send_event(UserEvent::CaptureFrameChanged);
             }
             Ok(StreamRuntimeMessage::Stop) => {
                 log::info!("poll_stream: stop message");

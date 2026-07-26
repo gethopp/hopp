@@ -118,6 +118,23 @@ struct ScreenSelectionState {
     mode: SelectionMode,
 }
 
+fn monitor_containing_frame(monitors: &[MonitorHandle], frame: Frame) -> Option<MonitorHandle> {
+    let center_x = frame.origin_x + frame.extent.width / 2.0;
+    let center_y = frame.origin_y + frame.extent.height / 2.0;
+    monitors
+        .iter()
+        .find(|monitor| {
+            let scale = monitor.scale_factor();
+            let position = monitor.position().to_logical::<f64>(scale);
+            let size = monitor.size().to_logical::<f64>(scale);
+            center_x >= position.x
+                && center_x < position.x + size.width
+                && center_y >= position.y
+                && center_y < position.y + size.height
+        })
+        .cloned()
+}
+
 #[derive(Error, Debug)]
 pub enum ServerError {
     #[error("Livekit room service not found")]
@@ -168,10 +185,8 @@ impl RemoteControl {
             .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
-        let translator = self
-            .cursor_controller
-            .get_overlay_window()
-            .create_position_translator();
+        let overlay_window = self.cursor_controller.get_overlay_window();
+        let translator = overlay_window.create_position_translator();
         gfx.draw(&translator);
         cleared_path_ids
     }
@@ -466,40 +481,27 @@ impl<'a> Application<'a> {
         room_service.unmute_screen_share_track();
         log::info!("screenshare: screen share track unmuted");
 
+        let capture_frame = screen_capturer.frame();
+        let capture_frame_snapshot = capture_frame
+            .as_ref()
+            .and_then(|frame| frame.lock().ok().map(|frame| *frame));
+        let overlay_monitor = selected_monitor
+            .or_else(|| {
+                capture_frame_snapshot.and_then(|frame| monitor_containing_frame(&monitors, frame))
+            })
+            .or_else(|| monitors.first().cloned());
         drop(screen_capturer);
 
-        if let Some(monitor) = selected_monitor {
-            let res = self.create_overlay_window(monitor, self.remote_control_enabled);
+        if let Some(monitor) = overlay_monitor {
+            let res =
+                self.create_overlay_window(monitor, self.remote_control_enabled, capture_frame);
             if let Err(e) = res {
                 self.stop_screenshare();
                 log::error!("screenshare: error creating overlay window: {e:?}");
                 return Err(e);
             }
-
-            let room_service = self.room_service.as_ref().unwrap();
-            if let (Some(window_manager), Some(remote_control)) =
-                (self.window_manager.as_mut(), self.remote_control.as_mut())
-            {
-                if let Some(gfx) = window_manager.active_gfx_mut() {
-                    let existing_participants = room_service.get_participants();
-                    for participant in &existing_participants {
-                        if let Err(e) = gfx.add_participant(
-                            participant.identity.clone(),
-                            &participant.name,
-                            false,
-                        ) {
-                            log::error!(
-                                "Failed to create cursor for participant {}: {e}",
-                                participant.identity
-                            );
-                        } else {
-                            remote_control
-                                .cursor_controller
-                                .add_controller(participant.identity.clone());
-                        }
-                    }
-                }
-            }
+        } else {
+            log::warn!("screenshare: no monitor available, skipping overlay creation");
         }
 
         self.set_screensharing_active(true);
@@ -681,6 +683,7 @@ impl<'a> Application<'a> {
         &mut self,
         selected_monitor: MonitorHandle,
         remote_control_enabled: bool,
+        frame: Option<Arc<Mutex<Frame>>>,
     ) -> Result<(), ServerError> {
         log::info!(
             "create_overlay_window: selected_monitor: {selected_monitor:?} {remote_control_enabled}",
@@ -699,8 +702,6 @@ impl<'a> Application<'a> {
         let window_size = window.inner_size();
         let window_outer_position = window.outer_position();
 
-        /* Hardcode window frame to zero as we only support displays for now.*/
-        let window_frame = Frame::default();
         let scaled = {
             #[cfg(target_os = "macos")]
             {
@@ -723,7 +724,7 @@ impl<'a> Application<'a> {
         };
 
         let overlay_window = Arc::new(OverlayWindow::new(
-            window_frame,
+            frame,
             Extent {
                 width: window_size.width as f64,
                 height: window_size.height as f64,
@@ -766,6 +767,32 @@ impl<'a> Application<'a> {
         };
         remote_control.set_enabled(remote_control_enabled);
         self.remote_control = Some(remote_control);
+
+        let existing_participants = self
+            .room_service
+            .as_ref()
+            .map(|room_service| room_service.get_participants())
+            .unwrap_or_default();
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                for participant in existing_participants {
+                    if let Err(error) =
+                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
+                    {
+                        log::error!(
+                            "Failed to create cursor for participant {}: {error}",
+                            participant.identity
+                        );
+                    } else {
+                        remote_control
+                            .cursor_controller
+                            .add_controller(participant.identity);
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1177,14 +1204,64 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SharerPosition(x, y) => {
                 debug!("user_event: sharer position: {x} {y}");
-                if self.room_service.is_none() {
-                    log::warn!("user_event: room service is none sharer position");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.publish_cursor_position(x, y, true);
+                }
+            }
+            UserEvent::CaptureFrameChanged => {
+                let Some(frame) = self
+                    .screen_capturer
+                    .lock()
+                    .ok()
+                    .and_then(|capturer| capturer.frame())
+                else {
+                    log::warn!("CaptureFrameChanged: no capture frame available");
+                    return;
+                };
+                let Some(frame_snapshot) = frame.lock().ok().map(|frame| *frame) else {
+                    log::warn!("CaptureFrameChanged: failed to read capture frame");
+                    return;
+                };
+                let monitors = event_loop.available_monitors().collect::<Vec<_>>();
+                let Some(target_monitor) = monitor_containing_frame(&monitors, frame_snapshot)
+                else {
+                    log::warn!("CaptureFrameChanged: no monitor contains the capture frame");
+                    return;
+                };
+                let target_monitor_id = ScreenshareFunctions::get_monitor_id(&target_monitor);
+                let already_on_target = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|window_manager| window_manager.active_gfx_mut())
+                    .and_then(|gfx| gfx.window().current_monitor())
+                    .is_some_and(|monitor| {
+                        ScreenshareFunctions::get_monitor_id(&monitor) == target_monitor_id
+                    });
+
+                if !already_on_target {
+                    log::info!(
+                        "CaptureFrameChanged: shared window moved to monitor {target_monitor_id:?}"
+                    );
+                    self.destroy_overlay_window();
+                    if let Err(error) = self.create_overlay_window(
+                        target_monitor,
+                        self.remote_control_enabled,
+                        Some(frame),
+                    ) {
+                        log::error!("CaptureFrameChanged: failed to recreate overlay: {error:?}");
+                        self.stop_screenshare();
+                    }
                     return;
                 }
-                self.room_service
-                    .as_ref()
-                    .unwrap()
-                    .publish_cursor_position(x, y, true);
+
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|window_manager| window_manager.active_gfx_mut())
+                {
+                    gfx.participants_manager_mut().clear_draw_caches();
+                    gfx.window().request_redraw();
+                }
             }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
@@ -2518,6 +2595,7 @@ pub enum UserEvent {
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
+    CaptureFrameChanged,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),

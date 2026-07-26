@@ -225,6 +225,12 @@ impl ParticipantsManager {
         *self = Self::default();
     }
 
+    pub fn clear_draw_caches(&mut self) {
+        for participant in self.participants.values_mut() {
+            participant.draw_mut().clear_cache();
+        }
+    }
+
     /// Removes a participant and their data.
     pub fn remove_participant(&mut self, identity: &str) {
         log::info!(

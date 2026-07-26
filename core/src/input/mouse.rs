@@ -319,10 +319,6 @@ impl ControllerCursor {
         self.clicked = clicked;
     }
 
-    fn global_position(&self) -> Position {
-        self.cursor_state.global_position
-    }
-
     fn local_position(&self) -> Position {
         self.cursor_state.local_position
     }
@@ -389,10 +385,6 @@ impl SharerCursor {
         let local_position = self
             .overlay_window
             .local_percentage_from_global(global_position.x, global_position.y);
-        let display_percentage = self
-            .overlay_window
-            .global_percentage_from_global(global_position.x, global_position.y);
-
         self.cursor_state
             .set_position(global_position, local_position, !self.has_control);
 
@@ -406,12 +398,13 @@ impl SharerCursor {
         }
 
         if self.last_event_position_time.elapsed() > SHARER_POSITION_UPDATE_INTERVAL {
-            let res = self.event_loop_proxy.send_event(UserEvent::SharerPosition(
-                display_percentage.x,
-                display_percentage.y,
-            ));
-            if let Err(e) = res {
-                error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+            if let Some(position) = self.overlay_window.global_to_source(global_position) {
+                let res = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::SharerPosition(position.x, position.y));
+                if let Err(e) = res {
+                    error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+                }
             }
             self.last_event_position_time = Instant::now();
         }
@@ -464,10 +457,6 @@ impl SharerCursor {
 
     fn global_position(&self) -> Position {
         self.cursor_state.global_position
-    }
-
-    fn local_position(&self) -> Position {
-        self.cursor_state.local_position
     }
 
     fn visible(&self) -> bool {
@@ -728,14 +717,16 @@ impl CursorController {
     pub fn cursor_move_controller(&mut self, x: f64, y: f64, identity: &str) {
         debug!("cursor_move_controller: x: {x} y: {y}");
 
+        let local_position = Position { x, y };
+        let Some(global_position) = self.overlay_window.source_to_global(local_position) else {
+            log::warn!("cursor_move_controller: invalid source position or capture frame");
+            return;
+        };
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             if controller.identity != identity {
                 continue;
             }
-
-            let local_position = self.overlay_window.translate_location(x, y);
-            let global_position = self.overlay_window.translate_to_global(x, y);
 
             controller.set_position(global_position, local_position);
             if controller.has_control() {
@@ -758,6 +749,13 @@ impl CursorController {
     /// * `identity` - Session ID identifying which controller is clicking
     pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, identity: &str) {
         debug!("mouse_click_controller: {click_data:?}");
+        let Some(global_position) = self.overlay_window.source_to_global(Position {
+            x: click_data.x as f64,
+            y: click_data.y as f64,
+        }) else {
+            log::warn!("mouse_click_controller: invalid source position or capture frame");
+            return;
+        };
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -769,10 +767,6 @@ impl CursorController {
                 log::info!("mouse_click_controller: controller mode is not Normal.");
                 break;
             }
-
-            let global_position = self
-                .overlay_window
-                .translate_to_global(click_data.x as f64, click_data.y as f64);
             click_data.x = global_position.x as f32;
             click_data.y = global_position.y as f32;
 
@@ -850,13 +844,20 @@ impl CursorController {
                 break;
             }
 
+            let Some(global_position) = self
+                .overlay_window
+                .source_to_global(controller.local_position())
+            else {
+                log::warn!("scroll_controller: invalid controller position or capture frame");
+                break;
+            };
             if !controller.has_control() {
                 control_changed = true;
                 controller.hide();
             }
 
             let mut cursor_simulator = self.remote_control.cursor_simulator.lock().unwrap();
-            cursor_simulator.simulate_cursor_movement(controller.global_position(), false);
+            cursor_simulator.simulate_cursor_movement(global_position, false);
             cursor_simulator.simulate_scroll(delta);
 
             break;
@@ -979,7 +980,10 @@ impl CursorController {
         // Update sharer cursor
         let sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
         if sharer_cursor.visible() {
-            participants_manager.set_cursor_position("local", Some(sharer_cursor.local_position()));
+            let position = self
+                .overlay_window
+                .global_to_source(sharer_cursor.global_position());
+            participants_manager.set_cursor_position("local", position);
         } else {
             participants_manager.set_cursor_position("local", None);
         }

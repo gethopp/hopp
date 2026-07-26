@@ -26,6 +26,7 @@ pub enum StreamRuntimeMessage {
     /// that cannot be recovered from without creating a new stream instance.
     /// The main thread will attempt to restart the stream when receiving this message.
     Failed,
+    FrameChanged,
 
     /// Requests that the stream polling thread should terminate.
     ///
@@ -506,6 +507,10 @@ impl Stream {
             width: stream_buffer.video_frame.buffer.width() as f64,
             height: stream_buffer.video_frame.buffer.height() as f64,
         }
+    }
+
+    pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
+        None
     }
 
     #[cfg(target_os = "linux")]

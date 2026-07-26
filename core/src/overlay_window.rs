@@ -6,6 +6,7 @@
 //! accurate coordinate mapping for virtual cursors.
 
 use core::fmt;
+use std::sync::{Arc, Mutex};
 
 use winit::dpi::PhysicalPosition;
 
@@ -32,8 +33,7 @@ pub struct DisplayInfo {
 /// It is used for properly showing the virtual cursor in the correct position and
 /// translating to global coordinates from display local when simulating mouse events.
 pub struct OverlayWindow {
-    /* The frame of the window/display being shared. */
-    sharing_window_frame: Frame,
+    frame: Option<Arc<Mutex<Frame>>>,
     /* The window's dimensions in pixels. */
     extent: Extent,
     /* The window's position in global coordinates (pixels). */
@@ -53,14 +53,7 @@ impl OverlayWindow {
     /// A new `OverlayWindow` instance with default values.
     pub fn default() -> Self {
         Self {
-            sharing_window_frame: Frame {
-                origin_x: 0.,
-                origin_y: 0.,
-                extent: Extent {
-                    width: 0.0,
-                    height: 0.0,
-                },
-            },
+            frame: None,
             extent: Extent {
                 width: 0.0,
                 height: 0.0,
@@ -95,14 +88,14 @@ impl OverlayWindow {
     ///
     /// A new `OverlayWindow` instance with the specified parameters.
     pub fn new(
-        sharing_window_frame: Frame,
+        frame: Option<Arc<Mutex<Frame>>>,
         extent: Extent,
         position: PhysicalPosition<i32>,
         display_info: DisplayInfo,
         scaled: bool,
     ) -> Self {
         Self {
-            sharing_window_frame,
+            frame,
             extent,
             position,
             display_info,
@@ -110,90 +103,39 @@ impl OverlayWindow {
         }
     }
 
-    /// Translates window local percentage coordinates to screen percentage coordinates.
-    ///
-    /// This function is essential for drawing virtual cursors in the correct position
-    /// in the overlay window. It adjusts for menubar positioning and handles the
-    /// coordinate system differences between the shared content and the overlay window.
-    ///
-    /// When sharing a display, the incoming percentage includes the menubar area,
-    /// but the overlay window doesn't include it, so this function adjusts the
-    /// coordinates accordingly.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The x-coordinate as a percentage (0.0 to 1.0)
-    /// * `y` - The y-coordinate as a percentage (0.0 to 1.0)
-    ///
-    /// # Returns
-    ///
-    /// A `Position` struct containing the translated coordinates as percentages.
-    pub fn translate_location(&self, x: f64, y: f64) -> Position {
-        log::debug!("translate_location: x: {x}, y: {y}");
-
-        if self.sharing_window_frame.extent.width == 0.0
-            || self.sharing_window_frame.extent.height == 0.0
-        {
-            log::debug!("translate_point: client_frame extent is 0.0");
-            return Position { x, y };
-        }
-
-        /* The following is unused. It will be needed when we support individual window sharing. */
-        let width_ratio = self.sharing_window_frame.extent.width / self.extent.width;
-        let width_offset = self.sharing_window_frame.origin_x / self.extent.width;
-        let x = x * width_ratio + width_offset;
-
-        let height_ratio = (self.sharing_window_frame.extent.height / self.extent.height).min(1.0);
-        let height_offset = self.sharing_window_frame.origin_y / self.extent.height;
-        let y = y * height_ratio + height_offset;
-
-        if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
-            log::error!("translate_location: x: {x}, y: {y} is out of bounds");
-        }
-
-        Position { x, y }
+    pub fn source_to_global(&self, position: Position) -> Option<Position> {
+        self.source_to_global_with_frame(position, self.capture_frame())
     }
 
-    /// Translates local percentage coordinates to global screen coordinates.
-    ///
-    /// This function converts coordinates from the local percentage system (0.0 to 1.0)
-    /// to global screen coordinates in pixels or points. The `scaled` parameter determines
-    /// whether the output should be in points (scaled) or pixels (unscaled).
-    ///
-    /// Note: This function currently only works when sharing a display, not for
-    /// window-local clicks.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The x-coordinate as a percentage (0.0 to 1.0)
-    /// * `y` - The y-coordinate as a percentage (0.0 to 1.0), includes menubar height
-    ///
-    /// # Returns
-    ///
-    /// A `Position` struct containing the global coordinates.
-    ///
-    /// # Platform Notes
-    ///
-    /// - macOS expects coordinates in points (scaled) for control commands
-    /// - Windows expects coordinates in pixels (unscaled)
-    pub fn translate_to_global(&self, x: f64, y: f64) -> Position {
-        // This doesn't work in window local click, only works when sharing display
-        // Here in y the menubar heigh is included.
-        let mut x = x * self.display_info.display_extent.width
-            + (self.display_info.display_position.x as f64);
-        let mut y = y * self.display_info.display_extent.height
-            + (self.display_info.display_position.y as f64);
-        /*
-         * macOS expects the coords in points (scaled) in control commands while windows
-         * expects them unscaled.
-         * The same applies to every other function that uses the display scale.
-         */
-        if self.scaled {
-            x /= self.display_info.display_scale;
-            y /= self.display_info.display_scale;
+    fn source_to_global_with_frame(
+        &self,
+        position: Position,
+        frame: Option<Frame>,
+    ) -> Option<Position> {
+        if is_out_of_bounds(position) {
+            return None;
+        }
+        if let Some(frame) = frame {
+            if !valid_frame(frame) {
+                return None;
+            }
+            return Some(Position {
+                x: frame.origin_x + position.x * frame.extent.width,
+                y: frame.origin_y + position.y * frame.extent.height,
+            });
         }
 
-        Position { x, y }
+        let mut global = Position {
+            x: position.x * self.display_info.display_extent.width
+                + self.display_info.display_position.x as f64,
+            y: position.y * self.display_info.display_extent.height
+                + self.display_info.display_position.y as f64,
+        };
+        if self.scaled {
+            global.x /= self.display_info.display_scale;
+            global.y /= self.display_info.display_scale;
+        }
+        Some(global)
     }
 
     /// Converts global coordinates to local window percentage coordinates.
@@ -221,35 +163,36 @@ impl OverlayWindow {
         Position { x, y }
     }
 
-    /// Converts global coordinates to global display percentage coordinates.
-    ///
-    /// This function takes global screen coordinates and converts them to percentage
-    /// coordinates relative to the entire display.
-    ///
-    /// # Arguments
-    ///
-    /// * `x` - The global x-coordinate
-    /// * `y` - The global y-coordinate
-    ///
-    /// # Returns
-    ///
-    /// A `Position` struct containing the global display percentage coordinates (0.0 to 1.0).
-    ///
-    /// # Note
-    ///
-    /// Similar to `local_percentage_from_global`, this function handles the conversion
-    /// between points and pixels using the display scale factor.
-    pub fn global_percentage_from_global(&self, x: f64, y: f64) -> Position {
+    pub fn global_to_source(&self, position: Position) -> Option<Position> {
+        let frame = self.capture_frame();
+        if let Some(frame) = frame {
+            if !valid_frame(frame) {
+                return None;
+            }
+            let source = Position {
+                x: (position.x - frame.origin_x) / frame.extent.width,
+                y: (position.y - frame.origin_y) / frame.extent.height,
+            };
+            return (!is_out_of_bounds(source)).then_some(source);
+        }
+
         let mut scale = 1.0;
         if self.scaled {
             scale = self.display_info.display_scale;
         }
-        let x = ((x * scale) - (self.display_info.display_position.x as f64))
-            / self.display_info.display_extent.width;
-        let y = ((y * scale) - (self.display_info.display_position.y as f64))
-            / self.display_info.display_extent.height;
+        let source = Position {
+            x: ((position.x * scale) - self.display_info.display_position.x as f64)
+                / self.display_info.display_extent.width,
+            y: ((position.y * scale) - self.display_info.display_position.y as f64)
+                / self.display_info.display_extent.height,
+        };
+        (!is_out_of_bounds(source)).then_some(source)
+    }
 
-        Position { x, y }
+    fn capture_frame(&self) -> Option<Frame> {
+        self.frame
+            .as_ref()
+            .and_then(|frame| frame.lock().ok().map(|frame| *frame))
     }
 
     pub fn get_display_scale(&self) -> f64 {
@@ -270,23 +213,56 @@ impl OverlayWindow {
         }
     }
 
-    /// Creates a closure that translates percentage positions (0.0–1.0) to logical pixel positions.
-    pub fn create_position_translator(&self) -> impl Fn(Position) -> Position {
-        let width = self.display_info.display_extent.width / self.display_info.display_scale;
-        let height = self.display_info.display_extent.height / self.display_info.display_scale;
-        move |pos: Position| Position {
-            x: pos.x * width,
-            y: pos.y * height,
+    /// Creates a closure that translates source-normalized positions to overlay-local points.
+    pub fn create_position_translator(&self) -> impl Fn(Position) -> Position + '_ {
+        let frame = self.capture_frame();
+        let scale = if self.scaled {
+            self.display_info.display_scale
+        } else {
+            1.0
+        };
+        move |position: Position| {
+            if frame.is_none() {
+                return Position {
+                    x: position.x * self.display_info.display_extent.width
+                        / self.display_info.display_scale,
+                    y: position.y * self.display_info.display_extent.height
+                        / self.display_info.display_scale,
+                };
+            }
+            let Some(global) = self.source_to_global_with_frame(position, frame) else {
+                return Position { x: -1.0, y: -1.0 };
+            };
+            let local = self.local_percentage_from_global(global.x, global.y);
+            Position {
+                x: local.x * self.extent.width / scale,
+                y: local.y * self.extent.height / scale,
+            }
         }
     }
+}
+
+fn is_out_of_bounds(position: Position) -> bool {
+    !position.x.is_finite()
+        || !position.y.is_finite()
+        || !(0.0..=1.0).contains(&position.x)
+        || !(0.0..=1.0).contains(&position.y)
+}
+
+fn valid_frame(frame: Frame) -> bool {
+    frame.origin_x.is_finite()
+        && frame.origin_y.is_finite()
+        && frame.extent.width.is_finite()
+        && frame.extent.height.is_finite()
+        && frame.extent.width > 0.0
+        && frame.extent.height > 0.0
 }
 
 impl fmt::Display for OverlayWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "sharing_window_frame: {}, extent: {}, display_extent: {}, position: {:?}, display_position: {:?}, display_scale: {}",
-            self.sharing_window_frame,
+            "extent: {}, display_extent: {}, position: {:?}, display_position: {:?}, display_scale: {}",
             self.extent,
             self.display_info.display_extent,
             self.position,

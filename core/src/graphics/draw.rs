@@ -141,6 +141,10 @@ impl Draw {
         self.completed_cache.clear();
     }
 
+    pub fn clear_cache(&mut self) {
+        self.completed_cache.clear();
+    }
+
     pub fn clear_expired_paths(&mut self) -> Vec<u64> {
         if !self.auto_clear {
             return Vec::new();

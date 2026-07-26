@@ -21,6 +21,7 @@ use super::CapturerError;
 #[allow(dead_code)]
 pub enum StreamRuntimeMessage {
     Failed,
+    FrameChanged,
     Stop,
     StopCapture,
     UserStoppedCapture,
@@ -185,6 +186,14 @@ impl Stream {
                     .find(|window| window.window_id() == content.id)
                     .ok_or(CapturerError::SelectedSourceNotFound)?;
                 let frame = window.frame();
+                *self.frame.lock().unwrap() = Frame {
+                    origin_x: frame.origin.x,
+                    origin_y: frame.origin.y,
+                    extent: Extent {
+                        width: frame.size.width,
+                        height: frame.size.height,
+                    },
+                };
                 let filter = SCContentFilter::create().with_window(&window).build();
                 let backing_scale = f64::from(filter.point_pixel_scale());
                 let native_width = (frame.size.width * backing_scale) as u32;
@@ -251,6 +260,7 @@ impl Stream {
         let buffer_source = self.buffer_source.clone();
         let failures_count = self.failures_count.clone();
         let frame_arc = self.frame.clone();
+        let frame_changed_tx = self.permanent_error_tx.clone();
         let output_extent = self.output_extent.clone();
         let capture_start = std::time::Instant::now();
 
@@ -308,12 +318,26 @@ impl Stream {
 
             let (content_rect, scale_factor) = if let Some(info) = sample.frame_info() {
                 let scale_factor = info.scale_factor.unwrap_or(1.0);
-                if let Some(screen_rect) = info.screen_rect {
-                    let mut frame = frame_arc.lock().unwrap();
-                    frame.origin_x = screen_rect.origin.x * scale_factor;
-                    frame.origin_y = screen_rect.origin.y * scale_factor;
-                    frame.extent.width = screen_rect.size.width * scale_factor;
-                    frame.extent.height = screen_rect.size.height * scale_factor;
+                if crop_window {
+                    if let Some(screen_rect) = info.screen_rect {
+                        let mut frame = frame_arc.lock().unwrap();
+                        let next_frame = Frame {
+                            origin_x: screen_rect.origin.x,
+                            origin_y: screen_rect.origin.y,
+                            extent: Extent {
+                                width: screen_rect.size.width,
+                                height: screen_rect.size.height,
+                            },
+                        };
+                        if frame.origin_x != next_frame.origin_x
+                            || frame.origin_y != next_frame.origin_y
+                            || frame.extent.width != next_frame.extent.width
+                            || frame.extent.height != next_frame.extent.height
+                        {
+                            *frame = next_frame;
+                            let _ = frame_changed_tx.send(StreamRuntimeMessage::FrameChanged);
+                        }
+                    }
                 }
                 (info.content_rect, scale_factor)
             } else {
@@ -418,5 +442,9 @@ impl Stream {
 
     pub fn get_stream_extent(&self) -> Extent {
         *self.output_extent.lock().unwrap()
+    }
+
+    pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
+        matches!(self.source.content_type, ContentType::Window).then(|| self.frame.clone())
     }
 }
