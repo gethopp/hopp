@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use thiserror::Error;
 use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowAttributes, WindowLevel};
@@ -97,8 +98,8 @@ use winit::platform::windows::WindowExtWindows;
 use crate::capture::capturer::{MonitorId, ScreenshareExt, ScreenshareFunctions};
 use crate::graphics::graphics_context::GraphicsContext;
 use crate::graphics::graphics_window_context::ContextManager;
-use crate::ServerError;
 use crate::UserEvent;
+use crate::{SelectionMode, ServerError};
 
 // Constants for magic numbers
 /// Initial size for the overlay window (width and height in logical pixels)
@@ -325,7 +326,7 @@ impl<'a> WindowManager<'a> {
                 .map_err(|_| WindowManagerError::WindowCreationError)?;
             self.active_monitor_id = Some(target_id);
         } else {
-            entry.gfx.set_screen_selection(true);
+            entry.gfx.set_screen_selection(Some(SelectionMode::Screen));
             let _ = entry.gfx.window().set_cursor_hittest(true);
         }
         entry.window.set_visible(true);
@@ -363,6 +364,26 @@ impl<'a> WindowManager<'a> {
             .iter_mut()
             .map(|entry| &mut entry.gfx)
             .collect()
+    }
+
+    pub fn handle_screen_selection_event(
+        &mut self,
+        window_id: winit::window::WindowId,
+        event: &WindowEvent,
+        mode: SelectionMode,
+    ) -> (bool, Option<SelectionMode>) {
+        self.windows
+            .iter_mut()
+            .find(|entry| entry.window.id() == window_id)
+            .map(|entry| entry.gfx.handle_screen_selection_event(event, mode))
+            .unwrap_or((false, None))
+    }
+
+    pub fn update_screen_selection(&mut self, mode: SelectionMode) {
+        for entry in &mut self.windows {
+            entry.gfx.set_screen_selection(Some(mode));
+            entry.gfx.trigger_render();
+        }
     }
 
     pub fn hide_active_window(&mut self) {
@@ -563,7 +584,7 @@ impl<'a> WindowManager<'a> {
 
     pub fn hide_screen_selection(&mut self) {
         for entry in &mut self.windows {
-            entry.gfx.set_screen_selection(false);
+            entry.gfx.set_screen_selection(None);
             #[cfg(target_os = "macos")]
             {
                 entry.window.set_simple_fullscreen(false);

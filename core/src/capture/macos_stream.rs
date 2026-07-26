@@ -306,26 +306,28 @@ impl Stream {
                 return;
             }
 
-            let content_rect = sample.content_rect();
-            if let Some(content_rect) = content_rect.as_ref() {
-                let mut frame = frame_arc.lock().unwrap();
-                frame.origin_x = content_rect.origin.x;
-                frame.origin_y = content_rect.origin.y;
-                frame.extent.width = content_rect.size.width;
-                frame.extent.height = content_rect.size.height;
-            }
+            let (content_rect, scale_factor) = if let Some(info) = sample.frame_info() {
+                let scale_factor = info.scale_factor.unwrap_or(1.0);
+                if let Some(screen_rect) = info.screen_rect {
+                    let mut frame = frame_arc.lock().unwrap();
+                    frame.origin_x = screen_rect.origin.x * scale_factor;
+                    frame.origin_y = screen_rect.origin.y * scale_factor;
+                    frame.extent.width = screen_rect.size.width * scale_factor;
+                    frame.extent.height = screen_rect.size.height * scale_factor;
+                }
+                (info.content_rect, scale_factor)
+            } else {
+                (None, 1.0)
+            };
 
             let crop = if crop_window {
                 match content_rect {
-                    Some(rect) => match nv12_crop_rect(
-                        rect,
-                        sample.scale_factor().unwrap_or(1.0),
-                        frame_width,
-                        frame_height,
-                    ) {
-                        Some(crop) => crop,
-                        None => return,
-                    },
+                    Some(rect) => {
+                        match nv12_crop_rect(rect, scale_factor, frame_width, frame_height) {
+                            Some(crop) => crop,
+                            None => return,
+                        }
+                    }
                     None => match CropRect::full_frame(frame_width, frame_height) {
                         Some(crop) => crop,
                         None => return,

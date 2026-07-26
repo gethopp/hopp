@@ -106,6 +106,18 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectionMode {
+    Screen,
+    Window,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScreenSelectionState {
+    mode: SelectionMode,
+}
+
 #[derive(Error, Debug)]
 pub enum ServerError {
     #[error("Livekit room service not found")]
@@ -238,7 +250,7 @@ pub struct Application<'a> {
     screen_share_resolution: ScreenShareResolution,
     remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
-    screen_selection_active: bool,
+    screen_selection: Option<ScreenSelectionState>,
 }
 
 #[derive(Error, Debug)]
@@ -326,7 +338,7 @@ impl<'a> Application<'a> {
             screen_share_resolution: ScreenShareResolution::P4K,
             remote_control_enabled: true,
             clipboard_controller,
-            screen_selection_active: false,
+            screen_selection: None,
         })
     }
 
@@ -346,8 +358,24 @@ impl<'a> Application<'a> {
             log::warn!("start_screen_selection: context manager not initialized");
         }
 
-        self.screen_selection_active = true;
+        self.screen_selection = Some(ScreenSelectionState {
+            mode: SelectionMode::Screen,
+        });
         window_manager.show_screen_selection(event_loop);
+    }
+
+    fn set_selection_mode(&mut self, mode: SelectionMode) {
+        let Some(selection) = self.screen_selection.as_mut() else {
+            return;
+        };
+        if selection.mode == mode {
+            return;
+        }
+
+        selection.mode = mode;
+        if let Some(window_manager) = self.window_manager.as_mut() {
+            window_manager.update_screen_selection(mode);
+        }
     }
 
     /// Initiates a screen sharing session with the specified configuration.
@@ -628,14 +656,14 @@ impl<'a> Application<'a> {
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
-        self.screen_selection_active = false;
+        self.screen_selection = None;
     }
 
     fn select_source(&mut self, content: Content) {
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
-        self.screen_selection_active = false;
+        self.screen_selection = None;
 
         let message = ScreenShareMessage {
             content,
@@ -1065,8 +1093,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::debug!("user_event: Screen share: {data:?}");
                 if let Some(ref mut wm) = self.window_manager {
                     wm.hide_screen_selection();
-                    self.screen_selection_active = false;
                 }
+                self.screen_selection = None;
                 let monitors = event_loop
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
@@ -1102,7 +1130,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
-                if self.screen_selection_active {
+                if self.screen_selection.is_some() {
                     let Some(window_manager) = self.window_manager.as_mut() else {
                         log::trace!("user_event: window manager is none request redraw");
                         return;
@@ -2211,12 +2239,38 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
         }
 
+        let screen_selection_mouse_event = matches!(
+            &event,
+            WindowEvent::CursorEntered { .. }
+                | WindowEvent::CursorLeft { .. }
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+        );
+        if screen_selection_mouse_event {
+            if let Some(mode) = self.screen_selection.map(|selection| selection.mode) {
+                let (captured, selected_mode) = self
+                    .window_manager
+                    .as_mut()
+                    .map(|window_manager| {
+                        window_manager.handle_screen_selection_event(window_id, &event, mode)
+                    })
+                    .unwrap_or((false, None));
+
+                if let Some(selected_mode) = selected_mode {
+                    self.set_selection_mode(selected_mode);
+                }
+                if captured {
+                    return;
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if self.screen_selection_active {
+                if self.screen_selection.is_some() {
                     let Some(window_manager) = self.window_manager.as_mut() else {
                         log::warn!("window_event: no window manager");
                         return;
@@ -2259,7 +2313,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if self.screen_selection_active => {
+            } if self
+                .screen_selection
+                .is_some_and(|selection| selection.mode == SelectionMode::Screen) =>
+            {
                 if let Some(content) =
                     self.display_content_for_selection_window(event_loop, window_id)
                 {
@@ -2268,7 +2325,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("window_event: failed to resolve selected source");
                 }
             }
-            WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
+            WindowEvent::CursorEntered { .. } if self.screen_selection.is_some() => {
                 if let Some(window_manager) = self.window_manager.as_ref() {
                     if !window_manager.focus_window(window_id) {
                         log::warn!("window_event: failed to focus screen selection window");
@@ -2281,14 +2338,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. }
-                if self.screen_selection_active && event.state.is_pressed() =>
+                if self.screen_selection.is_some() && event.state.is_pressed() =>
             {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => {
                         log::info!("window_event: Escape, cancelling screen selection");
                         self.cancel_screen_selection();
                     }
-                    Key::Named(NamedKey::Enter) => {
+                    Key::Named(NamedKey::Enter)
+                        if self
+                            .screen_selection
+                            .is_some_and(|selection| selection.mode == SelectionMode::Screen) =>
+                    {
                         log::info!("window_event: Enter, selecting focused screen");
                         if let Some(content) =
                             self.display_content_for_selection_window(event_loop, window_id)
@@ -2335,7 +2396,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
-                    if self.screen_selection_active {
+                    if self.screen_selection.is_some() {
                         wm.resize_window(window_id, new_size);
                     } else if wm.is_active_window(window_id) {
                         log::info!("window_event: active window resized to {:?}", new_size);

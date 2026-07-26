@@ -7,6 +7,7 @@
 use crate::graphics::graphics_window_context::ContextManager;
 use crate::utils::clock::Clock;
 use crate::utils::geometry::Position;
+use crate::SelectionMode;
 use crate::UserEvent;
 use std::sync::{
     mpsc::{Receiver, Sender},
@@ -14,6 +15,7 @@ use std::sync::{
 };
 use std::time::Instant;
 use thiserror::Error;
+use winit::event::WindowEvent;
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
 
@@ -159,7 +161,7 @@ pub struct GraphicsContext<'a> {
     surface_alpha_mode: wgpu::CompositeAlphaMode,
     surface_present_mode: wgpu::PresentMode,
 
-    screen_selection: bool,
+    screen_selection: Option<SelectionMode>,
 }
 
 impl<'a> GraphicsContext<'a> {
@@ -252,7 +254,7 @@ impl<'a> GraphicsContext<'a> {
             surface_format,
             surface_alpha_mode,
             surface_present_mode,
-            screen_selection: false,
+            screen_selection: None,
         })
     }
 
@@ -268,8 +270,23 @@ impl<'a> GraphicsContext<'a> {
         self.surface_format
     }
 
-    pub fn set_screen_selection(&mut self, screen_selection: bool) {
+    pub(crate) fn set_screen_selection(&mut self, screen_selection: Option<SelectionMode>) {
         self.screen_selection = screen_selection;
+    }
+
+    pub(crate) fn handle_screen_selection_event(
+        &mut self,
+        event: &WindowEvent,
+        mode: SelectionMode,
+    ) -> (bool, Option<SelectionMode>) {
+        let result = self.iced_renderer.handle_screen_selection_event(
+            event,
+            self.window.scale_factor() as f32,
+            mode,
+            self.window.has_focus(),
+        );
+        self.window.request_redraw();
+        result
     }
 
     /// Returns a clone of the redraw thread sender for use by subsystems.
