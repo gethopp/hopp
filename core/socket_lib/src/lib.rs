@@ -89,6 +89,7 @@ pub struct KeystrokeMessage {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ContentType {
     Display,
+    Window,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -101,6 +102,7 @@ impl fmt::Display for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.content_type {
             ContentType::Display => write!(f, "Display {}", self.id),
+            ContentType::Window => write!(f, "Window {}", self.id),
         }
     }
 }
@@ -595,6 +597,19 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg, Message::StartScreenShareResult(_)));
+    }
+
+    #[test]
+    fn test_window_content_round_trip() {
+        let serialized = serde_json::to_string(&Content {
+            content_type: ContentType::Window,
+            id: 42,
+        })
+        .unwrap();
+        let content: Content = serde_json::from_str(&serialized).unwrap();
+
+        assert!(matches!(content.content_type, ContentType::Window));
+        assert_eq!(content.id, 42);
     }
 
     #[test]

@@ -11,6 +11,7 @@ use livekit::webrtc::{
 use std::sync::{mpsc, Arc, Mutex};
 
 use super::CapturerError;
+use socket_lib::{Content, ContentType};
 
 const FRAME_CAPTURE_INTERVAL_MS: u64 = 18;
 
@@ -292,8 +293,8 @@ pub struct Stream {
     /// The resolution of the stream buffer.
     stream_resolution: Extent,
 
-    /// Identifier of the capture source (display or window ID).
-    source_id: u32,
+    /// The content source being captured.
+    source: Content,
 
     /// Counter tracking consecutive stream failures for health monitoring.
     ///
@@ -315,6 +316,7 @@ impl Stream {
     /// - `Ok(Stream)`: Successfully created stream ready for capture
     /// - `Err(CapturerError::DesktopCapturerCreationError)`: Failed to initialize the underlying capture system
     pub fn new(
+        source: Content,
         stream_resolution: Extent,
         _scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
@@ -355,27 +357,31 @@ impl Stream {
             buffer_source,
             frame,
             stream_resolution,
-            source_id: 0,
+            source,
             failures_count,
         })
     }
 
     /// Starts capturing frames from the specified source.
     ///
-    /// # Parameters
-    /// - `id`: The identifier of the capture source (display or window ID)
-    ///
     /// # Behavior
     /// - Finds the capture source matching the provided ID from available sources
-    /// - Falls back to the first available source if the specified ID is not found
     /// - Spawns a background worker thread that continuously captures frames
     /// - Begins the frame capture loop at FRAME_CAPTURE_INTERVAL_MS intervals
     ///
     /// # Notes
     /// This method should only be called when the stream is not already capturing.
     /// The capture thread will run until `stop_capture()` is called.
-    pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
-        log::info!("stream::start_capture: Starting capture for id: {id}");
+    pub fn start_capture(&mut self) -> Result<(), CapturerError> {
+        log::info!(
+            "stream::start_capture: Starting capture for content: {:?}",
+            self.source
+        );
+        let source_id = match self.source.content_type {
+            ContentType::Display => self.source.id,
+            ContentType::Window => return Err(CapturerError::UnsupportedContentType),
+        };
+
         let callback = create_capture_callback(
             self.buffer_source.clone(),
             self.stream_resolution,
@@ -391,15 +397,14 @@ impl Stream {
         }
         let mut source = sources[0].clone();
         for s in sources {
-            if s.id() == (id as u64) {
+            if s.id() == (source_id as u64) {
                 source = s;
                 break;
             }
         }
-        if source.id() != (id as u64) {
+        if source.id() != (source_id as u64) {
             return Err(CapturerError::SelectedSourceNotFound);
         }
-        self.source_id = id;
         capturer.start_capture(Some(source), callback);
         let (tx, rx) = mpsc::channel();
         let capturer_clone = self.capturer.clone();
@@ -436,7 +441,7 @@ impl Stream {
     /// - Stops the current stream if it's running
     /// - Creates a new desktop capturer with the same configuration
     /// - Shares the same buffers (stream_buffer, capture_buffer, frame) for memory efficiency
-    /// - Preserves the source_id and failure count from the original stream
+    /// - Preserves the source and failure count from the original stream
     /// - Sets up the same error reporting channel
     ///
     /// # Use Cases
@@ -473,7 +478,7 @@ impl Stream {
             buffer_source: self.buffer_source.clone(),
             frame: self.frame.clone(),
             stream_resolution: self.stream_resolution,
-            source_id: self.source_id,
+            source: self.source,
             failures_count: self.failures_count.clone(),
         };
 
@@ -493,20 +498,6 @@ impl Stream {
     /// will terminate to trigger a restart.
     pub fn get_failures_count(&self) -> u64 {
         *self.failures_count.lock().unwrap()
-    }
-
-    /// Returns the identifier of the capture source.
-    ///
-    /// # Returns
-    /// The ID of the display or window that this stream is currently configured
-    /// to capture from. This corresponds to the ID passed to `start_capture()`.
-    ///
-    /// # Use Cases
-    /// Used for identifying which source a stream is associated with, particularly
-    /// useful when managing multiple streams or when restarting streams to ensure
-    /// they reconnect to the same source.
-    pub fn source_id(&self) -> u32 {
-        self.source_id
     }
 
     pub fn get_stream_extent(&self) -> Extent {

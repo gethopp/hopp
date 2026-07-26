@@ -61,6 +61,14 @@ pub enum CapturerError {
     /// Couldn't find selected source.
     #[error("Couldn't find selected source")]
     SelectedSourceNotFound,
+
+    /// Capture source type is unsupported on this platform.
+    #[error("Capture source type is unsupported on this platform")]
+    UnsupportedContentType,
+
+    /// Invalid stream dimensions.
+    #[error("Invalid stream dimensions")]
+    InvalidStreamDimensions,
 }
 
 /// Platform-specific extensions for screen sharing and monitor management.
@@ -188,9 +196,15 @@ impl Capturer {
             self.active_stream = None;
         }
 
-        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), buffer_source)?;
+        let mut stream = Stream::new(
+            content,
+            stream_resolution,
+            scale,
+            self.tx.clone(),
+            buffer_source,
+        )?;
 
-        stream.start_capture(content.id)?;
+        stream.start_capture()?;
         self.active_stream = Some(stream);
         Ok(())
     }
@@ -261,7 +275,7 @@ impl Capturer {
                 // So we just sleep and retry a few times in case it's a temporary error.
                 // If we can't restart the stream after 10 retries, we exit the process
                 // and inform the user to restart the application.
-                let mut res = new_stream.start_capture(new_stream.source_id());
+                let mut res = new_stream.start_capture();
                 for i in 0..MAX_STREAM_FAILURES_BEFORE_EXIT {
                     if res.is_ok() {
                         break;
@@ -285,7 +299,7 @@ impl Capturer {
                             std::process::exit(STREAM_FAILURE_EXIT_CODE);
                         }
                     };
-                    res = new_stream.start_capture(new_stream.source_id());
+                    res = new_stream.start_capture();
                 }
 
                 if let Err(ref e) = res {

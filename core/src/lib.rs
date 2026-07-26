@@ -355,8 +355,8 @@ impl<'a> Application<'a> {
     /// This method sets up the complete screen sharing pipeline:
     /// 1. Calculates optimal streaming resolution using aspect fitting
     /// 2. Creates a livekit room for real-time communication
-    /// 3. Starts screen capture on the selected monitor
-    /// 4. Creates overlay window for cursor visualization
+    /// 3. Starts capture for the selected display or window
+    /// 4. Creates the remote-control overlay for display sharing
     ///
     /// # Arguments
     ///
@@ -372,8 +372,7 @@ impl<'a> Application<'a> {
     ///
     /// On success, this method:
     /// - Starts screen capture in a background thread
-    /// - Creates a maximized transparent overlay window
-    /// - Initializes cursor and keyboard controllers
+    /// - Creates a transparent overlay and input controllers for display sharing
     /// - Begins streaming captured content via LiveKit
     fn screenshare(
         &mut self,
@@ -407,8 +406,13 @@ impl<'a> Application<'a> {
             }
         };
 
-        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
-        let scale = monitor.scale_factor();
+        let selected_monitor =
+            matches!(screenshare_input.content.content_type, ContentType::Display).then(|| {
+                screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id)
+            });
+        let scale = selected_monitor
+            .as_ref()
+            .map_or(1.0, |monitor| monitor.scale_factor());
 
         let res = screen_capturer.start_capture(
             screenshare_input.content,
@@ -436,31 +440,35 @@ impl<'a> Application<'a> {
 
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, self.remote_control_enabled);
-        if let Err(e) = res {
-            self.stop_screenshare();
-            log::error!("screenshare: error creating overlay window: {e:?}");
-            return Err(e);
-        }
+        if let Some(monitor) = selected_monitor {
+            let res = self.create_overlay_window(monitor, self.remote_control_enabled);
+            if let Err(e) = res {
+                self.stop_screenshare();
+                log::error!("screenshare: error creating overlay window: {e:?}");
+                return Err(e);
+            }
 
-        let room_service = self.room_service.as_ref().unwrap();
-        if let (Some(window_manager), Some(remote_control)) =
-            (self.window_manager.as_mut(), self.remote_control.as_mut())
-        {
-            if let Some(gfx) = window_manager.active_gfx_mut() {
-                let existing_participants = room_service.get_participants();
-                for participant in &existing_participants {
-                    if let Err(e) =
-                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
-                    {
-                        log::error!(
-                            "Failed to create cursor for participant {}: {e}",
-                            participant.identity
-                        );
-                    } else {
-                        remote_control
-                            .cursor_controller
-                            .add_controller(participant.identity.clone());
+            let room_service = self.room_service.as_ref().unwrap();
+            if let (Some(window_manager), Some(remote_control)) =
+                (self.window_manager.as_mut(), self.remote_control.as_mut())
+            {
+                if let Some(gfx) = window_manager.active_gfx_mut() {
+                    let existing_participants = room_service.get_participants();
+                    for participant in &existing_participants {
+                        if let Err(e) = gfx.add_participant(
+                            participant.identity.clone(),
+                            &participant.name,
+                            false,
+                        ) {
+                            log::error!(
+                                "Failed to create cursor for participant {}: {e}",
+                                participant.identity
+                            );
+                        } else {
+                            remote_control
+                                .cursor_controller
+                                .add_controller(participant.identity.clone());
+                        }
                     }
                 }
             }
@@ -623,28 +631,21 @@ impl<'a> Application<'a> {
         self.screen_selection_active = false;
     }
 
-    fn select_screen_selection_window(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
-    ) {
-        let Some(message) = self.screenshare_message_for_window(event_loop, window_id) else {
-            log::error!("select_screen_selection_window: failed to resolve selected screen");
-            return;
-        };
-
+    fn select_source(&mut self, content: Content) {
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
         self.screen_selection_active = false;
 
+        let message = ScreenShareMessage {
+            content,
+            resolution: self.screen_share_resolution.extent(),
+        };
         if let Err(error) = self
             .event_loop_proxy
             .send_event(UserEvent::ScreenShare(message))
         {
-            log::error!(
-                "select_screen_selection_window: failed to send ScreenShare event: {error:?}"
-            );
+            log::error!("select_source: failed to send ScreenShare event: {error:?}");
         }
     }
 
@@ -749,11 +750,11 @@ impl<'a> Application<'a> {
         self.remote_control = None;
     }
 
-    fn screenshare_message_for_window(
+    fn display_content_for_selection_window(
         &self,
         event_loop: &ActiveEventLoop,
         window_id: winit::window::WindowId,
-    ) -> Option<ScreenShareMessage> {
+    ) -> Option<Content> {
         let clicked_monitor_id = self
             .window_manager
             .as_ref()?
@@ -763,16 +764,11 @@ impl<'a> Application<'a> {
             .available_monitors()
             .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == clicked_monitor_id)?;
 
-        let content_id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
+        let id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
 
-        let resolution = self.screen_share_resolution.extent();
-
-        Some(ScreenShareMessage {
-            content: Content {
-                content_type: ContentType::Display,
-                id: content_id,
-            },
-            resolution,
+        Some(Content {
+            content_type: ContentType::Display,
+            id,
         })
     }
 }
@@ -2264,7 +2260,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 button: MouseButton::Left,
                 ..
             } if self.screen_selection_active => {
-                self.select_screen_selection_window(event_loop, window_id);
+                if let Some(content) =
+                    self.display_content_for_selection_window(event_loop, window_id)
+                {
+                    self.select_source(content);
+                } else {
+                    log::error!("window_event: failed to resolve selected source");
+                }
             }
             WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
                 if let Some(window_manager) = self.window_manager.as_ref() {
@@ -2288,7 +2290,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                     Key::Named(NamedKey::Enter) => {
                         log::info!("window_event: Enter, selecting focused screen");
-                        self.select_screen_selection_window(event_loop, window_id);
+                        if let Some(content) =
+                            self.display_content_for_selection_window(event_loop, window_id)
+                        {
+                            self.select_source(content);
+                        } else {
+                            log::error!("window_event: failed to resolve selected source");
+                        }
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
