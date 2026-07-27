@@ -256,22 +256,23 @@ impl OverlaySurface {
             }
         });
 
-        let toggle_layer: Element<'static, Message, Theme, iced::Renderer> = if window_focused {
-            container(toggle)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::End)
-                .align_y(Alignment::Start)
-                .padding(Padding {
-                    top: 24.0,
-                    right: 24.0,
-                    bottom: 0.0,
-                    left: 0.0,
-                })
-                .into()
-        } else {
-            Space::new().into()
-        };
+        let toggle_layer: Element<'static, Message, Theme, iced::Renderer> =
+            if cfg!(target_os = "macos") && window_focused {
+                container(toggle)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::Start)
+                    .padding(Padding {
+                        top: 24.0,
+                        right: 24.0,
+                        bottom: 0.0,
+                        left: 0.0,
+                    })
+                    .into()
+            } else {
+                Space::new().into()
+            };
 
         if let Some(frame) = border_frame {
             stack![
