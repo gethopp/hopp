@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use iced::widget::{canvas, container};
 use iced::{Background, Color, Length, Rectangle, Theme};
@@ -10,7 +10,7 @@ use iced_winit::core::{window, Event, Size};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -24,7 +24,7 @@ use crate::graphics::graphics_window_context::{
     ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
 };
 use crate::room_service::DrawingMode;
-use crate::utils::geometry::Position;
+use crate::utils::geometry::{Frame, Position};
 use crate::window::drawing_helpers;
 
 pub fn drawing_window_attributes() -> WindowAttributes {
@@ -51,6 +51,48 @@ pub fn drawing_window_attributes() -> WindowAttributes {
 pub(crate) enum RedrawCommand {
     Activity,
     Stop,
+}
+
+fn valid_frame(frame: Frame) -> bool {
+    frame.origin_x.is_finite()
+        && frame.origin_y.is_finite()
+        && frame.extent.width.is_finite()
+        && frame.extent.height.is_finite()
+        && frame.extent.width > 0.0
+        && frame.extent.height > 0.0
+}
+
+fn source_from_overlay_local(
+    frame: Frame,
+    overlay_position: LogicalPosition<f64>,
+    local: Position,
+) -> Option<Position> {
+    if !valid_frame(frame) {
+        return None;
+    }
+    let source = Position {
+        x: (overlay_position.x + local.x - frame.origin_x) / frame.extent.width,
+        y: (overlay_position.y + local.y - frame.origin_y) / frame.extent.height,
+    };
+    (source.x.is_finite()
+        && source.y.is_finite()
+        && (0.0..=1.0).contains(&source.x)
+        && (0.0..=1.0).contains(&source.y))
+    .then_some(source)
+}
+
+fn overlay_local_from_source(
+    frame: Frame,
+    overlay_position: LogicalPosition<f64>,
+    source: Position,
+) -> Position {
+    if !valid_frame(frame) {
+        return Position { x: -1.0, y: -1.0 };
+    }
+    Position {
+        x: frame.origin_x + source.x * frame.extent.width - overlay_position.x,
+        y: frame.origin_y + source.y * frame.extent.height - overlay_position.y,
+    }
 }
 
 fn spawn_redraw_thread(
@@ -112,6 +154,10 @@ pub enum DrawingMessage {}
 
 struct DrawingOverlay<'a> {
     participants: &'a ParticipantsManager,
+    capture_frame: Option<Frame>,
+    overlay_position: LogicalPosition<f64>,
+    source_y_scale: f64,
+    source_y_offset: f64,
 }
 
 impl<'a, Message> iced::widget::canvas::Program<Message> for DrawingOverlay<'a> {
@@ -126,9 +172,12 @@ impl<'a, Message> iced::widget::canvas::Program<Message> for DrawingOverlay<'a> 
         _cursor: mouse::Cursor,
     ) -> Vec<iced::widget::canvas::Geometry> {
         let translate = |pos: Position| -> Position {
+            if let Some(frame) = self.capture_frame {
+                return overlay_local_from_source(frame, self.overlay_position, pos);
+            }
             Position {
                 x: pos.x * bounds.width as f64,
-                y: pos.y * bounds.height as f64,
+                y: ((pos.y - self.source_y_offset) / self.source_y_scale) * bounds.height as f64,
             }
         };
         self.participants.draw(renderer, bounds, &translate)
@@ -150,6 +199,7 @@ pub struct DrawingWindow {
     left_mouse_pressed: bool,
     current_path_id: u64,
     last_cursor_position: Option<(f64, f64)>,
+    capture_frame: Option<Arc<Mutex<Frame>>>,
     draw_y_scale: f64,
     draw_y_offset: f64,
     draw_persist: bool,
@@ -167,7 +217,8 @@ impl DrawingWindow {
         context_manager: &ContextManager,
         event_loop: &ActiveEventLoop,
         permanent: bool,
-        position: Option<winit::dpi::LogicalPosition<f64>>,
+        position: Option<LogicalPosition<f64>>,
+        capture_frame: Option<Arc<Mutex<Frame>>>,
     ) -> Result<Self, DrawingWindowError> {
         log::info!("DrawingWindow::new");
 
@@ -290,6 +341,7 @@ impl DrawingWindow {
             left_mouse_pressed: false,
             current_path_id: 0,
             last_cursor_position: None,
+            capture_frame,
             draw_y_scale: 1.0,
             draw_y_offset: 0.0,
             draw_persist: permanent,
@@ -313,6 +365,10 @@ impl DrawingWindow {
         let _ = self.redraw_tx.send(RedrawCommand::Activity);
     }
 
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
     pub fn stop_redraw_thread(&mut self) {
         if let Err(e) = self.redraw_tx.send(RedrawCommand::Stop) {
             log::error!("DrawingWindow::stop_redraw_thread: failed to send Stop: {e:?}");
@@ -324,7 +380,12 @@ impl DrawingWindow {
         self.window.set_visible(false);
     }
 
-    pub fn show(&mut self, position: Option<winit::dpi::LogicalPosition<f64>>) {
+    pub fn show(
+        &mut self,
+        position: Option<LogicalPosition<f64>>,
+        capture_frame: Option<Arc<Mutex<Frame>>>,
+    ) {
+        self.capture_frame = capture_frame;
         if let Some(pos) = position {
             self.window.set_outer_position(pos);
         }
@@ -352,6 +413,15 @@ impl DrawingWindow {
         self.window.focus_window();
         self.update_draw_y_transform();
         self.window.request_redraw();
+    }
+
+    pub fn move_to(&mut self, position: Option<LogicalPosition<f64>>) {
+        if let Some(position) = position {
+            self.window.set_outer_position(position);
+            self.window.set_maximized(true);
+            self.update_draw_y_transform();
+            self.window.request_redraw();
+        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -443,12 +513,62 @@ impl DrawingWindow {
         (local_y * self.draw_y_scale + self.draw_y_offset).clamp(0.0, 1.0)
     }
 
+    fn capture_frame(&self) -> Option<Frame> {
+        self.capture_frame
+            .as_ref()
+            .and_then(|frame| frame.lock().ok().map(|frame| *frame))
+    }
+
+    fn overlay_position(&self) -> Option<LogicalPosition<f64>> {
+        self.window
+            .inner_position()
+            .ok()
+            .map(|position| position.to_logical(self.window.scale_factor()))
+    }
+
+    fn source_position(&self, local: Position) -> Option<Position> {
+        if let Some(frame) = self.capture_frame() {
+            return self
+                .overlay_position()
+                .and_then(|position| source_from_overlay_local(frame, position, local));
+        }
+
+        let size = self.window.inner_size();
+        let scale = self.window.scale_factor();
+        let logical_size = size.to_logical::<f64>(scale);
+        (logical_size.width > 0.0 && logical_size.height > 0.0).then_some(Position {
+            x: (local.x / logical_size.width).clamp(0.0, 1.0),
+            y: self.draw_payload_y((local.y / logical_size.height).clamp(0.0, 1.0)),
+        })
+    }
+
+    fn end_stroke(&mut self) -> Option<DrawingWindowInputEvent> {
+        self.left_mouse_pressed = false;
+        let (x, y) = self.last_cursor_position?;
+        self.participants_manager.draw_end(
+            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
+            Position { x, y },
+        );
+        self.signal_activity();
+        Some(DrawingWindowInputEvent::DrawEnd { x, y })
+    }
+
     fn view<'a>(
         participants: &'a ParticipantsManager,
+        capture_frame: Option<Frame>,
+        overlay_position: LogicalPosition<f64>,
+        source_y_scale: f64,
+        source_y_offset: f64,
     ) -> iced::Element<'a, DrawingMessage, Theme, iced::Renderer> {
-        let canvas_overlay = canvas(DrawingOverlay { participants })
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let canvas_overlay = canvas(DrawingOverlay {
+            participants,
+            capture_frame,
+            overlay_position,
+            source_y_scale,
+            source_y_offset,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         container(canvas_overlay)
             .width(Length::Fill)
@@ -462,25 +582,26 @@ impl DrawingWindow {
 
     pub fn handle_window_event(&mut self, event: WindowEvent) -> Option<DrawingWindowInputEvent> {
         let mut input_event = None;
-        let scale_factor = self.window.scale_factor() as f32;
 
         match &event {
             WindowEvent::CursorMoved { position, .. } => {
-                let physical_size = self.window.inner_size();
-                let pct_x = (position.x / physical_size.width as f64).clamp(0.0, 1.0);
-                let pct_y = (position.y / physical_size.height as f64).clamp(0.0, 1.0);
-                self.last_cursor_position = Some((pct_x, pct_y));
-
-                if self.left_mouse_pressed {
-                    self.participants_manager.draw_add_point(
-                        drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                        Position { x: pct_x, y: pct_y },
-                    );
-                    input_event = Some(DrawingWindowInputEvent::DrawAddPoint {
-                        x: pct_x,
-                        y: self.draw_payload_y(pct_y),
-                    });
-                    self.signal_activity();
+                let local = position.to_logical(self.window.scale_factor());
+                if let Some(source) = self.source_position(Position {
+                    x: local.x,
+                    y: local.y,
+                }) {
+                    self.last_cursor_position = Some((source.x, source.y));
+                    if self.left_mouse_pressed {
+                        self.participants_manager
+                            .draw_add_point(drawing_helpers::LOCAL_PARTICIPANT_IDENTITY, source);
+                        input_event = Some(DrawingWindowInputEvent::DrawAddPoint {
+                            x: source.x,
+                            y: source.y,
+                        });
+                        self.signal_activity();
+                    }
+                } else if self.left_mouse_pressed {
+                    input_event = self.end_stroke();
                 }
             }
             WindowEvent::CursorEntered { .. } => {
@@ -489,18 +610,7 @@ impl DrawingWindow {
             }
             WindowEvent::CursorLeft { .. } => {
                 if self.left_mouse_pressed {
-                    if let Some((lx, ly)) = self.last_cursor_position {
-                        self.participants_manager.draw_end(
-                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            Position { x: lx, y: ly },
-                        );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
-                            x: lx,
-                            y: self.draw_payload_y(ly),
-                        });
-                    }
-                    self.left_mouse_pressed = false;
-                    self.signal_activity();
+                    input_event = self.end_stroke();
                 }
                 self.set_default_cursor();
             }
@@ -509,62 +619,44 @@ impl DrawingWindow {
             }
             WindowEvent::Focused(false) => {
                 if self.left_mouse_pressed {
-                    if let Some((lx, ly)) = self.last_cursor_position {
-                        self.participants_manager.draw_end(
-                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            Position { x: lx, y: ly },
-                        );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
-                            x: lx,
-                            y: self.draw_payload_y(ly),
-                        });
-                    }
-                    self.left_mouse_pressed = false;
-                    self.signal_activity();
+                    input_event = self.end_stroke();
                 }
                 self.set_default_cursor();
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.set_pencil_cursor();
-                let (pct_x, pct_y) = match &self.cursor {
-                    mouse::Cursor::Available(pos) => {
-                        let physical_size = self.window.inner_size();
-                        let logical_width = physical_size.width as f64 / scale_factor as f64;
-                        let logical_height = physical_size.height as f64 / scale_factor as f64;
-                        (
-                            (pos.x as f64 / logical_width).clamp(0.0, 1.0),
-                            (pos.y as f64 / logical_height).clamp(0.0, 1.0),
-                        )
-                    }
-                    _ => (0.0, 0.0),
+                let source = match &self.cursor {
+                    mouse::Cursor::Available(pos) => self.source_position(Position {
+                        x: pos.x as f64,
+                        y: pos.y as f64,
+                    }),
+                    _ => None,
                 };
 
                 if *button == winit::event::MouseButton::Left {
                     if state.is_pressed() {
+                        let Some(source) = source else {
+                            return input_event;
+                        };
                         self.current_path_id += 1;
                         self.left_mouse_pressed = true;
+                        self.last_cursor_position = Some((source.x, source.y));
                         self.participants_manager.draw_start(
                             drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            Position { x: pct_x, y: pct_y },
+                            source,
                             self.current_path_id,
                         );
                         input_event = Some(DrawingWindowInputEvent::DrawStart {
-                            x: pct_x,
-                            y: self.draw_payload_y(pct_y),
+                            x: source.x,
+                            y: source.y,
                             path_id: self.current_path_id,
                         });
                         self.signal_activity();
                     } else {
-                        self.left_mouse_pressed = false;
-                        self.participants_manager.draw_end(
-                            drawing_helpers::LOCAL_PARTICIPANT_IDENTITY,
-                            Position { x: pct_x, y: pct_y },
-                        );
-                        input_event = Some(DrawingWindowInputEvent::DrawEnd {
-                            x: pct_x,
-                            y: self.draw_payload_y(pct_y),
-                        });
-                        self.signal_activity();
+                        if let Some(source) = source {
+                            self.last_cursor_position = Some((source.x, source.y));
+                        }
+                        input_event = self.end_stroke();
                     }
                 } else if *button == winit::event::MouseButton::Right
                     && state.is_pressed()
@@ -641,7 +733,14 @@ impl DrawingWindow {
 
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
-                    Self::view(&self.participants_manager),
+                    Self::view(
+                        &self.participants_manager,
+                        self.capture_frame(),
+                        self.overlay_position()
+                            .unwrap_or(LogicalPosition::new(0.0, 0.0)),
+                        self.draw_y_scale,
+                        self.draw_y_offset,
+                    ),
                     self.viewport.logical_size(),
                     cache,
                     &mut self.renderer,
@@ -692,7 +791,14 @@ impl DrawingWindow {
 
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
-            Self::view(&self.participants_manager),
+            Self::view(
+                &self.participants_manager,
+                self.capture_frame(),
+                self.overlay_position()
+                    .unwrap_or(LogicalPosition::new(0.0, 0.0)),
+                self.draw_y_scale,
+                self.draw_y_offset,
+            ),
             self.viewport.logical_size(),
             cache,
             &mut self.renderer,

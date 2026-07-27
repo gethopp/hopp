@@ -1329,6 +1329,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::warn!("CaptureFrameChanged: failed to read capture frame");
                     return;
                 };
+                if let Some(drawing_window) = self
+                    .drawing_window
+                    .as_mut()
+                    .filter(|drawing_window| drawing_window.is_visible())
+                {
+                    drawing_window.request_redraw();
+                }
                 let monitors = event_loop.available_monitors().collect::<Vec<_>>();
                 let Some(target_monitor) = monitor_containing_frame(&monitors, frame_snapshot)
                 else {
@@ -1357,6 +1364,16 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     ) {
                         log::error!("CaptureFrameChanged: failed to recreate overlay: {error:?}");
                         self.stop_screenshare();
+                    } else if let Some(drawing_window) = self
+                        .drawing_window
+                        .as_mut()
+                        .filter(|drawing_window| drawing_window.is_visible())
+                    {
+                        let position = self
+                            .window_manager
+                            .as_ref()
+                            .and_then(|window_manager| window_manager.active_window_position());
+                        drawing_window.move_to(position);
                     }
                     return;
                 }
@@ -2119,6 +2136,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
+                    let capture_frame = self
+                        .screen_capturer
+                        .lock()
+                        .ok()
+                        .and_then(|capturer| capturer.frame());
                     let remote_control = self.remote_control.as_mut().unwrap();
 
                     // Disable remote control
@@ -2139,7 +2161,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .as_ref()
                             .and_then(|wm| wm.active_window_position());
                         win.set_draw_persist(drawing_enabled.permanent);
-                        win.show(overlay_position);
+                        win.show(overlay_position, capture_frame);
                         log::info!(
                             "Local drawing mode enabled (permanent: {})",
                             drawing_enabled.permanent
@@ -2155,6 +2177,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             event_loop,
                             drawing_enabled.permanent,
                             overlay_position,
+                            capture_frame,
                         ) {
                             Ok(win) => {
                                 self.drawing_window = Some(win);
