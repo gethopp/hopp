@@ -93,9 +93,10 @@ impl ScreenshareFunctions {
             .windows()
             .into_iter()
             .filter(|window| {
-                window
+                let owner_process_id = window
                     .owning_application()
-                    .is_none_or(|application| application.process_id() != current_process_id)
+                    .map(|application| application.process_id());
+                is_window_selectable(window.window_layer(), owner_process_id, current_process_id)
             })
             .map(|window| {
                 let frame = window.frame();
@@ -126,6 +127,14 @@ impl ScreenshareFunctions {
             window_ids.iter().map(|window_id| *window_id),
         ))
     }
+}
+
+fn is_window_selectable(
+    layer: i32,
+    owner_process_id: Option<i32>,
+    current_process_id: i32,
+) -> bool {
+    layer == 0 && owner_process_id.is_some_and(|process_id| process_id != current_process_id)
 }
 
 fn windows_in_front_order(
