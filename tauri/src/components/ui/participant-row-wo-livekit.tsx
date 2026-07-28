@@ -14,7 +14,7 @@ import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAPI } from "@/services/query";
-import { useEndCall } from "@/lib/hooks";
+import { endCallAndWait, useEndCall } from "@/lib/hooks";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -104,8 +104,7 @@ export const ParticipantRow = (props: {
       });
 
       if (callTokens) {
-        endCall();
-        await sleep(500);
+        await endCallAndWait(endCall);
       }
 
       const tokens = await getRoomTokens({

@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { once } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import hotkeys from "hotkeys-js";
 import useStore, { ParticipantRole } from "@/store/store";
@@ -9,6 +10,7 @@ import { sounds } from "@/constants/sounds";
 import { useFetchClient } from "@/services/query";
 
 const appWindow = getCurrentWebviewWindow();
+const CALL_END_TIMEOUT_MS = 5_000;
 
 /**
  * Hook to detect and listen for system theme changes (light/dark mode).
@@ -142,4 +144,26 @@ export function useEndCall() {
   }, [callTokens, setCallTokens, user, posthog, fetchClient]);
 
   return endCall;
+}
+
+export async function endCallAndWait(endCall: () => void) {
+  let resolveCallEnded = () => {};
+  const callEnded = new Promise<void>((resolve) => {
+    resolveCallEnded = () => resolve();
+  });
+  const unlisten = await once("core_call_ended", resolveCallEnded);
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    endCall();
+    await Promise.race([
+      callEnded,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("Timed out waiting for core call cleanup")), CALL_END_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    unlisten();
+  }
 }

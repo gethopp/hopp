@@ -1102,9 +1102,6 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
             }
             Message::CallEnded => {
                 log::info!("forward_core_events: call ended");
-                if let Err(e) = app.emit("core_call_ended", &()) {
-                    log::error!("forward_core_events: failed to emit call ended: {e:?}");
-                }
                 let data = app.state::<Mutex<AppData>>();
                 let mut data = data.lock().unwrap();
                 data.call_active = false;
@@ -1123,7 +1120,12 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                         suppress.store(false, Ordering::Relaxed);
                     });
                 }
+                #[cfg(not(target_os = "macos"))]
+                drop(data);
                 shortcuts::unregister_call_shortcuts(&app);
+                if let Err(e) = app.emit("core_call_ended", &()) {
+                    log::error!("forward_core_events: failed to emit call ended: {e:?}");
+                }
             }
             Message::ControllerDrawPersistChanged(persist) => {
                 log::info!("forward_core_events: controller draw persist changed: {persist}");

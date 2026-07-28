@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { HiMagnifyingGlass, HiOutlinePencil, HiOutlineTrash } from "react-icons/hi2";
 import { useState } from "react";
 import doorImage from "@/assets/door.png";
-import { useEndCall } from "@/lib/hooks";
+import { endCallAndWait, useEndCall } from "@/lib/hooks";
 
 type Room = components["schemas"]["Room"];
 
@@ -83,7 +83,7 @@ const RoomPresenceAvatars = ({
                         alt={`${info.first_name} ${info.last_name}`}
                         className="size-full object-cover"
                       />
-                      : <span className="text-[8px] font-medium text-emerald-700">
+                    : <span className="text-[8px] font-medium text-emerald-700">
                         {info.first_name[0]}
                         {info.last_name[0]}
                       </span>
@@ -135,7 +135,7 @@ const RoomPresenceAvatars = ({
 };
 
 export const Rooms = () => {
-  const { authToken, callTokens, setCallTokens, teammates, user } = useStore();
+  const { authToken, callTokens, setCallTokens, setTab, teammates, user } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -264,12 +264,11 @@ export const Rooms = () => {
 
   const handleJoinRoom = useCallback(
     async (room: Room) => {
-      if (isJoiningRoom) return;
-
-      // End existing call if there is one
-      if (callTokens) {
-        endCall();
+      if (callTokens?.room?.id === room.id) {
+        setTab("call");
+        return;
       }
+      if (isJoiningRoom) return;
 
       setIsJoiningRoom(true);
       joiningToastTimeout.current = setTimeout(() => {
@@ -277,6 +276,10 @@ export const Rooms = () => {
       }, 300);
 
       try {
+        if (callTokens) {
+          await endCallAndWait(endCall);
+        }
+
         const tokens = await getRoomTokens({
           params: {
             path: {
@@ -325,7 +328,7 @@ export const Rooms = () => {
         setIsJoiningRoom(false);
       }
     },
-    [getRoomTokens, callTokens, setCallTokens, endCall, isJoiningRoom],
+    [getRoomTokens, callTokens, setCallTokens, setTab, endCall, isJoiningRoom],
   );
 
   useEffect(() => {
@@ -404,7 +407,7 @@ export const Rooms = () => {
                   presenceAvatars={
                     presenceIds.length > 0 ?
                       <RoomPresenceAvatars participantIds={presenceIds} getParticipantInfo={getParticipantInfo} />
-                      : undefined
+                    : undefined
                   }
                   cornerIcon={
                     <DropdownMenu>
@@ -439,7 +442,7 @@ export const Rooms = () => {
               );
             })}
           </div>
-          : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
+        : <EmptyRoomsState onCreateRoomClick={() => setIsCreateDialogOpen(true)} isLoadingRooms={isLoadingRooms} />}
         <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <DialogContent container={document.getElementById("app-body")}>
             <DialogHeader>
@@ -522,4 +525,3 @@ const EmptyRoomsState = ({
     </div>
   );
 };
-
