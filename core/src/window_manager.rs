@@ -370,6 +370,26 @@ impl<'a> WindowManager<'a> {
             .collect()
     }
 
+    pub fn active_window_monitor_mismatch(
+        &self,
+        window_id: winit::window::WindowId,
+    ) -> Option<MonitorId> {
+        let active_monitor_id = self.active_monitor_id.as_ref()?;
+        let entry = self.windows.iter().find(|entry| {
+            &entry.monitor_id == active_monitor_id && entry.window.id() == window_id
+        })?;
+        let current_monitor_id = entry
+            .window
+            .current_monitor()
+            .map(|monitor| ScreenshareFunctions::get_monitor_id(&monitor));
+
+        (current_monitor_id.as_ref() != Some(active_monitor_id)).then(|| active_monitor_id.clone())
+    }
+
+    pub fn active_monitor_id(&self) -> Option<MonitorId> {
+        self.active_monitor_id.clone()
+    }
+
     pub fn handle_screen_selection_event(
         &mut self,
         window_id: winit::window::WindowId,
@@ -739,6 +759,9 @@ enum FullscreenError {
     #[error("Failed to get raw window handle")]
     #[cfg(target_os = "macos")]
     FailedToGetRawWindowHandle,
+    #[error("Window is not associated with a screen")]
+    #[cfg(target_os = "macos")]
+    ScreenUnavailable,
     #[error("Failed to match fullscreen size within timeout")]
     FailedToMatchFullscreenSize,
 }
@@ -769,6 +792,10 @@ fn set_fullscreen(
     log::info!("set_fullscreen: {selected_monitor:?}");
     #[cfg(target_os = "macos")]
     {
+        if window.current_monitor().is_none() {
+            return Err(FullscreenError::ScreenUnavailable);
+        }
+
         /* WA for putting the window in the right place. */
         window.set_simple_fullscreen(true);
 

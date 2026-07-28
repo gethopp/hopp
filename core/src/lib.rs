@@ -58,7 +58,7 @@ pub(crate) mod window_manager;
 pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
-use capture::capturer::{poll_stream, Capturer, ScreenshareExt, ScreenshareFunctions};
+use capture::capturer::{poll_stream, Capturer, MonitorId, ScreenshareExt, ScreenshareFunctions};
 use graphics::graphics_context::participant::CursorMode;
 use graphics::graphics_context::GraphicsContext;
 use graphics::graphics_window_context::ContextManager;
@@ -320,6 +320,7 @@ pub struct Application<'a> {
     remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
     screen_selection: Option<ScreenSelectionState>,
+    pending_overlay_repair: Option<MonitorId>,
 }
 
 #[derive(Error, Debug)]
@@ -408,6 +409,7 @@ impl<'a> Application<'a> {
             remote_control_enabled: true,
             clipboard_controller,
             screen_selection: None,
+            pending_overlay_repair: None,
         })
     }
 
@@ -930,10 +932,74 @@ impl<'a> Application<'a> {
 
     fn destroy_overlay_window(&mut self) {
         log::info!("destroy_overlay_window");
+        self.pending_overlay_repair = None;
         if let Some(wm) = self.window_manager.as_mut() {
             wm.hide_active_window();
         }
         self.remote_control = None;
+    }
+
+    fn repair_overlay_monitor(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        target_monitor_id: MonitorId,
+    ) {
+        let frame = match self.screen_capturer.lock() {
+            Ok(capturer) => capturer.frame(),
+            Err(error) => {
+                log::error!("repair_overlay_monitor: failed to lock capturer: {error:?}");
+                return;
+            }
+        };
+
+        self.destroy_overlay_window();
+
+        let update_result = match (self.window_manager.as_mut(), self.context_manager.as_ref()) {
+            (Some(window_manager), Some(context_manager)) => {
+                window_manager.update(event_loop, context_manager)
+            }
+            _ => {
+                log::error!("repair_overlay_monitor: window manager not initialized");
+                self.stop_screenshare();
+                return;
+            }
+        };
+        if let Err(error) = update_result {
+            log::error!("repair_overlay_monitor: failed to refresh monitors: {error:?}");
+            self.stop_screenshare();
+            return;
+        }
+
+        let Some(target_monitor) = event_loop
+            .available_monitors()
+            .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == target_monitor_id)
+        else {
+            log::error!(
+                "repair_overlay_monitor: target monitor {target_monitor_id:?} is unavailable"
+            );
+            self.stop_screenshare();
+            return;
+        };
+
+        if let Err(error) =
+            self.create_overlay_window(target_monitor, self.remote_control_enabled, frame)
+        {
+            log::error!("repair_overlay_monitor: failed to recreate overlay: {error:?}");
+            self.stop_screenshare();
+            return;
+        }
+
+        if let Some(drawing_window) = self
+            .drawing_window
+            .as_mut()
+            .filter(|drawing_window| drawing_window.is_visible())
+        {
+            let position = self
+                .window_manager
+                .as_ref()
+                .and_then(|window_manager| window_manager.active_window_position());
+            drawing_window.move_to(position);
+        }
     }
 
     fn display_content_for_selection_window(
@@ -1343,38 +1409,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     return;
                 };
                 let target_monitor_id = ScreenshareFunctions::get_monitor_id(&target_monitor);
-                let already_on_target = self
+                let registered_monitor_id = self
                     .window_manager
-                    .as_mut()
-                    .and_then(|window_manager| window_manager.active_gfx_mut())
-                    .and_then(|gfx| gfx.window().current_monitor())
-                    .is_some_and(|monitor| {
-                        ScreenshareFunctions::get_monitor_id(&monitor) == target_monitor_id
-                    });
+                    .as_ref()
+                    .and_then(|window_manager| window_manager.active_monitor_id());
 
-                if !already_on_target {
-                    log::info!(
-                        "CaptureFrameChanged: shared window moved to monitor {target_monitor_id:?}"
-                    );
-                    self.destroy_overlay_window();
-                    if let Err(error) = self.create_overlay_window(
-                        target_monitor,
-                        self.remote_control_enabled,
-                        Some(frame),
-                    ) {
-                        log::error!("CaptureFrameChanged: failed to recreate overlay: {error:?}");
-                        self.stop_screenshare();
-                    } else if let Some(drawing_window) = self
-                        .drawing_window
-                        .as_mut()
-                        .filter(|drawing_window| drawing_window.is_visible())
-                    {
-                        let position = self
-                            .window_manager
-                            .as_ref()
-                            .and_then(|window_manager| window_manager.active_window_position());
-                        drawing_window.move_to(position);
-                    }
+                if registered_monitor_id.as_ref() != Some(&target_monitor_id) {
+                    self.pending_overlay_repair = Some(target_monitor_id);
                     return;
                 }
 
@@ -2506,6 +2547,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
         }
 
+        if matches!(
+            &event,
+            WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::ScaleFactorChanged { .. }
+        ) && self.pending_overlay_repair.is_none()
+        {
+            self.pending_overlay_repair = self.window_manager.as_ref().and_then(|window_manager| {
+                window_manager.active_window_monitor_mismatch(window_id)
+            });
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -2667,6 +2720,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // and super high CPU usage.
         // Source: https://stackoverflow.com/a/76105294
         use winit::event_loop::ControlFlow;
+
+        if let Some(target_monitor_id) = self.pending_overlay_repair.take() {
+            self.repair_overlay_monitor(event_loop, target_monitor_id);
+        }
 
         let now = std::time::Instant::now();
         let mut next_redraw: Option<std::time::Instant> = None;
