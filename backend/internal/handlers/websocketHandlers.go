@@ -321,9 +321,14 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	const callDedupeTTL = 30 * time.Second
 	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, callerId, callDedupeTTL).Result()
 	if err != nil {
-		// Fail open — do not block legit calls on Redis hiccup.
+		// Fail closed: acceptCall requires this record, so ringing the callee
+		// without it would produce a call that can never be accepted.
 		ctx.Logger().Error("dedupe SETNX error: ", err)
-	} else if !acquired {
+		sendWSErrorMessage(ws, "Call service temporarily unavailable")
+		return
+	}
+
+	if !acquired {
 		ctx.Logger().Warn("Duplicate call dropped: ", callerId, " -> ", calleeID)
 		msg := messages.NewRejectCallMessage(calleeID, "already-calling")
 		msgJSON, mErr := json.Marshal(msg)
