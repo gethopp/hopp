@@ -553,7 +553,7 @@ func (h *SlackHandler) GetSessionTokens(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	if room.TeamID == nil || user.TeamID == nil || *room.TeamID != *user.TeamID {
+	if !sameTeam(user.TeamID, room.TeamID) {
 		c.Logger().Warnf("User %s (team %v) attempted to join Slack session from team %v",
 			user.ID, user.TeamID, room.TeamID)
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have access to this session")
