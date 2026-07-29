@@ -168,7 +168,11 @@ impl OverlaySurface {
                         .size(18.0)
                         .color(Color::from_rgb(0.89, 0.84, 0.98))
                         .font(GEIST_REGULAR),
-                    text("To share a window instead, click \"Share Window\" in the top-right, then click the window you'd like to share. Press ESC to cancel.")
+                    text(if cfg!(target_os = "macos") {
+                        "To share a window, click \"Share Window\" in the top-right. Then hover and click a visible window, or use Left/Right and press Enter. Press ESC to cancel."
+                    } else {
+                        "Press ESC to cancel."
+                    })
                         .size(18.0)
                         .color(Color::from_rgb(0.89, 0.84, 0.98))
                         .font(GEIST_REGULAR),
@@ -210,10 +214,14 @@ impl OverlaySurface {
         };
 
         let toggle = button(
-            text("Share Window")
-                .size(14.0)
-                .color(Color::WHITE)
-                .font(GEIST_REGULAR),
+            text(if window_selected {
+                "Share Screen  ⌘S"
+            } else {
+                "Share Window  ⌘S"
+            })
+            .size(14.0)
+            .color(Color::WHITE)
+            .font(GEIST_REGULAR),
         )
         .on_press(Message::SetSelectionMode(if window_selected {
             SelectionMode::Screen

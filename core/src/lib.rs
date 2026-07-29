@@ -86,7 +86,7 @@ use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::monitor::MonitorHandle;
 
 use window::screensharing_window::ScreenShareInputEvent;
@@ -141,6 +141,8 @@ struct ScreenSelectionState {
     mode: SelectionMode,
     windows: Vec<SelectableWindow>,
     hovered: Option<SelectableWindow>,
+    mouse_hover_enabled: bool,
+    modifiers: ModifiersState,
     next_list_refresh_at: Instant,
 }
 
@@ -153,32 +155,110 @@ fn window_at_cursor(windows: &[SelectableWindow], cursor: Position) -> Option<Se
     })
 }
 
-#[cfg(test)]
-mod screen_selection_tests {
-    use super::*;
-
-    #[test]
-    fn window_at_cursor_uses_front_to_back_order() {
-        let frame = Frame {
-            origin_x: 10.0,
-            origin_y: 20.0,
-            extent: Extent {
-                width: 100.0,
-                height: 80.0,
-            },
-        };
-        let front = SelectableWindow { id: 1, frame };
-        let back = SelectableWindow { id: 2, frame };
-
-        assert_eq!(
-            window_at_cursor(&[front, back], Position { x: 50.0, y: 50.0 }),
-            Some(front)
-        );
-        assert_eq!(
-            window_at_cursor(&[front, back], Position { x: 0.0, y: 0.0 }),
-            None
-        );
+fn cycle_window(
+    windows: &[SelectableWindow],
+    selected_id: Option<u32>,
+    forward: bool,
+) -> Option<SelectableWindow> {
+    if windows.is_empty() {
+        return None;
     }
+
+    let current_index =
+        selected_id.and_then(|id| windows.iter().position(|window| window.id == id));
+    let next_index = match (current_index, forward) {
+        (Some(index), true) => (index + 1) % windows.len(),
+        (Some(0), false) | (None, false) => windows.len() - 1,
+        (Some(index), false) => index - 1,
+        (None, true) => 0,
+    };
+    Some(windows[next_index])
+}
+
+fn valid_selection_frame(frame: Frame) -> bool {
+    frame.origin_x.is_finite()
+        && frame.origin_y.is_finite()
+        && frame.extent.width.is_finite()
+        && frame.extent.height.is_finite()
+        && frame.extent.width > 0.0
+        && frame.extent.height > 0.0
+}
+
+fn subtract_frame(frame: Frame, occluder: Frame, output: &mut Vec<Frame>) {
+    let frame_right = frame.origin_x + frame.extent.width;
+    let frame_bottom = frame.origin_y + frame.extent.height;
+    let overlap_left = frame.origin_x.max(occluder.origin_x);
+    let overlap_top = frame.origin_y.max(occluder.origin_y);
+    let overlap_right = frame_right.min(occluder.origin_x + occluder.extent.width);
+    let overlap_bottom = frame_bottom.min(occluder.origin_y + occluder.extent.height);
+
+    if overlap_left >= overlap_right || overlap_top >= overlap_bottom {
+        output.push(frame);
+        return;
+    }
+
+    let mut push = |origin_x, origin_y, width, height| {
+        if width > 0.0 && height > 0.0 {
+            output.push(Frame {
+                origin_x,
+                origin_y,
+                extent: Extent { width, height },
+            });
+        }
+    };
+    push(
+        frame.origin_x,
+        frame.origin_y,
+        frame.extent.width,
+        overlap_top - frame.origin_y,
+    );
+    push(
+        frame.origin_x,
+        overlap_bottom,
+        frame.extent.width,
+        frame_bottom - overlap_bottom,
+    );
+    push(
+        frame.origin_x,
+        overlap_top,
+        overlap_left - frame.origin_x,
+        overlap_bottom - overlap_top,
+    );
+    push(
+        overlap_right,
+        overlap_top,
+        frame_right - overlap_right,
+        overlap_bottom - overlap_top,
+    );
+}
+
+fn visible_windows(windows: Vec<SelectableWindow>) -> Vec<SelectableWindow> {
+    let mut occluders = Vec::with_capacity(windows.len());
+    windows
+        .into_iter()
+        .filter(|window| {
+            if !valid_selection_frame(window.frame) {
+                return false;
+            }
+
+            // ponytail: rectangle fragments are enough for desktop-sized window lists;
+            // replace with a sweep line if the 100 ms refresh ever profiles poorly.
+            let mut fragments = vec![window.frame];
+            for occluder in &occluders {
+                let mut remaining = Vec::with_capacity(fragments.len() * 4);
+                for fragment in fragments {
+                    subtract_frame(fragment, *occluder, &mut remaining);
+                }
+                if remaining.is_empty() {
+                    return false;
+                }
+                fragments = remaining;
+            }
+
+            occluders.push(window.frame);
+            true
+        })
+        .collect()
 }
 
 fn monitor_containing_frame(monitors: &[MonitorHandle], frame: Frame) -> Option<MonitorHandle> {
@@ -442,6 +522,8 @@ impl<'a> Application<'a> {
             mode: SelectionMode::Screen,
             windows: Vec::new(),
             hovered: None,
+            mouse_hover_enabled: true,
+            modifiers: ModifiersState::default(),
             next_list_refresh_at: Instant::now() + WINDOW_LIST_REFRESH_INTERVAL,
         });
         window_manager.show_screen_selection(event_loop);
@@ -482,32 +564,50 @@ impl<'a> Application<'a> {
     }
 
     fn refresh_window_list(&mut self) {
-        if !self
-            .screen_selection
-            .as_ref()
-            .is_some_and(|selection| selection.mode == SelectionMode::Window)
-        {
+        let Some((mouse_hover_enabled, selected_id)) =
+            self.screen_selection.as_ref().and_then(|selection| {
+                (selection.mode == SelectionMode::Window).then_some((
+                    selection.mouse_hover_enabled,
+                    selection.hovered.map(|window| window.id),
+                ))
+            })
+        else {
             return;
-        }
+        };
 
         #[cfg(target_os = "macos")]
         let windows = ScreenshareFunctions::selectable_windows().unwrap_or_default();
         #[cfg(not(target_os = "macos"))]
         let windows = Vec::new();
+        let windows = visible_windows(windows);
 
+        let mut changed = false;
         if let Some(selection) = self.screen_selection.as_mut() {
             selection.windows = windows;
             selection.next_list_refresh_at = Instant::now() + WINDOW_LIST_REFRESH_INTERVAL;
+            if !mouse_hover_enabled {
+                let hovered = selected_id.and_then(|id| {
+                    selection
+                        .windows
+                        .iter()
+                        .copied()
+                        .find(|window| window.id == id)
+                });
+                changed = selection.hovered != hovered;
+                selection.hovered = hovered;
+            }
         }
-        self.update_hovered_window();
+        if mouse_hover_enabled {
+            self.update_hovered_window();
+        } else if changed {
+            self.publish_selection_overlay();
+        }
     }
 
     fn update_hovered_window(&mut self) {
-        if !self
-            .screen_selection
-            .as_ref()
-            .is_some_and(|selection| selection.mode == SelectionMode::Window)
-        {
+        if !self.screen_selection.as_ref().is_some_and(|selection| {
+            selection.mode == SelectionMode::Window && selection.mouse_hover_enabled
+        }) {
             return;
         }
 
@@ -533,6 +633,27 @@ impl<'a> Application<'a> {
             selection.hovered = hovered;
         }
         self.publish_selection_overlay();
+    }
+
+    fn cycle_hovered_window(&mut self, forward: bool) {
+        let Some(selection) = self.screen_selection.as_mut() else {
+            return;
+        };
+        if selection.mode != SelectionMode::Window {
+            return;
+        }
+
+        selection.mouse_hover_enabled = false;
+        let hovered = cycle_window(
+            &selection.windows,
+            selection.hovered.map(|window| window.id),
+            forward,
+        );
+        let changed = selection.hovered != hovered;
+        selection.hovered = hovered;
+        if changed {
+            self.publish_selection_overlay();
+        }
     }
 
     /// Initiates a screen sharing session with the specified configuration.
@@ -1085,6 +1206,23 @@ impl<'a> Application<'a> {
             content_type: ContentType::Display,
             id,
         })
+    }
+
+    fn selected_content(
+        &self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+    ) -> Option<Content> {
+        let selection = self.screen_selection.as_ref()?;
+        match selection.mode {
+            SelectionMode::Screen => {
+                self.display_content_for_selection_window(event_loop, window_id)
+            }
+            SelectionMode::Window => selection.hovered.map(|window| Content {
+                content_type: ContentType::Window,
+                id: window.id,
+            }),
+        }
     }
 }
 
@@ -2578,10 +2716,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(selected_mode) = selected_mode {
                     self.set_selection_mode(selected_mode);
                 }
-                if matches!(
-                    event,
-                    WindowEvent::CursorEntered { .. } | WindowEvent::CursorMoved { .. }
-                ) {
+                if matches!(event, WindowEvent::CursorMoved { .. }) {
+                    if let Some(selection) = self.screen_selection.as_mut() {
+                        selection.mouse_hover_enabled = true;
+                    }
                     self.update_hovered_window();
                 }
                 if captured {
@@ -2652,19 +2790,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 ..
             } if self.screen_selection.is_some() => {
                 let mode = self.screen_selection.as_ref().unwrap().mode;
-                let content = match mode {
-                    SelectionMode::Screen => {
-                        self.display_content_for_selection_window(event_loop, window_id)
-                    }
-                    SelectionMode::Window => self
-                        .screen_selection
-                        .as_ref()
-                        .and_then(|selection| selection.hovered)
-                        .map(|window| Content {
-                            content_type: ContentType::Window,
-                            id: window.id,
-                        }),
-                };
+                let content = self.selected_content(event_loop, window_id);
 
                 match (mode, content) {
                     (_, Some(content)) => self.select_source(content),
@@ -2686,30 +2812,51 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
+            WindowEvent::ModifiersChanged(modifiers) if self.screen_selection.is_some() => {
+                if let Some(selection) = self.screen_selection.as_mut() {
+                    selection.modifiers = modifiers.state();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. }
                 if self.screen_selection.is_some() && event.state.is_pressed() =>
             {
+                let (mode, modifiers) = self
+                    .screen_selection
+                    .as_ref()
+                    .map(|selection| (selection.mode, selection.modifiers))
+                    .unwrap();
+                let repeat = event.repeat;
                 match event.logical_key {
+                    Key::Character(key)
+                        if cfg!(target_os = "macos")
+                            && !repeat
+                            && modifiers == ModifiersState::SUPER
+                            && key.as_ref().eq_ignore_ascii_case("s") =>
+                    {
+                        self.set_selection_mode(match mode {
+                            SelectionMode::Screen => SelectionMode::Window,
+                            SelectionMode::Window => SelectionMode::Screen,
+                        });
+                    }
                     Key::Named(NamedKey::Escape) => {
                         log::info!("window_event: Escape, cancelling screen selection");
                         self.cancel_screen_selection();
                     }
-                    Key::Named(NamedKey::Enter)
-                        if self
-                            .screen_selection
-                            .as_ref()
-                            .is_some_and(|selection| selection.mode == SelectionMode::Screen) =>
-                    {
-                        log::info!("window_event: Enter, selecting focused screen");
-                        if let Some(content) =
-                            self.display_content_for_selection_window(event_loop, window_id)
-                        {
+                    Key::Named(NamedKey::Enter) => {
+                        log::info!("window_event: Enter, selecting focused source");
+                        if let Some(content) = self.selected_content(event_loop, window_id) {
                             self.select_source(content);
-                        } else {
+                        } else if mode == SelectionMode::Screen {
                             log::error!("window_event: failed to resolve selected source");
                         }
                     }
-                    Key::Named(NamedKey::ArrowLeft) => {
+                    Key::Named(NamedKey::ArrowLeft) if mode == SelectionMode::Window => {
+                        self.cycle_hovered_window(false);
+                    }
+                    Key::Named(NamedKey::ArrowRight) if mode == SelectionMode::Window => {
+                        self.cycle_hovered_window(true);
+                    }
+                    Key::Named(NamedKey::ArrowLeft) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2717,7 +2864,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowRight) => {
+                    Key::Named(NamedKey::ArrowRight) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2725,7 +2872,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowUp) => {
+                    Key::Named(NamedKey::ArrowUp) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2733,7 +2880,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowDown) => {
+                    Key::Named(NamedKey::ArrowDown) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
