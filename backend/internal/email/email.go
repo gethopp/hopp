@@ -3,6 +3,7 @@ package email
 import (
 	"fmt"
 	"hopp-backend/internal/models"
+	"html"
 	"os"
 	"strings"
 
@@ -51,6 +52,30 @@ func NewResendEmailClient(client *resend.Client, defaultSender string, logger ec
 	}
 }
 
+// renderTemplate reads the HTML email template at templatePath and substitutes
+// the given {placeholder} values.
+//
+// Values are HTML-escaped because the templates are plain files interpolated by
+// string replacement rather than through html/template, and several values
+// (names, team names) are free text the user controls. Escaping is also correct
+// for the placeholders that sit inside double-quoted href attributes.
+//
+// The substitution is a single pass, so an escaped value can never be re-scanned
+// as another placeholder.
+func renderTemplate(templatePath string, values map[string]string) (string, error) {
+	templateBytes, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", err
+	}
+
+	pairs := make([]string, 0, len(values)*2)
+	for placeholder, value := range values {
+		pairs = append(pairs, placeholder, html.EscapeString(value))
+	}
+
+	return strings.NewReplacer(pairs...).Replace(string(templateBytes)), nil
+}
+
 // SendAsync sends an email asynchronously
 func (c *ResendEmailClient) SendAsync(toEmail, subject, htmlBody string) {
 	if c == nil || c.client == nil {
@@ -89,14 +114,14 @@ func (c *ResendEmailClient) SendWelcomeEmail(user *models.User) {
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-welcome.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-welcome.html", map[string]string{
+		"{first_name}": user.FirstName,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read welcome email template: %v", err)
 		return
 	}
 
-	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 	subject := "Welcome to Hopp " + user.FirstName
 
 	c.SendAsync(user.Email, subject, htmlBody)
@@ -108,17 +133,12 @@ func (c *ResendEmailClient) SendPasswordResetEmail(toEmail, resetLink string) {
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-password-reset.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-password-reset.html", map[string]string{
+		"{reset_link}": resetLink,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read password reset email template: %v", err)
 		return
-	}
-
-	htmlBody := strings.ReplaceAll(string(templateBytes), "{reset_link}", resetLink)
-
-	if err := os.WriteFile("testing.html", []byte(htmlBody), 0644); err != nil {
-		c.logger.Errorf("Failed to write testing.html: %v", err)
 	}
 
 	subject := "Hopp Password Reset Request"
@@ -133,17 +153,15 @@ func (c *ResendEmailClient) SendTeamInvitationEmail(inviterName, teamName, invit
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-invite-teammate.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-invite-teammate.html", map[string]string{
+		"{inviter_name}": inviterName,
+		"{team_name}":    teamName,
+		"{invite_url}":   inviteLink,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read team invitation email template: %v", err)
 		return
 	}
-
-	htmlBody := string(templateBytes)
-	htmlBody = strings.ReplaceAll(htmlBody, "{inviter_name}", inviterName)
-	htmlBody = strings.ReplaceAll(htmlBody, "{team_name}", teamName)
-	htmlBody = strings.ReplaceAll(htmlBody, "{invite_url}", inviteLink)
 
 	subject := fmt.Sprintf("%s has invited you to join %s team - join the team", inviterName, teamName)
 
@@ -157,19 +175,15 @@ func (c *ResendEmailClient) SendTeamRemovalEmail(user *models.User, oldTeamName,
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-team-removed.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-team-removed.html", map[string]string{
+		"{first_name}":    user.FirstName,
+		"{old_team_name}": oldTeamName,
+		"{new_team_name}": newTeamName,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read team removal email template: %v", err)
 		return
 	}
-
-	replacer := strings.NewReplacer(
-		"{first_name}", user.FirstName,
-		"{old_team_name}", oldTeamName,
-		"{new_team_name}", newTeamName,
-	)
-	htmlBody := replacer.Replace(string(templateBytes))
 
 	subject := fmt.Sprintf("Hopp: You've been removed from %s", oldTeamName)
 
@@ -183,14 +197,13 @@ func (c *ResendEmailClient) SendSubscriptionConfirmationEmail(user *models.User)
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-subscription.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-subscription.html", map[string]string{
+		"{first_name}": user.FirstName,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read subscription confirmation email template: %v", err)
 		return
 	}
-
-	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
 	subject := "Welcome to Hopp Pro 🎉"
 
@@ -205,14 +218,13 @@ func (c *ResendEmailClient) SendSubscriptionTrialEmail(user *models.User) {
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-subscription-trial.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-subscription-trial.html", map[string]string{
+		"{first_name}": user.FirstName,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read subscription trial email template: %v", err)
 		return
 	}
-
-	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
 	subject := "Your Hopp Pro trial has started 🎉"
 
@@ -226,14 +238,13 @@ func (c *ResendEmailClient) SendSubscriptionCancellationEmail(user *models.User)
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-unsubscribe.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-unsubscribe.html", map[string]string{
+		"{first_name}": user.FirstName,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read subscription cancellation email template: %v", err)
 		return
 	}
-
-	htmlBody := strings.ReplaceAll(string(templateBytes), "{first_name}", user.FirstName)
 
 	subject := "We're sorry to see you go 😢"
 
@@ -247,20 +258,16 @@ func (c *ResendEmailClient) SendInvoiceEmail(toEmail string, data InvoiceEmailDa
 		return
 	}
 
-	// Read the template file
-	templateBytes, err := os.ReadFile("web/emails/hopp-invoice.html")
+	htmlBody, err := renderTemplate("web/emails/hopp-invoice.html", map[string]string{
+		"{invoice_number}": data.InvoiceNumber,
+		"{period}":         data.Period,
+		"{view_link}":      data.HostedInvoiceURL,
+		"{download_link}":  data.InvoicePDFURL,
+	})
 	if err != nil {
 		c.logger.Errorf("Failed to read invoice email template: %v", err)
 		return
 	}
-
-	replacer := strings.NewReplacer(
-		"{invoice_number}", data.InvoiceNumber,
-		"{period}", data.Period,
-		"{view_link}", data.HostedInvoiceURL,
-		"{download_link}", data.InvoicePDFURL,
-	)
-	htmlBody := replacer.Replace(string(templateBytes))
 
 	subject := fmt.Sprintf("Invoice #%s from Hopp 🏀", data.InvoiceNumber)
 
