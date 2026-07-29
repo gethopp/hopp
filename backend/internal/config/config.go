@@ -126,6 +126,9 @@ func Load() (*Config, error) {
 	c.Server.TLS.KeyFile = "./certs/localhost-key.pem"
 
 	c.Auth.SessionSecret = os.Getenv("SESSION_SECRET")
+	if c.Auth.SessionSecret == "" {
+		return nil, fmt.Errorf("SESSION_SECRET is required and must not be empty")
+	}
 
 	c.Auth.GoogleKey = os.Getenv("GOOGLE_KEY")
 	c.Auth.GoogleSecret = os.Getenv("GOOGLE_SECRET")
