@@ -169,7 +169,7 @@ impl OverlaySurface {
                         .color(Color::from_rgb(0.89, 0.84, 0.98))
                         .font(GEIST_REGULAR),
                     text(if cfg!(target_os = "macos") {
-                        "To share a window, click \"Share Window\" in the top-right. Then hover and click a visible window, or use Left/Right and press Enter. Press ESC to cancel."
+                        "To share a window, click \"Share Window\" in the top-right. Then hover and click a visible window, or use Left/Right and press Enter.\n\nPress ESC to cancel."
                     } else {
                         "Press ESC to cancel."
                     })

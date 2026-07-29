@@ -136,9 +136,7 @@ impl IcedRenderer {
         let selected_mode = messages.into_iter().next().map(|message| match message {
             Message::SetSelectionMode(mode) => mode,
         });
-        let captured = statuses
-            .iter()
-            .any(|status| *status == iced::event::Status::Captured);
+        let captured = statuses.contains(&iced::event::Status::Captured);
 
         (captured, selected_mode)
     }
