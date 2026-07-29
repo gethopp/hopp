@@ -109,6 +109,15 @@ const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
 const WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
+fn cursor_mode_for_drawing_mode(drawing_mode: &DrawingMode) -> Option<CursorMode> {
+    match drawing_mode {
+        DrawingMode::Draw(_) => Some(CursorMode::Pencil),
+        DrawingMode::ClickAnimation => Some(CursorMode::Pointer),
+        DrawingMode::Disabled => Some(CursorMode::Normal),
+        DrawingMode::Any => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SelectionMode {
     Screen,
@@ -939,6 +948,25 @@ impl<'a> Application<'a> {
         self.remote_control = None;
     }
 
+    fn apply_overlay_participant_drawing_mode(
+        &mut self,
+        identity: &str,
+        drawing_mode: DrawingMode,
+    ) {
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(cursor_mode) = cursor_mode_for_drawing_mode(&drawing_mode) {
+                remote_control
+                    .cursor_controller
+                    .set_controller_mode(identity, cursor_mode);
+            }
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                gfx.set_drawing_mode(identity, drawing_mode);
+            }
+        }
+    }
+
     fn repair_overlay_monitor(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -951,6 +979,18 @@ impl<'a> Application<'a> {
                 return;
             }
         };
+
+        let participant_drawing_modes = self
+            .window_manager
+            .as_mut()
+            .and_then(|window_manager| window_manager.active_gfx_mut())
+            .map(|gfx| gfx.participants_manager_mut().drawing_modes())
+            .unwrap_or_default();
+        let remote_control_enabled = self.remote_control_enabled
+            && self
+                .drawing_window
+                .as_ref()
+                .is_none_or(|drawing_window| !drawing_window.is_visible());
 
         self.destroy_overlay_window();
 
@@ -982,11 +1022,15 @@ impl<'a> Application<'a> {
         };
 
         if let Err(error) =
-            self.create_overlay_window(target_monitor, self.remote_control_enabled, frame)
+            self.create_overlay_window(target_monitor, remote_control_enabled, frame)
         {
             log::error!("repair_overlay_monitor: failed to recreate overlay: {error:?}");
             self.stop_screenshare();
             return;
+        }
+
+        for (identity, drawing_mode) in participant_drawing_modes {
+            self.apply_overlay_participant_drawing_mode(&identity, drawing_mode);
         }
 
         if let Some(drawing_window) = self
@@ -1606,27 +1650,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if let (Some(window_manager), Some(remote_control)) =
-                    (self.window_manager.as_mut(), self.remote_control.as_mut())
-                {
-                    let cursor_controller = &mut remote_control.cursor_controller;
-                    match &drawing_mode {
-                        DrawingMode::Draw(_) => {
-                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Pencil);
-                        }
-                        DrawingMode::ClickAnimation => {
-                            cursor_controller
-                                .set_controller_mode(sid.as_str(), CursorMode::Pointer);
-                        }
-                        DrawingMode::Disabled => {
-                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Normal);
-                        }
-                        DrawingMode::Any => {}
-                    }
-                    if let Some(gfx) = window_manager.active_gfx_mut() {
-                        gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
-                    }
-                }
+                self.apply_overlay_participant_drawing_mode(sid.as_str(), drawing_mode.clone());
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     if screensharing_window.is_visible() {
                         screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);

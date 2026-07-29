@@ -74,6 +74,10 @@ impl Draw {
         }
     }
 
+    pub fn mode(&self) -> DrawingMode {
+        self.mode.clone()
+    }
+
     pub fn set_mode(&mut self, mode: DrawingMode) {
         self.mode = mode.clone();
         if mode == DrawingMode::Disabled {

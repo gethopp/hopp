@@ -231,6 +231,13 @@ impl ParticipantsManager {
         }
     }
 
+    pub fn drawing_modes(&self) -> Vec<(String, DrawingMode)> {
+        self.participants
+            .iter()
+            .map(|(identity, participant)| (identity.clone(), participant.draw().mode()))
+            .collect()
+    }
+
     /// Removes a participant and their data.
     pub fn remove_participant(&mut self, identity: &str) {
         log::info!(
