@@ -595,8 +595,19 @@ impl CursorController {
         redraw_thread_sender: Sender<RedrawThreadCommands>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         clock: Arc<dyn Clock>,
+        target_process_id: Option<i32>,
+        target_window_id: Option<u32>,
     ) -> Result<Self, CursorControllerError> {
         let controllers_cursors = Arc::new(Mutex::new(vec![]));
+        #[cfg(target_os = "macos")]
+        let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new(
+            overlay_window.clone(),
+            target_process_id,
+            target_window_id,
+        )));
+        #[cfg(not(target_os = "macos"))]
+        let _ = (target_process_id, target_window_id);
+        #[cfg(not(target_os = "macos"))]
         let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
         let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
             CursorState::new(redraw_thread_sender.clone(), clock.clone()),

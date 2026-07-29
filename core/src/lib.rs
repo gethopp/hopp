@@ -624,6 +624,8 @@ impl<'a> Application<'a> {
         log::info!("screenshare: screen share track unmuted");
 
         let capture_frame = screen_capturer.frame();
+        let target_process_id = screen_capturer.target_process_id();
+        let target_window_id = screen_capturer.target_window_id();
         let capture_frame_snapshot = capture_frame
             .as_ref()
             .and_then(|frame| frame.lock().ok().map(|frame| *frame));
@@ -635,8 +637,13 @@ impl<'a> Application<'a> {
         drop(screen_capturer);
 
         if let Some(monitor) = overlay_monitor {
-            let res =
-                self.create_overlay_window(monitor, self.remote_control_enabled, capture_frame);
+            let res = self.create_overlay_window(
+                monitor,
+                self.remote_control_enabled,
+                capture_frame,
+                target_process_id,
+                target_window_id,
+            );
             if let Err(e) = res {
                 self.stop_screenshare();
                 log::error!("screenshare: error creating overlay window: {e:?}");
@@ -826,6 +833,8 @@ impl<'a> Application<'a> {
         selected_monitor: MonitorHandle,
         remote_control_enabled: bool,
         frame: Option<Arc<Mutex<Frame>>>,
+        target_process_id: Option<i32>,
+        target_window_id: Option<u32>,
     ) -> Result<(), ServerError> {
         log::info!(
             "create_overlay_window: selected_monitor: {selected_monitor:?} {remote_control_enabled}",
@@ -898,6 +907,8 @@ impl<'a> Application<'a> {
             redraw_sender,
             self.event_loop_proxy.clone(),
             clock,
+            target_process_id,
+            target_window_id,
         )
         .map_err(|error| {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");
@@ -905,7 +916,7 @@ impl<'a> Application<'a> {
         })?;
         let mut remote_control = RemoteControl {
             cursor_controller,
-            keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
+            keyboard_controller: KeyboardController::<KeyboardLayout>::new(target_process_id),
         };
         remote_control.set_enabled(remote_control_enabled);
         self.remote_control = Some(remote_control);
@@ -972,8 +983,12 @@ impl<'a> Application<'a> {
         event_loop: &ActiveEventLoop,
         target_monitor_id: MonitorId,
     ) {
-        let frame = match self.screen_capturer.lock() {
-            Ok(capturer) => capturer.frame(),
+        let (frame, target_process_id, target_window_id) = match self.screen_capturer.lock() {
+            Ok(capturer) => (
+                capturer.frame(),
+                capturer.target_process_id(),
+                capturer.target_window_id(),
+            ),
             Err(error) => {
                 log::error!("repair_overlay_monitor: failed to lock capturer: {error:?}");
                 return;
@@ -1021,9 +1036,13 @@ impl<'a> Application<'a> {
             return;
         };
 
-        if let Err(error) =
-            self.create_overlay_window(target_monitor, remote_control_enabled, frame)
-        {
+        if let Err(error) = self.create_overlay_window(
+            target_monitor,
+            remote_control_enabled,
+            frame,
+            target_process_id,
+            target_window_id,
+        ) {
             log::error!("repair_overlay_monitor: failed to recreate overlay: {error:?}");
             self.stop_screenshare();
             return;

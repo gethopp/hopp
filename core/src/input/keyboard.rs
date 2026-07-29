@@ -348,6 +348,7 @@ pub struct KeyboardController<T: KeyboardLayoutTrait> {
     layout: T,
     /// Whether keyboard simulation is currently enabled.
     enabled: bool,
+    target_process_id: Option<i32>,
 }
 
 impl<T: KeyboardLayoutTrait> KeyboardController<T> {
@@ -360,13 +361,14 @@ impl<T: KeyboardLayoutTrait> KeyboardController<T> {
     /// # Returns
     ///
     /// A new `KeyboardController` instance ready for keystroke simulation.
-    pub fn new() -> KeyboardController<KeyboardLayout> {
+    pub fn new(target_process_id: Option<i32>) -> KeyboardController<KeyboardLayout> {
         let layout = KeyboardLayout::new();
         let map = KeyMap::new(&layout);
         KeyboardController {
             map,
             layout,
             enabled: true,
+            target_process_id,
         }
     }
 
@@ -455,7 +457,12 @@ impl<T: KeyboardLayoutTrait> KeyboardController<T> {
             }
         };
 
-        let event = KeyboardEvent::new(keycode, modifier, keystroke_data.down);
+        let event = KeyboardEvent::new(
+            keycode,
+            modifier,
+            keystroke_data.down,
+            self.target_process_id,
+        );
         if event.is_none() {
             log::error!("simulate_keystrokes: couldn't create keyboard event");
             return;
@@ -504,6 +511,6 @@ mod keyboard_tests {
     #[test]
     fn test_keyboard_simulator() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
-        let _ = KeyboardController::<KeyboardLayout>::new();
+        let _ = KeyboardController::<KeyboardLayout>::new(None);
     }
 }

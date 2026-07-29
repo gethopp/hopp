@@ -119,6 +119,7 @@ pub struct Stream {
     failures_count: Arc<Mutex<u64>>,
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
+    target_process_id: Option<i32>,
 }
 
 impl Stream {
@@ -143,11 +144,13 @@ impl Stream {
                 height: 0.,
             })),
             scale,
+            target_process_id: None,
         })
     }
 
     pub fn start_capture(&mut self) -> Result<(), CapturerError> {
         let content = self.source;
+        self.target_process_id = None;
         log::info!("macos_stream::start_capture: Starting capture for {content}");
 
         let shareable_content = SCShareableContent::get().map_err(|e| {
@@ -185,6 +188,9 @@ impl Stream {
                     .into_iter()
                     .find(|window| window.window_id() == content.id)
                     .ok_or(CapturerError::SelectedSourceNotFound)?;
+                self.target_process_id = window
+                    .owning_application()
+                    .map(|application| application.process_id());
                 let frame = window.frame();
                 *self.frame.lock().unwrap() = Frame {
                     origin_x: frame.origin.x,
@@ -433,6 +439,7 @@ impl Stream {
             failures_count: self.failures_count.clone(),
             output_extent: self.output_extent.clone(),
             scale: self.scale,
+            target_process_id: self.target_process_id,
         })
     }
 
@@ -446,6 +453,14 @@ impl Stream {
 
     pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
         matches!(self.source.content_type, ContentType::Window).then(|| self.frame.clone())
+    }
+
+    pub fn target_process_id(&self) -> Option<i32> {
+        self.target_process_id
+    }
+
+    pub fn target_window_id(&self) -> Option<u32> {
+        matches!(self.source.content_type, ContentType::Window).then_some(self.source.id)
     }
 }
 

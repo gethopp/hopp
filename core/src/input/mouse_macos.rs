@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use crate::{input::mouse::SharerCursor, utils::geometry::Position, MouseClickData, ScrollDelta};
+use crate::{
+    input::mouse::SharerCursor, overlay_window::OverlayWindow, utils::geometry::Position,
+    MouseClickData, ScrollDelta,
+};
 
 use core_foundation::{
     base::TCFType,
@@ -18,6 +21,9 @@ use core_graphics::{
     event::{CGEventTap, CGEventTapOptions, CGEventTapPlacement},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
+use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+use objc2_core_graphics::{CGEvent as ObjcCGEvent, CGEventType as ObjcCGEventType};
+use objc2_foundation::{NSPoint, NSProcessInfo};
 
 use super::{CursorSimulatorFunctions, CUSTOM_MOUSE_EVENT};
 
@@ -249,34 +255,108 @@ impl Drop for MouseObserver {
     }
 }
 
-pub struct CursorSimulator {}
+pub struct CursorSimulator {
+    overlay_window: Arc<OverlayWindow>,
+    target_process_id: Option<i32>,
+    target_window_id: Option<u32>,
+    last_position: Option<Position>,
+}
 
 impl Default for CursorSimulator {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(OverlayWindow::default()), None, None)
     }
 }
 
 impl CursorSimulator {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(
+        overlay_window: Arc<OverlayWindow>,
+        target_process_id: Option<i32>,
+        target_window_id: Option<u32>,
+    ) -> Self {
+        Self {
+            overlay_window,
+            target_process_id,
+            target_window_id,
+            last_position: None,
+        }
+    }
+
+    fn post_to_window(
+        &self,
+        event_type: CGEventType,
+        position: Position,
+        flags: CGEventFlags,
+        click_count: i64,
+        posted_event_type: Option<CGEventType>,
+    ) -> bool {
+        let (Some(process_id), Some(window_id)) = (self.target_process_id, self.target_window_id)
+        else {
+            return false;
+        };
+        let Some(location) = self.overlay_window.global_to_window_local(position) else {
+            log::error!("post_to_window: invalid capture frame or mouse position");
+            return true;
+        };
+        // NSEvent timestamps are measured from system startup, not Foundation's
+        // reference date. Chromium forwards this value into web input handling.
+        let timestamp = NSProcessInfo::processInfo().systemUptime();
+        let Some(ns_event) =
+            NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                NSEventType(event_type as usize),
+                NSPoint::new(location.x, location.y),
+                NSEventModifierFlags(flags.bits() as usize),
+                timestamp,
+                window_id as isize,
+                None,
+                0,
+                click_count as isize,
+                0.,
+            )
+        else {
+            log::error!("post_to_window: failed to create NSEvent");
+            return true;
+        };
+        let Some(cg_event) = ns_event.CGEvent() else {
+            log::error!("post_to_window: failed to convert NSEvent to CGEvent");
+            return true;
+        };
+        if let Some(posted_event_type) = posted_event_type {
+            ObjcCGEvent::set_type(Some(&cg_event), ObjcCGEventType(posted_event_type as u32));
+        }
+        // AppKit may consume the first mouse-down to activate an unfocused
+        // window, so click delivery depends on the target view's first-mouse policy.
+        // This means that when a window is unfocused a click might not go. The alternative
+        // is to use private APIs to handle this properly.
+        ObjcCGEvent::post_to_pid(process_id, Some(&cg_event));
+        true
+    }
+
+    fn post(&self, event: &CGEvent) {
+        if let Some(process_id) = self.target_process_id {
+            event.post_to_pid(process_id);
+        } else {
+            event.post(CGEventTapLocation::HID);
+        }
     }
 }
 
 impl CursorSimulatorFunctions for CursorSimulator {
     fn simulate_cursor_movement(&mut self, position: Position, click_down: bool) {
         log::debug!("simulate_cursor_movement: {position:?}");
+        self.last_position = Some(position);
+        let event_type = if click_down {
+            CGEventType::LeftMouseDragged
+        } else {
+            CGEventType::MouseMoved
+        };
+        self.post_to_window(event_type, position, CGEventFlags::empty(), 0, None);
         let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
             Ok(event_source) => event_source,
             Err(error) => {
                 log::error!("simulate_cursor_movement: error creating event source: {error:?}");
                 return;
             }
-        };
-        let event_type = if click_down {
-            CGEventType::LeftMouseDragged
-        } else {
-            CGEventType::MouseMoved
         };
         let event = CGEvent::new_mouse_event(
             event_source,
@@ -344,6 +424,18 @@ impl CursorSimulatorFunctions for CursorSimulator {
         };
         log::debug!("simulate_click: mouse_dir: {mouse_dir:?} mouse_button: {mouse_button:?}");
 
+        if self.post_to_window(
+            mouse_dir,
+            Position {
+                x: click_data.x as f64,
+                y: click_data.y as f64,
+            },
+            event_flags,
+            click_data.clicks as i64,
+            None,
+        ) {
+            return;
+        }
         let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
             Ok(event_source) => event_source,
             Err(error) => {
@@ -370,7 +462,7 @@ impl CursorSimulatorFunctions for CursorSimulator {
         );
         event.set_flags(event_flags);
         event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, CUSTOM_MOUSE_EVENT);
-        event.post(CGEventTapLocation::HID);
+        self.post(&event);
     }
 
     fn simulate_scroll(&mut self, delta: ScrollDelta) {
@@ -399,6 +491,21 @@ impl CursorSimulatorFunctions for CursorSimulator {
             }
         };
         event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, CUSTOM_MOUSE_EVENT);
-        event.post(CGEventTapLocation::HID);
+        if self.target_process_id.is_some() {
+            let Some(position) = self.last_position else {
+                log::error!("simulate_scroll: target window position is unavailable");
+                return;
+            };
+            // A bare wheel event posted to a PID has no target-window location. Prime
+            // AppKit with an NSEvent-derived scroll event before posting the deltas.
+            self.post_to_window(
+                CGEventType::MouseMoved,
+                position,
+                CGEventFlags::empty(),
+                0,
+                Some(CGEventType::ScrollWheel),
+            );
+        }
+        self.post(&event);
     }
 }

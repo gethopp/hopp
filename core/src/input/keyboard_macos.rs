@@ -222,10 +222,16 @@ impl Drop for KeyboardLayout {
 
 pub struct KeyboardEvent {
     event: CGEvent,
+    target_process_id: Option<i32>,
 }
 
 impl KeyboardEvent {
-    pub fn new(keycode: u16, modifier: u32, down: bool) -> Option<Self> {
+    pub fn new(
+        keycode: u16,
+        modifier: u32,
+        down: bool,
+        target_process_id: Option<i32>,
+    ) -> Option<Self> {
         let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
             Ok(event_source) => event_source,
             Err(()) => {
@@ -267,7 +273,10 @@ impl KeyboardEvent {
 
         event.set_flags(event_flags);
 
-        Some(Self { event })
+        Some(Self {
+            event,
+            target_process_id,
+        })
     }
 }
 
@@ -279,6 +288,10 @@ impl KeyboardEventTrait for KeyboardEvent {
     }
 
     fn send(&self) {
-        self.event.post(CGEventTapLocation::HID);
+        if let Some(process_id) = self.target_process_id {
+            self.event.post_to_pid(process_id);
+        } else {
+            self.event.post(CGEventTapLocation::HID);
+        }
     }
 }

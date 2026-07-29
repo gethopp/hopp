@@ -339,6 +339,14 @@ impl Capturer {
         self.active_stream.as_ref()?.frame()
     }
 
+    pub fn target_process_id(&self) -> Option<i32> {
+        self.active_stream.as_ref()?.target_process_id()
+    }
+
+    pub fn target_window_id(&self) -> Option<u32> {
+        self.active_stream.as_ref()?.target_window_id()
+    }
+
     /// Signals the runtime stream monitoring thread to terminate.
     ///
     /// # Behavior

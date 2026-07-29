@@ -189,6 +189,16 @@ impl OverlayWindow {
         (!is_out_of_bounds(source)).then_some(source)
     }
 
+    pub fn global_to_window_local(&self, position: Position) -> Option<Position> {
+        let frame = self.capture_frame()?;
+        valid_frame(frame).then_some(Position {
+            x: position.x - frame.origin_x,
+            // PID delivery applies the target window's screen Y origin to the converted
+            // event again, so remove it before flipping into AppKit's bottom-up space.
+            y: frame.extent.height - ((position.y - frame.origin_y) - frame.origin_y),
+        })
+    }
+
     fn capture_frame(&self) -> Option<Frame> {
         self.frame
             .as_ref()

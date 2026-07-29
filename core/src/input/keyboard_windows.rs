@@ -153,7 +153,12 @@ pub struct KeyboardEvent {
 }
 
 impl KeyboardEvent {
-    pub fn new(keycode: u16, _modifier: u32, down: bool) -> Option<Self> {
+    pub fn new(
+        keycode: u16,
+        _modifier: u32,
+        down: bool,
+        _target_process_id: Option<i32>,
+    ) -> Option<Self> {
         let flags = if down {
             KEYBD_EVENT_FLAGS(0)
         } else {

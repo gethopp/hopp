@@ -513,6 +513,14 @@ impl Stream {
         None
     }
 
+    pub fn target_process_id(&self) -> Option<i32> {
+        None
+    }
+
+    pub fn target_window_id(&self) -> Option<u32> {
+        None
+    }
+
     #[cfg(target_os = "linux")]
     pub fn capturer(&self) -> Arc<Mutex<DesktopCapturer>> {
         self.capturer.clone()
