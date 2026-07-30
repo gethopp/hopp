@@ -27,6 +27,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type AuthHandler struct {
@@ -329,8 +330,17 @@ func (h *AuthHandler) SocialLogin(c echo.Context) error {
 func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	c.Logger().Info("Received manual sign-up request")
 
+	// Only the fields a caller is allowed to set. Binding into models.User would
+	// mass-assign is_admin, team_id and the Team association straight from the
+	// request body, letting anyone sign up into an arbitrary existing team as
+	// admin. Team membership is decided below, from the invite UUID or by
+	// creating a fresh team.
+	// Addressing: https://github.com/gethopp/hopp/security/advisories/GHSA-cxq8-6457-f956
 	type SignUpRequest struct {
-		models.User
+		FirstName      string `json:"first_name" validate:"required"`
+		LastName       string `json:"last_name" validate:"required"`
+		Email          string `json:"email" validate:"required,email"`
+		Password       string `json:"password" validate:"required,min=8"`
 		TeamName       string `json:"team_name"`
 		TeamInviteUUID string `json:"team_invite_uuid"`
 	}
@@ -340,9 +350,15 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	u := &req.User
-	if err := c.Validate(u); err != nil {
+	if err := c.Validate(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	u := &models.User{
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Email:     req.Email,
+		Password:  req.Password,
 	}
 
 	if burner.IsBurnerEmail(u.Email) {
@@ -381,7 +397,9 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 			u.IsAdmin = true
 		}
 
-		return tx.Create(u).Error
+		// Omitting associations keeps a populated u.Team from upserting a team and
+		// overwriting the team_id decided above.
+		return tx.Omit(clause.Associations).Create(u).Error
 	})
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return echo.NewHTTPError(409, "user with this email already exists")
@@ -1012,14 +1030,15 @@ func (h *AuthHandler) UpdateRoom(c echo.Context) error {
 
 	result := h.DB.Where("id = ?", roomID).First(&room)
 
-	// Check if user can modify the room
-	if user.Team != room.Team {
-		return c.String(http.StatusUnauthorized, "Unauthorized request")
-	}
-
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "Room not found")
 	}
+
+	// Check if user can modify the room
+	if !sameTeam(user.TeamID, room.TeamID) {
+		return c.String(http.StatusUnauthorized, "Unauthorized request")
+	}
+
 	room.Name = req.Name
 
 	if err := h.DB.Save(&room).Error; err != nil {
@@ -1050,7 +1069,7 @@ func (h *AuthHandler) DeleteRoom(c echo.Context) error {
 	}
 
 	// Check if user can modify the room
-	if user.Team != room.Team {
+	if !sameTeam(user.TeamID, room.TeamID) {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
 
@@ -1079,7 +1098,7 @@ func (h *AuthHandler) GetRoom(c echo.Context) error {
 	}
 
 	// Check if user can access the room (same team)
-	if room.TeamID == nil || user.TeamID == nil || *room.TeamID != *user.TeamID {
+	if !sameTeam(user.TeamID, room.TeamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have access to this room")
 	}
 
@@ -1129,7 +1148,7 @@ func (h *AuthHandler) JoinCall(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Target user not found")
 	}
 
-	if user.TeamID == nil || target.TeamID == nil || *user.TeamID != *target.TeamID {
+	if !sameTeam(user.TeamID, target.TeamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "You can only join calls with teammates")
 	}
 
@@ -1310,7 +1329,7 @@ func (h *AuthHandler) RemoveTeammate(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load user")
 	}
 
-	if teammate.TeamID == nil || *teammate.TeamID != *user.TeamID {
+	if !sameTeam(user.TeamID, teammate.TeamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "user not in your team")
 	}
 

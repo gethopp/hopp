@@ -162,6 +162,13 @@ func (bh *BillingHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.U
 	return getAuthenticatedUserFromJWTCommon(c, bh.JwtIssuer, bh.DB)
 }
 
+// sameTeam reports whether two team references point at the same team.
+// A missing team never matches, not even another missing team, so callers that
+// have not been assigned to a team are denied rather than matched together.
+func sameTeam(a, b *uint) bool {
+	return a != nil && b != nil && *a == *b
+}
+
 // checkUserHasAccess checks if a user has an active subscription or trial.
 // Returns true if the user is a Pro subscriber or has an active trial, false otherwise.
 // Returns an error if the subscription check fails.

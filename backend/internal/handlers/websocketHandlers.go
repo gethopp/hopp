@@ -283,11 +283,31 @@ func sendWSErrorMessage(ws *websocket.Conn, message string) {
 	ws.WriteMessage(websocket.TextMessage, msgJSON)
 }
 
+func sendCalleeOfflineMessage(ctx echo.Context, ws *websocket.Conn, calleeID string) {
+	msg := messages.NewCalleeOfflineMessage(calleeID)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		ctx.Logger().Error("Error marshalling callee offline message: ", err)
+		return
+	}
+	ws.WriteMessage(websocket.TextMessage, msgJSON)
+}
+
 func dedupeCallKey(a, b string) string {
 	if a < b {
 		return "call:pending:" + a + ":" + b
 	}
 	return "call:pending:" + b + ":" + a
+}
+
+// consumePendingCall releases the dedupe slot and reports whether callerID
+// really did ring calleeID. The dedupe key is symmetric, so the stored value is
+// what preserves direction: an accept naming a caller that never rang finds no
+// match. Redis errors count as no match, so a call can never be accepted
+// without a pending record.
+func consumePendingCall(ctx context.Context, rdb *redis.Client, callerID, calleeID string) bool {
+	pendingCallerID, err := rdb.GetDel(ctx, dedupeCallKey(callerID, calleeID)).Result()
+	return err == nil && pendingCallerID == callerID
 }
 
 func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, rdb *redis.PubSub, callerId, calleeID string) {
@@ -296,13 +316,19 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	dedupeKey := dedupeCallKey(callerId, calleeID)
 
 	// Dedupe: prevent duplicate/glare call requests within ringing window.
-	// Symmetric key: pending A->B also blocks B->A.
+	// Symmetric key: pending A->B also blocks B->A. The value records who rang,
+	// so only the callee of this call can accept it.
 	const callDedupeTTL = 30 * time.Second
-	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, "1", callDedupeTTL).Result()
+	acquired, err := s.Redis.SetNX(rdbCtx, dedupeKey, callerId, callDedupeTTL).Result()
 	if err != nil {
-		// Fail open — do not block legit calls on Redis hiccup.
+		// Fail closed: acceptCall requires this record, so ringing the callee
+		// without it would produce a call that can never be accepted.
 		ctx.Logger().Error("dedupe SETNX error: ", err)
-	} else if !acquired {
+		sendWSErrorMessage(ws, "Call service temporarily unavailable")
+		return
+	}
+
+	if !acquired {
 		ctx.Logger().Warn("Duplicate call dropped: ", callerId, " -> ", calleeID)
 		msg := messages.NewRejectCallMessage(calleeID, "already-calling")
 		msgJSON, mErr := json.Marshal(msg)
@@ -320,6 +346,16 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 		ctx.Logger().Error("Error getting caller: ", err)
 		s.Redis.Del(rdbCtx, dedupeKey)
 		sendWSErrorMessage(ws, "Failed to get caller information")
+		return
+	}
+
+	// Only teammates may ring each other. Answer as if the callee were offline
+	// so the caller cannot probe for users outside its own team.
+	callee, err := models.GetUserByID(s.DB, calleeID)
+	if err != nil || !sameTeam(caller.TeamID, callee.TeamID) {
+		ctx.Logger().Warn("Blocked call to non-teammate: ", callerId, " -> ", calleeID)
+		s.Redis.Del(rdbCtx, dedupeKey)
+		sendCalleeOfflineMessage(ctx, ws, calleeID)
 		return
 	}
 
@@ -356,13 +392,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 
 	if len(channels) == 0 {
 		s.Redis.Del(rdbCtx, dedupeKey)
-		msg := messages.NewCalleeOfflineMessage(calleeID)
-		msgJSON, err := json.Marshal(msg)
-		if err != nil {
-			ctx.Logger().Error("Error marshalling message: %v", err)
-			return
-		}
-		ws.WriteMessage(websocket.TextMessage, msgJSON)
+		sendCalleeOfflineMessage(ctx, ws, calleeID)
 		return
 	}
 
@@ -372,6 +402,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		ctx.Logger().Error(err)
+		s.Redis.Del(rdbCtx, dedupeKey)
 		return
 	}
 
@@ -395,22 +426,17 @@ func rejectCall(ctx echo.Context, s *common.ServerState, rejecterID string, mess
 }
 
 func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, message messages.AcceptCallMessage) {
-	// Release the dedupe slot — call moving from "pending" to "in progress".
-	s.Redis.Del(context.Background(), dedupeCallKey(message.Payload.CallerID, calleeID))
+	rdbCtx := context.Background()
+	callerID := message.Payload.CallerID
 
-	// Publish a message to the caller for acceptance
-	payloadJSON, err := json.Marshal(message)
-	if err != nil {
-		ctx.Logger().Error(err)
+	// Release the dedupe slot — call moving from "pending" to "in progress".
+	// Only the callee that was actually rung can do this, so an accept for a
+	// call that was never placed mints no tokens.
+	if !consumePendingCall(rdbCtx, s.Redis, callerID, calleeID) {
+		ctx.Logger().Warn("Dropped accept without a pending call: ", calleeID, " accepting ", callerID)
 		return
 	}
-	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), payloadJSON)
 
-	// Next steps after accepting call
-	// 1. Create a room with the two participants
-	// 2. Create 6 tokens, 2 for each participant per video+data stream, audio stream, and camera stream
-	// 3. Send the tokens to the participants
-	callerID := message.Payload.CallerID
 	caller, err := models.GetUserByID(s.DB, callerID)
 	if err != nil {
 		ctx.Logger().Error(err)
@@ -425,6 +451,23 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 		return
 	}
 
+	if !sameTeam(caller.TeamID, callee.TeamID) {
+		ctx.Logger().Warn("Blocked call accept between non-teammates: ", calleeID, " accepting ", callerID)
+		return
+	}
+
+	// Publish a message to the caller for acceptance
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(rdbCtx, redisutil.GetUserChannel(callerID), payloadJSON)
+
+	// Next steps after accepting call
+	// 1. Create a room with the two participants
+	// 2. Create 6 tokens, 2 for each participant per video+data stream, audio stream, and camera stream
+	// 3. Send the tokens to the participants
 	roomName := uuid.New().String()
 	ctx.Logger().Info("Creating room: ", roomName, " for users ", callerID, " ", calleeID)
 
@@ -469,8 +512,8 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	}
 
 	// Publish the LiveKit tokens to the caller and the callee
-	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.CallerID), callerMsgJSON)
-	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(calleeID), calleeMsgJSON)
+	s.Redis.Publish(rdbCtx, redisutil.GetUserChannel(callerID), callerMsgJSON)
+	s.Redis.Publish(rdbCtx, redisutil.GetUserChannel(calleeID), calleeMsgJSON)
 
 	if s.CallState != nil {
 		ctx.Logger().Infof("callstate: AddCallRoom callerID=%s calleeID=%s room=%s", callerID, calleeID, roomName)
