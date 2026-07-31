@@ -412,8 +412,11 @@ impl SharerCursor {
         left_monitor
     }
 
-    fn click(&mut self) {
-        log::debug!("sharer_cursor: click: has_control: {}", self.has_control);
+    fn click(&mut self, press_location: Position) {
+        log::debug!(
+            "sharer_cursor: click: has_control: {} press_location: {press_location:?}",
+            self.has_control
+        );
 
         if self.has_control {
             return;
@@ -421,13 +424,30 @@ impl SharerCursor {
 
         self.hide(true);
 
+        let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
+        if cursor_simulator.has_window_target() {
+            cursor_simulator.simulate_cursor_movement(press_location, false);
+            cursor_simulator.simulate_click(MouseClickData {
+                x: press_location.x as f32,
+                y: press_location.y as f32,
+                button: 0,
+                clicks: 1.,
+                down: true,
+                shift: false,
+                alt: false,
+                ctrl: false,
+                meta: false,
+            });
+            return;
+        }
+
         /*
          * When the sharer takes back control with with a click, we need to move
          * the system cursor to the position of the click, because the system cursor
          * was were the controlling controller was.
          */
-        let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
         let global_position = self.global_position();
+        log::debug!("sharer_cursor: click: simulating take-back down at {global_position:?}");
         cursor_simulator.simulate_click(MouseClickData {
             x: global_position.x as f32,
             y: global_position.y as f32,

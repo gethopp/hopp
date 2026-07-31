@@ -158,10 +158,13 @@ impl MouseObserver {
                             *tap_disabled_clone.lock().unwrap() = true;
                         }
                         _ => {
-                            log::debug!("Any other event received");
                             let mut sharer_cursor = internal.lock().unwrap();
                             let sharer_has_control = sharer_cursor.has_control();
-                            sharer_cursor.click();
+                            let location = Position {
+                                x: d.location().x,
+                                y: d.location().y,
+                            };
+                            sharer_cursor.click(location);
                             /*
                              * We drop the first one where the sharer doesn't have control
                              * and we simulate it the click down. Inside mouse_click_sharer.
@@ -292,6 +295,12 @@ impl CursorSimulator {
         self.sender_flip_height = None;
     }
 
+    /// Whether events are being delivered directly to a shared window's
+    /// process (window sharing with pinned delivery) rather than system-wide.
+    pub fn has_window_target(&self) -> bool {
+        self.target_process_id.is_some()
+    }
+
     /// Measures the height the NSEvent->CGEvent conversion uses to flip AppKit
     /// screen coordinates into global ones (the main display's height) by
     /// posting probe events through the same conversion path used for delivery.
@@ -410,7 +419,17 @@ impl CursorSimulatorFunctions for CursorSimulator {
         } else {
             CGEventType::MouseMoved
         };
-        self.post_to_window(event_type, position, CGEventFlags::empty(), 0, None);
+        if self.post_to_window(event_type, position, CGEventFlags::empty(), 0, None) {
+            /*
+             * Pinned delivery doesn't move the system cursor. Warp it without
+             * posting an event, so the cursor follows without the move also
+             * being delivered to the shared window a second time.
+             */
+            unsafe {
+                CGWarpMouseCursorPosition(CGPoint::new(position.x, position.y));
+            }
+            return;
+        }
         let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
             Ok(event_source) => event_source,
             Err(error) => {

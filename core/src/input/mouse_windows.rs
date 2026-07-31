@@ -132,7 +132,7 @@ fn event_processing_thread(
                     } else if event_type == WM_MOUSEWHEEL {
                         sharer_cursor.scroll();
                     } else {
-                        sharer_cursor.click();
+                        sharer_cursor.click(location);
                     }
                 }
                 EventProcessingCommand::Stop => {
@@ -316,6 +316,11 @@ impl CursorSimulator {
 
     /* macOS only: no conversion measurement is cached on this platform. */
     pub fn invalidate_sender_flip_height(&mut self) {}
+
+    /* macOS only: pinned window delivery does not exist on this platform. */
+    pub fn has_window_target(&self) -> bool {
+        false
+    }
 }
 
 impl Drop for CursorSimulator {

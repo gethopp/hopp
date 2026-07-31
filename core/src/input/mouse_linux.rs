@@ -27,6 +27,11 @@ impl CursorSimulator {
 
     /* macOS only: no conversion measurement is cached on this platform. */
     pub fn invalidate_sender_flip_height(&mut self) {}
+
+    /* macOS only: pinned window delivery does not exist on this platform. */
+    pub fn has_window_target(&self) -> bool {
+        false
+    }
 }
 
 impl CursorSimulatorFunctions for CursorSimulator {
