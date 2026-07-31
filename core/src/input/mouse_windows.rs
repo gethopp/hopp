@@ -115,12 +115,12 @@ fn event_processing_thread(
                             let dy = location.y - last_location.y;
 
                             let global_position = sharer_cursor.global_position();
-                            let sharer_left_monitor = sharer_cursor.set_position(Position {
+                            let released_to_sharer = sharer_cursor.set_position(Position {
                                 x: global_position.x + dx,
                                 y: global_position.y + dy,
                             });
 
-                            if !sharer_left_monitor {
+                            if !released_to_sharer {
                                 unsafe {
                                     let _ = SetCursorPos(
                                         last_location.x as i32,

@@ -130,18 +130,21 @@ impl MouseObserver {
                                 dx -= dx_delta;
                                 dy -= dy_delta;
 
-                                let sharer_left_monitor = sharer_cursor.set_position(Position {
+                                let released_to_sharer = sharer_cursor.set_position(Position {
                                     x: sharer_position.x + dx,
                                     y: sharer_position.y + dy,
                                 });
 
-                                if !sharer_left_monitor {
-                                    unsafe {
-                                        CGWarpMouseCursorPosition(CGPoint {
-                                            x: location.x,
-                                            y: location.y,
-                                        });
-                                    }
+                                let cursor_position = if released_to_sharer {
+                                    sharer_cursor.global_position()
+                                } else {
+                                    location
+                                };
+                                unsafe {
+                                    CGWarpMouseCursorPosition(CGPoint::new(
+                                        cursor_position.x,
+                                        cursor_position.y,
+                                    ));
                                 }
 
                                 return CallbackResult::Drop;

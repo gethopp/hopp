@@ -336,16 +336,6 @@ impl ControllerCursor {
     }
 }
 
-fn is_out_of_bounds(position: Position) -> bool {
-    if !(0.0..=1.0).contains(&position.x) {
-        return true;
-    }
-    if !(0.0..=1.0).contains(&position.y) {
-        return true;
-    }
-    false
-}
-
 pub struct SharerCursor {
     cursor_state: CursorState,
     has_control: bool,
@@ -382,27 +372,26 @@ impl SharerCursor {
         }
     }
 
-    // The result is whether or not the sharer left the monitor.
+    // Returns whether control was released to the sharer.
     fn set_position(&mut self, global_position: Position) -> bool {
         log::debug!("sharer_cursor: set_position: global_position: {global_position:?}");
 
         let local_position = self
             .overlay_window
             .local_percentage_from_global(global_position.x, global_position.y);
+        let source_position = self.overlay_window.global_to_source(global_position);
+
         self.cursor_state
             .set_position(global_position, local_position, !self.has_control);
 
-        // This needs to be after we have set the position in order to use the correct global position
-        // when hiding the virtual cursor.
-        let mut left_monitor = false;
-        if is_out_of_bounds(local_position) && !self.has_control {
-            log::info!("sharer_cursor: set_position: sharer left monitor");
+        let released_to_sharer = source_position.is_none() && !self.has_control;
+        if released_to_sharer {
+            log::info!("sharer_cursor: set_position: sharer left shared source");
             self.hide(true);
-            left_monitor = true;
         }
 
         if self.last_event_position_time.elapsed() > SHARER_POSITION_UPDATE_INTERVAL {
-            if let Some(position) = self.overlay_window.global_to_source(global_position) {
+            if let Some(position) = source_position {
                 let res = self
                     .event_loop_proxy
                     .send_event(UserEvent::SharerPosition(position.x, position.y));
@@ -413,7 +402,7 @@ impl SharerCursor {
             self.last_event_position_time = Instant::now();
         }
 
-        left_monitor
+        released_to_sharer
     }
 
     #[cfg(not(target_os = "macos"))]
