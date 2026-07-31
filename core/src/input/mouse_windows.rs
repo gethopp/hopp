@@ -132,6 +132,8 @@ fn event_processing_thread(
                     } else if event_type == WM_MOUSEWHEEL {
                         sharer_cursor.scroll();
                     } else {
+                        // TODO: See if we can rewrite the hardware event's location
+                        // instead of simulating a new click, like the macOS event tap does.
                         sharer_cursor.click(location);
                     }
                 }

@@ -353,9 +353,12 @@ pub struct SharerCursor {
     overlay_window: Arc<OverlayWindow>,
     /// We are using this to take control back when the sharer clicks/scrolls
     controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
-    cursor_simulator: Arc<Mutex<CursorSimulator>>,
     last_event_position: Position,
     last_event_position_time: Instant,
+    // only Windows simulates the take-back click in SharerCursor.
+    // macOS rewrites the hardware event in the event tap instead.
+    #[cfg(not(target_os = "macos"))]
+    cursor_simulator: Arc<Mutex<CursorSimulator>>,
 }
 
 impl SharerCursor {
@@ -363,8 +366,8 @@ impl SharerCursor {
         cursor_state: CursorState,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         overlay_window: Arc<OverlayWindow>,
-        cursor_simulator: Arc<Mutex<CursorSimulator>>,
         controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
+        #[cfg(not(target_os = "macos"))] cursor_simulator: Arc<Mutex<CursorSimulator>>,
     ) -> Self {
         Self {
             cursor_state,
@@ -372,9 +375,10 @@ impl SharerCursor {
             event_loop_proxy,
             overlay_window,
             controllers_cursors,
-            cursor_simulator,
             last_event_position: Position::default(),
             last_event_position_time: Instant::now(),
+            #[cfg(not(target_os = "macos"))]
+            cursor_simulator,
         }
     }
 
@@ -412,12 +416,8 @@ impl SharerCursor {
         left_monitor
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn click(&mut self, press_location: Position) {
-        log::debug!(
-            "sharer_cursor: click: has_control: {} press_location: {press_location:?}",
-            self.has_control
-        );
-
         if self.has_control {
             return;
         }
@@ -441,13 +441,7 @@ impl SharerCursor {
             return;
         }
 
-        /*
-         * When the sharer takes back control with with a click, we need to move
-         * the system cursor to the position of the click, because the system cursor
-         * was were the controlling controller was.
-         */
         let global_position = self.global_position();
-        log::debug!("sharer_cursor: click: simulating take-back down at {global_position:?}");
         cursor_simulator.simulate_click(MouseClickData {
             x: global_position.x as f32,
             y: global_position.y as f32,
@@ -493,6 +487,7 @@ impl SharerCursor {
         self.has_control = true;
         self.cursor_state.hide();
 
+        #[cfg(not(target_os = "macos"))]
         {
             let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
             let global_position = self.global_position();
@@ -633,8 +628,9 @@ impl CursorController {
             CursorState::new(redraw_thread_sender.clone(), clock.clone()),
             event_loop_proxy.clone(),
             overlay_window.clone(),
-            cursor_simulator.clone(),
             controllers_cursors.clone(),
+            #[cfg(not(target_os = "macos"))]
+            cursor_simulator.clone(),
         )));
         let mouse_observer = MouseObserver::new(sharer_cursor.clone()).map_err(|_| {
             log::error!("CursorController::new: error creating mouse observer");
@@ -779,7 +775,6 @@ impl CursorController {
     /// * `click_data` - Complete mouse click information including:
     /// * `identity` - Session ID identifying which controller is clicking
     pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, identity: &str) {
-        debug!("mouse_click_controller: {click_data:?}");
         let Some(global_position) = self.overlay_window.source_to_global(Position {
             x: click_data.x as f64,
             y: click_data.y as f64,
@@ -795,7 +790,6 @@ impl CursorController {
             }
 
             if controller.mode() != CursorMode::Normal {
-                log::info!("mouse_click_controller: controller mode is not Normal.");
                 break;
             }
             click_data.x = global_position.x as f32;

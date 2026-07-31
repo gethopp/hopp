@@ -150,7 +150,17 @@ impl MouseObserver {
                         CGEventType::ScrollWheel => {
                             log::debug!("Scroll wheel event received");
                             let mut sharer_cursor = internal.lock().unwrap();
+                            let sharer_has_control = sharer_cursor.has_control();
                             sharer_cursor.scroll();
+                            if !sharer_has_control {
+                                let sharer_position = sharer_cursor.global_position();
+                                unsafe {
+                                    CGWarpMouseCursorPosition(CGPoint::new(
+                                        sharer_position.x,
+                                        sharer_position.y,
+                                    ));
+                                }
+                            }
                         }
                         CGEventType::TapDisabledByTimeout => {
                             log::error!("Tap disabled by timeout");
@@ -160,18 +170,18 @@ impl MouseObserver {
                         _ => {
                             let mut sharer_cursor = internal.lock().unwrap();
                             let sharer_has_control = sharer_cursor.has_control();
-                            let location = Position {
-                                x: d.location().x,
-                                y: d.location().y,
-                            };
-                            sharer_cursor.click(location);
-                            /*
-                             * We drop the first one where the sharer doesn't have control
-                             * and we simulate it the click down. Inside mouse_click_sharer.
-                             */
+
+                            // On click transition we just overwrite the event's location
                             if !sharer_has_control {
-                                /* We need to put the cursor where the sharer is. */
-                                return CallbackResult::Drop;
+                                let sharer_position = sharer_cursor.global_position();
+                                sharer_cursor.hide(true);
+                                unsafe {
+                                    CGWarpMouseCursorPosition(CGPoint::new(
+                                        sharer_position.x,
+                                        sharer_position.y,
+                                    ));
+                                }
+                                d.set_location(CGPoint::new(sharer_position.x, sharer_position.y));
                             }
                         }
                     }
@@ -367,8 +377,6 @@ impl CursorSimulator {
             log::error!("post_to_window: invalid capture frame or mouse position");
             return true;
         };
-        // NSEvent timestamps are measured from system startup, not Foundation's
-        // reference date. Chromium forwards this value into web input handling.
         let timestamp = NSProcessInfo::processInfo().systemUptime();
         let Some(ns_event) =
             NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
