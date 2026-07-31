@@ -454,6 +454,7 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
                     .event_loop_proxy
                     .send_event(UserEvent::StopScreenShare);
             }
+            #[cfg(target_os = "macos")]
             Ok(StreamRuntimeMessage::FrameChanged) => {
                 let capturer = capturer.lock().unwrap();
                 let _ = capturer

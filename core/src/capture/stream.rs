@@ -26,8 +26,6 @@ pub enum StreamRuntimeMessage {
     /// that cannot be recovered from without creating a new stream instance.
     /// The main thread will attempt to restart the stream when receiving this message.
     Failed,
-    FrameChanged,
-
     /// Requests that the stream polling thread should terminate.
     ///
     /// This message is sent to gracefully shut down the stream monitoring thread
