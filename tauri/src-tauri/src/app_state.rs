@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-pub use socket_lib::{ScreenShareResolution, StoredMode};
+pub use socket_lib::{ScreenSharePickerMode, ScreenShareResolution, StoredMode};
 
 fn default_true() -> bool {
     true
@@ -23,6 +23,8 @@ pub struct UserSettings {
     pub noise_cancellation_enabled: bool,
     #[serde(default = "default_screen_share_resolution")]
     pub screen_share_resolution: ScreenShareResolution,
+    #[serde(default)]
+    pub screen_share_picker_mode: ScreenSharePickerMode,
     pub hopp_server_url: Option<String>,
     pub shortcut_toggle_mic: Option<String>,
     pub shortcut_toggle_camera: Option<String>,
@@ -44,6 +46,7 @@ impl Default for UserSettings {
             remote_control_enabled: true,
             noise_cancellation_enabled: true,
             screen_share_resolution: ScreenShareResolution::P4K,
+            screen_share_picker_mode: ScreenSharePickerMode::Screen,
             hopp_server_url: None,
             shortcut_toggle_mic: None,
             shortcut_toggle_camera: None,

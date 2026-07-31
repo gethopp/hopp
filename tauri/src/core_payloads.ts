@@ -85,6 +85,7 @@ export interface CoreParticipantState {
 }
 
 export type ScreenShareResolution = "P1080" | "P1440" | "P4K";
+export type ScreenSharePickerMode = "Screen" | "Window";
 
 export interface UserSettings {
   call_feedback_popup: boolean;
@@ -94,6 +95,7 @@ export interface UserSettings {
   remote_control_enabled: boolean;
   noise_cancellation_enabled: boolean;
   screen_share_resolution: ScreenShareResolution;
+  screen_share_picker_mode: ScreenSharePickerMode;
   hopp_server_url: string | null;
   shortcut_toggle_mic: string;
   shortcut_toggle_camera: string;
@@ -210,6 +212,7 @@ export interface CommandMap {
   toggle_mic: { args: void; return: void };
   set_noise_cancellation: { args: { enabled: boolean }; return: void };
   set_screen_share_resolution: { args: { resolution: ScreenShareResolution }; return: void };
+  set_screen_share_picker_mode: { args: { mode: ScreenSharePickerMode }; return: void };
   list_microphones: { args: void; return: AudioDevice[] };
   select_microphone: { args: { deviceName: string }; return: void };
 

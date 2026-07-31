@@ -70,7 +70,7 @@ use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
     CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenShareResolution, SentryMetadata, SocketSender,
+    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -118,11 +118,7 @@ fn cursor_mode_for_drawing_mode(drawing_mode: &DrawingMode) -> Option<CursorMode
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelectionMode {
-    Screen,
-    Window,
-}
+pub(crate) use socket_lib::ScreenSharePickerMode as SelectionMode;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SelectableWindow {
@@ -406,6 +402,7 @@ pub struct Application<'a> {
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
     screen_share_resolution: ScreenShareResolution,
+    screen_share_picker_mode: ScreenSharePickerMode,
     remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
     screen_selection: Option<ScreenSelectionState>,
@@ -495,6 +492,7 @@ impl<'a> Application<'a> {
             hang_protection_counter,
             start_camera_on_call: false,
             screen_share_resolution: ScreenShareResolution::P4K,
+            screen_share_picker_mode: ScreenSharePickerMode::Screen,
             remote_control_enabled: true,
             clipboard_controller,
             screen_selection: None,
@@ -504,6 +502,12 @@ impl<'a> Application<'a> {
 
     fn start_screen_selection(&mut self, event_loop: &ActiveEventLoop) {
         log::info!("start_screen_selection: opening screen selection overlays");
+
+        let initial_mode = if cfg!(target_os = "macos") {
+            self.screen_share_picker_mode
+        } else {
+            ScreenSharePickerMode::Screen
+        };
 
         let Some(window_manager) = self.window_manager.as_mut() else {
             log::error!("start_screen_selection: window manager not initialized");
@@ -527,6 +531,7 @@ impl<'a> Application<'a> {
             next_list_refresh_at: Instant::now() + WINDOW_LIST_REFRESH_INTERVAL,
         });
         window_manager.show_screen_selection(event_loop);
+        self.set_selection_mode(initial_mode);
     }
 
     fn set_selection_mode(&mut self, mode: SelectionMode) {
@@ -2025,6 +2030,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: SetScreenShareResolution({resolution:?})");
                 self.screen_share_resolution = resolution;
             }
+            UserEvent::SetScreenSharePickerMode(mode) => {
+                log::info!("user_event: SetScreenSharePickerMode({mode:?})");
+                self.screen_share_picker_mode = mode;
+            }
             UserEvent::SetTelemetryEnabled(enabled) => {
                 log::info!("user_event: SetTelemetryEnabled({enabled})");
                 sentry_utils::set_telemetry_enabled(enabled);
@@ -3070,6 +3079,7 @@ pub enum UserEvent {
     AudioCaptureError,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
+    SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
@@ -3226,6 +3236,9 @@ impl RenderEventLoop {
                     }
                     Message::SetScreenShareResolution(resolution) => {
                         UserEvent::SetScreenShareResolution(resolution)
+                    }
+                    Message::SetScreenSharePickerMode(mode) => {
+                        UserEvent::SetScreenSharePickerMode(mode)
                     }
                     Message::SetTelemetryEnabled(enabled) => {
                         UserEvent::SetTelemetryEnabled(enabled)

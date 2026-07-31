@@ -5,7 +5,7 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { typedInvoke, type ScreenShareResolution } from "@/core_payloads";
+import { typedInvoke, type ScreenSharePickerMode, type ScreenShareResolution } from "@/core_payloads";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { tauriUtils } from "@/windows/window-utils";
 import { OS, URLS } from "@/constants";
@@ -19,6 +19,11 @@ const screenShareResolutionItems = [
   { id: "P1440", title: "1440p", description: "Balance latency and resolution" },
   { id: "P4K", title: "4K", description: "Maximum resolution" },
 ] satisfies Array<{ id: ScreenShareResolution; title: string; description: string }>;
+
+const screenSharePickerModeItems = [
+  { id: "Screen", title: "Screen", description: "Choose an entire display" },
+  { id: "Window", title: "Window", description: "Choose a single app window" },
+] satisfies Array<{ id: ScreenSharePickerMode; title: string; description: string }>;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -73,6 +78,46 @@ function ResolutionRow({
             <input
               type="radio"
               name="screen-share-resolution"
+              className="mt-0.5 size-4 cursor-pointer accent-slate-700 dark:accent-slate-300"
+              checked={value === item.id}
+              onChange={(event) => {
+                if (event.target.checked && value !== item.id) {
+                  onValueChange(item.id);
+                }
+              }}
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{item.title}</span>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{item.description}</span>
+            </div>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PickerModeRow({
+  value,
+  onValueChange,
+}: {
+  value: ScreenSharePickerMode;
+  onValueChange: (value: ScreenSharePickerMode) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Default picker mode</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">
+          Choose what to select when screen sharing starts
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {screenSharePickerModeItems.map((item) => (
+          <label key={item.id} className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="screen-share-picker-mode"
               className="mt-0.5 size-4 cursor-pointer accent-slate-700 dark:accent-slate-300"
               checked={value === item.id}
               onChange={(event) => {
@@ -310,6 +355,14 @@ function SettingsWindow() {
                   typedInvoke("set_screen_share_resolution", { resolution }).then(() => refetchSettings());
                 }}
               />
+              {OS === "macos" && (
+                <PickerModeRow
+                  value={settings.screen_share_picker_mode}
+                  onValueChange={(mode) => {
+                    typedInvoke("set_screen_share_picker_mode", { mode }).then(() => refetchSettings());
+                  }}
+                />
+              )}
             </div>
           </div>
 
