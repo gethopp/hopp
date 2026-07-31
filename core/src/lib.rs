@@ -1583,6 +1583,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::CaptureFrameChanged => {
+                if let Some(remote_control) = self.remote_control.as_mut() {
+                    remote_control
+                        .cursor_controller
+                        .invalidate_sender_flip_height();
+                }
                 let Some(frame) = self
                     .screen_capturer
                     .lock()

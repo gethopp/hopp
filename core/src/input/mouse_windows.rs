@@ -313,6 +313,9 @@ impl CursorSimulator {
             tx,
         }
     }
+
+    /* macOS only: no conversion measurement is cached on this platform. */
+    pub fn invalidate_sender_flip_height(&mut self) {}
 }
 
 impl Drop for CursorSimulator {

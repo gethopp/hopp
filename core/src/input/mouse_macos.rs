@@ -260,6 +260,11 @@ pub struct CursorSimulator {
     target_process_id: Option<i32>,
     target_window_id: Option<u32>,
     last_position: Option<Position>,
+    /// Cached result of `measure_sender_flip_height`. Probing posts synthetic
+    /// NSEvents through AppKit on the event hot path, so it only runs once and
+    /// is invalidated via `invalidate_sender_flip_height` when the capture
+    /// frame changes (window moved/resized/changed monitors).
+    sender_flip_height: Option<f64>,
 }
 
 impl Default for CursorSimulator {
@@ -279,11 +284,53 @@ impl CursorSimulator {
             target_process_id,
             target_window_id,
             last_position: None,
+            sender_flip_height: None,
         }
     }
 
+    pub fn invalidate_sender_flip_height(&mut self) {
+        self.sender_flip_height = None;
+    }
+
+    /// Measures the height the NSEvent->CGEvent conversion uses to flip AppKit
+    /// screen coordinates into global ones (the main display's height) by
+    /// posting probe events through the same conversion path used for delivery.
+    ///
+    /// Returns `None` when the probe fails or the measured transform has an
+    /// unexpected shape, in which case the caller falls back to the heuristic
+    /// in `OverlayWindow::global_to_window_local`.
+    fn measure_sender_flip_height(&self, window_id: u32) -> Option<f64> {
+        let probe = |x: f64, y: f64| -> Option<(f64, f64)> {
+            let timestamp = NSProcessInfo::processInfo().systemUptime();
+            let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                NSEventType(CGEventType::MouseMoved as usize),
+                NSPoint::new(x, y),
+                NSEventModifierFlags(0),
+                timestamp,
+                window_id as isize,
+                None,
+                0,
+                0,
+                0.0,
+            )?;
+            let cg_event = event.CGEvent()?;
+            let location = ObjcCGEvent::location(Some(&cg_event));
+            Some((location.x, location.y))
+        };
+        let (origin_x, origin_y) = probe(0.0, 0.0)?;
+        let (unit_x, unit_y) = probe(1.0, 1.0)?;
+        // Expected transform: (x, y) -> (x, height - y).
+        if (unit_x - origin_x - 1.0).abs() > 0.001 || (unit_y - origin_y + 1.0).abs() > 0.001 {
+            log::error!(
+                "measure_sender_flip_height: unexpected transform ({origin_x}, {origin_y}) -> ({unit_x}, {unit_y})"
+            );
+            return None;
+        }
+        Some(origin_y)
+    }
+
     fn post_to_window(
-        &self,
+        &mut self,
         event_type: CGEventType,
         position: Position,
         flags: CGEventFlags,
@@ -294,7 +341,20 @@ impl CursorSimulator {
         else {
             return false;
         };
-        let Some(location) = self.overlay_window.global_to_window_local(position) else {
+        let flip_height = match self.sender_flip_height {
+            Some(height) => Some(height),
+            None => {
+                let measured = self.measure_sender_flip_height(window_id);
+                if measured.is_some() {
+                    self.sender_flip_height = measured;
+                }
+                measured
+            }
+        };
+        let Some(location) = self
+            .overlay_window
+            .global_to_window_local(position, flip_height)
+        else {
             log::error!("post_to_window: invalid capture frame or mouse position");
             return true;
         };

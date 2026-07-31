@@ -189,13 +189,32 @@ impl OverlayWindow {
         (!is_out_of_bounds(source)).then_some(source)
     }
 
-    pub fn global_to_window_local(&self, position: Position) -> Option<Position> {
+    /// Converts global screen coordinates to the NSEvent location expected by
+    /// `CursorSimulator::post_to_window` on macOS.
+    ///
+    /// The NSEvent->CGEvent conversion cannot resolve a foreign window number
+    /// to an NSWindow, so it treats the location as AppKit screen coordinates
+    /// and flips them around the main display's height (`sender_flip_height`,
+    /// measured at runtime). The receiving side interprets the delivered event
+    /// location as a top-down window-local point, which makes the net transform
+    /// `y = sender_flip_height - (position.y - origin_y)` for any display
+    /// origin, including negative ones.
+    ///
+    /// Without a measured `sender_flip_height`, fall back to the previous
+    /// heuristic, which is exact only when the window spans the full height of
+    /// the main display.
+    pub fn global_to_window_local(
+        &self,
+        position: Position,
+        sender_flip_height: Option<f64>,
+    ) -> Option<Position> {
         let frame = self.capture_frame()?;
         valid_frame(frame).then_some(Position {
             x: position.x - frame.origin_x,
-            // PID delivery applies the target window's screen Y origin to the converted
-            // event again, so remove it before flipping into AppKit's bottom-up space.
-            y: frame.extent.height - ((position.y - frame.origin_y) - frame.origin_y),
+            y: match sender_flip_height {
+                Some(height) => height - (position.y - frame.origin_y),
+                None => frame.extent.height - ((position.y - frame.origin_y) - frame.origin_y),
+            },
         })
     }
 

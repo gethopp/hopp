@@ -24,6 +24,9 @@ impl CursorSimulator {
     pub fn new() -> Self {
         Self {}
     }
+
+    /* macOS only: no conversion measurement is cached on this platform. */
+    pub fn invalidate_sender_flip_height(&mut self) {}
 }
 
 impl CursorSimulatorFunctions for CursorSimulator {

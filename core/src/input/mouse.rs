@@ -1016,6 +1016,17 @@ impl CursorController {
         self.overlay_window.clone()
     }
 
+    /// Invalidates the cached NSEvent conversion measurement (macOS only) so
+    /// it is re-probed on the next posted event. Called when the capture frame
+    /// changes (window moved/resized/changed monitors).
+    pub fn invalidate_sender_flip_height(&mut self) {
+        self.remote_control
+            .cursor_simulator
+            .lock()
+            .unwrap()
+            .invalidate_sender_flip_height();
+    }
+
     /// Hides cursors that have been inactive for longer than `CURSOR_HIDE_TIMEOUT`.
     ///
     /// This should be called during each redraw cycle, similar to how
