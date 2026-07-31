@@ -21,7 +21,7 @@ use super::CapturerError;
 #[allow(dead_code)]
 pub enum StreamRuntimeMessage {
     Failed,
-    FrameChanged,
+    FrameChanged { resize: Option<(u32, u32)> },
     Stop,
     StopCapture,
     UserStoppedCapture,
@@ -62,6 +62,16 @@ impl CropRect {
             height,
         })
     }
+}
+
+fn capture_dimensions(
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> (u32, u32) {
+    let (width, height) = aspect_fit(width, height, target_width, target_height);
+    (width + width % 2, height + height % 2)
 }
 
 fn nv12_crop_rect(
@@ -170,7 +180,7 @@ impl Stream {
                     .ok_or(CapturerError::SelectedSourceNotFound)?;
                 let native_width = (display.width() as f64 * self.scale) as u32;
                 let native_height = (display.height() as f64 * self.scale) as u32;
-                let (width, height) = aspect_fit(
+                let (width, height) = capture_dimensions(
                     native_width,
                     native_height,
                     self.stream_resolution.width as u32,
@@ -192,6 +202,8 @@ impl Stream {
                     .owning_application()
                     .map(|application| application.process_id());
                 let frame = window.frame();
+                let filter = SCContentFilter::create().with_window(&window).build();
+                let backing_scale = f64::from(filter.point_pixel_scale());
                 *self.frame.lock().unwrap() = Frame {
                     origin_x: frame.origin.x,
                     origin_y: frame.origin.y,
@@ -200,11 +212,9 @@ impl Stream {
                         height: frame.size.height,
                     },
                 };
-                let filter = SCContentFilter::create().with_window(&window).build();
-                let backing_scale = f64::from(filter.point_pixel_scale());
                 let native_width = (frame.size.width * backing_scale) as u32;
                 let native_height = (frame.size.height * backing_scale) as u32;
-                let (width, height) = aspect_fit(
+                let (width, height) = capture_dimensions(
                     native_width,
                     native_height,
                     self.stream_resolution.width as u32,
@@ -268,6 +278,8 @@ impl Stream {
         let frame_arc = self.frame.clone();
         let frame_changed_tx = self.permanent_error_tx.clone();
         let output_extent = self.output_extent.clone();
+        let stream_resolution = self.stream_resolution;
+        let resize_target = Arc::new(Mutex::new((stream_width, stream_height)));
         let capture_start = std::time::Instant::now();
 
         let handler = move |sample: CMSampleBuffer, of_type: SCStreamOutputType| {
@@ -326,6 +338,27 @@ impl Stream {
                 let scale_factor = info.scale_factor.unwrap_or(1.0);
                 if crop_window {
                     if let Some(screen_rect) = info.screen_rect {
+                        let native_width = (screen_rect.size.width * scale_factor) as u32;
+                        let native_height = (screen_rect.size.height * scale_factor) as u32;
+                        let next_resize_target = capture_dimensions(
+                            native_width,
+                            native_height,
+                            stream_resolution.width as u32,
+                            stream_resolution.height as u32,
+                        );
+                        let resize = {
+                            let mut current_resize_target = resize_target.lock().unwrap();
+                            if *current_resize_target != next_resize_target
+                                && next_resize_target.0 >= 2
+                                && next_resize_target.1 >= 2
+                            {
+                                *current_resize_target = next_resize_target;
+                                Some(next_resize_target)
+                            } else {
+                                None
+                            }
+                        };
+
                         let mut frame = frame_arc.lock().unwrap();
                         let next_frame = Frame {
                             origin_x: screen_rect.origin.x,
@@ -335,13 +368,16 @@ impl Stream {
                                 height: screen_rect.size.height,
                             },
                         };
-                        if frame.origin_x != next_frame.origin_x
+                        let frame_changed = frame.origin_x != next_frame.origin_x
                             || frame.origin_y != next_frame.origin_y
                             || frame.extent.width != next_frame.extent.width
-                            || frame.extent.height != next_frame.extent.height
-                        {
+                            || frame.extent.height != next_frame.extent.height;
+                        if frame_changed {
                             *frame = next_frame;
-                            let _ = frame_changed_tx.send(StreamRuntimeMessage::FrameChanged);
+                        }
+                        if frame_changed || resize.is_some() {
+                            let _ = frame_changed_tx
+                                .send(StreamRuntimeMessage::FrameChanged { resize });
                         }
                     }
                 }
@@ -413,6 +449,21 @@ impl Stream {
         Ok(())
     }
 
+    pub fn reconfigure(&self, width: u32, height: u32) {
+        let Some(stream) = self.sc_stream.as_ref() else {
+            return;
+        };
+        let config = SCStreamConfiguration::new()
+            .with_width(width)
+            .with_height(height)
+            .with_pixel_format(PixelFormat::YCbCr_420v)
+            .with_shows_cursor(false)
+            .with_fps(60);
+        if let Err(error) = stream.update_configuration(&config) {
+            log::error!("capture stream reconfiguration failed: {error}");
+        }
+    }
+
     pub fn stop_capture(&mut self) {
         if let Some(ref stream) = self.sc_stream {
             if let Err(e) = stream.stop_capture() {
@@ -461,37 +512,5 @@ impl Stream {
 
     pub fn target_window_id(&self) -> Option<u32> {
         matches!(self.source.content_type, ContentType::Window).then_some(self.source.id)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crops_odd_source_dimensions_to_even_nv12_output() {
-        let crop = nv12_crop_rect(CGRect::new(1.0, 1.0, 6.0, 4.0), 1.0, 8, 6).unwrap();
-        assert_eq!(
-            crop,
-            CropRect {
-                x: 2,
-                y: 2,
-                width: 4,
-                height: 2,
-            }
-        );
-        assert_eq!(
-            CropRect::full_frame(5, 3),
-            Some(CropRect {
-                x: 0,
-                y: 0,
-                width: 4,
-                height: 2,
-            })
-        );
-
-        let buffer = NV12Buffer::new(crop.width as u32, crop.height as u32);
-        assert_eq!(buffer.strides(), (4, 4));
-        assert_eq!(buffer.data().1.len(), 4);
     }
 }

@@ -34,6 +34,8 @@ use stream::{Stream, StreamRuntimeMessage};
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
+#[cfg(target_os = "macos")]
+const STREAM_RECONFIGURE_DEBOUNCE_MS: u64 = 10;
 
 #[cfg_attr(target_os = "windows", path = "windows.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
@@ -433,6 +435,8 @@ impl Capturer {
  */
 pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */) {
     let rx = { capturer.lock().unwrap().rx.clone() };
+    #[cfg(target_os = "macos")]
+    let mut pending_resize = None;
     loop {
         log::debug!("poll_stream: waiting for message");
         let rx_lock = rx.lock();
@@ -441,7 +445,15 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
             break;
         }
         let rx_lock = rx_lock.unwrap();
-        match rx_lock.recv_timeout(std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS)) {
+        #[cfg(target_os = "macos")]
+        let timeout = pending_resize
+            .map(|(_, deadline): ((u32, u32), std::time::Instant)| {
+                deadline.saturating_duration_since(std::time::Instant::now())
+            })
+            .unwrap_or(std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS));
+        #[cfg(not(target_os = "macos"))]
+        let timeout = std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS);
+        match rx_lock.recv_timeout(timeout) {
             Ok(StreamRuntimeMessage::Failed) => {
                 log::info!("poll_stream: stream failed");
                 let mut capturer = capturer.lock().unwrap();
@@ -455,7 +467,14 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
                     .send_event(UserEvent::StopScreenShare);
             }
             #[cfg(target_os = "macos")]
-            Ok(StreamRuntimeMessage::FrameChanged) => {
+            Ok(StreamRuntimeMessage::FrameChanged { resize }) => {
+                if let Some((width, height)) = resize {
+                    pending_resize = Some((
+                        (width, height),
+                        std::time::Instant::now()
+                            + std::time::Duration::from_millis(STREAM_RECONFIGURE_DEBOUNCE_MS),
+                    ));
+                }
                 let capturer = capturer.lock().unwrap();
                 let _ = capturer
                     .event_loop_proxy
@@ -465,7 +484,15 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
                 log::info!("poll_stream: stop message");
                 break;
             }
-            Err(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                #[cfg(target_os = "macos")]
+                if let Some(((width, height), _)) = pending_resize.take() {
+                    if let Some(stream) = capturer.lock().unwrap().active_stream.as_ref() {
+                        stream.reconfigure(width, height);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
             _ => {}
         };
     }
