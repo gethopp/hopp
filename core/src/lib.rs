@@ -58,7 +58,7 @@ pub(crate) mod window_manager;
 pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
-use capture::capturer::{poll_stream, Capturer, ScreenshareExt, ScreenshareFunctions};
+use capture::capturer::{poll_stream, Capturer, MonitorId, ScreenshareExt, ScreenshareFunctions};
 use graphics::graphics_context::participant::CursorMode;
 use graphics::graphics_context::GraphicsContext;
 use graphics::graphics_window_context::ContextManager;
@@ -70,11 +70,12 @@ use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
     CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenShareResolution, SentryMetadata, SocketSender,
+    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use utils::geometry::{Extent, Frame};
 use window::camera_window::CameraWindow;
@@ -85,7 +86,7 @@ use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::monitor::MonitorHandle;
 
 use window::screensharing_window::ScreenShareInputEvent;
@@ -106,6 +107,173 @@ const SOCKET_MESSAGE_TIMEOUT_SECONDS: u64 = 30;
 const STREAM_FAILURE_EXIT_CODE: i32 = 2;
 const HANG_PROTECTION_EXIT_CODE: i32 = 3;
 const HANG_PROTECTION_INTERVAL_SECONDS: u64 = 30;
+const WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+
+fn cursor_mode_for_drawing_mode(drawing_mode: &DrawingMode) -> Option<CursorMode> {
+    match drawing_mode {
+        DrawingMode::Draw(_) => Some(CursorMode::Pencil),
+        DrawingMode::ClickAnimation => Some(CursorMode::Pointer),
+        DrawingMode::Disabled => Some(CursorMode::Normal),
+        DrawingMode::Any => None,
+    }
+}
+
+pub(crate) use socket_lib::ScreenSharePickerMode as SelectionMode;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SelectableWindow {
+    pub(crate) id: u32,
+    pub(crate) frame: Frame,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SelectionOverlayState {
+    pub(crate) mode: SelectionMode,
+    pub(crate) border_frame: Option<Frame>,
+}
+
+#[derive(Debug)]
+struct ScreenSelectionState {
+    mode: SelectionMode,
+    windows: Vec<SelectableWindow>,
+    hovered: Option<SelectableWindow>,
+    mouse_hover_enabled: bool,
+    modifiers: ModifiersState,
+    next_list_refresh_at: Instant,
+}
+
+fn window_at_cursor(windows: &[SelectableWindow], cursor: Position) -> Option<SelectableWindow> {
+    windows.iter().copied().find(|window| {
+        cursor.x >= window.frame.origin_x
+            && cursor.x < window.frame.origin_x + window.frame.extent.width
+            && cursor.y >= window.frame.origin_y
+            && cursor.y < window.frame.origin_y + window.frame.extent.height
+    })
+}
+
+fn cycle_window(
+    windows: &[SelectableWindow],
+    selected_id: Option<u32>,
+    forward: bool,
+) -> Option<SelectableWindow> {
+    if windows.is_empty() {
+        return None;
+    }
+
+    let current_index =
+        selected_id.and_then(|id| windows.iter().position(|window| window.id == id));
+    let next_index = match (current_index, forward) {
+        (Some(index), true) => (index + 1) % windows.len(),
+        (Some(0), false) | (None, false) => windows.len() - 1,
+        (Some(index), false) => index - 1,
+        (None, true) => 0,
+    };
+    Some(windows[next_index])
+}
+
+fn valid_selection_frame(frame: Frame) -> bool {
+    frame.origin_x.is_finite()
+        && frame.origin_y.is_finite()
+        && frame.extent.width.is_finite()
+        && frame.extent.height.is_finite()
+        && frame.extent.width > 0.0
+        && frame.extent.height > 0.0
+}
+
+fn subtract_frame(frame: Frame, occluder: Frame, output: &mut Vec<Frame>) {
+    let frame_right = frame.origin_x + frame.extent.width;
+    let frame_bottom = frame.origin_y + frame.extent.height;
+    let overlap_left = frame.origin_x.max(occluder.origin_x);
+    let overlap_top = frame.origin_y.max(occluder.origin_y);
+    let overlap_right = frame_right.min(occluder.origin_x + occluder.extent.width);
+    let overlap_bottom = frame_bottom.min(occluder.origin_y + occluder.extent.height);
+
+    if overlap_left >= overlap_right || overlap_top >= overlap_bottom {
+        output.push(frame);
+        return;
+    }
+
+    let mut push = |origin_x, origin_y, width, height| {
+        if width > 0.0 && height > 0.0 {
+            output.push(Frame {
+                origin_x,
+                origin_y,
+                extent: Extent { width, height },
+            });
+        }
+    };
+    push(
+        frame.origin_x,
+        frame.origin_y,
+        frame.extent.width,
+        overlap_top - frame.origin_y,
+    );
+    push(
+        frame.origin_x,
+        overlap_bottom,
+        frame.extent.width,
+        frame_bottom - overlap_bottom,
+    );
+    push(
+        frame.origin_x,
+        overlap_top,
+        overlap_left - frame.origin_x,
+        overlap_bottom - overlap_top,
+    );
+    push(
+        overlap_right,
+        overlap_top,
+        frame_right - overlap_right,
+        overlap_bottom - overlap_top,
+    );
+}
+
+fn visible_windows(windows: Vec<SelectableWindow>) -> Vec<SelectableWindow> {
+    let mut occluders = Vec::with_capacity(windows.len());
+    windows
+        .into_iter()
+        .filter(|window| {
+            if !valid_selection_frame(window.frame) {
+                return false;
+            }
+
+            // ponytail: rectangle fragments are enough for desktop-sized window lists;
+            // replace with a sweep line if the 100 ms refresh ever profiles poorly.
+            let mut fragments = vec![window.frame];
+            for occluder in &occluders {
+                let mut remaining = Vec::with_capacity(fragments.len() * 4);
+                for fragment in fragments {
+                    subtract_frame(fragment, *occluder, &mut remaining);
+                }
+                if remaining.is_empty() {
+                    return false;
+                }
+                fragments = remaining;
+            }
+
+            occluders.push(window.frame);
+            true
+        })
+        .collect()
+}
+
+fn monitor_containing_frame(monitors: &[MonitorHandle], frame: Frame) -> Option<MonitorHandle> {
+    let center_x = frame.origin_x + frame.extent.width / 2.0;
+    let center_y = frame.origin_y + frame.extent.height / 2.0;
+    monitors
+        .iter()
+        .find(|monitor| {
+            let scale = monitor.scale_factor();
+            let position = monitor.position().to_logical::<f64>(scale);
+            let size = monitor.size().to_logical::<f64>(scale);
+            center_x >= position.x
+                && center_x < position.x + size.width
+                && center_y >= position.y
+                && center_y < position.y + size.height
+        })
+        .cloned()
+}
+
 #[derive(Error, Debug)]
 pub enum ServerError {
     #[error("Livekit room service not found")]
@@ -156,10 +324,8 @@ impl RemoteControl {
             .update_cursors(gfx.participants_manager_mut());
         self.cursor_controller.hide_inactive_cursors();
         let cleared_path_ids = gfx.participants_manager_mut().update_auto_clear();
-        let translator = self
-            .cursor_controller
-            .get_overlay_window()
-            .create_position_translator();
+        let overlay_window = self.cursor_controller.get_overlay_window();
+        let translator = overlay_window.create_position_translator();
         gfx.draw(&translator);
         cleared_path_ids
     }
@@ -236,9 +402,11 @@ pub struct Application<'a> {
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
     screen_share_resolution: ScreenShareResolution,
+    screen_share_picker_mode: ScreenSharePickerMode,
     remote_control_enabled: bool,
     clipboard_controller: Option<ClipboardController>,
-    screen_selection_active: bool,
+    screen_selection: Option<ScreenSelectionState>,
+    pending_overlay_repair: Option<MonitorId>,
 }
 
 #[derive(Error, Debug)]
@@ -324,14 +492,22 @@ impl<'a> Application<'a> {
             hang_protection_counter,
             start_camera_on_call: false,
             screen_share_resolution: ScreenShareResolution::P4K,
+            screen_share_picker_mode: ScreenSharePickerMode::Screen,
             remote_control_enabled: true,
             clipboard_controller,
-            screen_selection_active: false,
+            screen_selection: None,
+            pending_overlay_repair: None,
         })
     }
 
     fn start_screen_selection(&mut self, event_loop: &ActiveEventLoop) {
         log::info!("start_screen_selection: opening screen selection overlays");
+
+        let initial_mode = if cfg!(target_os = "macos") {
+            self.screen_share_picker_mode
+        } else {
+            ScreenSharePickerMode::Screen
+        };
 
         let Some(window_manager) = self.window_manager.as_mut() else {
             log::error!("start_screen_selection: window manager not initialized");
@@ -346,8 +522,143 @@ impl<'a> Application<'a> {
             log::warn!("start_screen_selection: context manager not initialized");
         }
 
-        self.screen_selection_active = true;
+        self.screen_selection = Some(ScreenSelectionState {
+            mode: SelectionMode::Screen,
+            windows: Vec::new(),
+            hovered: None,
+            mouse_hover_enabled: true,
+            modifiers: ModifiersState::default(),
+            next_list_refresh_at: Instant::now() + WINDOW_LIST_REFRESH_INTERVAL,
+        });
         window_manager.show_screen_selection(event_loop);
+        self.set_selection_mode(initial_mode);
+    }
+
+    fn set_selection_mode(&mut self, mode: SelectionMode) {
+        let Some(selection) = self.screen_selection.as_mut() else {
+            return;
+        };
+        if selection.mode == mode {
+            return;
+        }
+
+        selection.mode = mode;
+        match mode {
+            SelectionMode::Screen => {
+                selection.windows.clear();
+                selection.hovered = None;
+                self.publish_selection_overlay();
+            }
+            SelectionMode::Window => {
+                self.refresh_window_list();
+                self.publish_selection_overlay();
+            }
+        }
+    }
+
+    fn publish_selection_overlay(&mut self) {
+        let Some(selection) = self.screen_selection.as_ref() else {
+            return;
+        };
+        let mode = selection.mode;
+        let hovered_frame = selection.hovered.map(|window| window.frame);
+
+        if let Some(window_manager) = self.window_manager.as_mut() {
+            window_manager.update_screen_selection(mode, hovered_frame);
+        }
+    }
+
+    fn refresh_window_list(&mut self) {
+        let Some((mouse_hover_enabled, selected_id)) =
+            self.screen_selection.as_ref().and_then(|selection| {
+                (selection.mode == SelectionMode::Window).then_some((
+                    selection.mouse_hover_enabled,
+                    selection.hovered.map(|window| window.id),
+                ))
+            })
+        else {
+            return;
+        };
+
+        #[cfg(target_os = "macos")]
+        let windows = ScreenshareFunctions::selectable_windows().unwrap_or_default();
+        #[cfg(not(target_os = "macos"))]
+        let windows = Vec::new();
+        let windows = visible_windows(windows);
+
+        let mut changed = false;
+        if let Some(selection) = self.screen_selection.as_mut() {
+            selection.windows = windows;
+            selection.next_list_refresh_at = Instant::now() + WINDOW_LIST_REFRESH_INTERVAL;
+            if !mouse_hover_enabled {
+                let hovered = selected_id.and_then(|id| {
+                    selection
+                        .windows
+                        .iter()
+                        .copied()
+                        .find(|window| window.id == id)
+                });
+                changed = selection.hovered != hovered;
+                selection.hovered = hovered;
+            }
+        }
+        if mouse_hover_enabled {
+            self.update_hovered_window();
+        } else if changed {
+            self.publish_selection_overlay();
+        }
+    }
+
+    fn update_hovered_window(&mut self) {
+        if !self.screen_selection.as_ref().is_some_and(|selection| {
+            selection.mode == SelectionMode::Window && selection.mouse_hover_enabled
+        }) {
+            return;
+        }
+
+        #[cfg(target_os = "macos")]
+        let cursor = ScreenshareFunctions::cursor_position();
+        #[cfg(not(target_os = "macos"))]
+        let cursor: Option<Position> = None;
+
+        let hovered = cursor.and_then(|cursor| {
+            self.screen_selection
+                .as_ref()
+                .and_then(|selection| window_at_cursor(&selection.windows, cursor))
+        });
+        let changed = self
+            .screen_selection
+            .as_ref()
+            .is_some_and(|selection| selection.hovered != hovered);
+        if !changed {
+            return;
+        }
+
+        if let Some(selection) = self.screen_selection.as_mut() {
+            selection.hovered = hovered;
+        }
+        self.publish_selection_overlay();
+    }
+
+    fn cycle_hovered_window(&mut self, forward: bool) {
+        let Some(selection) = self.screen_selection.as_mut() else {
+            return;
+        };
+        if selection.mode != SelectionMode::Window {
+            return;
+        }
+
+        selection.mouse_hover_enabled = false;
+        let hovered = cycle_window(
+            &selection.windows,
+            selection.hovered.map(|window| window.id),
+            forward,
+        );
+        let changed = selection.hovered != hovered;
+        selection.hovered = hovered;
+        if changed {
+            self.publish_selection_overlay();
+        }
     }
 
     /// Initiates a screen sharing session with the specified configuration.
@@ -355,8 +666,8 @@ impl<'a> Application<'a> {
     /// This method sets up the complete screen sharing pipeline:
     /// 1. Calculates optimal streaming resolution using aspect fitting
     /// 2. Creates a livekit room for real-time communication
-    /// 3. Starts screen capture on the selected monitor
-    /// 4. Creates overlay window for cursor visualization
+    /// 3. Starts capture for the selected display or window
+    /// 4. Creates the remote-control overlay for display sharing
     ///
     /// # Arguments
     ///
@@ -372,8 +683,7 @@ impl<'a> Application<'a> {
     ///
     /// On success, this method:
     /// - Starts screen capture in a background thread
-    /// - Creates a maximized transparent overlay window
-    /// - Initializes cursor and keyboard controllers
+    /// - Creates a transparent overlay and input controllers for display sharing
     /// - Begins streaming captured content via LiveKit
     fn screenshare(
         &mut self,
@@ -407,8 +717,13 @@ impl<'a> Application<'a> {
             }
         };
 
-        let monitor = screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id);
-        let scale = monitor.scale_factor();
+        let selected_monitor =
+            matches!(screenshare_input.content.content_type, ContentType::Display).then(|| {
+                screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id)
+            });
+        let scale = selected_monitor
+            .as_ref()
+            .map_or(1.0, |monitor| monitor.scale_factor());
 
         let res = screen_capturer.start_capture(
             screenshare_input.content,
@@ -434,36 +749,34 @@ impl<'a> Application<'a> {
         room_service.unmute_screen_share_track();
         log::info!("screenshare: screen share track unmuted");
 
+        let capture_frame = screen_capturer.frame();
+        let target_process_id = screen_capturer.target_process_id();
+        let target_window_id = screen_capturer.target_window_id();
+        let capture_frame_snapshot = capture_frame
+            .as_ref()
+            .and_then(|frame| frame.lock().ok().map(|frame| *frame));
+        let overlay_monitor = selected_monitor
+            .or_else(|| {
+                capture_frame_snapshot.and_then(|frame| monitor_containing_frame(&monitors, frame))
+            })
+            .or_else(|| monitors.first().cloned());
         drop(screen_capturer);
 
-        let res = self.create_overlay_window(monitor, self.remote_control_enabled);
-        if let Err(e) = res {
-            self.stop_screenshare();
-            log::error!("screenshare: error creating overlay window: {e:?}");
-            return Err(e);
-        }
-
-        let room_service = self.room_service.as_ref().unwrap();
-        if let (Some(window_manager), Some(remote_control)) =
-            (self.window_manager.as_mut(), self.remote_control.as_mut())
-        {
-            if let Some(gfx) = window_manager.active_gfx_mut() {
-                let existing_participants = room_service.get_participants();
-                for participant in &existing_participants {
-                    if let Err(e) =
-                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
-                    {
-                        log::error!(
-                            "Failed to create cursor for participant {}: {e}",
-                            participant.identity
-                        );
-                    } else {
-                        remote_control
-                            .cursor_controller
-                            .add_controller(participant.identity.clone());
-                    }
-                }
+        if let Some(monitor) = overlay_monitor {
+            let res = self.create_overlay_window(
+                monitor,
+                self.remote_control_enabled,
+                capture_frame,
+                target_process_id,
+                target_window_id,
+            );
+            if let Err(e) = res {
+                self.stop_screenshare();
+                log::error!("screenshare: error creating overlay window: {e:?}");
+                return Err(e);
             }
+        } else {
+            log::warn!("screenshare: no monitor available, skipping overlay creation");
         }
 
         self.set_screensharing_active(true);
@@ -620,31 +933,24 @@ impl<'a> Application<'a> {
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
-        self.screen_selection_active = false;
+        self.screen_selection = None;
     }
 
-    fn select_screen_selection_window(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
-    ) {
-        let Some(message) = self.screenshare_message_for_window(event_loop, window_id) else {
-            log::error!("select_screen_selection_window: failed to resolve selected screen");
-            return;
-        };
-
+    fn select_source(&mut self, content: Content) {
         if let Some(window_manager) = self.window_manager.as_mut() {
             window_manager.hide_screen_selection();
         }
-        self.screen_selection_active = false;
+        self.screen_selection = None;
 
+        let message = ScreenShareMessage {
+            content,
+            resolution: self.screen_share_resolution.extent(),
+        };
         if let Err(error) = self
             .event_loop_proxy
             .send_event(UserEvent::ScreenShare(message))
         {
-            log::error!(
-                "select_screen_selection_window: failed to send ScreenShare event: {error:?}"
-            );
+            log::error!("select_source: failed to send ScreenShare event: {error:?}");
         }
     }
 
@@ -652,6 +958,9 @@ impl<'a> Application<'a> {
         &mut self,
         selected_monitor: MonitorHandle,
         remote_control_enabled: bool,
+        frame: Option<Arc<Mutex<Frame>>>,
+        target_process_id: Option<i32>,
+        target_window_id: Option<u32>,
     ) -> Result<(), ServerError> {
         log::info!(
             "create_overlay_window: selected_monitor: {selected_monitor:?} {remote_control_enabled}",
@@ -670,8 +979,6 @@ impl<'a> Application<'a> {
         let window_size = window.inner_size();
         let window_outer_position = window.outer_position();
 
-        /* Hardcode window frame to zero as we only support displays for now.*/
-        let window_frame = Frame::default();
         let scaled = {
             #[cfg(target_os = "macos")]
             {
@@ -694,7 +1001,7 @@ impl<'a> Application<'a> {
         };
 
         let overlay_window = Arc::new(OverlayWindow::new(
-            window_frame,
+            frame,
             Extent {
                 width: window_size.width as f64,
                 height: window_size.height as f64,
@@ -726,6 +1033,8 @@ impl<'a> Application<'a> {
             redraw_sender,
             self.event_loop_proxy.clone(),
             clock,
+            target_process_id,
+            target_window_id,
         )
         .map_err(|error| {
             log::error!("create_overlay_window: Error creating cursor controller {error:?}");
@@ -733,27 +1042,160 @@ impl<'a> Application<'a> {
         })?;
         let mut remote_control = RemoteControl {
             cursor_controller,
-            keyboard_controller: KeyboardController::<KeyboardLayout>::new(),
+            keyboard_controller: KeyboardController::<KeyboardLayout>::new(target_process_id),
         };
         remote_control.set_enabled(remote_control_enabled);
         self.remote_control = Some(remote_control);
+
+        let existing_participants = self
+            .room_service
+            .as_ref()
+            .map(|room_service| room_service.get_participants())
+            .unwrap_or_default();
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                for participant in existing_participants {
+                    if let Err(error) =
+                        gfx.add_participant(participant.identity.clone(), &participant.name, false)
+                    {
+                        log::error!(
+                            "Failed to create cursor for participant {}: {error}",
+                            participant.identity
+                        );
+                    } else {
+                        remote_control
+                            .cursor_controller
+                            .add_controller(participant.identity);
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
 
     fn destroy_overlay_window(&mut self) {
         log::info!("destroy_overlay_window");
+        self.pending_overlay_repair = None;
         if let Some(wm) = self.window_manager.as_mut() {
             wm.hide_active_window();
         }
         self.remote_control = None;
     }
 
-    fn screenshare_message_for_window(
+    fn apply_overlay_participant_drawing_mode(
+        &mut self,
+        identity: &str,
+        drawing_mode: DrawingMode,
+    ) {
+        if let (Some(window_manager), Some(remote_control)) =
+            (self.window_manager.as_mut(), self.remote_control.as_mut())
+        {
+            if let Some(cursor_mode) = cursor_mode_for_drawing_mode(&drawing_mode) {
+                remote_control
+                    .cursor_controller
+                    .set_controller_mode(identity, cursor_mode);
+            }
+            if let Some(gfx) = window_manager.active_gfx_mut() {
+                gfx.set_drawing_mode(identity, drawing_mode);
+            }
+        }
+    }
+
+    fn repair_overlay_monitor(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        target_monitor_id: MonitorId,
+    ) {
+        let (frame, target_process_id, target_window_id) = match self.screen_capturer.lock() {
+            Ok(capturer) => (
+                capturer.frame(),
+                capturer.target_process_id(),
+                capturer.target_window_id(),
+            ),
+            Err(error) => {
+                log::error!("repair_overlay_monitor: failed to lock capturer: {error:?}");
+                return;
+            }
+        };
+
+        let participant_drawing_modes = self
+            .window_manager
+            .as_mut()
+            .and_then(|window_manager| window_manager.active_gfx_mut())
+            .map(|gfx| gfx.participants_manager_mut().drawing_modes())
+            .unwrap_or_default();
+        let remote_control_enabled = self.remote_control_enabled
+            && self
+                .drawing_window
+                .as_ref()
+                .is_none_or(|drawing_window| !drawing_window.is_visible());
+
+        self.destroy_overlay_window();
+
+        let update_result = match (self.window_manager.as_mut(), self.context_manager.as_ref()) {
+            (Some(window_manager), Some(context_manager)) => {
+                window_manager.update(event_loop, context_manager)
+            }
+            _ => {
+                log::error!("repair_overlay_monitor: window manager not initialized");
+                self.stop_screenshare();
+                return;
+            }
+        };
+        if let Err(error) = update_result {
+            log::error!("repair_overlay_monitor: failed to refresh monitors: {error:?}");
+            self.stop_screenshare();
+            return;
+        }
+
+        let Some(target_monitor) = event_loop
+            .available_monitors()
+            .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == target_monitor_id)
+        else {
+            log::error!(
+                "repair_overlay_monitor: target monitor {target_monitor_id:?} is unavailable"
+            );
+            self.stop_screenshare();
+            return;
+        };
+
+        if let Err(error) = self.create_overlay_window(
+            target_monitor,
+            remote_control_enabled,
+            frame,
+            target_process_id,
+            target_window_id,
+        ) {
+            log::error!("repair_overlay_monitor: failed to recreate overlay: {error:?}");
+            self.stop_screenshare();
+            return;
+        }
+
+        for (identity, drawing_mode) in participant_drawing_modes {
+            self.apply_overlay_participant_drawing_mode(&identity, drawing_mode);
+        }
+
+        if let Some(drawing_window) = self
+            .drawing_window
+            .as_mut()
+            .filter(|drawing_window| drawing_window.is_visible())
+        {
+            let position = self
+                .window_manager
+                .as_ref()
+                .and_then(|window_manager| window_manager.active_window_position());
+            drawing_window.move_to(position);
+        }
+    }
+
+    fn display_content_for_selection_window(
         &self,
         event_loop: &ActiveEventLoop,
         window_id: winit::window::WindowId,
-    ) -> Option<ScreenShareMessage> {
+    ) -> Option<Content> {
         let clicked_monitor_id = self
             .window_manager
             .as_ref()?
@@ -763,17 +1205,29 @@ impl<'a> Application<'a> {
             .available_monitors()
             .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == clicked_monitor_id)?;
 
-        let content_id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
+        let id = ScreenshareFunctions::capture_content_id_for_monitor(&monitor)?;
 
-        let resolution = self.screen_share_resolution.extent();
-
-        Some(ScreenShareMessage {
-            content: Content {
-                content_type: ContentType::Display,
-                id: content_id,
-            },
-            resolution,
+        Some(Content {
+            content_type: ContentType::Display,
+            id,
         })
+    }
+
+    fn selected_content(
+        &self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+    ) -> Option<Content> {
+        let selection = self.screen_selection.as_ref()?;
+        match selection.mode {
+            SelectionMode::Screen => {
+                self.display_content_for_selection_window(event_loop, window_id)
+            }
+            SelectionMode::Window => selection.hovered.map(|window| Content {
+                content_type: ContentType::Window,
+                id: window.id,
+            }),
+        }
     }
 }
 
@@ -1069,8 +1523,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::debug!("user_event: Screen share: {data:?}");
                 if let Some(ref mut wm) = self.window_manager {
                     wm.hide_screen_selection();
-                    self.screen_selection_active = false;
                 }
+                self.screen_selection = None;
                 let monitors = event_loop
                     .available_monitors()
                     .collect::<Vec<MonitorHandle>>();
@@ -1106,7 +1560,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RequestRedraw => {
                 log::trace!("user_event: Requesting redraw");
-                if self.screen_selection_active {
+                if self.screen_selection.is_some() {
                     let Some(window_manager) = self.window_manager.as_mut() else {
                         log::trace!("user_event: window manager is none request redraw");
                         return;
@@ -1129,14 +1583,61 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SharerPosition(x, y) => {
                 debug!("user_event: sharer position: {x} {y}");
-                if self.room_service.is_none() {
-                    log::warn!("user_event: room service is none sharer position");
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.publish_cursor_position(x, y, true);
+                }
+            }
+            UserEvent::CaptureFrameChanged => {
+                if let Some(remote_control) = self.remote_control.as_mut() {
+                    remote_control
+                        .cursor_controller
+                        .invalidate_sender_flip_height();
+                }
+                let Some(frame) = self
+                    .screen_capturer
+                    .lock()
+                    .ok()
+                    .and_then(|capturer| capturer.frame())
+                else {
+                    log::warn!("CaptureFrameChanged: no capture frame available");
+                    return;
+                };
+                let Some(frame_snapshot) = frame.lock().ok().map(|frame| *frame) else {
+                    log::warn!("CaptureFrameChanged: failed to read capture frame");
+                    return;
+                };
+                if let Some(drawing_window) = self
+                    .drawing_window
+                    .as_mut()
+                    .filter(|drawing_window| drawing_window.is_visible())
+                {
+                    drawing_window.request_redraw();
+                }
+                let monitors = event_loop.available_monitors().collect::<Vec<_>>();
+                let Some(target_monitor) = monitor_containing_frame(&monitors, frame_snapshot)
+                else {
+                    log::warn!("CaptureFrameChanged: no monitor contains the capture frame");
+                    return;
+                };
+                let target_monitor_id = ScreenshareFunctions::get_monitor_id(&target_monitor);
+                let registered_monitor_id = self
+                    .window_manager
+                    .as_ref()
+                    .and_then(|window_manager| window_manager.active_monitor_id());
+
+                if registered_monitor_id.as_ref() != Some(&target_monitor_id) {
+                    self.pending_overlay_repair = Some(target_monitor_id);
                     return;
                 }
-                self.room_service
-                    .as_ref()
-                    .unwrap()
-                    .publish_cursor_position(x, y, true);
+
+                if let Some(gfx) = self
+                    .window_manager
+                    .as_mut()
+                    .and_then(|window_manager| window_manager.active_gfx_mut())
+                {
+                    gfx.participants_manager_mut().clear_draw_caches();
+                    gfx.window().request_redraw();
+                }
             }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
@@ -1316,27 +1817,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DrawingMode(drawing_mode, sid) => {
                 log::debug!("user_event: DrawingMode: {:?} {}", drawing_mode, sid);
-                if let (Some(window_manager), Some(remote_control)) =
-                    (self.window_manager.as_mut(), self.remote_control.as_mut())
-                {
-                    let cursor_controller = &mut remote_control.cursor_controller;
-                    match &drawing_mode {
-                        DrawingMode::Draw(_) => {
-                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Pencil);
-                        }
-                        DrawingMode::ClickAnimation => {
-                            cursor_controller
-                                .set_controller_mode(sid.as_str(), CursorMode::Pointer);
-                        }
-                        DrawingMode::Disabled => {
-                            cursor_controller.set_controller_mode(sid.as_str(), CursorMode::Normal);
-                        }
-                        DrawingMode::Any => {}
-                    }
-                    if let Some(gfx) = window_manager.active_gfx_mut() {
-                        gfx.set_drawing_mode(sid.as_str(), drawing_mode.clone());
-                    }
-                }
+                self.apply_overlay_participant_drawing_mode(sid.as_str(), drawing_mode.clone());
                 if let Some(screensharing_window) = &mut self.screensharing_window {
                     if screensharing_window.is_visible() {
                         screensharing_window.set_drawing_mode(sid.as_str(), drawing_mode);
@@ -1548,6 +2029,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::SetScreenShareResolution(resolution) => {
                 log::info!("user_event: SetScreenShareResolution({resolution:?})");
                 self.screen_share_resolution = resolution;
+            }
+            UserEvent::SetScreenSharePickerMode(mode) => {
+                log::info!("user_event: SetScreenSharePickerMode({mode:?})");
+                self.screen_share_picker_mode = mode;
             }
             UserEvent::SetTelemetryEnabled(enabled) => {
                 log::info!("user_event: SetTelemetryEnabled({enabled})");
@@ -1887,6 +2372,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if self.drawing_window.as_ref().is_none_or(|w| !w.is_visible()) {
+                    let capture_frame = self
+                        .screen_capturer
+                        .lock()
+                        .ok()
+                        .and_then(|capturer| capturer.frame());
                     let remote_control = self.remote_control.as_mut().unwrap();
 
                     // Disable remote control
@@ -1907,7 +2397,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             .as_ref()
                             .and_then(|wm| wm.active_window_position());
                         win.set_draw_persist(drawing_enabled.permanent);
-                        win.show(overlay_position);
+                        win.show(overlay_position, capture_frame);
                         log::info!(
                             "Local drawing mode enabled (permanent: {})",
                             drawing_enabled.permanent
@@ -1923,6 +2413,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             event_loop,
                             drawing_enabled.permanent,
                             overlay_position,
+                            capture_frame,
                         ) {
                             Ok(win) => {
                                 self.drawing_window = Some(win);
@@ -2215,12 +2706,60 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
         }
 
+        let screen_selection_mouse_event = matches!(
+            &event,
+            WindowEvent::CursorEntered { .. }
+                | WindowEvent::CursorLeft { .. }
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+        );
+        if screen_selection_mouse_event {
+            if let Some(mode) = self
+                .screen_selection
+                .as_ref()
+                .map(|selection| selection.mode)
+            {
+                let (captured, selected_mode) = self
+                    .window_manager
+                    .as_mut()
+                    .map(|window_manager| {
+                        window_manager.handle_screen_selection_event(window_id, &event, mode)
+                    })
+                    .unwrap_or((false, None));
+
+                if let Some(selected_mode) = selected_mode {
+                    self.set_selection_mode(selected_mode);
+                }
+                if matches!(event, WindowEvent::CursorMoved { .. }) {
+                    if let Some(selection) = self.screen_selection.as_mut() {
+                        selection.mouse_hover_enabled = true;
+                    }
+                    self.update_hovered_window();
+                }
+                if captured {
+                    return;
+                }
+            }
+        }
+
+        if matches!(
+            &event,
+            WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::ScaleFactorChanged { .. }
+        ) && self.pending_overlay_repair.is_none()
+        {
+            self.pending_overlay_repair = self.window_manager.as_ref().and_then(|window_manager| {
+                window_manager.active_window_monitor_mismatch(window_id)
+            });
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if self.screen_selection_active {
+                if self.screen_selection.is_some() {
                     let Some(window_manager) = self.window_manager.as_mut() else {
                         log::warn!("window_event: no window manager");
                         return;
@@ -2263,10 +2802,19 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } if self.screen_selection_active => {
-                self.select_screen_selection_window(event_loop, window_id);
+            } if self.screen_selection.is_some() => {
+                let mode = self.screen_selection.as_ref().unwrap().mode;
+                let content = self.selected_content(event_loop, window_id);
+
+                match (mode, content) {
+                    (_, Some(content)) => self.select_source(content),
+                    (SelectionMode::Screen, None) => {
+                        log::error!("window_event: failed to resolve selected screen");
+                    }
+                    (SelectionMode::Window, None) => {}
+                }
             }
-            WindowEvent::CursorEntered { .. } if self.screen_selection_active => {
+            WindowEvent::CursorEntered { .. } if self.screen_selection.is_some() => {
                 if let Some(window_manager) = self.window_manager.as_ref() {
                     if !window_manager.focus_window(window_id) {
                         log::warn!("window_event: failed to focus screen selection window");
@@ -2278,19 +2826,51 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
+            WindowEvent::ModifiersChanged(modifiers) if self.screen_selection.is_some() => {
+                if let Some(selection) = self.screen_selection.as_mut() {
+                    selection.modifiers = modifiers.state();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. }
-                if self.screen_selection_active && event.state.is_pressed() =>
+                if self.screen_selection.is_some() && event.state.is_pressed() =>
             {
+                let (mode, modifiers) = self
+                    .screen_selection
+                    .as_ref()
+                    .map(|selection| (selection.mode, selection.modifiers))
+                    .unwrap();
+                let repeat = event.repeat;
                 match event.logical_key {
+                    Key::Character(key)
+                        if cfg!(target_os = "macos")
+                            && !repeat
+                            && modifiers == ModifiersState::SUPER
+                            && key.as_ref().eq_ignore_ascii_case("s") =>
+                    {
+                        self.set_selection_mode(match mode {
+                            SelectionMode::Screen => SelectionMode::Window,
+                            SelectionMode::Window => SelectionMode::Screen,
+                        });
+                    }
                     Key::Named(NamedKey::Escape) => {
                         log::info!("window_event: Escape, cancelling screen selection");
                         self.cancel_screen_selection();
                     }
                     Key::Named(NamedKey::Enter) => {
-                        log::info!("window_event: Enter, selecting focused screen");
-                        self.select_screen_selection_window(event_loop, window_id);
+                        log::info!("window_event: Enter, selecting focused source");
+                        if let Some(content) = self.selected_content(event_loop, window_id) {
+                            self.select_source(content);
+                        } else if mode == SelectionMode::Screen {
+                            log::error!("window_event: failed to resolve selected source");
+                        }
                     }
-                    Key::Named(NamedKey::ArrowLeft) => {
+                    Key::Named(NamedKey::ArrowLeft) if mode == SelectionMode::Window => {
+                        self.cycle_hovered_window(false);
+                    }
+                    Key::Named(NamedKey::ArrowRight) if mode == SelectionMode::Window => {
+                        self.cycle_hovered_window(true);
+                    }
+                    Key::Named(NamedKey::ArrowLeft) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2298,7 +2878,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowRight) => {
+                    Key::Named(NamedKey::ArrowRight) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2306,7 +2886,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowUp) => {
+                    Key::Named(NamedKey::ArrowUp) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2314,7 +2894,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             );
                         }
                     }
-                    Key::Named(NamedKey::ArrowDown) => {
+                    Key::Named(NamedKey::ArrowDown) if mode == SelectionMode::Screen => {
                         if let Some(window_manager) = self.window_manager.as_ref() {
                             window_manager.focus_window_in_direction(
                                 window_id,
@@ -2327,7 +2907,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             WindowEvent::Resized(new_size) => {
                 if let Some(wm) = self.window_manager.as_mut() {
-                    if self.screen_selection_active {
+                    if self.screen_selection.is_some() {
                         wm.resize_window(window_id, new_size);
                     } else if wm.is_active_window(window_id) {
                         log::info!("window_event: active window resized to {:?}", new_size);
@@ -2345,8 +2925,28 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
         // Source: https://stackoverflow.com/a/76105294
         use winit::event_loop::ControlFlow;
 
+        if let Some(target_monitor_id) = self.pending_overlay_repair.take() {
+            self.repair_overlay_monitor(event_loop, target_monitor_id);
+        }
+
         let now = std::time::Instant::now();
         let mut next_redraw: Option<std::time::Instant> = None;
+
+        let refresh_window_list = self.screen_selection.as_ref().is_some_and(|selection| {
+            selection.mode == SelectionMode::Window && now >= selection.next_list_refresh_at
+        });
+        if refresh_window_list {
+            self.refresh_window_list();
+        }
+        if let Some(next_refresh) = self.screen_selection.as_ref().and_then(|selection| {
+            (selection.mode == SelectionMode::Window).then_some(selection.next_list_refresh_at)
+        }) {
+            next_redraw = Some(
+                next_redraw
+                    .map(|existing| existing.min(next_refresh))
+                    .unwrap_or(next_refresh),
+            );
+        }
 
         // Handle stats window
         if let Some(stats_win) = &mut self.stats_window {
@@ -2418,6 +3018,7 @@ pub enum UserEvent {
     StopScreenShare,
     RequestRedraw,
     SharerPosition(f64, f64),
+    CaptureFrameChanged,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
@@ -2478,6 +3079,7 @@ pub enum UserEvent {
     AudioCaptureError,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
+    SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
     ExitRequested,
@@ -2634,6 +3236,9 @@ impl RenderEventLoop {
                     }
                     Message::SetScreenShareResolution(resolution) => {
                         UserEvent::SetScreenShareResolution(resolution)
+                    }
+                    Message::SetScreenSharePickerMode(mode) => {
+                        UserEvent::SetScreenSharePickerMode(mode)
                     }
                     Message::SetTelemetryEnabled(enabled) => {
                         UserEvent::SetTelemetryEnabled(enabled)

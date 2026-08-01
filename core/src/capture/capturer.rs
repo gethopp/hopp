@@ -3,7 +3,10 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
-use crate::{utils::geometry::Extent, UserEvent, STREAM_FAILURE_EXIT_CODE};
+use crate::{
+    utils::geometry::{Extent, Frame},
+    UserEvent, STREAM_FAILURE_EXIT_CODE,
+};
 
 /// Platform-agnostic monitor identifier.
 ///
@@ -31,6 +34,8 @@ use stream::{Stream, StreamRuntimeMessage};
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
 const POLL_STREAM_DATA_SLEEP_MS: u64 = 100;
+#[cfg(target_os = "macos")]
+const STREAM_RECONFIGURE_DEBOUNCE_MS: u64 = 10;
 
 #[cfg_attr(target_os = "windows", path = "windows.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
@@ -61,6 +66,14 @@ pub enum CapturerError {
     /// Couldn't find selected source.
     #[error("Couldn't find selected source")]
     SelectedSourceNotFound,
+
+    /// Capture source type is unsupported on this platform.
+    #[error("Capture source type is unsupported on this platform")]
+    UnsupportedContentType,
+
+    /// Invalid stream dimensions.
+    #[error("Invalid stream dimensions")]
+    InvalidStreamDimensions,
 }
 
 /// Platform-specific extensions for screen sharing and monitor management.
@@ -188,9 +201,15 @@ impl Capturer {
             self.active_stream = None;
         }
 
-        let mut stream = Stream::new(stream_resolution, scale, self.tx.clone(), buffer_source)?;
+        let mut stream = Stream::new(
+            content,
+            stream_resolution,
+            scale,
+            self.tx.clone(),
+            buffer_source,
+        )?;
 
-        stream.start_capture(content.id)?;
+        stream.start_capture()?;
         self.active_stream = Some(stream);
         Ok(())
     }
@@ -261,7 +280,7 @@ impl Capturer {
                 // So we just sleep and retry a few times in case it's a temporary error.
                 // If we can't restart the stream after 10 retries, we exit the process
                 // and inform the user to restart the application.
-                let mut res = new_stream.start_capture(new_stream.source_id());
+                let mut res = new_stream.start_capture();
                 for i in 0..MAX_STREAM_FAILURES_BEFORE_EXIT {
                     if res.is_ok() {
                         break;
@@ -285,7 +304,7 @@ impl Capturer {
                             std::process::exit(STREAM_FAILURE_EXIT_CODE);
                         }
                     };
-                    res = new_stream.start_capture(new_stream.source_id());
+                    res = new_stream.start_capture();
                 }
 
                 if let Err(ref e) = res {
@@ -316,6 +335,18 @@ impl Capturer {
     /// - `false`: No capture is in progress
     pub fn has_active_stream(&self) -> bool {
         self.active_stream.is_some()
+    }
+
+    pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
+        self.active_stream.as_ref()?.frame()
+    }
+
+    pub fn target_process_id(&self) -> Option<i32> {
+        self.active_stream.as_ref()?.target_process_id()
+    }
+
+    pub fn target_window_id(&self) -> Option<u32> {
+        self.active_stream.as_ref()?.target_window_id()
     }
 
     /// Signals the runtime stream monitoring thread to terminate.
@@ -404,6 +435,8 @@ impl Capturer {
  */
 pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */) {
     let rx = { capturer.lock().unwrap().rx.clone() };
+    #[cfg(target_os = "macos")]
+    let mut pending_resize = None;
     loop {
         log::debug!("poll_stream: waiting for message");
         let rx_lock = rx.lock();
@@ -412,7 +445,15 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
             break;
         }
         let rx_lock = rx_lock.unwrap();
-        match rx_lock.recv_timeout(std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS)) {
+        #[cfg(target_os = "macos")]
+        let timeout = pending_resize
+            .map(|(_, deadline): ((u32, u32), std::time::Instant)| {
+                deadline.saturating_duration_since(std::time::Instant::now())
+            })
+            .unwrap_or(std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS));
+        #[cfg(not(target_os = "macos"))]
+        let timeout = std::time::Duration::from_secs(POLL_STREAM_TIMEOUT_SECS);
+        match rx_lock.recv_timeout(timeout) {
             Ok(StreamRuntimeMessage::Failed) => {
                 log::info!("poll_stream: stream failed");
                 let mut capturer = capturer.lock().unwrap();
@@ -425,11 +466,33 @@ pub fn poll_stream(capturer: Arc<Mutex<Capturer>> /* mut socket: CursorSocket */
                     .event_loop_proxy
                     .send_event(UserEvent::StopScreenShare);
             }
+            #[cfg(target_os = "macos")]
+            Ok(StreamRuntimeMessage::FrameChanged { resize }) => {
+                if let Some((width, height)) = resize {
+                    pending_resize = Some((
+                        (width, height),
+                        std::time::Instant::now()
+                            + std::time::Duration::from_millis(STREAM_RECONFIGURE_DEBOUNCE_MS),
+                    ));
+                }
+                let capturer = capturer.lock().unwrap();
+                let _ = capturer
+                    .event_loop_proxy
+                    .send_event(UserEvent::CaptureFrameChanged);
+            }
             Ok(StreamRuntimeMessage::Stop) => {
                 log::info!("poll_stream: stop message");
                 break;
             }
-            Err(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                #[cfg(target_os = "macos")]
+                if let Some(((width, height), _)) = pending_resize.take() {
+                    if let Some(stream) = capturer.lock().unwrap().active_stream.as_ref() {
+                        stream.reconfigure(width, height);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
             _ => {}
         };
     }

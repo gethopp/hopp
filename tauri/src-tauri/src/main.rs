@@ -4,8 +4,8 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenShareResolution,
-    SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenSharePickerMode,
+    ScreenShareResolution, SentryMetadata,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -887,6 +887,18 @@ fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareRes
 }
 
 #[tauri::command(async)]
+fn set_screen_share_picker_mode(app: tauri::AppHandle, mode: ScreenSharePickerMode) {
+    log::info!("set_screen_share_picker_mode: {mode:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|settings| settings.screen_share_picker_mode = mode);
+    if let Err(e) = data.sender.send(Message::SetScreenSharePickerMode(mode)) {
+        log::error!("set_screen_share_picker_mode: failed to send: {e:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
@@ -1350,6 +1362,10 @@ fn main() {
             if let Err(e) = sender.send(Message::SetScreenShareResolution(screen_share_resolution)) {
                 log::error!("Failed to send initial screen_share_resolution: {e:?}");
             }
+            let screen_share_picker_mode = app_state.user_settings().screen_share_picker_mode;
+            if let Err(e) = sender.send(Message::SetScreenSharePickerMode(screen_share_picker_mode)) {
+                log::error!("Failed to send initial screen_share_picker_mode: {e:?}");
+            }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
             }
@@ -1674,6 +1690,7 @@ fn main() {
             toggle_mic,
             set_noise_cancellation,
             set_screen_share_resolution,
+            set_screen_share_picker_mode,
             list_microphones,
             select_microphone,
             list_webcams,

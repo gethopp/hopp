@@ -1,14 +1,16 @@
 use crate::utils::geometry::{aspect_fit, Extent, Frame};
 use livekit::webrtc::{
-    prelude::{NV12Buffer, VideoFrame, VideoRotation},
+    prelude::{NV12Buffer, VideoBuffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
 };
 use screencapturekit::{
+    cg::CGRect,
     cm::{CMSampleBufferExt, CMSampleBufferSCExt, IOSurfaceLockOptions},
     error::SCStreamErrorCode,
     prelude::*,
     stream::delegate_trait::StreamCallbacks,
 };
+use socket_lib::{Content, ContentType};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
@@ -19,6 +21,7 @@ use super::CapturerError;
 #[allow(dead_code)]
 pub enum StreamRuntimeMessage {
     Failed,
+    FrameChanged { resize: Option<(u32, u32)> },
     Stop,
     StopCapture,
     UserStoppedCapture,
@@ -40,6 +43,81 @@ impl StreamBuffer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CropRect {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
+
+impl CropRect {
+    fn full_frame(width: usize, height: usize) -> Option<Self> {
+        let width = width & !1;
+        let height = height & !1;
+        (width > 0 && height > 0).then_some(Self {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        })
+    }
+}
+
+fn capture_dimensions(
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> (u32, u32) {
+    let (width, height) = aspect_fit(width, height, target_width, target_height);
+    (width + width % 2, height + height % 2)
+}
+
+fn nv12_crop_rect(
+    rect: CGRect,
+    point_pixel_scale: f64,
+    surface_width: usize,
+    surface_height: usize,
+) -> Option<CropRect> {
+    let values = [
+        rect.origin.x,
+        rect.origin.y,
+        rect.size.width,
+        rect.size.height,
+        point_pixel_scale,
+    ];
+    if values.iter().any(|value| !value.is_finite())
+        || rect.size.width <= 0.0
+        || rect.size.height <= 0.0
+        || point_pixel_scale <= 0.0
+    {
+        return None;
+    }
+
+    let left = (rect.origin.x * point_pixel_scale).max(0.0).ceil() as usize;
+    let top = (rect.origin.y * point_pixel_scale).max(0.0).ceil() as usize;
+    let right = ((rect.origin.x + rect.size.width) * point_pixel_scale)
+        .min(surface_width as f64)
+        .floor() as usize;
+    let bottom = ((rect.origin.y + rect.size.height) * point_pixel_scale)
+        .min(surface_height as f64)
+        .floor() as usize;
+
+    // NV12 chroma samples cover 2x2 luma pixels, so crop inward to even bounds.
+    let x = (left + 1) & !1;
+    let y = (top + 1) & !1;
+    let right = right & !1;
+    let bottom = bottom & !1;
+
+    (right > x && bottom > y).then_some(CropRect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    })
+}
+
 pub struct Stream {
     sc_stream: Option<SCStream>,
     permanent_error_tx: mpsc::Sender<StreamRuntimeMessage>,
@@ -47,14 +125,16 @@ pub struct Stream {
     buffer_source: NativeVideoSource,
     frame: Arc<Mutex<Frame>>,
     stream_resolution: Extent,
-    source_id: u32,
+    source: Content,
     failures_count: Arc<Mutex<u64>>,
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
+    target_process_id: Option<i32>,
 }
 
 impl Stream {
     pub fn new(
+        source: Content,
         stream_resolution: Extent,
         scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
@@ -67,45 +147,87 @@ impl Stream {
             buffer_source,
             frame: Arc::new(Mutex::new(Frame::default())),
             stream_resolution,
-            source_id: 0,
+            source,
             failures_count: Arc::new(Mutex::new(0)),
             output_extent: Arc::new(Mutex::new(Extent {
                 width: 0.,
                 height: 0.,
             })),
             scale,
+            target_process_id: None,
         })
     }
 
-    pub fn start_capture(&mut self, id: u32) -> Result<(), CapturerError> {
-        log::info!("macos_stream::start_capture: Starting capture for id: {id}");
+    pub fn start_capture(&mut self) -> Result<(), CapturerError> {
+        let content = self.source;
+        self.target_process_id = None;
+        log::info!("macos_stream::start_capture: Starting capture for {content}");
 
-        let content = SCShareableContent::get().map_err(|e| {
-            log::error!("start_capture: Failed to get shareable content: {e}");
+        let shareable_content = SCShareableContent::get().map_err(|e| {
+            log::error!("start_capture: failed to get shareable content: {e}");
             CapturerError::DesktopCapturerCreationError
         })?;
 
-        let displays = content.displays();
-        if displays.is_empty() {
-            return Err(CapturerError::CaptureSourceListEmpty);
+        let (stream_width, stream_height, filter, crop_window) = match content.content_type {
+            ContentType::Display => {
+                let displays = shareable_content.displays();
+                if displays.is_empty() {
+                    return Err(CapturerError::CaptureSourceListEmpty);
+                }
+                let display = displays
+                    .into_iter()
+                    .find(|display| display.display_id() == content.id)
+                    .ok_or(CapturerError::SelectedSourceNotFound)?;
+                let native_width = (display.width() as f64 * self.scale) as u32;
+                let native_height = (display.height() as f64 * self.scale) as u32;
+                let (width, height) = capture_dimensions(
+                    native_width,
+                    native_height,
+                    self.stream_resolution.width as u32,
+                    self.stream_resolution.height as u32,
+                );
+                let filter = SCContentFilter::create()
+                    .with_display(&display)
+                    .with_excluding_windows(&[])
+                    .build();
+                (width, height, filter, false)
+            }
+            ContentType::Window => {
+                let window = shareable_content
+                    .windows()
+                    .into_iter()
+                    .find(|window| window.window_id() == content.id)
+                    .ok_or(CapturerError::SelectedSourceNotFound)?;
+                self.target_process_id = window
+                    .owning_application()
+                    .map(|application| application.process_id());
+                let frame = window.frame();
+                let filter = SCContentFilter::create().with_window(&window).build();
+                let backing_scale = f64::from(filter.point_pixel_scale());
+                *self.frame.lock().unwrap() = Frame {
+                    origin_x: frame.origin.x,
+                    origin_y: frame.origin.y,
+                    extent: Extent {
+                        width: frame.size.width,
+                        height: frame.size.height,
+                    },
+                };
+                let native_width = (frame.size.width * backing_scale) as u32;
+                let native_height = (frame.size.height * backing_scale) as u32;
+                let (width, height) = capture_dimensions(
+                    native_width,
+                    native_height,
+                    self.stream_resolution.width as u32,
+                    self.stream_resolution.height as u32,
+                );
+                (width, height, filter, true)
+            }
+        };
+        if stream_width < 2 || stream_height < 2 {
+            return Err(CapturerError::InvalidStreamDimensions);
         }
-
-        let display = displays
-            .into_iter()
-            .find(|d| d.display_id() == id)
-            .ok_or(CapturerError::SelectedSourceNotFound)?;
-
-        let native_width = (display.width() as f64 * self.scale) as u32;
-        let native_height = (display.height() as f64 * self.scale) as u32;
-        let (stream_width, stream_height) = aspect_fit(
-            native_width,
-            native_height,
-            self.stream_resolution.width as u32,
-            self.stream_resolution.height as u32,
-        );
         log::info!(
-            "start_capture: output {stream_width}x{stream_height} from display {native_width}x{native_height} (scale: {})",
-            self.scale
+            "start_capture: configured output {stream_width}x{stream_height}, crop_window: {crop_window}"
         );
 
         {
@@ -124,11 +246,6 @@ impl Stream {
             .with_pixel_format(PixelFormat::YCbCr_420v)
             .with_shows_cursor(false)
             .with_fps(60);
-
-        let filter = SCContentFilter::create()
-            .with_display(&display)
-            .with_excluding_windows(&[])
-            .build();
 
         let error_tx = self.permanent_error_tx.clone();
         let stop_tx = self.permanent_error_tx.clone();
@@ -159,10 +276,18 @@ impl Stream {
         let buffer_source = self.buffer_source.clone();
         let failures_count = self.failures_count.clone();
         let frame_arc = self.frame.clone();
+        let frame_changed_tx = self.permanent_error_tx.clone();
+        let output_extent = self.output_extent.clone();
+        let stream_resolution = self.stream_resolution;
+        let resize_target = Arc::new(Mutex::new((stream_width, stream_height)));
         let capture_start = std::time::Instant::now();
 
         let handler = move |sample: CMSampleBuffer, of_type: SCStreamOutputType| {
             if !matches!(of_type, SCStreamOutputType::Screen) {
+                return;
+            }
+            let frame_status = sample.frame_status();
+            if frame_status.is_some_and(|status| !status.has_content()) {
                 return;
             }
 
@@ -209,38 +334,103 @@ impl Stream {
                 return;
             }
 
-            // Update frame metadata
-            {
-                if let Some(content_rect) = sample.content_rect() {
-                    let mut frame = frame_arc.lock().unwrap();
-                    frame.origin_x = content_rect.origin.x;
-                    frame.origin_y = content_rect.origin.y;
-                    frame.extent.width = content_rect.size.width;
-                    frame.extent.height = content_rect.size.height;
+            let (content_rect, scale_factor) = if let Some(info) = sample.frame_info() {
+                let scale_factor = info.scale_factor.unwrap_or(1.0);
+                if crop_window {
+                    if let Some(screen_rect) = info.screen_rect {
+                        let native_width = (screen_rect.size.width * scale_factor) as u32;
+                        let native_height = (screen_rect.size.height * scale_factor) as u32;
+                        let next_resize_target = capture_dimensions(
+                            native_width,
+                            native_height,
+                            stream_resolution.width as u32,
+                            stream_resolution.height as u32,
+                        );
+                        let resize = {
+                            let mut current_resize_target = resize_target.lock().unwrap();
+                            if *current_resize_target != next_resize_target
+                                && next_resize_target.0 >= 2
+                                && next_resize_target.1 >= 2
+                            {
+                                *current_resize_target = next_resize_target;
+                                Some(next_resize_target)
+                            } else {
+                                None
+                            }
+                        };
+
+                        let mut frame = frame_arc.lock().unwrap();
+                        let next_frame = Frame {
+                            origin_x: screen_rect.origin.x,
+                            origin_y: screen_rect.origin.y,
+                            extent: Extent {
+                                width: screen_rect.size.width,
+                                height: screen_rect.size.height,
+                            },
+                        };
+                        let frame_changed = frame.origin_x != next_frame.origin_x
+                            || frame.origin_y != next_frame.origin_y
+                            || frame.extent.width != next_frame.extent.width
+                            || frame.extent.height != next_frame.extent.height;
+                        if frame_changed {
+                            *frame = next_frame;
+                        }
+                        if frame_changed || resize.is_some() {
+                            let _ = frame_changed_tx
+                                .send(StreamRuntimeMessage::FrameChanged { resize });
+                        }
+                    }
                 }
-            }
+                (info.content_rect, scale_factor)
+            } else {
+                (None, 1.0)
+            };
+
+            let crop = if crop_window {
+                match content_rect {
+                    Some(rect) => {
+                        match nv12_crop_rect(rect, scale_factor, frame_width, frame_height) {
+                            Some(crop) => crop,
+                            None => return,
+                        }
+                    }
+                    None => match CropRect::full_frame(frame_width, frame_height) {
+                        Some(crop) => crop,
+                        None => return,
+                    },
+                }
+            } else {
+                match CropRect::full_frame(frame_width, frame_height) {
+                    Some(crop) => crop,
+                    None => return,
+                }
+            };
 
             let mut sb = stream_buffer.lock().unwrap();
+            let output_resized = sb.video_frame.buffer.width() != crop.width as u32
+                || sb.video_frame.buffer.height() != crop.height as u32;
+            if output_resized {
+                *sb = StreamBuffer::new(crop.width as u32, crop.height as u32);
+                let mut extent = output_extent.lock().unwrap();
+                extent.width = crop.width as f64;
+                extent.height = crop.height as f64;
+            }
+
             let (dst_stride_y, dst_stride_uv) = sb.video_frame.buffer.strides();
             let (dst_y, dst_uv) = sb.video_frame.buffer.data_mut();
 
-            // Copy Y plane row-by-row to handle stride mismatch
-            let copy_width_y = frame_width.min(dst_stride_y as usize);
-            for row in 0..frame_height {
-                let src_off = row * src_stride_y;
+            for row in 0..crop.height {
+                let src_off = (crop.y + row) * src_stride_y + crop.x;
                 let dst_off = row * dst_stride_y as usize;
-                dst_y[dst_off..dst_off + copy_width_y]
-                    .copy_from_slice(&src_y[src_off..src_off + copy_width_y]);
+                dst_y[dst_off..dst_off + crop.width]
+                    .copy_from_slice(&src_y[src_off..src_off + crop.width]);
             }
 
-            // Copy UV plane (half height, interleaved CbCr)
-            let uv_height = frame_height / 2;
-            let copy_width_uv = (frame_width).min(dst_stride_uv as usize);
-            for row in 0..uv_height {
-                let src_off = row * src_stride_uv;
+            for row in 0..crop.height / 2 {
+                let src_off = (crop.y / 2 + row) * src_stride_uv + crop.x;
                 let dst_off = row * dst_stride_uv as usize;
-                dst_uv[dst_off..dst_off + copy_width_uv]
-                    .copy_from_slice(&src_uv[src_off..src_off + copy_width_uv]);
+                dst_uv[dst_off..dst_off + crop.width]
+                    .copy_from_slice(&src_uv[src_off..src_off + crop.width]);
             }
 
             sb.video_frame.timestamp_us = capture_start.elapsed().as_micros() as i64;
@@ -256,8 +446,22 @@ impl Stream {
         })?;
 
         self.sc_stream = Some(sc_stream);
-        self.source_id = id;
         Ok(())
+    }
+
+    pub fn reconfigure(&self, width: u32, height: u32) {
+        let Some(stream) = self.sc_stream.as_ref() else {
+            return;
+        };
+        let config = SCStreamConfiguration::new()
+            .with_width(width)
+            .with_height(height)
+            .with_pixel_format(PixelFormat::YCbCr_420v)
+            .with_shows_cursor(false)
+            .with_fps(60);
+        if let Err(error) = stream.update_configuration(&config) {
+            log::error!("capture stream reconfiguration failed: {error}");
+        }
     }
 
     pub fn stop_capture(&mut self) {
@@ -282,10 +486,11 @@ impl Stream {
             buffer_source: self.buffer_source.clone(),
             frame: self.frame.clone(),
             stream_resolution: self.stream_resolution,
-            source_id: self.source_id,
+            source: self.source,
             failures_count: self.failures_count.clone(),
             output_extent: self.output_extent.clone(),
             scale: self.scale,
+            target_process_id: self.target_process_id,
         })
     }
 
@@ -293,11 +498,19 @@ impl Stream {
         *self.failures_count.lock().unwrap()
     }
 
-    pub fn source_id(&self) -> u32 {
-        self.source_id
-    }
-
     pub fn get_stream_extent(&self) -> Extent {
         *self.output_extent.lock().unwrap()
+    }
+
+    pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
+        matches!(self.source.content_type, ContentType::Window).then(|| self.frame.clone())
+    }
+
+    pub fn target_process_id(&self) -> Option<i32> {
+        self.target_process_id
+    }
+
+    pub fn target_window_id(&self) -> Option<u32> {
+        matches!(self.source.content_type, ContentType::Window).then_some(self.source.id)
     }
 }

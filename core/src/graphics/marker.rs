@@ -1,65 +1,60 @@
 use iced::{widget::canvas, Rectangle, Renderer};
 
+use crate::utils::geometry::Position;
+
 pub struct Marker {
     marker: iced_core::image::Handle,
-    cache: canvas::Cache,
 }
 
 impl Marker {
     pub fn new(texture_path: &String) -> Self {
-        let cache = canvas::Cache::new();
         let marker =
             iced_core::image::Handle::from_path(format!("{texture_path}/marker_top_left.png"));
-        Self { marker, cache }
+        Self { marker }
     }
 
-    pub fn draw(&self, renderer: &Renderer, bounds: Rectangle) -> canvas::Geometry {
-        self.cache.draw(renderer, bounds.size(), |frame| {
-            let image_handle = iced_core::image::Image::new(self.marker.clone());
-            let width = 40.0;
-            let height = 40.0;
+    pub fn draw(
+        &self,
+        renderer: &Renderer,
+        bounds: Rectangle,
+        translate: &dyn Fn(Position) -> Position,
+    ) -> canvas::Geometry {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let top_left = translate(Position { x: 0.0, y: 0.0 });
+        let bottom_right = translate(Position { x: 1.0, y: 1.0 });
+        let width = 40.0;
+        let height = 40.0;
+
+        for (x, y, rotation) in [
+            (top_left.x, top_left.y, iced_core::Radians(0.0)),
+            (
+                top_left.x,
+                bottom_right.y - height as f64,
+                iced_core::Radians::PI * 1.5,
+            ),
+            (
+                bottom_right.x - width as f64,
+                bottom_right.y - height as f64,
+                iced_core::Radians::PI,
+            ),
+            (
+                bottom_right.x - width as f64,
+                top_left.y,
+                iced_core::Radians::PI / 2.0,
+            ),
+        ] {
+            let marker = iced_core::image::Image::new(self.marker.clone()).rotation(rotation);
             frame.draw_image(
                 Rectangle {
-                    x: 0.,
-                    y: 0.,
+                    x: x as f32,
+                    y: y as f32,
                     width,
                     height,
                 },
-                image_handle,
+                marker,
             );
-            let image_handle = iced_core::image::Image::new(self.marker.clone());
-            let image_handle = image_handle.rotation(iced_core::Radians::PI * 1.5);
-            frame.draw_image(
-                Rectangle {
-                    x: 0.,
-                    y: bounds.height - height,
-                    width,
-                    height,
-                },
-                image_handle,
-            );
-            let image_handle = iced_core::image::Image::new(self.marker.clone());
-            let image_handle = image_handle.rotation(iced_core::Radians::PI);
-            frame.draw_image(
-                Rectangle {
-                    x: bounds.width - width,
-                    y: bounds.height - height,
-                    width,
-                    height,
-                },
-                image_handle,
-            );
-            let image_handle = iced_core::image::Image::new(self.marker.clone());
-            let image_handle = image_handle.rotation(iced_core::Radians::PI / 2.0);
-            frame.draw_image(
-                Rectangle {
-                    x: bounds.width - width,
-                    y: 0.,
-                    width,
-                    height,
-                },
-                image_handle,
-            );
-        })
+        }
+
+        frame.into_geometry()
     }
 }

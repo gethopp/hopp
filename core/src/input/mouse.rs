@@ -319,10 +319,6 @@ impl ControllerCursor {
         self.clicked = clicked;
     }
 
-    fn global_position(&self) -> Position {
-        self.cursor_state.global_position
-    }
-
     fn local_position(&self) -> Position {
         self.cursor_state.local_position
     }
@@ -340,16 +336,6 @@ impl ControllerCursor {
     }
 }
 
-fn is_out_of_bounds(position: Position) -> bool {
-    if !(0.0..=1.0).contains(&position.x) {
-        return true;
-    }
-    if !(0.0..=1.0).contains(&position.y) {
-        return true;
-    }
-    false
-}
-
 pub struct SharerCursor {
     cursor_state: CursorState,
     has_control: bool,
@@ -357,9 +343,12 @@ pub struct SharerCursor {
     overlay_window: Arc<OverlayWindow>,
     /// We are using this to take control back when the sharer clicks/scrolls
     controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
-    cursor_simulator: Arc<Mutex<CursorSimulator>>,
     last_event_position: Position,
     last_event_position_time: Instant,
+    // only Windows simulates the take-back click in SharerCursor.
+    // macOS rewrites the hardware event in the event tap instead.
+    #[cfg(not(target_os = "macos"))]
+    cursor_simulator: Arc<Mutex<CursorSimulator>>,
 }
 
 impl SharerCursor {
@@ -367,8 +356,8 @@ impl SharerCursor {
         cursor_state: CursorState,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         overlay_window: Arc<OverlayWindow>,
-        cursor_simulator: Arc<Mutex<CursorSimulator>>,
         controllers_cursors: Arc<Mutex<Vec<ControllerCursor>>>,
+        #[cfg(not(target_os = "macos"))] cursor_simulator: Arc<Mutex<CursorSimulator>>,
     ) -> Self {
         Self {
             cursor_state,
@@ -376,64 +365,71 @@ impl SharerCursor {
             event_loop_proxy,
             overlay_window,
             controllers_cursors,
-            cursor_simulator,
             last_event_position: Position::default(),
             last_event_position_time: Instant::now(),
+            #[cfg(not(target_os = "macos"))]
+            cursor_simulator,
         }
     }
 
-    // The result is whether or not the sharer left the monitor.
+    // Returns whether control was released to the sharer.
     fn set_position(&mut self, global_position: Position) -> bool {
         log::debug!("sharer_cursor: set_position: global_position: {global_position:?}");
 
         let local_position = self
             .overlay_window
             .local_percentage_from_global(global_position.x, global_position.y);
-        let display_percentage = self
-            .overlay_window
-            .global_percentage_from_global(global_position.x, global_position.y);
+        let source_position = self.overlay_window.global_to_source(global_position);
 
         self.cursor_state
             .set_position(global_position, local_position, !self.has_control);
 
-        // This needs to be after we have set the position in order to use the correct global position
-        // when hiding the virtual cursor.
-        let mut left_monitor = false;
-        if is_out_of_bounds(local_position) && !self.has_control {
-            log::info!("sharer_cursor: set_position: sharer left monitor");
+        let released_to_sharer = source_position.is_none() && !self.has_control;
+        if released_to_sharer {
+            log::info!("sharer_cursor: set_position: sharer left shared source");
             self.hide(true);
-            left_monitor = true;
         }
 
         if self.last_event_position_time.elapsed() > SHARER_POSITION_UPDATE_INTERVAL {
-            let res = self.event_loop_proxy.send_event(UserEvent::SharerPosition(
-                display_percentage.x,
-                display_percentage.y,
-            ));
-            if let Err(e) = res {
-                error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+            if let Some(position) = source_position {
+                let res = self
+                    .event_loop_proxy
+                    .send_event(UserEvent::SharerPosition(position.x, position.y));
+                if let Err(e) = res {
+                    error!("sharer_cursor: set_position: error sending sharer position: {e:?}");
+                }
             }
             self.last_event_position_time = Instant::now();
         }
 
-        left_monitor
+        released_to_sharer
     }
 
-    fn click(&mut self) {
-        log::debug!("sharer_cursor: click: has_control: {}", self.has_control);
-
+    #[cfg(not(target_os = "macos"))]
+    fn click(&mut self, press_location: Position) {
         if self.has_control {
             return;
         }
 
         self.hide(true);
 
-        /*
-         * When the sharer takes back control with with a click, we need to move
-         * the system cursor to the position of the click, because the system cursor
-         * was were the controlling controller was.
-         */
         let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
+        if cursor_simulator.has_window_target() {
+            cursor_simulator.simulate_cursor_movement(press_location, false);
+            cursor_simulator.simulate_click(MouseClickData {
+                x: press_location.x as f32,
+                y: press_location.y as f32,
+                button: 0,
+                clicks: 1.,
+                down: true,
+                shift: false,
+                alt: false,
+                ctrl: false,
+                meta: false,
+            });
+            return;
+        }
+
         let global_position = self.global_position();
         cursor_simulator.simulate_click(MouseClickData {
             x: global_position.x as f32,
@@ -466,10 +462,6 @@ impl SharerCursor {
         self.cursor_state.global_position
     }
 
-    fn local_position(&self) -> Position {
-        self.cursor_state.local_position
-    }
-
     fn visible(&self) -> bool {
         self.cursor_state.visible
     }
@@ -484,6 +476,7 @@ impl SharerCursor {
         self.has_control = true;
         self.cursor_state.hide();
 
+        #[cfg(not(target_os = "macos"))]
         {
             let mut cursor_simulator = self.cursor_simulator.lock().unwrap();
             let global_position = self.global_position();
@@ -606,15 +599,27 @@ impl CursorController {
         redraw_thread_sender: Sender<RedrawThreadCommands>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         clock: Arc<dyn Clock>,
+        target_process_id: Option<i32>,
+        target_window_id: Option<u32>,
     ) -> Result<Self, CursorControllerError> {
         let controllers_cursors = Arc::new(Mutex::new(vec![]));
+        #[cfg(target_os = "macos")]
+        let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new(
+            overlay_window.clone(),
+            target_process_id,
+            target_window_id,
+        )));
+        #[cfg(not(target_os = "macos"))]
+        let _ = (target_process_id, target_window_id);
+        #[cfg(not(target_os = "macos"))]
         let cursor_simulator = Arc::new(Mutex::new(CursorSimulator::new()));
         let sharer_cursor = Arc::new(Mutex::new(SharerCursor::new(
             CursorState::new(redraw_thread_sender.clone(), clock.clone()),
             event_loop_proxy.clone(),
             overlay_window.clone(),
-            cursor_simulator.clone(),
             controllers_cursors.clone(),
+            #[cfg(not(target_os = "macos"))]
+            cursor_simulator.clone(),
         )));
         let mouse_observer = MouseObserver::new(sharer_cursor.clone()).map_err(|_| {
             log::error!("CursorController::new: error creating mouse observer");
@@ -728,14 +733,16 @@ impl CursorController {
     pub fn cursor_move_controller(&mut self, x: f64, y: f64, identity: &str) {
         debug!("cursor_move_controller: x: {x} y: {y}");
 
+        let local_position = Position { x, y };
+        let Some(global_position) = self.overlay_window.source_to_global(local_position) else {
+            log::warn!("cursor_move_controller: invalid source position or capture frame");
+            return;
+        };
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
             if controller.identity != identity {
                 continue;
             }
-
-            let local_position = self.overlay_window.translate_location(x, y);
-            let global_position = self.overlay_window.translate_to_global(x, y);
 
             controller.set_position(global_position, local_position);
             if controller.has_control() {
@@ -757,7 +764,13 @@ impl CursorController {
     /// * `click_data` - Complete mouse click information including:
     /// * `identity` - Session ID identifying which controller is clicking
     pub fn mouse_click_controller(&mut self, mut click_data: MouseClickData, identity: &str) {
-        debug!("mouse_click_controller: {click_data:?}");
+        let Some(global_position) = self.overlay_window.source_to_global(Position {
+            x: click_data.x as f64,
+            y: click_data.y as f64,
+        }) else {
+            log::warn!("mouse_click_controller: invalid source position or capture frame");
+            return;
+        };
         let mut control_changed = false;
         let mut controllers_cursors = self.controllers_cursors.lock().unwrap();
         for controller in controllers_cursors.iter_mut() {
@@ -766,13 +779,8 @@ impl CursorController {
             }
 
             if controller.mode() != CursorMode::Normal {
-                log::info!("mouse_click_controller: controller mode is not Normal.");
                 break;
             }
-
-            let global_position = self
-                .overlay_window
-                .translate_to_global(click_data.x as f64, click_data.y as f64);
             click_data.x = global_position.x as f32;
             click_data.y = global_position.y as f32;
 
@@ -850,13 +858,20 @@ impl CursorController {
                 break;
             }
 
+            let Some(global_position) = self
+                .overlay_window
+                .source_to_global(controller.local_position())
+            else {
+                log::warn!("scroll_controller: invalid controller position or capture frame");
+                break;
+            };
             if !controller.has_control() {
                 control_changed = true;
                 controller.hide();
             }
 
             let mut cursor_simulator = self.remote_control.cursor_simulator.lock().unwrap();
-            cursor_simulator.simulate_cursor_movement(controller.global_position(), false);
+            cursor_simulator.simulate_cursor_movement(global_position, false);
             cursor_simulator.simulate_scroll(delta);
 
             break;
@@ -979,7 +994,10 @@ impl CursorController {
         // Update sharer cursor
         let sharer_cursor = self.remote_control.sharer_cursor.lock().unwrap();
         if sharer_cursor.visible() {
-            participants_manager.set_cursor_position("local", Some(sharer_cursor.local_position()));
+            let position = self
+                .overlay_window
+                .global_to_source(sharer_cursor.global_position());
+            participants_manager.set_cursor_position("local", position);
         } else {
             participants_manager.set_cursor_position("local", None);
         }
@@ -999,6 +1017,17 @@ impl CursorController {
 
     pub fn get_overlay_window(&self) -> Arc<OverlayWindow> {
         self.overlay_window.clone()
+    }
+
+    /// Invalidates the cached NSEvent conversion measurement (macOS only) so
+    /// it is re-probed on the next posted event. Called when the capture frame
+    /// changes (window moved/resized/changed monitors).
+    pub fn invalidate_sender_flip_height(&mut self) {
+        self.remote_control
+            .cursor_simulator
+            .lock()
+            .unwrap()
+            .invalidate_sender_flip_height();
     }
 
     /// Hides cursors that have been inactive for longer than `CURSOR_HIDE_TIMEOUT`.

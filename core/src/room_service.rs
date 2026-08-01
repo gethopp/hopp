@@ -951,7 +951,7 @@ async fn room_service_commands(
                     let video_codec = if use_av1 {
                         VideoCodec::AV1
                     } else {
-                        VideoCodec::H264
+                        VideoCodec::H265
                     };
                     let screen_result = video_room
                         .local_participant()

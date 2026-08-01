@@ -74,6 +74,10 @@ impl Draw {
         }
     }
 
+    pub fn mode(&self) -> DrawingMode {
+        self.mode.clone()
+    }
+
     pub fn set_mode(&mut self, mode: DrawingMode) {
         self.mode = mode.clone();
         if mode == DrawingMode::Disabled {
@@ -138,6 +142,10 @@ impl Draw {
     pub fn clear(&mut self) {
         self.in_progress_path = None;
         self.completed_paths.clear();
+        self.completed_cache.clear();
+    }
+
+    pub fn clear_cache(&mut self) {
         self.completed_cache.clear();
     }
 

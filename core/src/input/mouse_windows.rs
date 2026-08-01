@@ -115,12 +115,12 @@ fn event_processing_thread(
                             let dy = location.y - last_location.y;
 
                             let global_position = sharer_cursor.global_position();
-                            let sharer_left_monitor = sharer_cursor.set_position(Position {
+                            let released_to_sharer = sharer_cursor.set_position(Position {
                                 x: global_position.x + dx,
                                 y: global_position.y + dy,
                             });
 
-                            if !sharer_left_monitor {
+                            if !released_to_sharer {
                                 unsafe {
                                     let _ = SetCursorPos(
                                         last_location.x as i32,
@@ -132,7 +132,9 @@ fn event_processing_thread(
                     } else if event_type == WM_MOUSEWHEEL {
                         sharer_cursor.scroll();
                     } else {
-                        sharer_cursor.click();
+                        // TODO: See if we can rewrite the hardware event's location
+                        // instead of simulating a new click, like the macOS event tap does.
+                        sharer_cursor.click(location);
                     }
                 }
                 EventProcessingCommand::Stop => {
@@ -312,6 +314,14 @@ impl CursorSimulator {
             skipped_wheel_events: 0,
             tx,
         }
+    }
+
+    /* macOS only: no conversion measurement is cached on this platform. */
+    pub fn invalidate_sender_flip_height(&mut self) {}
+
+    /* macOS only: pinned window delivery does not exist on this platform. */
+    pub fn has_window_target(&self) -> bool {
+        false
     }
 }
 

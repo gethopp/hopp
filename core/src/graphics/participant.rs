@@ -225,6 +225,19 @@ impl ParticipantsManager {
         *self = Self::default();
     }
 
+    pub fn clear_draw_caches(&mut self) {
+        for participant in self.participants.values_mut() {
+            participant.draw_mut().clear_cache();
+        }
+    }
+
+    pub fn drawing_modes(&self) -> Vec<(String, DrawingMode)> {
+        self.participants
+            .iter()
+            .map(|(identity, participant)| (identity.clone(), participant.draw().mode()))
+            .collect()
+    }
+
     /// Removes a participant and their data.
     pub fn remove_participant(&mut self, identity: &str) {
         log::info!(
