@@ -167,18 +167,44 @@ fn open_output_stream(
                             MIXER_NUM_CHANNELS as i32,
                         );
                     }
+                    // WebRTC only upmixes mono to stereo. Keep that path for
+                    // mono/stereo devices and handle wider outputs ourselves.
+                    let resampler_channels = if output_channels > 2 {
+                        MIXER_NUM_CHANNELS
+                    } else {
+                        output_channels as u32
+                    };
                     let sampled = resampler.remix_and_resample(
                         mixed,
                         MIXER_SAMPLE_RATE / 100,
                         MIXER_NUM_CHANNELS,
                         MIXER_SAMPLE_RATE,
-                        output_channels as u32,
+                        resampler_channels,
                         output_sample_rate,
                     );
-                    buf = sampled
-                        .iter()
-                        .map(|&s| s as f32 / i16::MAX as f32)
-                        .collect();
+                    if output_channels <= 2 {
+                        buf = sampled
+                            .iter()
+                            .map(|&sample| sample as f32 / i16::MAX as f32)
+                            .collect();
+                    } else {
+                        buf.clear();
+                        buf.reserve(sampled.len() * output_channels as usize);
+                        for &sample in sampled {
+                            let normalized_sample = sample as f32 / i16::MAX as f32;
+                            buf.extend((0..output_channels).map(|channel| {
+                                if channel < 2 {
+                                    normalized_sample
+                                } else {
+                                    0.0
+                                }
+                            }));
+                        }
+                        debug_assert_eq!(
+                            buf.len(),
+                            output_sample_rate as usize / 100 * output_channels as usize,
+                        );
+                    }
                 }
             },
             |err| error!("cpal stream error: {err}"),
