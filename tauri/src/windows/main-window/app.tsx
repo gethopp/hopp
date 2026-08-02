@@ -361,6 +361,16 @@ function App() {
         }
       }
 
+      // Reject if already showing an incoming call or update in progress
+      const { incomingCallCallerId, updateInProgress } = useStore.getState();
+      if (incomingCallCallerId || updateInProgress) {
+        socketService.send({
+          type: "invite_reject",
+          payload: { inviter_id: data.payload.inviter_id, invite_id: data.payload.invite_id },
+        });
+        return;
+      }
+
       setIncomingInviteInviterId(data.payload.inviter_id);
 
       // Open current tauri window and create invite banner

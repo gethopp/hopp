@@ -7,7 +7,7 @@ import { socketService } from "@/services/socket";
 import { sounds } from "@/constants/sounds";
 import { HoppAvatar } from "./hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
-import { Constants } from "@/constants";
+import { useAPI } from "@/services/query";
 import throttle from "lodash/throttle";
 import { endCallAndWait, useEndCall } from "@/lib/hooks";
 
@@ -38,6 +38,8 @@ export const InviteBanner = ({
 
   const { setCallTokens, setIncomingInviteInviterId } = useStore();
   const endCall = useEndCall();
+  const { useMutation } = useAPI();
+  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
 
   const handleReject = useMemo(
     () =>
@@ -70,36 +72,22 @@ export const InviteBanner = ({
 
           try {
             // If already in a call, use the shared teardown and wait for core.
-            const { callTokens, authToken } = useStore.getState();
+            const { callTokens } = useStore.getState();
             if (callTokens) {
               await endCallAndWait(endCall);
             }
 
-            // Join the inviter's call via REST — gets our own tokens
-            const response = await fetch(`${Constants.backendUrl}/api/auth/call/join/${inviterId}`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${authToken}`,
-              },
+            // Join the inviter's call via typed REST — gets our own tokens
+            const tokens = await joinCallRequest({
+              params: { path: { userId: inviterId } },
             });
 
-            if (!response.ok) {
-              if (response.status === 402) {
-                const body = await response.json().catch(() => null);
-                if (body?.error === "trial-ended") {
-                  toast.error("Trial has expired, contact us if you want to extend it");
-                } else {
-                  toast.error("Error joining call");
-                }
-              } else {
-                toast.error("Error joining call");
-              }
+            if (!tokens) {
+              toast.error("Error joining call");
               toast.dismiss(toastId);
               setIncomingInviteInviterId(null);
               return;
             }
-
-            const tokens = await response.json();
 
             sounds.callAccepted.play();
             let startMic = false;
@@ -132,6 +120,10 @@ export const InviteBanner = ({
               tauriUtils.endCallCleanup();
               setCallTokens(null);
               toast.error("Failed to start call");
+              socketService.send({
+                type: "invite_reject",
+                payload: { inviter_id: inviterId, invite_id: inviteId },
+              });
               toast.dismiss(toastId);
               setIncomingInviteInviterId(null);
               return;
@@ -144,8 +136,16 @@ export const InviteBanner = ({
             tauriUtils.showWindow("main");
             toast.dismiss(toastId);
             setIncomingInviteInviterId(null);
-          } catch {
-            toast.error("Error joining call");
+          } catch (error: any) {
+            if (error?.error === "trial-ended") {
+              toast.error("Trial has expired, contact us if you want to extend it");
+            } else {
+              toast.error("Error joining call");
+            }
+            socketService.send({
+              type: "invite_reject",
+              payload: { inviter_id: inviterId, invite_id: inviteId },
+            });
             toast.dismiss(toastId);
             setIncomingInviteInviterId(null);
           }
@@ -153,7 +153,7 @@ export const InviteBanner = ({
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [inviterId, inviteId, toastId, setCallTokens, setIncomingInviteInviterId, endCall],
+    [inviterId, inviteId, toastId, setCallTokens, setIncomingInviteInviterId, endCall, joinCallRequest],
   );
 
   useEffect(() => {
