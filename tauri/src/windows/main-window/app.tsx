@@ -364,16 +364,19 @@ function App() {
       setIncomingInviteInviterId(data.payload.inviter_id);
 
       // Open current tauri window and create invite banner
-      toast((t) => <InviteBanner inviterId={data.payload.inviter_id} toastId={t.id} />, {
-        position: "bottom-center",
-        id: "invite-banner",
-        duration: Infinity,
-        className: "ml-12",
-        removeDelay: 100,
-        style: {
-          padding: "2px",
+      toast(
+        (t) => <InviteBanner inviterId={data.payload.inviter_id} inviteId={data.payload.invite_id} toastId={t.id} />,
+        {
+          position: "bottom-center",
+          id: "invite-banner",
+          duration: Infinity,
+          className: "ml-12",
+          removeDelay: 100,
+          style: {
+            padding: "2px",
+          },
         },
-      });
+      );
       tauriUtils.showWindow("main");
     });
   }, []);

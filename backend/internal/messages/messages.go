@@ -54,6 +54,8 @@ const (
 	MessageTypeInviteAccept MessageType = "invite_accept"
 	// Client -> Server: Reject invite request (inviter id)
 	MessageTypeInviteReject MessageType = "invite_reject"
+	// Client -> Server -> Client: Cancel a pending invite
+	MessageTypeInviteCancel MessageType = "invite_cancel"
 )
 
 // BaseMessage represents the common structure of all WebSocket messages
@@ -243,6 +245,7 @@ type PresenceAckMessage struct {
 // InviteRequestPayload represents the payload for invite request messages
 type InviteRequestPayload struct {
 	InviteeID string `json:"invitee_id" validate:"required"`
+	InviteID  string `json:"invite_id" validate:"required"`
 }
 
 // InviteRequestMessage is a complete invite request message
@@ -254,6 +257,7 @@ type InviteRequestMessage struct {
 // IncomingInvitePayload represents the payload for an incoming invite
 type IncomingInvitePayload struct {
 	InviterID   string `json:"inviter_id" validate:"required"`
+	InviteID    string `json:"invite_id" validate:"required"`
 	InitiatedAt *int64 `json:"initiated_at,omitempty"`
 }
 
@@ -264,11 +268,15 @@ type IncomingInviteMessage struct {
 }
 
 // InviteAcceptMessage is the message to accept an invite request
+type InviteResponsePayload struct {
+	InviterID string `json:"inviter_id" validate:"required"`
+	InviteeID string `json:"invitee_id,omitempty"`
+	InviteID  string `json:"invite_id" validate:"required"`
+}
+
 type InviteAcceptMessage struct {
-	Type    MessageType `json:"type"`
-	Payload struct {
-		InviterID string `json:"inviter_id" validate:"required"`
-	} `json:"payload"`
+	Type    MessageType           `json:"type"`
+	Payload InviteResponsePayload `json:"payload"`
 }
 
 // InviteRejectMessage is the message to reject an invite request
@@ -276,7 +284,18 @@ type InviteRejectMessage struct {
 	Type    MessageType `json:"type"`
 	Payload struct {
 		InviterID    string `json:"inviter_id" validate:"required"`
+		InviteeID    string `json:"invitee_id,omitempty"`
+		InviteID     string `json:"invite_id" validate:"required"`
 		RejectReason string `json:"reject_reason,omitempty"`
+	} `json:"payload"`
+}
+
+type InviteCancelMessage struct {
+	Type    MessageType `json:"type"`
+	Payload struct {
+		InviterID string `json:"inviter_id,omitempty"`
+		InviteeID string `json:"invitee_id,omitempty"`
+		InviteID  string `json:"invite_id" validate:"required"`
 	} `json:"payload"`
 }
 
@@ -301,6 +320,7 @@ type ParsedMessage struct {
 	IncomingInvite        *IncomingInviteMessage
 	InviteAcceptMessage   *InviteAcceptMessage
 	InviteRejectMessage   *InviteRejectMessage
+	InviteCancelMessage   *InviteCancelMessage
 }
 
 // ParseMessage parses a raw message into a ParsedMessage
@@ -409,6 +429,12 @@ func ParseMessage(data []byte) (*ParsedMessage, error) {
 			return nil, err
 		}
 		parsed.InviteRejectMessage = &msg
+	case MessageTypeInviteCancel:
+		var msg InviteCancelMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.InviteCancelMessage = &msg
 	}
 
 	return parsed, nil
@@ -456,11 +482,12 @@ func NewIncomingCallMessage(callerID string, initiatedAt int64) IncomingCallMess
 	}
 }
 
-func NewIncomingInviteMessage(inviterID string, initiatedAt int64) IncomingInviteMessage {
+func NewIncomingInviteMessage(inviterID, inviteID string, initiatedAt int64) IncomingInviteMessage {
 	return IncomingInviteMessage{
 		Type: MessageTypeIncomingInvite,
 		Payload: IncomingInvitePayload{
 			InviterID:   inviterID,
+			InviteID:    inviteID,
 			InitiatedAt: &initiatedAt,
 		},
 	}

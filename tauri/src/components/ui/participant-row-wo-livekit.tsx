@@ -58,6 +58,7 @@ export const ParticipantRow = (props: {
   rooms: components["schemas"]["Room"][];
 }) => {
   const posthog = usePostHog();
+  const inviting = useStore((state) => state.inviting);
   const isCalling = useStore((state) => state.calling === props.user.id);
   const isInviting = useStore((state) => state.inviting === props.user.id);
   const { setCalling, setInviting, callTokens, setCallTokens } = useStore((state) => state);
@@ -162,6 +163,7 @@ export const ParticipantRow = (props: {
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
+  const inviteIdRef = useRef("");
 
   const joinCall = useCallback(async () => {
     if (inACall || hasIncomingCall) return;
@@ -271,12 +273,14 @@ export const ParticipantRow = (props: {
     }
 
     sounds.ringing.play();
+    inviteIdRef.current = crypto.randomUUID();
     setInviting(props.user.id);
     toast.success(`Inviting ${props.user.first_name}...`);
     socketService.send({
       type: "invite_request",
       payload: {
         invitee_id: props.user.id,
+        invite_id: inviteIdRef.current,
       },
     } as TInviteRequestMessage);
   }, [props.user, setInviting, posthog]);
@@ -402,7 +406,17 @@ export const ParticipantRow = (props: {
 
   // Listen for invite responses (invite_accept / invite_reject / callee_offline)
   const inviteCallbackIdRef = useRef<string>(`invite-response-${props.user.id}`);
-  const inviteResolvedRef = useRef(false);
+
+  const cancelInvite = useCallback(() => {
+    if (inviteIdRef.current) {
+      socketService.send({
+        type: "invite_cancel",
+        payload: { invitee_id: props.user.id, invite_id: inviteIdRef.current },
+      });
+    }
+    sounds.ringing.stop();
+    setInviting(null);
+  }, [props.user.id, setInviting]);
 
   useEffect(() => {
     socketService.on(inviteCallbackIdRef.current, async (data: TWebSocketMessage) => {
@@ -410,13 +424,13 @@ export const ParticipantRow = (props: {
 
       switch (data.type) {
         case "invite_accept":
-          inviteResolvedRef.current = true;
+          if (data.payload.invitee_id !== props.user.id || data.payload.invite_id !== inviteIdRef.current) return;
           setInviting(null);
           sounds.ringing.stop();
           toast.success(`${props.user.first_name} accepted your invite`, { duration: 1500 });
           break;
         case "invite_reject":
-          inviteResolvedRef.current = true;
+          if (data.payload.invitee_id !== props.user.id || data.payload.invite_id !== inviteIdRef.current) return;
           setInviting(null);
           sounds.ringing.stop();
           sounds.unavailable.play();
@@ -427,14 +441,13 @@ export const ParticipantRow = (props: {
           }
           break;
         case "callee_offline":
-          inviteResolvedRef.current = true;
+          if (data.payload.callee_id !== props.user.id) return;
           setInviting(null);
           sounds.ringing.stop();
           sounds.unavailable.play();
           toast.error(`${props.user.first_name} appears to be offline`, { duration: 2500 });
           break;
         case "error":
-          inviteResolvedRef.current = true;
           setInviting(null);
           sounds.ringing.stop();
           toast.error(data.payload.error, { duration: 2500 });
@@ -445,9 +458,7 @@ export const ParticipantRow = (props: {
     const timeoutId =
       isInviting ?
         setTimeout(() => {
-          inviteResolvedRef.current = true;
-          sounds.ringing.stop();
-          setInviting(null);
+          cancelInvite();
           toast.error(`${props.user.first_name} didn't respond`, { duration: 1500 });
         }, 65_000)
       : undefined;
@@ -461,7 +472,7 @@ export const ParticipantRow = (props: {
       setInviting(null);
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [isInviting]);
+  }, [isInviting, cancelInvite, props.user.first_name, props.user.id, setInviting]);
 
   return (
     <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] gap-2 w-full items-center">
@@ -517,14 +528,12 @@ export const ParticipantRow = (props: {
             variant="gradient-white"
             onClick={() => {
               if (isInviting) {
-                inviteResolvedRef.current = true;
-                sounds.ringing.stop();
-                setInviting(null);
+                cancelInvite();
               } else {
                 inviteUser();
               }
             }}
-            disabled={hasIncomingCall || !props.user.is_active}
+            disabled={hasIncomingCall || !props.user.is_active || (inviting !== null && !isInviting)}
             className={clsx(
               "px-2 w-auto h-7 flex flex-row items-center gap-1",
               !isInviting && "text-slate-600",

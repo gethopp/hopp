@@ -9,10 +9,19 @@ import { HoppAvatar } from "./hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Constants } from "@/constants";
 import throttle from "lodash/throttle";
+import { endCallAndWait, useEndCall } from "@/lib/hooks";
 
 const ACTION_THROTTLE_MS = 6000;
 
-export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastId: string }) => {
+export const InviteBanner = ({
+  inviterId,
+  inviteId,
+  toastId,
+}: {
+  inviterId: string;
+  inviteId: string;
+  toastId: string;
+}) => {
   let inviter = useStore((state) => state?.teammates?.find((user) => user.id === inviterId));
 
   if (!inviter) {
@@ -28,6 +37,7 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
   }
 
   const { setCallTokens, setIncomingInviteInviterId } = useStore();
+  const endCall = useEndCall();
 
   const handleReject = useMemo(
     () =>
@@ -38,6 +48,7 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
             type: "invite_reject",
             payload: {
               inviter_id: inviterId,
+              invite_id: inviteId,
             },
           });
           toast.dismiss(toastId);
@@ -46,7 +57,7 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [inviterId, toastId, setIncomingInviteInviterId],
+    [inviterId, inviteId, toastId, setIncomingInviteInviterId],
   );
 
   const handleAnswer = useMemo(
@@ -54,30 +65,17 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
       throttle(
         async () => {
           sounds.incomingCall.stop();
+          toast.dismiss(toastId);
+          setIncomingInviteInviterId(null);
 
-          // Send invite_accept so the inviter gets a toast
-          socketService.send({
-            type: "invite_accept",
-            payload: {
-              inviter_id: inviterId,
-            },
-          });
-
-          // If already in a call, end it first (manual cleanup, no useEndCall hook)
-          const { callTokens, authToken } = useStore.getState();
-          if (callTokens) {
-            socketService.send({
-              type: "call_end",
-              payload: { participant_id: callTokens.participant },
-            });
-            tauriUtils.endCallCleanup();
-            setCallTokens(null);
-            // Give core a moment to tear down before we start a new call
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-
-          // Join the inviter's call via REST — gets our own tokens
           try {
+            // If already in a call, use the shared teardown and wait for core.
+            const { callTokens, authToken } = useStore.getState();
+            if (callTokens) {
+              await endCallAndWait(endCall);
+            }
+
+            // Join the inviter's call via REST — gets our own tokens
             const response = await fetch(`${Constants.backendUrl}/api/auth/call/join/${inviterId}`, {
               method: "POST",
               headers: {
@@ -130,6 +128,8 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
             try {
               await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
             } catch {
+              socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
+              tauriUtils.endCallCleanup();
               setCallTokens(null);
               toast.error("Failed to start call");
               toast.dismiss(toastId);
@@ -137,6 +137,10 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
               return;
             }
 
+            socketService.send({
+              type: "invite_accept",
+              payload: { inviter_id: inviterId, invite_id: inviteId },
+            });
             tauriUtils.showWindow("main");
             toast.dismiss(toastId);
             setIncomingInviteInviterId(null);
@@ -149,7 +153,7 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [inviterId, toastId, setCallTokens, setIncomingInviteInviterId],
+    [inviterId, inviteId, toastId, setCallTokens, setIncomingInviteInviterId, endCall],
   );
 
   useEffect(() => {
@@ -165,6 +169,18 @@ export const InviteBanner = ({ inviterId, toastId }: { inviterId: string; toastI
       clearTimeout(timeoutId);
     };
   }, [inviterId, toastId]);
+
+  useEffect(() => {
+    const handlerId = `invite-cancel-${inviteId}`;
+    socketService.on(handlerId, (data) => {
+      if (data.type !== "invite_cancel" || data.payload.inviter_id !== inviterId || data.payload.invite_id !== inviteId)
+        return;
+      sounds.incomingCall.stop();
+      toast.dismiss(toastId);
+      setIncomingInviteInviterId(null);
+    });
+    return () => socketService.removeHandler(handlerId);
+  }, [inviterId, inviteId, toastId, setIncomingInviteInviterId]);
 
   useEffect(() => {
     return () => {

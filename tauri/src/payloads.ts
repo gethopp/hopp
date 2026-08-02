@@ -198,6 +198,7 @@ export const MessageType = z.enum([
   "incoming_invite",
   "invite_accept",
   "invite_reject",
+  "invite_cancel",
 ]);
 
 export type TMessageType = z.infer<typeof MessageType>;
@@ -291,27 +292,39 @@ export const PPresenceAckMessage = z.object({
 
 export const PInviteRequestMessage = z.object({
   type: z.literal("invite_request"),
-  payload: z.object({ invitee_id: z.string() }),
+  payload: z.object({ invitee_id: z.string(), invite_id: z.string() }),
 });
 
 export const PIncomingInviteMessage = z.object({
   type: z.literal("incoming_invite"),
   payload: z.object({
     inviter_id: z.string(),
+    invite_id: z.string(),
     initiated_at: z.number().optional(),
   }),
 });
 
 export const PInviteAcceptMessage = z.object({
   type: z.literal("invite_accept"),
-  payload: z.object({ inviter_id: z.string() }),
+  payload: z.object({ inviter_id: z.string(), invitee_id: z.string().optional(), invite_id: z.string() }),
 });
 
 export const PInviteRejectMessage = z.object({
   type: z.literal("invite_reject"),
   payload: z.object({
     inviter_id: z.string(),
+    invitee_id: z.string().optional(),
+    invite_id: z.string(),
     reject_reason: z.enum(["in-call", "rejected"]).optional(),
+  }),
+});
+
+export const PInviteCancelMessage = z.object({
+  type: z.literal("invite_cancel"),
+  payload: z.object({
+    inviter_id: z.string().optional(),
+    invitee_id: z.string().optional(),
+    invite_id: z.string(),
   }),
 });
 
@@ -335,6 +348,7 @@ export type TInviteRequestMessage = z.infer<typeof PInviteRequestMessage>;
 export type TIncomingInviteMessage = z.infer<typeof PIncomingInviteMessage>;
 export type TInviteAcceptMessage = z.infer<typeof PInviteAcceptMessage>;
 export type TInviteRejectMessage = z.infer<typeof PInviteRejectMessage>;
+export type TInviteCancelMessage = z.infer<typeof PInviteCancelMessage>;
 
 // Union type for all possible messages
 export const PWebSocketMessage = z.discriminatedUnion("type", [
@@ -357,6 +371,7 @@ export const PWebSocketMessage = z.discriminatedUnion("type", [
   PIncomingInviteMessage,
   PInviteAcceptMessage,
   PInviteRejectMessage,
+  PInviteCancelMessage,
 ]);
 
 export type TWebSocketMessage = z.infer<typeof PWebSocketMessage>;
