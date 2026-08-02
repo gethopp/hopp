@@ -265,6 +265,21 @@ const getUserSettings = async () => {
   }>("get_user_settings");
 };
 
+/**
+ * Reads the user's "start mic/camera on call" preferences.
+ * Falls back to safe defaults (both off) when settings can't be read,
+ * so joining a call never fails because of a settings error.
+ */
+const getCallStartPreferences = async (): Promise<{ startMic: boolean; startCamera: boolean }> => {
+  try {
+    const settings = await getUserSettings();
+    return { startMic: settings.start_mic_on_call, startCamera: settings.start_camera_on_call };
+  } catch (error) {
+    console.error("Failed to read call start preferences, falling back to defaults:", error);
+    return { startMic: false, startCamera: false };
+  }
+};
+
 const showFeedbackWindowIfEnabled = async (teamId: string, roomId: string, participantId: string): Promise<void> => {
   if (!isTauri) return;
 
@@ -322,4 +337,5 @@ export const tauriUtils = {
   createFeedbackWindow,
   showFeedbackWindowIfEnabled,
   getUserSettings,
+  getCallStartPreferences,
 };

@@ -14,7 +14,7 @@ import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAPI } from "@/services/query";
-import { endCallAndWait, useEndCall } from "@/lib/hooks";
+import { endCallAndWait, useEndCall, useJoinCall } from "@/lib/hooks";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -82,7 +82,6 @@ export const ParticipantRow = (props: {
   }, [userPresence?.peerIds, teammates, currentUser]);
 
   const { useMutation } = useAPI();
-  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
   const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const targetRoom = useMemo(
@@ -119,15 +118,7 @@ export const ParticipantRow = (props: {
       }
 
       sounds.callAccepted.play();
-      let startMic = false;
-      let startCamera = false;
-      try {
-        const settings = await tauriUtils.getUserSettings();
-        startMic = settings.start_mic_on_call;
-        startCamera = settings.start_camera_on_call;
-      } catch {
-        // fall back to safe defaults
-      }
+      const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
       setCallTokens({
         ...tokens,
         isRoomCall: true,
@@ -165,6 +156,8 @@ export const ParticipantRow = (props: {
   const callResolvedRef = useRef(false);
   const inviteIdRef = useRef("");
 
+  const joinOngoingCall = useJoinCall();
+
   const joinCall = useCallback(async () => {
     if (inACall || hasIncomingCall) return;
 
@@ -173,51 +166,8 @@ export const ParticipantRow = (props: {
       user_name: props.user.first_name,
     });
 
-    try {
-      const tokens = await joinCallRequest({ params: { path: { userId: props.user.id } } });
-
-      if (!tokens) {
-        toast.error("Error joining call");
-        return;
-      }
-
-      sounds.callAccepted.play();
-      let startMic = false;
-      let startCamera = false;
-      try {
-        const settings = await tauriUtils.getUserSettings();
-        startMic = settings.start_mic_on_call;
-        startCamera = settings.start_camera_on_call;
-      } catch {
-        // fall back to safe defaults
-      }
-      setCallTokens({
-        ...tokens,
-        timeStarted: new Date(),
-        hasAudioEnabled: startMic,
-        hasCameraEnabled: startCamera,
-        role: ParticipantRole.NONE,
-        isRemoteControlEnabled: true,
-        isRoomCall: !!tokens.room,
-        participants: [],
-        isInitialisingCall: true,
-        micLevel: 0,
-      });
-      try {
-        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-      } catch {
-        setCallTokens(null);
-        return;
-      }
-      tauriUtils.showWindow("main");
-    } catch (error: any) {
-      if (error?.error === "trial-ended") {
-        toast.error("Trial has expired, contact us if you want to extend it");
-      } else {
-        toast.error("Error joining call");
-      }
-    }
-  }, [props.user, inACall, hasIncomingCall, joinCallRequest, setCallTokens]);
+    await joinOngoingCall(props.user.id);
+  }, [props.user, inACall, hasIncomingCall, joinOngoingCall, posthog]);
 
   const callUser = useCallback(() => {
     if (hasIncomingCall) return;
@@ -338,15 +288,7 @@ export const ParticipantRow = (props: {
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
-          let startMic = false;
-          let startCamera = false;
-          try {
-            const settings = await tauriUtils.getUserSettings();
-            startMic = settings.start_mic_on_call;
-            startCamera = settings.start_camera_on_call;
-          } catch {
-            // fall back to safe defaults
-          }
+          const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),

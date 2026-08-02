@@ -230,68 +230,25 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					}
 
 					switch {
-					case parsedMessage.IncomingCall != nil:
-						// Forward incoming call message to the callee
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
+					case parsedMessage.CallEnd != nil,
+						parsedMessage.IncomingCall != nil,
+						parsedMessage.RejectCallMessage != nil,
+						parsedMessage.AcceptCallMessage != nil,
+						parsedMessage.CallTokensMessage != nil,
+						parsedMessage.TeammateOnlineMessage != nil,
+						parsedMessage.PresenceChanged != nil,
+						parsedMessage.PresenceCheck != nil,
+						parsedMessage.IncomingInvite != nil,
+						parsedMessage.InviteAcceptMessage != nil,
+						parsedMessage.InviteRejectMessage != nil,
+						parsedMessage.InviteCancelMessage != nil:
+						var base messages.BaseMessage
+						if err := json.Unmarshal([]byte(msg.Payload), &base); err != nil {
+							c.Logger().Error("Invalid Redis message:", err)
+							continue
 						}
-					case parsedMessage.RejectCallMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.AcceptCallMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.CallTokensMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.CallEnd != nil:
-						// Handle call end
-						c.Logger().Info("Received call end")
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.TeammateOnlineMessage != nil:
-						// Handle user online message
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.PresenceChanged != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.PresenceCheck != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.IncomingInvite != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.InviteAcceptMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.InviteRejectMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.InviteCancelMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
+						c.Logger().Infof("Forwarding WebSocket message type=%s", base.Type)
+						if err := ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
 							c.Logger().Error(err)
 						}
 					default:

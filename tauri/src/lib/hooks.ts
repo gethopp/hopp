@@ -2,12 +2,13 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { once } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import hotkeys from "hotkeys-js";
+import toast from "react-hot-toast";
 import useStore, { ParticipantRole } from "@/store/store";
 import { tauriUtils } from "@/windows/window-utils";
 import { usePostHog } from "posthog-js/react";
 import { socketService } from "@/services/socket";
 import { sounds } from "@/constants/sounds";
-import { useFetchClient } from "@/services/query";
+import { useAPI, useFetchClient } from "@/services/query";
 
 const appWindow = getCurrentWebviewWindow();
 const CALL_END_TIMEOUT_MS = 5_000;
@@ -166,4 +167,71 @@ export async function endCallAndWait(endCall: () => void) {
     if (timeoutId) clearTimeout(timeoutId);
     unlisten();
   }
+}
+
+/**
+ * Hook to join another user's ongoing call, whether from an invite or from
+ * teammate presence. Handles the full shared join flow: tears down any current
+ * call (waiting for core cleanup), requests session tokens, initialises call
+ * state (including named-room handling) and starts the call in core.
+ * Failures are reported to the user via toasts and roll back call state.
+ *
+ * @returns Function that joins `userId`'s call and resolves to true when the
+ * call started, false when it failed.
+ */
+export function useJoinCall() {
+  const setCallTokens = useStore((state) => state.setCallTokens);
+  const endCall = useEndCall();
+  const { useMutation } = useAPI();
+  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
+
+  return useCallback(
+    async (userId: string): Promise<boolean> => {
+      try {
+        // If already in a call, use the shared teardown and wait for core.
+        if (useStore.getState().callTokens) {
+          await endCallAndWait(endCall);
+        }
+
+        const tokens = await joinCallRequest({ params: { path: { userId } } });
+        if (!tokens) {
+          toast.error("Error joining call");
+          return false;
+        }
+
+        sounds.callAccepted.play();
+        const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+        setCallTokens({
+          ...tokens,
+          timeStarted: new Date(),
+          hasAudioEnabled: startMic,
+          hasCameraEnabled: startCamera,
+          role: ParticipantRole.NONE,
+          isRemoteControlEnabled: true,
+          isRoomCall: !!tokens.room,
+          participants: [],
+          isInitialisingCall: true,
+          micLevel: 0,
+        });
+
+        try {
+          await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+        } catch {
+          socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
+          tauriUtils.endCallCleanup();
+          setCallTokens(null);
+          toast.error("Failed to start call");
+          return false;
+        }
+
+        tauriUtils.showWindow("main");
+        return true;
+      } catch (error) {
+        const isTrialEnded = (error as { error?: string } | null)?.error === "trial-ended";
+        toast.error(isTrialEnded ? "Trial has expired, contact us if you want to extend it" : "Error joining call");
+        return false;
+      }
+    },
+    [endCall, joinCallRequest, setCallTokens],
+  );
 }

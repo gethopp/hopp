@@ -267,13 +267,13 @@ type IncomingInviteMessage struct {
 	Payload IncomingInvitePayload `json:"payload"`
 }
 
-// InviteAcceptMessage is the message to accept an invite request
 type InviteResponsePayload struct {
 	InviterID string `json:"inviter_id" validate:"required"`
 	InviteeID string `json:"invitee_id,omitempty"`
 	InviteID  string `json:"invite_id" validate:"required"`
 }
 
+// InviteAcceptMessage is the message to accept an invite request
 type InviteAcceptMessage struct {
 	Type    MessageType           `json:"type"`
 	Payload InviteResponsePayload `json:"payload"`

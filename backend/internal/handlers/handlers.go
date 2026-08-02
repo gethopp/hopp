@@ -1195,21 +1195,19 @@ func (h *AuthHandler) JoinCall(c echo.Context) error {
 		c.Logger().Warnf("JoinCall: error looking up room %s: %v", roomName, err)
 	}
 
+	type joinCallResponse struct {
+		livekitutil.LivekitTokenSet
+		Room *models.Room `json:"room,omitempty"`
+	}
+
 	broadcastPresenceChanged(c, &h.ServerState, user.ID)
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", user.ID, target.ID), h.Config)
 
-	if room != nil {
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"audioToken":  tokens.AudioToken,
-			"videoToken":  tokens.VideoToken,
-			"cameraToken": tokens.CameraToken,
-			"participant": tokens.Participant,
-			"room":        room,
-		})
-	}
-
-	return c.JSON(http.StatusOK, tokens)
+	return c.JSON(http.StatusOK, joinCallResponse{
+		LivekitTokenSet: tokens,
+		Room:            room,
+	})
 }
 
 func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {

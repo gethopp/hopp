@@ -1,15 +1,14 @@
 import toast from "react-hot-toast";
 import { HiMiniPhoneArrowDownLeft, HiMiniPhoneXMark } from "react-icons/hi2";
 import { Button } from "./button";
-import useStore, { ParticipantRole } from "@/store/store";
-import { useEffect, useMemo } from "react";
+import useStore from "@/store/store";
+import { useCallback, useEffect, useMemo } from "react";
 import { socketService } from "@/services/socket";
 import { sounds } from "@/constants/sounds";
 import { HoppAvatar } from "./hopp-avatar";
-import { tauriUtils } from "@/windows/window-utils";
-import { useAPI } from "@/services/query";
 import throttle from "lodash/throttle";
-import { endCallAndWait, useEndCall } from "@/lib/hooks";
+import { useJoinCall } from "@/lib/hooks";
+import { TWebSocketMessage } from "@/payloads";
 
 const ACTION_THROTTLE_MS = 6000;
 
@@ -36,10 +35,8 @@ export const InviteBanner = ({
     };
   }
 
-  const { setCallTokens, setIncomingInviteInviterId } = useStore();
-  const endCall = useEndCall();
-  const { useMutation } = useAPI();
-  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
+  const { setIncomingInviteInviterId } = useStore();
+  const joinOngoingCall = useJoinCall();
 
   const handleReject = useMemo(
     () =>
@@ -62,98 +59,35 @@ export const InviteBanner = ({
     [inviterId, inviteId, toastId, setIncomingInviteInviterId],
   );
 
+  const dismissInvite = useCallback(() => {
+    toast.dismiss(toastId);
+    setIncomingInviteInviterId(null);
+  }, [toastId, setIncomingInviteInviterId]);
+
   const handleAnswer = useMemo(
     () =>
       throttle(
         async () => {
           sounds.incomingCall.stop();
-          toast.dismiss(toastId);
-          setIncomingInviteInviterId(null);
 
-          try {
-            // If already in a call, use the shared teardown and wait for core.
-            const { callTokens } = useStore.getState();
-            if (callTokens) {
-              await endCallAndWait(endCall);
-            }
-
-            // Join the inviter's call via typed REST — gets our own tokens
-            const tokens = await joinCallRequest({
-              params: { path: { userId: inviterId } },
-            });
-
-            if (!tokens) {
-              toast.error("Error joining call");
-              toast.dismiss(toastId);
-              setIncomingInviteInviterId(null);
-              return;
-            }
-
-            sounds.callAccepted.play();
-            let startMic = false;
-            let startCamera = false;
-            try {
-              const settings = await tauriUtils.getUserSettings();
-              startMic = settings.start_mic_on_call;
-              startCamera = settings.start_camera_on_call;
-            } catch {
-              // fall back to safe defaults
-            }
-
-            setCallTokens({
-              ...tokens,
-              timeStarted: new Date(),
-              hasAudioEnabled: startMic,
-              hasCameraEnabled: startCamera,
-              role: ParticipantRole.NONE,
-              isRemoteControlEnabled: true,
-              isRoomCall: !!tokens.room,
-              participants: [],
-              isInitialisingCall: true,
-              micLevel: 0,
-            });
-
-            try {
-              await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-            } catch {
-              socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
-              tauriUtils.endCallCleanup();
-              setCallTokens(null);
-              toast.error("Failed to start call");
-              socketService.send({
-                type: "invite_reject",
-                payload: { inviter_id: inviterId, invite_id: inviteId },
-              });
-              toast.dismiss(toastId);
-              setIncomingInviteInviterId(null);
-              return;
-            }
-
+          const joined = await joinOngoingCall(inviterId);
+          if (joined) {
             socketService.send({
               type: "invite_accept",
               payload: { inviter_id: inviterId, invite_id: inviteId },
             });
-            tauriUtils.showWindow("main");
-            toast.dismiss(toastId);
-            setIncomingInviteInviterId(null);
-          } catch (error: any) {
-            if (error?.error === "trial-ended") {
-              toast.error("Trial has expired, contact us if you want to extend it");
-            } else {
-              toast.error("Error joining call");
-            }
+          } else {
             socketService.send({
               type: "invite_reject",
               payload: { inviter_id: inviterId, invite_id: inviteId },
             });
-            toast.dismiss(toastId);
-            setIncomingInviteInviterId(null);
           }
+          dismissInvite();
         },
         ACTION_THROTTLE_MS,
         { leading: true, trailing: false },
       ),
-    [inviterId, inviteId, toastId, setCallTokens, setIncomingInviteInviterId, endCall, joinCallRequest],
+    [inviterId, inviteId, joinOngoingCall, dismissInvite],
   );
 
   useEffect(() => {
@@ -172,7 +106,7 @@ export const InviteBanner = ({
 
   useEffect(() => {
     const handlerId = `invite-cancel-${inviteId}`;
-    socketService.on(handlerId, (data) => {
+    socketService.on(handlerId, (data: TWebSocketMessage) => {
       if (data.type !== "invite_cancel" || data.payload.inviter_id !== inviterId || data.payload.invite_id !== inviteId)
         return;
       sounds.incomingCall.stop();

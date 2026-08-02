@@ -2697,6 +2697,8 @@ export interface components {
       cameraToken: string;
       /** @description Participant identity for the session */
       participant: string;
+      /** @description Included when the session is a named room (not an ad-hoc call) */
+      room?: components["schemas"]["Room"];
     };
     SlackInstallation: {
       /** @description Installation ID */

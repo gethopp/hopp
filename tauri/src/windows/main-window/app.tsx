@@ -351,7 +351,7 @@ function App() {
       }
 
       const MAX_INVITE_AGE_S = 60;
-      const incomingMsg = data as TIncomingInviteMessage;
+      const incomingMsg = data;
       const initiatedAt = incomingMsg.payload.initiated_at;
       if (initiatedAt != null) {
         const ageSeconds = differenceInSeconds(new Date(), fromUnixTime(initiatedAt));
