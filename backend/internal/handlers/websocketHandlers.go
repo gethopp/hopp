@@ -171,6 +171,18 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				case parsedMessage.PresenceAck != nil:
 					// Client confirmed (or denied) presence in a candidate room
 					handlePresenceAck(c, server, user.ID, *parsedMessage.PresenceAck)
+				case parsedMessage.InviteRequest != nil:
+					// Handle invite request (user in a call invites another user)
+					c.Logger().Info("Received invite request")
+					initiateInvite(c, server, ws, user.ID, parsedMessage.InviteRequest.Payload.InviteeID)
+				case parsedMessage.InviteAcceptMessage != nil:
+					// Handle invite accept — forward to inviter
+					c.Logger().Info("Accepting invite")
+					acceptInvite(c, server, user.ID, *parsedMessage.InviteAcceptMessage)
+				case parsedMessage.InviteRejectMessage != nil:
+					// Handle invite reject — forward to inviter
+					c.Logger().Info("Rejecting invite")
+					rejectInvite(c, server, user.ID, *parsedMessage.InviteRejectMessage)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -256,6 +268,21 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 							c.Logger().Error(err)
 						}
 					case parsedMessage.PresenceCheck != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
+					case parsedMessage.IncomingInvite != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
+					case parsedMessage.InviteAcceptMessage != nil:
+						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+						if err != nil {
+							c.Logger().Error(err)
+						}
+					case parsedMessage.InviteRejectMessage != nil:
 						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 						if err != nil {
 							c.Logger().Error(err)
@@ -659,4 +686,81 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userI
 	}
 
 	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(teammateID), msgJSON)
+}
+
+// initiateInvite is sent by a user already in a call/room to invite another
+// user to join. It verifies the inviter is in an active room, checks the
+// invitee is online and a teammate, then forwards an incoming_invite to the
+// invitee. Unlike call_request, there is no dedupe lock — the invitee decides.
+func initiateInvite(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, inviterID, inviteeID string) {
+	rdbCtx := context.Background()
+	inviteeChannelID := redisutil.GetUserChannel(inviteeID)
+
+	// Inviter must be in an active call/room
+	if s.CallState == nil {
+		sendWSErrorMessage(ws, "Call service unavailable")
+		return
+	}
+	roomName, found, err := s.CallState.GetUserRoom(rdbCtx, inviterID)
+	if err != nil || !found || roomName == "" {
+		ctx.Logger().Warnf("initiateInvite: inviter %s has no active room", inviterID)
+		sendWSErrorMessage(ws, "You are not in a call")
+		return
+	}
+
+	// Fetch inviter + invitee and verify same team
+	inviter, err := models.GetUserByID(s.DB, inviterID)
+	if err != nil {
+		ctx.Logger().Error("initiateInvite: error getting inviter: ", err)
+		sendWSErrorMessage(ws, "Failed to get inviter information")
+		return
+	}
+	invitee, err := models.GetUserByID(s.DB, inviteeID)
+	if err != nil || !sameTeam(inviter.TeamID, invitee.TeamID) {
+		ctx.Logger().Warn("initiateInvite: blocked invite to non-teammate: ", inviterID, " -> ", inviteeID)
+		sendCalleeOfflineMessage(ctx, ws, inviteeID)
+		return
+	}
+
+	// Check invitee is online
+	channels, err := s.Redis.PubSubChannels(rdbCtx, inviteeChannelID).Result()
+	if err != nil {
+		ctx.Logger().Error("initiateInvite: error getting channels: ", err)
+		return
+	}
+	if len(channels) == 0 {
+		sendCalleeOfflineMessage(ctx, ws, inviteeID)
+		return
+	}
+
+	// Publish incoming_invite to the invitee
+	msg := messages.NewIncomingInviteMessage(inviterID, time.Now().Unix())
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(rdbCtx, inviteeChannelID, msgJSON)
+}
+
+// acceptInvite forwards the invite_accept to the inviter so they get a toast.
+// The invitee then calls POST /api/auth/call/join/{inviterId} directly (REST)
+// to get their own tokens — no token delivery over WS for invites.
+func acceptInvite(ctx echo.Context, s *common.ServerState, inviteeID string, message messages.InviteAcceptMessage) {
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.InviterID), payloadJSON)
+}
+
+// rejectInvite forwards the invite_reject to the inviter.
+func rejectInvite(ctx echo.Context, s *common.ServerState, inviteeID string, message messages.InviteRejectMessage) {
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.InviterID), payloadJSON)
 }

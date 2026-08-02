@@ -6,7 +6,7 @@ import { socketService } from "@/services/socket";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
-import { TRejectCallMessage, TCallRequestMessage, TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TCallRequestMessage, TInviteRequestMessage, TWebSocketMessage } from "@/payloads";
 import useStore, { ParticipantRole } from "@/store/store";
 import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
@@ -59,7 +59,8 @@ export const ParticipantRow = (props: {
 }) => {
   const posthog = usePostHog();
   const isCalling = useStore((state) => state.calling === props.user.id);
-  const { setCalling, callTokens, setCallTokens } = useStore((state) => state);
+  const isInviting = useStore((state) => state.inviting === props.user.id);
+  const { setCalling, setInviting, callTokens, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
   const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
   const callsPresence = useStore((state) => state.callsPresence);
@@ -195,6 +196,7 @@ export const ParticipantRow = (props: {
         hasCameraEnabled: startCamera,
         role: ParticipantRole.NONE,
         isRemoteControlEnabled: true,
+        isRoomCall: !!tokens.room,
         participants: [],
         isInitialisingCall: true,
         micLevel: 0,
@@ -255,6 +257,29 @@ export const ParticipantRow = (props: {
       },
     } as TCallRequestMessage);
   }, [props.user, hasIncomingCall]);
+
+  const inviteUser = useCallback(() => {
+    posthog.capture("user_invite_request", {
+      user_id: props.user.id,
+      user_name: props.user.first_name,
+    });
+
+    if (!props.user.is_active) {
+      console.log(`${props.user.first_name} is currently offline, cannot invite`);
+      toast.error(`${props.user.first_name} is currently offline`);
+      return;
+    }
+
+    sounds.ringing.play();
+    setInviting(props.user.id);
+    toast.success(`Inviting ${props.user.first_name}...`);
+    socketService.send({
+      type: "invite_request",
+      payload: {
+        invitee_id: props.user.id,
+      },
+    } as TInviteRequestMessage);
+  }, [props.user, setInviting, posthog]);
 
   // Add a useEffect to listen for call responses
   // that will unsubscribe from the socket when the component unmounts
@@ -375,6 +400,69 @@ export const ParticipantRow = (props: {
     };
   }, [isCalling]);
 
+  // Listen for invite responses (invite_accept / invite_reject / callee_offline)
+  const inviteCallbackIdRef = useRef<string>(`invite-response-${props.user.id}`);
+  const inviteResolvedRef = useRef(false);
+
+  useEffect(() => {
+    socketService.on(inviteCallbackIdRef.current, async (data: TWebSocketMessage) => {
+      if (!isInviting) return;
+
+      switch (data.type) {
+        case "invite_accept":
+          inviteResolvedRef.current = true;
+          setInviting(null);
+          sounds.ringing.stop();
+          toast.success(`${props.user.first_name} accepted your invite`, { duration: 1500 });
+          break;
+        case "invite_reject":
+          inviteResolvedRef.current = true;
+          setInviting(null);
+          sounds.ringing.stop();
+          sounds.unavailable.play();
+          if (data.payload.reject_reason === "in-call") {
+            toast.error(`${props.user.first_name} is already in a call`, { duration: 2500 });
+          } else {
+            toast.error(`${props.user.first_name} declined your invite`, { duration: 2500 });
+          }
+          break;
+        case "callee_offline":
+          inviteResolvedRef.current = true;
+          setInviting(null);
+          sounds.ringing.stop();
+          sounds.unavailable.play();
+          toast.error(`${props.user.first_name} appears to be offline`, { duration: 2500 });
+          break;
+        case "error":
+          inviteResolvedRef.current = true;
+          setInviting(null);
+          sounds.ringing.stop();
+          toast.error(data.payload.error, { duration: 2500 });
+          break;
+      }
+    });
+
+    const timeoutId =
+      isInviting ?
+        setTimeout(() => {
+          inviteResolvedRef.current = true;
+          sounds.ringing.stop();
+          setInviting(null);
+          toast.error(`${props.user.first_name} didn't respond`, { duration: 1500 });
+        }, 65_000)
+      : undefined;
+
+    return () => {
+      if (!isInviting) return;
+      if (inviteCallbackIdRef.current) {
+        socketService.removeHandler(inviteCallbackIdRef.current);
+      }
+      sounds.ringing.stop();
+      setInviting(null);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isInviting]);
+
   return (
     <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] gap-2 w-full items-center">
       <HoppAvatar
@@ -423,6 +511,36 @@ export const ParticipantRow = (props: {
           >
             <HiPhoneArrowDownLeft className="size-3" />
             Join
+          </Button>
+        : inACall && !userPresence ?
+          <Button
+            variant="gradient-white"
+            onClick={() => {
+              if (isInviting) {
+                inviteResolvedRef.current = true;
+                sounds.ringing.stop();
+                setInviting(null);
+              } else {
+                inviteUser();
+              }
+            }}
+            disabled={hasIncomingCall || !props.user.is_active}
+            className={clsx(
+              "px-2 w-auto h-7 flex flex-row items-center gap-1",
+              !isInviting && "text-slate-600",
+              isInviting && "text-red-500",
+            )}
+          >
+            {isInviting ?
+              <>
+                <HiPhoneArrowUpRight className="size-3 animate-oscillate" />
+                Cancel
+              </>
+            : <>
+                <HiPhone className="size-3" />
+                Invite
+              </>
+            }
           </Button>
         : <Button
             variant="gradient-white"

@@ -45,6 +45,10 @@ type State = {
   calling: string | null;
   // Caller id while incoming call banner is visible
   incomingCallCallerId: string | null;
+  // The targeted invitee id (inviter side)
+  inviting: string | null;
+  // Inviter id while incoming invite banner is visible
+  incomingInviteInviterId: string | null;
   // Call tokens for LiveKit
   callTokens: CallState | null;
   customServerUrl: string | null;
@@ -64,6 +68,8 @@ type Actions = {
   reset: () => void;
   setCalling: (calling: string | null) => void;
   setIncomingCallCallerId: (callerId: string | null) => void;
+  setInviting: (inviting: string | null) => void;
+  setIncomingInviteInviterId: (inviterId: string | null) => void;
   setCallTokens: (tokens: CallState | null) => void;
   // TODO(@konsalex): Rename `xxCallToken` as its not
   // representative anymore or the actual state it holds.
@@ -83,6 +89,8 @@ const initialState: State = {
   teammates: null,
   calling: null,
   incomingCallCallerId: null,
+  inviting: null,
+  incomingInviteInviterId: null,
   callTokens: null,
   customServerUrl: null,
   livekitUrl: null,
@@ -128,6 +136,14 @@ const useStore = create<State & Actions>()(
     setIncomingCallCallerId: (callerId) =>
       set((state) => {
         state.incomingCallCallerId = callerId;
+      }),
+    setInviting: (inviting) =>
+      set((state) => {
+        state.inviting = inviting;
+      }),
+    setIncomingInviteInviterId: (inviterId) =>
+      set((state) => {
+        state.incomingInviteInviterId = inviterId;
       }),
     setCallTokens: (tokens) =>
       set((state) => {

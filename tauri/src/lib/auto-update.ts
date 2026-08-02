@@ -6,8 +6,10 @@ import { checkForUpdates, downloadUpdateInBackground, installAndRelaunch } from 
 
 /** Safe to interrupt: no call activity and the window isn't in front of the user. */
 async function isIdle(): Promise<boolean> {
-  const { callTokens, incomingCallCallerId, calling, updateInProgress } = useStore.getState();
-  if (callTokens || incomingCallCallerId || calling || updateInProgress) return false;
+  const { callTokens, incomingCallCallerId, calling, inviting, incomingInviteInviterId, updateInProgress } =
+    useStore.getState();
+  if (callTokens || incomingCallCallerId || calling || inviting || incomingInviteInviterId || updateInProgress)
+    return false;
   return !(await getCurrentWindow().isFocused());
 }
 

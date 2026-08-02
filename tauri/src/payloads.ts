@@ -194,6 +194,10 @@ export const MessageType = z.enum([
   "presence_changed",
   "presence_check",
   "presence_ack",
+  "invite_request",
+  "incoming_invite",
+  "invite_accept",
+  "invite_reject",
 ]);
 
 export type TMessageType = z.infer<typeof MessageType>;
@@ -285,6 +289,32 @@ export const PPresenceAckMessage = z.object({
   payload: z.object({ room: z.string(), in_call: z.boolean() }),
 });
 
+export const PInviteRequestMessage = z.object({
+  type: z.literal("invite_request"),
+  payload: z.object({ invitee_id: z.string() }),
+});
+
+export const PIncomingInviteMessage = z.object({
+  type: z.literal("incoming_invite"),
+  payload: z.object({
+    inviter_id: z.string(),
+    initiated_at: z.number().optional(),
+  }),
+});
+
+export const PInviteAcceptMessage = z.object({
+  type: z.literal("invite_accept"),
+  payload: z.object({ inviter_id: z.string() }),
+});
+
+export const PInviteRejectMessage = z.object({
+  type: z.literal("invite_reject"),
+  payload: z.object({
+    inviter_id: z.string(),
+    reject_reason: z.enum(["in-call", "rejected"]).optional(),
+  }),
+});
+
 // Export types for all messages
 export type TSuccessMessage = z.infer<typeof PSuccessMessage>;
 export type TCallRequestMessage = z.infer<typeof PCallRequestMessage>;
@@ -301,6 +331,10 @@ export type TTeammateOnlineMessage = z.infer<typeof PTeammateOnlineMessage>;
 export type TPresenceChangedMessage = z.infer<typeof PPresenceChangedMessage>;
 export type TPresenceCheckMessage = z.infer<typeof PPresenceCheckMessage>;
 export type TPresenceAckMessage = z.infer<typeof PPresenceAckMessage>;
+export type TInviteRequestMessage = z.infer<typeof PInviteRequestMessage>;
+export type TIncomingInviteMessage = z.infer<typeof PIncomingInviteMessage>;
+export type TInviteAcceptMessage = z.infer<typeof PInviteAcceptMessage>;
+export type TInviteRejectMessage = z.infer<typeof PInviteRejectMessage>;
 
 // Union type for all possible messages
 export const PWebSocketMessage = z.discriminatedUnion("type", [
@@ -319,6 +353,10 @@ export const PWebSocketMessage = z.discriminatedUnion("type", [
   PPresenceChangedMessage,
   PPresenceCheckMessage,
   PPresenceAckMessage,
+  PInviteRequestMessage,
+  PIncomingInviteMessage,
+  PInviteAcceptMessage,
+  PInviteRejectMessage,
 ]);
 
 export type TWebSocketMessage = z.infer<typeof PWebSocketMessage>;

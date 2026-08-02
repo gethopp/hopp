@@ -15,8 +15,15 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import toast from "react-hot-toast";
 import { CallBanner } from "@/components/ui/call-banner";
+import { InviteBanner } from "@/components/ui/invite-banner";
 import { socketService } from "@/services/socket";
-import { TRejectCallMessage, TIncomingCallMessage, TWebSocketMessage, TPresenceAckMessage } from "@/payloads";
+import {
+  TRejectCallMessage,
+  TIncomingCallMessage,
+  TIncomingInviteMessage,
+  TWebSocketMessage,
+  TPresenceAckMessage,
+} from "@/payloads";
 import { Participants } from "@/components/ui/participants";
 import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
@@ -42,6 +49,7 @@ function App() {
     setAuthToken,
     setLivekitUrl,
     setIncomingCallCallerId,
+    setIncomingInviteInviterId,
     setCallsPresence,
   } = useStore();
 
@@ -281,7 +289,9 @@ function App() {
       if (data.type === "call_end") {
         // Get call info before clearing tokens
         toast.dismiss("call-banner");
+        toast.dismiss("invite-banner");
         setIncomingCallCallerId(null);
+        setIncomingInviteInviterId(null);
 
         const { callTokens: currentCallTokens, user } = useStore.getState();
         const participantId = currentCallTokens?.participant || "";
@@ -333,6 +343,38 @@ function App() {
         type: "presence_ack",
         payload: { room, in_call: inCall },
       } as TPresenceAckMessage);
+    });
+
+    socketService.on("incoming_invite", (data: TWebSocketMessage) => {
+      if (data.type !== "incoming_invite") {
+        return;
+      }
+
+      const MAX_INVITE_AGE_S = 60;
+      const incomingMsg = data as TIncomingInviteMessage;
+      const initiatedAt = incomingMsg.payload.initiated_at;
+      if (initiatedAt != null) {
+        const ageSeconds = differenceInSeconds(new Date(), fromUnixTime(initiatedAt));
+        if (ageSeconds > MAX_INVITE_AGE_S) {
+          console.warn(`Dropping stale incoming invite (age: ${ageSeconds}s)`);
+          return;
+        }
+      }
+
+      setIncomingInviteInviterId(data.payload.inviter_id);
+
+      // Open current tauri window and create invite banner
+      toast((t) => <InviteBanner inviterId={data.payload.inviter_id} toastId={t.id} />, {
+        position: "bottom-center",
+        id: "invite-banner",
+        duration: Infinity,
+        className: "ml-12",
+        removeDelay: 100,
+        style: {
+          padding: "2px",
+        },
+      });
+      tauriUtils.showWindow("main");
     });
   }, []);
 
