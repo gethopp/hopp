@@ -45,6 +45,17 @@ const (
 	MessageTypePresenceCheck MessageType = "presence_check"
 	// Client -> Server: Reply to a presence_check
 	MessageTypePresenceAck MessageType = "presence_ack"
+
+	// Client -> Server: Invite request from a user in a call to another user (with invitee id)
+	MessageTypeInviteRequest MessageType = "invite_request"
+	// Server -> Client: Incoming invite from a user in a call (with inviter id)
+	MessageTypeIncomingInvite MessageType = "incoming_invite"
+	// Client -> Server: Accept invite request (inviter id)
+	MessageTypeInviteAccept MessageType = "invite_accept"
+	// Client -> Server: Reject invite request (inviter id)
+	MessageTypeInviteReject MessageType = "invite_reject"
+	// Client -> Server -> Client: Cancel a pending invite
+	MessageTypeInviteCancel MessageType = "invite_cancel"
 )
 
 // BaseMessage represents the common structure of all WebSocket messages
@@ -231,6 +242,63 @@ type PresenceAckMessage struct {
 	Payload PresenceAckPayload `json:"payload"`
 }
 
+// InviteRequestPayload represents the payload for invite request messages
+type InviteRequestPayload struct {
+	InviteeID string `json:"invitee_id" validate:"required"`
+	InviteID  string `json:"invite_id" validate:"required"`
+}
+
+// InviteRequestMessage is a complete invite request message
+type InviteRequestMessage struct {
+	Type    MessageType          `json:"type"`
+	Payload InviteRequestPayload `json:"payload"`
+}
+
+// IncomingInvitePayload represents the payload for an incoming invite
+type IncomingInvitePayload struct {
+	InviterID   string `json:"inviter_id" validate:"required"`
+	InviteID    string `json:"invite_id" validate:"required"`
+	InitiatedAt *int64 `json:"initiated_at,omitempty"`
+}
+
+// IncomingInviteMessage is a complete incoming invite message
+type IncomingInviteMessage struct {
+	Type    MessageType           `json:"type"`
+	Payload IncomingInvitePayload `json:"payload"`
+}
+
+type InviteResponsePayload struct {
+	InviterID string `json:"inviter_id" validate:"required"`
+	InviteeID string `json:"invitee_id,omitempty"`
+	InviteID  string `json:"invite_id" validate:"required"`
+}
+
+// InviteAcceptMessage is the message to accept an invite request
+type InviteAcceptMessage struct {
+	Type    MessageType           `json:"type"`
+	Payload InviteResponsePayload `json:"payload"`
+}
+
+// InviteRejectMessage is the message to reject an invite request
+type InviteRejectMessage struct {
+	Type    MessageType `json:"type"`
+	Payload struct {
+		InviterID    string `json:"inviter_id" validate:"required"`
+		InviteeID    string `json:"invitee_id,omitempty"`
+		InviteID     string `json:"invite_id" validate:"required"`
+		RejectReason string `json:"reject_reason,omitempty"`
+	} `json:"payload"`
+}
+
+type InviteCancelMessage struct {
+	Type    MessageType `json:"type"`
+	Payload struct {
+		InviterID string `json:"inviter_id,omitempty"`
+		InviteeID string `json:"invitee_id,omitempty"`
+		InviteID  string `json:"invite_id" validate:"required"`
+	} `json:"payload"`
+}
+
 // ParsedMessage is a union type of all possible message types
 type ParsedMessage struct {
 	Success               *SuccessMessage
@@ -248,6 +316,11 @@ type ParsedMessage struct {
 	PresenceCheck         *PresenceCheckMessage
 	PresenceAck           *PresenceAckMessage
 	Error                 *ErrorMessage
+	InviteRequest         *InviteRequestMessage
+	IncomingInvite        *IncomingInviteMessage
+	InviteAcceptMessage   *InviteAcceptMessage
+	InviteRejectMessage   *InviteRejectMessage
+	InviteCancelMessage   *InviteCancelMessage
 }
 
 // ParseMessage parses a raw message into a ParsedMessage
@@ -332,6 +405,36 @@ func ParseMessage(data []byte) (*ParsedMessage, error) {
 			return nil, err
 		}
 		parsed.PresenceAck = &msg
+	case MessageTypeInviteRequest:
+		var msg InviteRequestMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.InviteRequest = &msg
+	case MessageTypeIncomingInvite:
+		var msg IncomingInviteMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.IncomingInvite = &msg
+	case MessageTypeInviteAccept:
+		var msg InviteAcceptMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.InviteAcceptMessage = &msg
+	case MessageTypeInviteReject:
+		var msg InviteRejectMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.InviteRejectMessage = &msg
+	case MessageTypeInviteCancel:
+		var msg InviteCancelMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return nil, err
+		}
+		parsed.InviteCancelMessage = &msg
 	}
 
 	return parsed, nil
@@ -374,6 +477,17 @@ func NewIncomingCallMessage(callerID string, initiatedAt int64) IncomingCallMess
 		Type: MessageTypeIncomingCall,
 		Payload: IncomingCallPayload{
 			CallerID:    callerID,
+			InitiatedAt: &initiatedAt,
+		},
+	}
+}
+
+func NewIncomingInviteMessage(inviterID, inviteID string, initiatedAt int64) IncomingInviteMessage {
+	return IncomingInviteMessage{
+		Type: MessageTypeIncomingInvite,
+		Payload: IncomingInvitePayload{
+			InviterID:   inviterID,
+			InviteID:    inviteID,
 			InitiatedAt: &initiatedAt,
 		},
 	}

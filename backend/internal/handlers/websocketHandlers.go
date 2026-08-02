@@ -171,6 +171,20 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 				case parsedMessage.PresenceAck != nil:
 					// Client confirmed (or denied) presence in a candidate room
 					handlePresenceAck(c, server, user.ID, *parsedMessage.PresenceAck)
+				case parsedMessage.InviteRequest != nil:
+					// Handle invite request (user in a call invites another user)
+					c.Logger().Info("Received invite request")
+					initiateInvite(c, server, ws, user.ID, parsedMessage.InviteRequest.Payload.InviteeID, parsedMessage.InviteRequest.Payload.InviteID)
+				case parsedMessage.InviteAcceptMessage != nil:
+					// Handle invite accept — forward to inviter
+					c.Logger().Info("Accepting invite")
+					acceptInvite(c, server, user.ID, *parsedMessage.InviteAcceptMessage)
+				case parsedMessage.InviteRejectMessage != nil:
+					// Handle invite reject — forward to inviter
+					c.Logger().Info("Rejecting invite")
+					rejectInvite(c, server, user.ID, *parsedMessage.InviteRejectMessage)
+				case parsedMessage.InviteCancelMessage != nil:
+					cancelInvite(c, server, user.ID, *parsedMessage.InviteCancelMessage)
 				default:
 					c.Logger().Warn("Unknown message type")
 				}
@@ -216,48 +230,25 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					}
 
 					switch {
-					case parsedMessage.IncomingCall != nil:
-						// Forward incoming call message to the callee
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
+					case parsedMessage.CallEnd != nil,
+						parsedMessage.IncomingCall != nil,
+						parsedMessage.RejectCallMessage != nil,
+						parsedMessage.AcceptCallMessage != nil,
+						parsedMessage.CallTokensMessage != nil,
+						parsedMessage.TeammateOnlineMessage != nil,
+						parsedMessage.PresenceChanged != nil,
+						parsedMessage.PresenceCheck != nil,
+						parsedMessage.IncomingInvite != nil,
+						parsedMessage.InviteAcceptMessage != nil,
+						parsedMessage.InviteRejectMessage != nil,
+						parsedMessage.InviteCancelMessage != nil:
+						var base messages.BaseMessage
+						if err := json.Unmarshal([]byte(msg.Payload), &base); err != nil {
+							c.Logger().Error("Invalid Redis message:", err)
+							continue
 						}
-					case parsedMessage.RejectCallMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.AcceptCallMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.CallTokensMessage != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.CallEnd != nil:
-						// Handle call end
-						c.Logger().Info("Received call end")
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.TeammateOnlineMessage != nil:
-						// Handle user online message
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.PresenceChanged != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
-							c.Logger().Error(err)
-						}
-					case parsedMessage.PresenceCheck != nil:
-						err = ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
-						if err != nil {
+						c.Logger().Infof("Forwarding WebSocket message type=%s", base.Type)
+						if err := ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
 							c.Logger().Error(err)
 						}
 					default:
@@ -659,4 +650,124 @@ func publishTeammateOnlineMessage(ctx echo.Context, s *common.ServerState, userI
 	}
 
 	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(teammateID), msgJSON)
+}
+
+// initiateInvite is sent by a user already in a call/room to invite another
+// user to join. It verifies the inviter is in an active room, checks the
+// invitee is online and a teammate, then forwards an incoming_invite to the
+// invitee.
+func initiateInvite(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, inviterID, inviteeID, inviteID string) {
+	rdbCtx := context.Background()
+	inviteeChannelID := redisutil.GetUserChannel(inviteeID)
+
+	// Inviter must be in an active call/room
+	if s.CallState == nil {
+		sendWSErrorMessage(ws, "Call service unavailable")
+		return
+	}
+	roomName, found, err := s.CallState.GetUserRoom(rdbCtx, inviterID)
+	if err != nil || !found || roomName == "" {
+		ctx.Logger().Warnf("initiateInvite: inviter %s has no active room", inviterID)
+		sendWSErrorMessage(ws, "You are not in a call")
+		return
+	}
+
+	// Fetch inviter + invitee and verify same team
+	inviter, err := models.GetUserByID(s.DB, inviterID)
+	if err != nil {
+		ctx.Logger().Error("initiateInvite: error getting inviter: ", err)
+		sendWSErrorMessage(ws, "Failed to get inviter information")
+		return
+	}
+	invitee, err := models.GetUserByID(s.DB, inviteeID)
+	if err != nil || !sameTeam(inviter.TeamID, invitee.TeamID) {
+		ctx.Logger().Warn("initiateInvite: blocked invite to non-teammate: ", inviterID, " -> ", inviteeID)
+		sendCalleeOfflineMessage(ctx, ws, inviteeID)
+		return
+	}
+
+	// Check invitee is online
+	channels, err := s.Redis.PubSubChannels(rdbCtx, inviteeChannelID).Result()
+	if err != nil {
+		ctx.Logger().Error("initiateInvite: error getting channels: ", err)
+		return
+	}
+	if len(channels) == 0 {
+		sendCalleeOfflineMessage(ctx, ws, inviteeID)
+		return
+	}
+
+	// Record the exact pending invite before publishing it. Responses and
+	// cancellation fail closed unless this one-time record exists.
+	if err := s.Redis.Set(rdbCtx, pendingInviteKey(inviterID, inviteeID, inviteID), "1", 2*time.Minute).Err(); err != nil {
+		ctx.Logger().Error("initiateInvite: error recording pending invite: ", err)
+		sendWSErrorMessage(ws, "Invite service temporarily unavailable")
+		return
+	}
+
+	msg := messages.NewIncomingInviteMessage(inviterID, inviteID, time.Now().Unix())
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		ctx.Logger().Error(err)
+		s.Redis.Del(rdbCtx, pendingInviteKey(inviterID, inviteeID, inviteID))
+		return
+	}
+	s.Redis.Publish(rdbCtx, inviteeChannelID, msgJSON)
+}
+
+func pendingInviteKey(inviterID, inviteeID, inviteID string) string {
+	return "invite:pending:" + inviterID + ":" + inviteeID + ":" + inviteID
+}
+
+func consumePendingInvite(rdb *redis.Client, inviterID, inviteeID, inviteID string) bool {
+	_, err := rdb.GetDel(context.Background(), pendingInviteKey(inviterID, inviteeID, inviteID)).Result()
+	return err == nil
+}
+
+// acceptInvite forwards the invite_accept to the inviter so they get a toast.
+// The invitee then calls POST /api/auth/call/join/{inviterId} directly (REST)
+// to get their own tokens — no token delivery over WS for invites.
+func acceptInvite(ctx echo.Context, s *common.ServerState, inviteeID string, message messages.InviteAcceptMessage) {
+	if !consumePendingInvite(s.Redis, message.Payload.InviterID, inviteeID, message.Payload.InviteID) {
+		ctx.Logger().Warn("Dropped accept without a matching pending invite")
+		return
+	}
+	message.Payload.InviteeID = inviteeID
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.InviterID), payloadJSON)
+}
+
+// rejectInvite forwards the invite_reject to the inviter.
+func rejectInvite(ctx echo.Context, s *common.ServerState, inviteeID string, message messages.InviteRejectMessage) {
+	if !consumePendingInvite(s.Redis, message.Payload.InviterID, inviteeID, message.Payload.InviteID) {
+		ctx.Logger().Warn("Dropped rejection without a matching pending invite")
+		return
+	}
+	message.Payload.InviteeID = inviteeID
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(message.Payload.InviterID), payloadJSON)
+}
+
+func cancelInvite(ctx echo.Context, s *common.ServerState, inviterID string, message messages.InviteCancelMessage) {
+	inviteeID := message.Payload.InviteeID
+	if !consumePendingInvite(s.Redis, inviterID, inviteeID, message.Payload.InviteID) {
+		ctx.Logger().Warn("Dropped cancellation without a matching pending invite")
+		return
+	}
+	message.Payload.InviterID = inviterID
+	message.Payload.InviteeID = ""
+	payloadJSON, err := json.Marshal(message)
+	if err != nil {
+		ctx.Logger().Error(err)
+		return
+	}
+	s.Redis.Publish(context.Background(), redisutil.GetUserChannel(inviteeID), payloadJSON)
 }

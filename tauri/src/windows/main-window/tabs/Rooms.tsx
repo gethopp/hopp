@@ -294,13 +294,13 @@ export const Rooms = () => {
         }
 
         sounds.callAccepted.play();
-        const settings = await tauriUtils.getUserSettings();
+        const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
         setCallTokens({
           ...tokens,
           isRoomCall: true,
           timeStarted: new Date(),
-          hasAudioEnabled: settings.start_mic_on_call,
-          hasCameraEnabled: settings.start_camera_on_call,
+          hasAudioEnabled: startMic,
+          hasCameraEnabled: startCamera,
           role: ParticipantRole.NONE,
           isRemoteControlEnabled: true,
           room: room,

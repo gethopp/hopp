@@ -263,6 +263,9 @@ components:
         participant:
           type: string
           description: Participant identity for the session
+        room:
+          $ref: "#/components/schemas/Room"
+          description: Included when the session is a named room (not an ad-hoc call)
 
     SlackInstallation:
       type: object

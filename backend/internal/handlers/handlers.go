@@ -1188,11 +1188,26 @@ func (h *AuthHandler) JoinCall(c echo.Context) error {
 	}
 	tokens.Participant = targetUserID
 
+	// If the room name corresponds to a DB room, include it in the response
+	// so the frontend can set isRoomCall/room in its call state.
+	room, err := models.GetRoomByID(h.DB, roomName)
+	if err != nil {
+		c.Logger().Warnf("JoinCall: error looking up room %s: %v", roomName, err)
+	}
+
+	type joinCallResponse struct {
+		livekitutil.LivekitTokenSet
+		Room *models.Room `json:"room,omitempty"`
+	}
+
 	broadcastPresenceChanged(c, &h.ServerState, user.ID)
 
 	_ = notifications.SendTelegramNotification(fmt.Sprintf("User %s joined call with %s", user.ID, target.ID), h.Config)
 
-	return c.JSON(http.StatusOK, tokens)
+	return c.JSON(http.StatusOK, joinCallResponse{
+		LivekitTokenSet: tokens,
+		Room:            room,
+	})
 }
 
 func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {

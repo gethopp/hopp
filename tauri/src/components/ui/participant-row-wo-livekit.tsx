@@ -6,7 +6,7 @@ import { socketService } from "@/services/socket";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
-import { TRejectCallMessage, TCallRequestMessage, TWebSocketMessage } from "@/payloads";
+import { TRejectCallMessage, TCallRequestMessage, TInviteRequestMessage, TWebSocketMessage } from "@/payloads";
 import useStore, { ParticipantRole } from "@/store/store";
 import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
@@ -14,7 +14,7 @@ import { HoppAvatar } from "@/components/ui/hopp-avatar";
 import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAPI } from "@/services/query";
-import { endCallAndWait, useEndCall } from "@/lib/hooks";
+import { endCallAndWait, useEndCall, useJoinCall } from "@/lib/hooks";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -58,8 +58,10 @@ export const ParticipantRow = (props: {
   rooms: components["schemas"]["Room"][];
 }) => {
   const posthog = usePostHog();
+  const inviting = useStore((state) => state.inviting);
   const isCalling = useStore((state) => state.calling === props.user.id);
-  const { setCalling, callTokens, setCallTokens } = useStore((state) => state);
+  const isInviting = useStore((state) => state.inviting === props.user.id);
+  const { setCalling, setInviting, callTokens, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
   const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
   const callsPresence = useStore((state) => state.callsPresence);
@@ -80,7 +82,6 @@ export const ParticipantRow = (props: {
   }, [userPresence?.peerIds, teammates, currentUser]);
 
   const { useMutation } = useAPI();
-  const { mutateAsync: joinCallRequest } = useMutation("post", "/api/auth/call/join/{userId}", undefined);
   const { mutateAsync: getRoomTokens } = useMutation("get", "/api/auth/room/{id}", undefined);
 
   const targetRoom = useMemo(
@@ -117,15 +118,7 @@ export const ParticipantRow = (props: {
       }
 
       sounds.callAccepted.play();
-      let startMic = false;
-      let startCamera = false;
-      try {
-        const settings = await tauriUtils.getUserSettings();
-        startMic = settings.start_mic_on_call;
-        startCamera = settings.start_camera_on_call;
-      } catch {
-        // fall back to safe defaults
-      }
+      const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
       setCallTokens({
         ...tokens,
         isRoomCall: true,
@@ -161,6 +154,9 @@ export const ParticipantRow = (props: {
 
   const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
   const callResolvedRef = useRef(false);
+  const inviteIdRef = useRef("");
+
+  const joinOngoingCall = useJoinCall();
 
   const joinCall = useCallback(async () => {
     if (inACall || hasIncomingCall) return;
@@ -170,50 +166,8 @@ export const ParticipantRow = (props: {
       user_name: props.user.first_name,
     });
 
-    try {
-      const tokens = await joinCallRequest({ params: { path: { userId: props.user.id } } });
-
-      if (!tokens) {
-        toast.error("Error joining call");
-        return;
-      }
-
-      sounds.callAccepted.play();
-      let startMic = false;
-      let startCamera = false;
-      try {
-        const settings = await tauriUtils.getUserSettings();
-        startMic = settings.start_mic_on_call;
-        startCamera = settings.start_camera_on_call;
-      } catch {
-        // fall back to safe defaults
-      }
-      setCallTokens({
-        ...tokens,
-        timeStarted: new Date(),
-        hasAudioEnabled: startMic,
-        hasCameraEnabled: startCamera,
-        role: ParticipantRole.NONE,
-        isRemoteControlEnabled: true,
-        participants: [],
-        isInitialisingCall: true,
-        micLevel: 0,
-      });
-      try {
-        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-      } catch {
-        setCallTokens(null);
-        return;
-      }
-      tauriUtils.showWindow("main");
-    } catch (error: any) {
-      if (error?.error === "trial-ended") {
-        toast.error("Trial has expired, contact us if you want to extend it");
-      } else {
-        toast.error("Error joining call");
-      }
-    }
-  }, [props.user, inACall, hasIncomingCall, joinCallRequest, setCallTokens]);
+    await joinOngoingCall(props.user.id);
+  }, [props.user, inACall, hasIncomingCall, joinOngoingCall, posthog]);
 
   const callUser = useCallback(() => {
     if (hasIncomingCall) return;
@@ -255,6 +209,31 @@ export const ParticipantRow = (props: {
       },
     } as TCallRequestMessage);
   }, [props.user, hasIncomingCall]);
+
+  const inviteUser = useCallback(() => {
+    posthog.capture("user_invite_request", {
+      user_id: props.user.id,
+      user_name: props.user.first_name,
+    });
+
+    if (!props.user.is_active) {
+      console.log(`${props.user.first_name} is currently offline, cannot invite`);
+      toast.error(`${props.user.first_name} is currently offline`);
+      return;
+    }
+
+    sounds.ringing.play();
+    inviteIdRef.current = crypto.randomUUID();
+    setInviting(props.user.id);
+    toast.success(`Inviting ${props.user.first_name}...`);
+    socketService.send({
+      type: "invite_request",
+      payload: {
+        invitee_id: props.user.id,
+        invite_id: inviteIdRef.current,
+      },
+    } as TInviteRequestMessage);
+  }, [props.user, setInviting, posthog]);
 
   // Add a useEffect to listen for call responses
   // that will unsubscribe from the socket when the component unmounts
@@ -309,15 +288,7 @@ export const ParticipantRow = (props: {
           sounds.ringing.stop();
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
-          let startMic = false;
-          let startCamera = false;
-          try {
-            const settings = await tauriUtils.getUserSettings();
-            startMic = settings.start_mic_on_call;
-            startCamera = settings.start_camera_on_call;
-          } catch {
-            // fall back to safe defaults
-          }
+          const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
           setCallTokens({
             ...data.payload,
             timeStarted: new Date(),
@@ -375,6 +346,76 @@ export const ParticipantRow = (props: {
     };
   }, [isCalling]);
 
+  // Listen for invite responses (invite_accept / invite_reject / callee_offline)
+  const inviteCallbackIdRef = useRef<string>(`invite-response-${props.user.id}`);
+
+  const cancelInvite = useCallback(() => {
+    if (inviteIdRef.current) {
+      socketService.send({
+        type: "invite_cancel",
+        payload: { invitee_id: props.user.id, invite_id: inviteIdRef.current },
+      });
+    }
+    sounds.ringing.stop();
+    setInviting(null);
+  }, [props.user.id, setInviting]);
+
+  useEffect(() => {
+    socketService.on(inviteCallbackIdRef.current, async (data: TWebSocketMessage) => {
+      if (!isInviting) return;
+
+      switch (data.type) {
+        case "invite_accept":
+          if (data.payload.invitee_id !== props.user.id || data.payload.invite_id !== inviteIdRef.current) return;
+          setInviting(null);
+          sounds.ringing.stop();
+          toast.success(`${props.user.first_name} accepted your invite`, { duration: 1500 });
+          break;
+        case "invite_reject":
+          if (data.payload.invitee_id !== props.user.id || data.payload.invite_id !== inviteIdRef.current) return;
+          setInviting(null);
+          sounds.ringing.stop();
+          sounds.unavailable.play();
+          if (data.payload.reject_reason === "in-call") {
+            toast.error(`${props.user.first_name} is already in a call`, { duration: 2500 });
+          } else {
+            toast.error(`${props.user.first_name} declined your invite`, { duration: 2500 });
+          }
+          break;
+        case "callee_offline":
+          if (data.payload.callee_id !== props.user.id) return;
+          setInviting(null);
+          sounds.ringing.stop();
+          sounds.unavailable.play();
+          toast.error(`${props.user.first_name} appears to be offline`, { duration: 2500 });
+          break;
+        case "error":
+          setInviting(null);
+          sounds.ringing.stop();
+          toast.error(data.payload.error, { duration: 2500 });
+          break;
+      }
+    });
+
+    const timeoutId =
+      isInviting ?
+        setTimeout(() => {
+          cancelInvite();
+          toast.error(`${props.user.first_name} didn't respond`, { duration: 1500 });
+        }, 65_000)
+      : undefined;
+
+    return () => {
+      if (!isInviting) return;
+      if (inviteCallbackIdRef.current) {
+        socketService.removeHandler(inviteCallbackIdRef.current);
+      }
+      sounds.ringing.stop();
+      setInviting(null);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isInviting, cancelInvite, props.user.first_name, props.user.id, setInviting]);
+
   return (
     <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] gap-2 w-full items-center">
       <HoppAvatar
@@ -423,6 +464,34 @@ export const ParticipantRow = (props: {
           >
             <HiPhoneArrowDownLeft className="size-3" />
             Join
+          </Button>
+        : inACall && !userPresence ?
+          <Button
+            variant="gradient-white"
+            onClick={() => {
+              if (isInviting) {
+                cancelInvite();
+              } else {
+                inviteUser();
+              }
+            }}
+            disabled={hasIncomingCall || !props.user.is_active || (inviting !== null && !isInviting)}
+            className={clsx(
+              "px-2 w-auto h-7 flex flex-row items-center gap-1",
+              !isInviting && "text-slate-600",
+              isInviting && "text-red-500",
+            )}
+          >
+            {isInviting ?
+              <>
+                <HiPhoneArrowUpRight className="size-3 animate-oscillate" />
+                Cancel
+              </>
+            : <>
+                <HiPhone className="size-3" />
+                Invite
+              </>
+            }
           </Button>
         : <Button
             variant="gradient-white"
