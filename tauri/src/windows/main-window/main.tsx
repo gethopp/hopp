@@ -74,16 +74,16 @@ listen<boolean>("telemetry_enabled_changed", (event) => {
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <PostHogProvider apiKey={POSTHOG_API_KEY} options={options}>
-      <Toaster
-        position="bottom-right"
-        toastOptions={{
-          duration: 1_500,
-          loading: { duration: Infinity },
-        }}
-      />
       <QueryClientProvider client={queryClient}>
         {/* Custom type-safe provider */}
         <QueryProvider>
+          <Toaster
+            position="bottom-right"
+            toastOptions={{
+              duration: 1_500,
+              loading: { duration: Infinity },
+            }}
+          />
           <App />
         </QueryProvider>
       </QueryClientProvider>
