@@ -94,10 +94,6 @@ pub enum OverlayError {
     #[error("Failed to request graphics device")]
     DeviceRequestError,
 
-    /// Failed to create or load a texture resource.
-    #[error("Failed to create or load texture resource")]
-    TextureCreationError,
-
     /// Maximum number of participants reached.
     #[error("Maximum number of participants reached")]
     MaxParticipantsReached,
@@ -174,7 +170,6 @@ impl<'a> GraphicsContext<'a> {
     ///
     /// * `context_manager` - Cached GPU context manager
     /// * `window` - The overlay window to render to
-    /// * `texture_path` - Base directory path for loading texture resources
     /// * `scale` - Display scale
     ///
     /// # Returns
@@ -188,7 +183,6 @@ impl<'a> GraphicsContext<'a> {
     /// - `OverlayError::SurfaceCreationError` - Failed to create rendering surface
     /// - `OverlayError::AdapterRequestError` - No suitable GPU adapter found
     /// - `OverlayError::DeviceRequestError` - Failed to create logical GPU device
-    /// - `OverlayError::TextureCreationError` - Failed to initialize marker textures
     ///
     /// # Platform-Specific Behavior
     ///
@@ -196,14 +190,12 @@ impl<'a> GraphicsContext<'a> {
     pub fn new(
         context_manager: &ContextManager,
         window_arc: Arc<Window>,
-        texture_path: String,
         scale: f64,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> OverlayResult<Self> {
         Self::with_clock(
             context_manager,
             window_arc,
-            texture_path,
             scale,
             event_loop_proxy,
             crate::utils::clock::default_clock(),
@@ -214,7 +206,6 @@ impl<'a> GraphicsContext<'a> {
     pub fn with_clock(
         context_manager: &ContextManager,
         window_arc: Arc<Window>,
-        texture_path: String,
         scale: f64,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         clock: Arc<dyn Clock>,
@@ -234,7 +225,7 @@ impl<'a> GraphicsContext<'a> {
 
         let click_animation_renderer = ClickAnimationRenderer::new(clock.clone());
 
-        let iced_renderer = IcedRenderer::new(context_manager, &window_arc, &texture_path);
+        let iced_renderer = IcedRenderer::new(context_manager, &window_arc);
 
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {

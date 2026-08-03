@@ -1,16 +1,13 @@
-use iced::{widget::canvas, Rectangle, Renderer};
+use iced::widget::canvas::{self, stroke, Path, Stroke};
+use iced::{Color, Point, Rectangle, Renderer, Size};
 
 use crate::utils::geometry::Position;
 
-pub struct Marker {
-    marker: iced_core::image::Handle,
-}
+pub struct Marker;
 
 impl Marker {
-    pub fn new(texture_path: &String) -> Self {
-        let marker =
-            iced_core::image::Handle::from_path(format!("{texture_path}/marker_top_left.png"));
-        Self { marker }
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn draw(
@@ -22,38 +19,23 @@ impl Marker {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let top_left = translate(Position { x: 0.0, y: 0.0 });
         let bottom_right = translate(Position { x: 1.0, y: 1.0 });
-        let width = 40.0;
-        let height = 40.0;
-
-        for (x, y, rotation) in [
-            (top_left.x, top_left.y, iced_core::Radians(0.0)),
-            (
-                top_left.x,
-                bottom_right.y - height as f64,
-                iced_core::Radians::PI * 1.5,
+        const BORDER_WIDTH: f32 = 4.0;
+        let inset = BORDER_WIDTH / 2.0;
+        let border = Path::rectangle(
+            Point::new(top_left.x as f32 + inset, top_left.y as f32 + inset),
+            Size::new(
+                ((bottom_right.x - top_left.x) as f32 - BORDER_WIDTH).max(0.0),
+                ((bottom_right.y - top_left.y) as f32 - BORDER_WIDTH).max(0.0),
             ),
-            (
-                bottom_right.x - width as f64,
-                bottom_right.y - height as f64,
-                iced_core::Radians::PI,
-            ),
-            (
-                bottom_right.x - width as f64,
-                top_left.y,
-                iced_core::Radians::PI / 2.0,
-            ),
-        ] {
-            let marker = iced_core::image::Image::new(self.marker.clone()).rotation(rotation);
-            frame.draw_image(
-                Rectangle {
-                    x: x as f32,
-                    y: y as f32,
-                    width,
-                    height,
-                },
-                marker,
-            );
-        }
+        );
+        frame.stroke(
+            &border,
+            Stroke {
+                style: stroke::Style::Solid(Color::from_rgba(0.28, 0.12, 0.58, 0.98)),
+                width: BORDER_WIDTH,
+                ..Stroke::default()
+            },
+        );
 
         frame.into_geometry()
     }

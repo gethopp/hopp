@@ -162,7 +162,6 @@ struct WindowEntry<'a> {
 pub struct WindowManager<'a> {
     windows: Vec<WindowEntry<'a>>,
     active_monitor_id: Option<MonitorId>,
-    textures_path: String,
     event_loop_proxy: EventLoopProxy<UserEvent>,
 }
 
@@ -170,7 +169,6 @@ impl<'a> WindowManager<'a> {
     pub fn new(
         event_loop: &ActiveEventLoop,
         context_manager: &ContextManager,
-        textures_path: String,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, WindowManagerError> {
         log::info!("WindowManager::new: creating windows for available monitors");
@@ -181,7 +179,6 @@ impl<'a> WindowManager<'a> {
                 event_loop,
                 &monitor,
                 context_manager,
-                &textures_path,
                 event_loop_proxy.clone(),
             )?;
             windows.push(window_entry);
@@ -190,7 +187,6 @@ impl<'a> WindowManager<'a> {
         Ok(Self {
             windows,
             active_monitor_id: None,
-            textures_path,
             event_loop_proxy,
         })
     }
@@ -199,7 +195,6 @@ impl<'a> WindowManager<'a> {
         event_loop: &ActiveEventLoop,
         monitor: &MonitorHandle,
         context_manager: &ContextManager,
-        textures_path: &str,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<WindowEntry<'a>, WindowManagerError> {
         let attributes = get_window_attributes();
@@ -248,7 +243,6 @@ impl<'a> WindowManager<'a> {
         let gfx = GraphicsContext::new(
             context_manager,
             window.clone(),
-            textures_path.to_string(),
             monitor.scale_factor(),
             event_loop_proxy,
         )
@@ -730,7 +724,6 @@ impl<'a> WindowManager<'a> {
                     event_loop,
                     monitor,
                     context_manager,
-                    &self.textures_path.clone(),
                     self.event_loop_proxy.clone(),
                 )?);
             }

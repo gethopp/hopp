@@ -11,7 +11,7 @@ use log::LevelFilter;
 use rand::{distributions::Alphanumeric, Rng};
 use sounds::SoundEntry;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 use tauri::async_runtime::Receiver;
-use tauri::path::BaseDirectory;
 #[cfg(target_os = "macos")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
@@ -246,7 +245,6 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
 /// Spawns the core process sidecar with required arguments.
 fn start_sidecar(
     app: &tauri::AppHandle,
-    textures_path: &Path,
     socket_path: &str,
 ) -> (Receiver<CommandEvent>, CommandChild) {
     log::info!("start_sidecar:");
@@ -264,12 +262,7 @@ fn start_sidecar(
         }
     }
 
-    let mut args = vec![
-        "--socket-path",
-        socket_path,
-        "--textures-path",
-        textures_path.to_str().unwrap(),
-    ];
+    let mut args = vec!["--socket-path", socket_path];
 
     let sentry_dsn = get_sentry_dsn();
     if !cfg!(debug_assertions) {
@@ -333,30 +326,11 @@ pub fn create_core_process(
     app: &tauri::AppHandle,
 ) -> Result<(CoreProcess, SocketSender, EventSocket), CoreProcessCreationError> {
     log::info!("create_core_process: Creating core process");
-    let mut resources_dir = app
-        .path()
-        .resolve("resources", BaseDirectory::Resource)
-        .unwrap();
-    resources_dir.push("core");
-    /*
-     * We need to do this because this has
-     * UNC path, which is incompatible with File::open
-     */
-    #[cfg(target_os = "windows")]
-    {
-        resources_dir = resources_dir.canonicalize().unwrap();
-        resources_dir = resources_dir
-            .to_str()
-            .and_then(|s| s.get(4..))
-            .map(PathBuf::from)
-            .unwrap_or(resources_dir);
-    }
-
     let tmp_dir = std::env::temp_dir();
     let socket_name = format!("core-socket-{}", create_random_suffix());
     let socket_path = format!("{}/{socket_name}", tmp_dir.display());
 
-    let (rx, core_process) = start_sidecar(app, &resources_dir, &socket_path);
+    let (rx, core_process) = start_sidecar(app, &socket_path);
     tauri::async_runtime::spawn(show_stdout(rx, app.clone()));
     let (sender, event_socket) = create_core_process_socket(&socket_path)?;
     let ping_sender = sender.clone();
