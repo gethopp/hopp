@@ -118,8 +118,8 @@ impl<Message> canvas::Program<Message> for SelectionBorderCanvas {
 }
 
 impl OverlaySurface {
-    pub fn new(texture_path: &String) -> Self {
-        let marker = Marker::new(texture_path);
+    pub fn new() -> Self {
+        let marker = Marker::new();
         Self { marker }
     }
 

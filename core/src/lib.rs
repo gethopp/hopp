@@ -72,7 +72,6 @@ use socket_lib::{
     CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
     ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
-use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -348,7 +347,6 @@ impl RemoteControl {
 /// # Fields
 ///
 /// * `remote_control` - Optional active remote control session (None when not sharing)
-/// * `textures_path` - Path to texture resources for cursor and UI rendering
 /// * `screen_capturer` - Thread-safe screen capture system wrapped in Arc<Mutex>
 /// * `socket` - Local socket for communication with the main tauri app
 /// * `room_service` - object for interacting with the livekit room and its async thread
@@ -376,8 +374,6 @@ impl RemoteControl {
 /// Critical errors may trigger session reset or application termination.
 pub struct Application<'a> {
     remote_control: Option<RemoteControl>,
-    // TODO: remove me
-    textures_path: String,
     // The arc is needed because we move the object to the
     // thread that checks if the stream has failed.
     //screen_capturer: Arc<Mutex<ScreenCapturer>>,
@@ -440,7 +436,6 @@ impl<'a> Application<'a> {
     /// - Screen capturer initialization fails
     /// - Event loop proxy is invalid
     pub fn new(
-        input: RenderLoopRunArgs,
         socket: SocketSender,
         socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -470,7 +465,6 @@ impl<'a> Application<'a> {
 
         Ok(Self {
             remote_control: None,
-            textures_path: input.textures_path,
             screen_capturer: screencapturer,
             socket,
             socket_responses,
@@ -2487,7 +2481,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 match window_manager::WindowManager::new(
                     event_loop,
                     context_manager,
-                    self.textures_path.clone(),
                     self.event_loop_proxy.clone(),
                 ) {
                     Ok(wm) => self.window_manager = Some(wm),
@@ -3089,16 +3082,6 @@ pub struct RenderEventLoop {
     pub event_loop: EventLoop<UserEvent>,
 }
 
-pub struct RenderLoopRunArgs {
-    pub textures_path: String,
-}
-
-impl fmt::Display for RenderLoopRunArgs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Textures path: {}", self.textures_path)
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum RenderLoopError {
     #[error("Socket operation failed: {0}")]
@@ -3133,7 +3116,7 @@ impl RenderEventLoop {
         Self { event_loop }
     }
 
-    pub fn run(self, input: RenderLoopRunArgs, socket_path: String) -> Result<(), RenderLoopError> {
+    pub fn run(self, socket_path: String) -> Result<(), RenderLoopError> {
         log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
@@ -3294,13 +3277,8 @@ impl RenderEventLoop {
         });
 
         let proxy = self.event_loop.create_proxy();
-        let mut application = Application::new(
-            input,
-            sender,
-            socket_responses,
-            proxy,
-            hang_protection_counter,
-        )?;
+        let mut application =
+            Application::new(sender, socket_responses, proxy, hang_protection_counter)?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

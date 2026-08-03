@@ -53,11 +53,7 @@ impl std::fmt::Debug for IcedRenderer {
 }
 
 impl IcedRenderer {
-    pub(crate) fn new(
-        context_manager: &ContextManager,
-        window: &Arc<Window>,
-        texture_path: &String,
-    ) -> Self {
+    pub(crate) fn new(context_manager: &ContextManager, window: &Arc<Window>) -> Self {
         let engine = context_manager.overlay_context.engine.clone();
         let physical_size = window.inner_size();
         let viewport = Viewport::with_physical_size(
@@ -65,7 +61,7 @@ impl IcedRenderer {
             window.scale_factor() as f32,
         );
         let clipboard = Clipboard::connect(window.clone());
-        let overlay_surface = OverlaySurface::new(texture_path);
+        let overlay_surface = OverlaySurface::new();
         fonts_mod::load_fonts();
         let wgpu_renderer = iced_wgpu::Renderer::new(engine, Font::default(), Pixels::from(16));
         let renderer = Renderer::Primary(wgpu_renderer);
