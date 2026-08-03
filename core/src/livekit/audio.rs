@@ -213,7 +213,7 @@ pub fn play_remote_audio_track(
                 let expected_secs = total_samples as f64 / LIVEKIT_SAMPLE_RATE as f64;
                 let drift_ms = (expected_secs - elapsed) * 1000.0;
                 if drift_ms.abs() > 50.0 {
-                    log::warn!(
+                    log::debug!(
                         "Audio receive [{}]: drift {:.0}ms ({} frames, expected {:.1}s, wall {:.1}s)",
                         stream_key,
                         drift_ms,
