@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use thread_priority::{set_current_thread_priority, ThreadPriority};
 use tokio::sync::mpsc;
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
@@ -276,6 +277,12 @@ impl Capturer {
         let proxy_for_thread = self.proxy.clone();
 
         std::thread::spawn(move || {
+            match set_current_thread_priority(ThreadPriority::Max) {
+                Ok(()) => log::info!("Microphone capture thread priority set to maximum"),
+                Err(error) => {
+                    log::warn!("Failed to raise microphone capture thread priority: {error}")
+                }
+            }
             let mut mic = mic;
             let mut resampler = AudioResampler::default();
             let mut level = LevelEmitter::new(socket_for_level.clone());
