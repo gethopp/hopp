@@ -499,12 +499,40 @@ impl<'a> WindowManager<'a> {
             log::info!("{:?}", res);
         }
 
-        if let Some(monitor) = event_loop
-            .primary_monitor()
+        #[cfg(target_os = "macos")]
+        let cursor_monitor = ScreenshareFunctions::cursor_position().and_then(|cursor| {
+            monitors
+                .iter()
+                .find(|monitor| {
+                    let scale = monitor.scale_factor();
+                    let position = monitor.position().to_logical::<f64>(scale);
+                    let size = monitor.size().to_logical::<f64>(scale);
+
+                    cursor.x >= position.x
+                        && cursor.x < position.x + size.width
+                        && cursor.y >= position.y
+                        && cursor.y < position.y + size.height
+                })
+                .cloned()
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        let cursor_monitor: Option<MonitorHandle> = None;
+
+        let active_monitor = self.active_monitor_id.as_ref().and_then(|active_id| {
+            monitors
+                .iter()
+                .find(|monitor| ScreenshareFunctions::get_monitor_id(monitor) == *active_id)
+                .cloned()
+        });
+
+        if let Some(monitor) = cursor_monitor
+            .or(active_monitor)
+            .or_else(|| event_loop.primary_monitor())
             .or_else(|| monitors.first().cloned())
         {
             if !self.focus_monitor(&monitor) {
-                log::warn!("show_screen_selection: failed to focus primary monitor window");
+                log::warn!("show_screen_selection: failed to focus monitor window");
             }
         }
     }
@@ -613,14 +641,22 @@ impl<'a> WindowManager<'a> {
     }
 
     pub fn hide_screen_selection(&mut self) {
+        let active_monitor_id = self.active_monitor_id.clone();
         for entry in &mut self.windows {
             entry.gfx.set_screen_selection(None);
+            let _ = entry.window.set_cursor_hittest(false);
+
+            if active_monitor_id.as_ref() == Some(&entry.monitor_id) {
+                entry.window.set_visible(true);
+                entry.gfx.trigger_render();
+                continue;
+            }
+
             #[cfg(target_os = "macos")]
             {
                 entry.window.set_simple_fullscreen(false);
                 remove_miniaturizable_style(&entry.window);
             }
-            let _ = entry.window.set_cursor_hittest(false);
             entry.window.set_visible(false);
             entry.gfx.resize(winit::dpi::PhysicalSize::new(1, 1));
         }

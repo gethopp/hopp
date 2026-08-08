@@ -158,6 +158,7 @@ pub enum CameraWindowError {
 pub enum CameraMessage {
     MicToggle,
     ScreenShare,
+    OpenScreenSharePicker,
     VideoToggle,
     EndCall,
     ToggleSelfVisibility,
@@ -718,11 +719,25 @@ impl CameraWindow {
             state.camera_dropdown_open,
         );
 
+        let is_screensharing = participants
+            .read()
+            .ok()
+            .and_then(|participants| {
+                participants
+                    .get("local")
+                    .map(ParticipantInfo::is_screensharing)
+            })
+            .unwrap_or(false);
+        let screen_bg_color = if is_screensharing {
+            ColorToken::Green400.to_color()
+        } else {
+            ColorToken::Gray400.to_color()
+        };
         let screen_button = split_button(
             ICON_SCREEN_SHARE,
-            ColorToken::Gray400.to_color(),
+            screen_bg_color,
             CameraMessage::ScreenShare,
-            None,
+            Some(CameraMessage::OpenScreenSharePicker),
             false,
         );
 
@@ -945,12 +960,35 @@ impl CameraWindow {
                 }
             }
             CameraMessage::ScreenShare => {
-                log::info!("CameraWindow: screen share -> GetAvailableContent");
-                if let Err(e) = self
+                let is_screensharing = self
+                    .participants
+                    .read()
+                    .ok()
+                    .and_then(|participants| {
+                        participants
+                            .get("local")
+                            .map(ParticipantInfo::is_screensharing)
+                    })
+                    .unwrap_or(false);
+
+                let event = if is_screensharing {
+                    UserEvent::StopScreenShare
+                } else {
+                    UserEvent::GetAvailableContent
+                };
+
+                log::info!("CameraWindow: screen share toggle -> {:?}", event);
+                if let Err(error) = self.event_loop_proxy.send_event(event) {
+                    log::error!("CameraWindow: failed to send screen share event: {error:?}");
+                }
+            }
+            CameraMessage::OpenScreenSharePicker => {
+                log::info!("CameraWindow: opening screen share picker");
+                if let Err(error) = self
                     .event_loop_proxy
                     .send_event(UserEvent::GetAvailableContent)
                 {
-                    log::error!("CameraWindow: failed to send GetAvailableContent event: {e:?}");
+                    log::error!("CameraWindow: failed to open screen share picker: {error:?}");
                 }
             }
             CameraMessage::VideoToggle => {
