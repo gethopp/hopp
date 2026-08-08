@@ -148,6 +148,7 @@ pub(crate) struct RoomServiceInner {
     participants: Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
     remote_screen_share: RemoteScreenShare,
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
+    pub(crate) video_health_summary: std::sync::Mutex<crate::livekit::stats::VideoHealthSummary>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
     snapshot_sender: SnapshotSender,
@@ -302,6 +303,7 @@ impl RoomService {
                 publisher_identity: Arc::new(std::sync::Mutex::new(None)),
             },
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
+            video_health_summary: std::sync::Mutex::new(Default::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
             cancel_connect: std::sync::Mutex::new(Vec::new()),
             snapshot_sender,
@@ -366,6 +368,9 @@ impl RoomService {
     /// Destroys the current room connection.
     pub fn destroy_room(&self) {
         log::info!("destroy_room");
+        if let Ok(summary) = self.inner.video_health_summary.lock() {
+            summary.log();
+        }
 
         // Cancel any in-flight connection of CreateRoom attempt immediately.
         // Dropping all senders causes each corresponding cancel_rx to resolve.
@@ -921,8 +926,10 @@ async fn room_service_commands(
                 // };
                 let inner_clone_video = inner.clone();
                 let video_connect_fut = tokio::time::timeout(Duration::from_secs(30), async {
+                    let mut video_room_options = RoomOptions::default();
+                    video_room_options.auto_subscribe = false;
                     let (video_room, video_rx) =
-                        Room::connect(&url, &video_token, RoomOptions::default())
+                        Room::connect(&url, &video_token, video_room_options)
                             .await
                             .map_err(|e| format!("{e:?}"))?;
 
@@ -1135,6 +1142,15 @@ async fn room_service_commands(
                         String::new()
                     }
                 };
+                if !video_participant_identity.is_empty() {
+                    for (_, participant) in room.remote_participants() {
+                        if participant.identity().as_str() == video_participant_identity {
+                            for (_, publication) in participant.track_publications() {
+                                publication.set_subscribed(false);
+                            }
+                        }
+                    }
+                }
                 log::info!(
                     "room_service_commands: Finished room setup in {}ms",
                     total_connect_start.elapsed().as_millis()
@@ -2230,6 +2246,10 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 publication,
                 participant,
             } => {
+                if participant.identity().as_str() == video_participant_identity {
+                    publication.set_subscribed(false);
+                    continue;
+                }
                 log::info!(
                     "handle_room_events: Track published: {} ({:?}) from {}",
                     publication.name(),
@@ -2447,7 +2467,8 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 let participant_identity = participant.identity().as_str().to_string();
 
                 if participant_identity == video_participant_identity {
-                    log::debug!("handle_room_events: Skipping track subscribed event from video participant");
+                    publication.set_subscribed(false);
+                    log::debug!("handle_room_events: Unsubscribed from video participant track");
                     continue;
                 }
 

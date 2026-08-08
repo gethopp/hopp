@@ -1,6 +1,7 @@
-use sentry::protocol::{Attachment, Event};
+use sentry::protocol::{Attachment, Context, Event, Value};
 use sentry::types::random_uuid;
 use sentry::{ClientInitGuard, Envelope, Level};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -258,6 +259,64 @@ pub fn simple_event(message: String) {
         ..Default::default()
     };
     let envelope: Envelope = event.into();
+    client.send_envelope(envelope);
+}
+
+pub fn video_quality_event(
+    issue: &str,
+    tags: BTreeMap<String, String>,
+    metrics: BTreeMap<String, String>,
+) {
+    if !TELEMETRY_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let client = match sentry::Hub::current().client() {
+        Some(client) => client,
+        None => {
+            log::warn!("video_quality_event: No client found");
+            return;
+        }
+    };
+
+    let mut event_tags = get_system_tags();
+    event_tags.extend(tags);
+    event_tags.insert("issue".to_string(), issue.to_string());
+
+    let metrics = metrics
+        .into_iter()
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect::<BTreeMap<_, _>>();
+    let mut contexts = BTreeMap::new();
+    contexts.insert("video".to_string(), Context::Other(metrics));
+
+    let event: Event<'static> = Event {
+        event_id: random_uuid(),
+        message: Some("Hopp screen share quality degraded".to_string()),
+        level: Level::Warning,
+        fingerprint: Cow::Owned(vec![
+            Cow::Owned("video-quality".to_string()),
+            Cow::Owned(issue.to_string()),
+        ]),
+        tags: event_tags,
+        contexts,
+        ..Default::default()
+    };
+
+    let mut envelope: Envelope = event.into();
+    if let Some(log_path) = get_log_path() {
+        match std::fs::read(log_path) {
+            Ok(logs) => envelope.add_item(Attachment {
+                buffer: logs,
+                filename: "hopp.log".to_string(),
+                content_type: Some("text/plain".to_string()),
+                ..Default::default()
+            }),
+            Err(error) => log::warn!("video_quality_event: Error reading log file: {error}"),
+        }
+    } else {
+        log::warn!("video_quality_event: No log path found");
+    }
+
     client.send_envelope(envelope);
 }
 
