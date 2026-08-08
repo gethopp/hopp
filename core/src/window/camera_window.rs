@@ -108,7 +108,6 @@ fn spawn_redraw_thread(
 const CONTENT_PADDING: f32 = 12.0;
 
 // Grid layout constants
-const MIN_TILE_SIZE: f32 = 80.0;
 const TILE_SPACING: f32 = 16.0;
 const MIN_GRID_PADDING: f32 = 8.0;
 
@@ -130,8 +129,8 @@ const ICON_VIDEO: char = '\u{F101}';
 const ICON_PHONE_OFF: char = '\u{F103}';
 const ICON_PIN_ANGLE: char = '\u{F10B}';
 
-const PIN_CORNER_WIDTH: f64 = 60.0;
-const PIN_CORNER_HEIGHT: f64 = 60.0;
+const PIN_CORNER_WIDTH: f64 = CAMERA_WINDOW_MIN_WIDTH;
+const PIN_CORNER_HEIGHT: f64 = CAMERA_WINDOW_MIN_HEIGHT;
 const PIN_CORNER_MARGIN: f64 = 40.0;
 
 const ICON_EYE_ON_SVG: &[u8] = include_bytes!("../../resources/icons/EyeOn.svg");
@@ -183,8 +182,6 @@ struct CameraState {
     local_tile_hovered: bool,
     /// Window narrower than `COMPACT_WIDTH_THRESHOLD` hides header, name labels, etc.
     is_compact: bool,
-    /// Last min-height applied via `set_min_inner_size` (used to avoid redundant calls).
-    compact_min_height: f64,
     toast: Option<ToastState>,
     camera_dropdown_open: bool,
     available_cameras: Vec<socket_lib::CameraDevice>,
@@ -202,7 +199,6 @@ impl Default for CameraState {
             self_hidden: false,
             local_tile_hovered: false,
             is_compact: false,
-            compact_min_height: CAMERA_WINDOW_MIN_HEIGHT,
             toast: None,
             camera_dropdown_open: false,
             available_cameras: Vec::new(),
@@ -1039,35 +1035,9 @@ impl CameraWindow {
         }
     }
 
-    /// Recompute `is_compact` from the current viewport width and update the
-    /// window's minimum inner size accordingly. Safe to call on every frame —
-    /// the windowing-system call is skipped when nothing changed.
+    /// Recompute `is_compact` from the current viewport width.
     fn sync_compact_constraints(&mut self) {
-        let is_compact = self.state.viewport_size.width < COMPACT_WIDTH_THRESHOLD;
-        let count = self
-            .participants
-            .read()
-            .map(|p| p.len())
-            .unwrap_or(1)
-            .max(1);
-
-        let min_h = if is_compact {
-            (count as f64) * (MIN_TILE_SIZE as f64)
-                + ((count - 1) as f64) * (TILE_SPACING as f64)
-                + (MIN_GRID_PADDING as f64 * 2.0)
-        } else {
-            CAMERA_WINDOW_MIN_HEIGHT
-        };
-
-        if is_compact != self.state.is_compact || self.state.compact_min_height != min_h {
-            self.state.is_compact = is_compact;
-            self.state.compact_min_height = min_h;
-            self.window
-                .set_min_inner_size(Some(winit::dpi::LogicalSize::new(
-                    CAMERA_WINDOW_MIN_WIDTH,
-                    min_h,
-                )));
-        }
+        self.state.is_compact = self.state.viewport_size.width < COMPACT_WIDTH_THRESHOLD;
     }
 
     /// Resize and reposition the window to the top-right corner of the current monitor,
@@ -1742,14 +1712,6 @@ fn create_participant_grid<'a>(
         sorted
     };
 
-    // Uncomment to test with multiple participants
-    // #[cfg(debug_assertions)]
-    // {
-    //     let cloned = sorted.clone();
-    //     sorted.extend(cloned.iter().copied());
-    //     sorted.extend(cloned.iter().copied());
-    // }
-
     let participant_count = sorted.len();
     if participant_count == 0 {
         return Space::new().into();
@@ -1792,8 +1754,7 @@ fn create_participant_grid<'a>(
         }
     }
 
-    // Apply minimum tile size (but don't exceed what fits)
-    let tile_size = best_tile_size.max(MIN_TILE_SIZE);
+    let tile_size = best_tile_size;
     let tiles_per_row = best_cols;
     let num_rows = best_rows;
     let hide_name = tile_size < HIDE_NAME_TILE_THRESHOLD;
