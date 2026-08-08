@@ -23,6 +23,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::snapshot_sender::SnapshotSender;
 use crate::{audio, ParticipantData, UserEvent};
+use socket_lib::ScreenShareCodec;
 
 // Constants for magic values
 const TOPIC_SHARER_LOCATION: &str = "participant_location";
@@ -49,6 +50,7 @@ pub struct CreateRoomParams {
     pub sample_rx: mpsc::UnboundedReceiver<Vec<i16>>,
     pub audio_processor: SharedProcessor,
     pub noise_cancellation_enabled: Arc<AtomicBool>,
+    pub screen_share_codec: ScreenShareCodec,
     pub start_mic_on_call: bool,
     pub start_camera_on_call: bool,
 }
@@ -823,6 +825,7 @@ async fn room_service_commands(
                 sample_rx,
                 audio_processor,
                 noise_cancellation_enabled,
+                screen_share_codec,
                 start_mic_on_call,
                 start_camera_on_call,
             }) => {
@@ -946,19 +949,9 @@ async fn room_service_commands(
                         RtcVideoSource::Native(screen_source.clone()),
                     );
                     screen_track.mute();
-                    #[cfg(target_os = "macos")]
-                    let use_av1 = false;
-                    #[cfg(target_os = "windows")]
-                    let use_av1 = true;
-                    let max_bitrate = if use_av1 {
-                        AV1_BITRATE_DEFAULT
-                    } else {
-                        H264_BITRATE_DEFAULT
-                    };
-                    let video_codec = if use_av1 {
-                        VideoCodec::AV1
-                    } else {
-                        VideoCodec::H264
+                    let (video_codec, max_bitrate) = match screen_share_codec {
+                        ScreenShareCodec::H264 => (VideoCodec::H264, H264_BITRATE_DEFAULT),
+                        ScreenShareCodec::AV1 => (VideoCodec::AV1, AV1_BITRATE_DEFAULT),
                     };
                     let screen_result = video_room
                         .local_participant()

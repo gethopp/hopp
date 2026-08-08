@@ -28,6 +28,22 @@ pub enum ScreenShareResolution {
     P4K,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenShareCodec {
+    H264,
+    AV1,
+}
+
+impl Default for ScreenShareCodec {
+    fn default() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::AV1
+        } else {
+            Self::H264
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenSharePickerMode {
     #[default]
@@ -256,6 +272,7 @@ pub enum Message {
     DrawingDisabled,
     ExitRequested,
     SetNoiseCancellation(bool),
+    SetScreenShareCodec(ScreenShareCodec),
     SetScreenShareResolution(ScreenShareResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),

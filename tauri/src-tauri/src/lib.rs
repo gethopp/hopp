@@ -27,7 +27,7 @@ use tauri::{Rect, TitleBarStyle, WebviewWindow};
 use tauri_plugin_autostart::AutoLaunchManager;
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
 
-use socket_lib::{EventSocket, Message, SocketSender};
+use socket_lib::{EventSocket, Message, ScreenShareCodec, SocketSender};
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, PhysicalPosition, PhysicalSize};
 
@@ -94,6 +94,9 @@ pub struct AppData {
     /// Whether the local participant is currently screensharing (pushed from frontend snapshots).
     pub is_screensharing: bool,
 
+    /// Screenshare codec selected for the next call.
+    pub screen_share_codec: ScreenShareCodec,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -132,6 +135,7 @@ impl AppData {
             call_active: false,
             is_camera_on: false,
             is_screensharing: false,
+            screen_share_codec: ScreenShareCodec::default(),
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }
@@ -206,6 +210,13 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                     )) {
                                         log::error!(
                                             "show_stdout: Failed to send livekit server url: {e:?}"
+                                        );
+                                    }
+                                    if let Err(e) = sender
+                                        .send(Message::SetScreenShareCodec(data.screen_share_codec))
+                                    {
+                                        log::error!(
+                                            "show_stdout: Failed to send screenshare codec: {e:?}"
                                         );
                                     }
                                     data.sender = sender;

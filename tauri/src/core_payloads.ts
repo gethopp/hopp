@@ -86,6 +86,7 @@ export interface CoreParticipantState {
 
 export type ScreenShareResolution = "P1080" | "P1440" | "P4K";
 export type ScreenSharePickerMode = "Screen" | "Window";
+export type ScreenShareCodec = "H264" | "AV1";
 
 export interface UserSettings {
   call_feedback_popup: boolean;
@@ -211,6 +212,8 @@ export interface CommandMap {
   unmute_mic: { args: void; return: void };
   toggle_mic: { args: void; return: void };
   set_noise_cancellation: { args: { enabled: boolean }; return: void };
+  get_screen_share_codec: { args: void; return: ScreenShareCodec };
+  toggle_screen_share_codec: { args: void; return: ScreenShareCodec };
   set_screen_share_resolution: { args: { resolution: ScreenShareResolution }; return: void };
   set_screen_share_picker_mode: { args: { mode: ScreenSharePickerMode }; return: void };
   list_microphones: { args: void; return: AudioDevice[] };

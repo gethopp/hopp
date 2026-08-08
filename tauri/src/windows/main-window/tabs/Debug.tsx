@@ -22,6 +22,11 @@ export const Debug = () => {
     queryFn: () => typedInvoke("list_webcams"),
   });
 
+  const { data: screenShareCodec, refetch: refetchScreenShareCodec } = useQuery({
+    queryKey: ["screen_share_codec"],
+    queryFn: () => typedInvoke("get_screen_share_codec"),
+  });
+
   const handleSetTrayNotification = async (enabled: boolean) => {
     try {
       await invoke("set_tray_notification", { enabled });
@@ -125,6 +130,16 @@ export const Debug = () => {
         <Button onClick={() => typedInvoke("open_stats_window")} size="sm">
           Open Stats Window
         </Button>
+        <Button
+          onClick={async () => {
+            await typedInvoke("toggle_screen_share_codec");
+            await refetchScreenShareCodec();
+          }}
+          size="sm"
+        >
+          Screenshare codec: {screenShareCodec ?? "Loading..."}
+        </Button>
+        <span className="text-xs text-muted-foreground">Changes apply to the next call.</span>
       </div>
 
       <div className="flex flex-col gap-3 my-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">

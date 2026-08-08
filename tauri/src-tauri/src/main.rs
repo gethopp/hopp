@@ -4,8 +4,8 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenSharePickerMode,
-    ScreenShareResolution, SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenShareCodec,
+    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -872,6 +872,29 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
 }
 
 #[tauri::command(async)]
+fn get_screen_share_codec(app: tauri::AppHandle) -> ScreenShareCodec {
+    app.state::<Mutex<AppData>>()
+        .lock()
+        .unwrap()
+        .screen_share_codec
+}
+
+#[tauri::command(async)]
+fn toggle_screen_share_codec(app: tauri::AppHandle) -> Result<ScreenShareCodec, String> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let codec = match data.screen_share_codec {
+        ScreenShareCodec::H264 => ScreenShareCodec::AV1,
+        ScreenShareCodec::AV1 => ScreenShareCodec::H264,
+    };
+    data.sender
+        .send(Message::SetScreenShareCodec(codec))
+        .map_err(|e| format!("Failed to set screenshare codec: {e:?}"))?;
+    data.screen_share_codec = codec;
+    Ok(codec)
+}
+
+#[tauri::command(async)]
 fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareResolution) {
     log::info!("set_screen_share_resolution: {resolution:?}");
     let data = app.state::<Mutex<AppData>>();
@@ -1689,6 +1712,8 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
+            get_screen_share_codec,
+            toggle_screen_share_codec,
             set_screen_share_resolution,
             set_screen_share_picker_mode,
             list_microphones,

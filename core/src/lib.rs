@@ -69,8 +69,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
+    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareCodec,
+    ScreenShareMessage, ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -388,6 +388,7 @@ pub struct Application<'a> {
     audio_capturer: audio::capturer::Capturer,
     audio_player: audio::player::Player,
     noise_cancellation_enabled: Arc<AtomicBool>,
+    screen_share_codec: ScreenShareCodec,
     camera_capturer: Arc<Mutex<CameraCapturer>>,
     screensharing_active: bool,
     context_manager: Option<ContextManager>,
@@ -476,6 +477,7 @@ impl<'a> Application<'a> {
             audio_capturer,
             audio_player,
             noise_cancellation_enabled: Arc::new(AtomicBool::new(true)),
+            screen_share_codec: ScreenShareCodec::default(),
             camera_capturer: camera_capturer.clone(),
             screensharing_active: false,
             context_manager: None,
@@ -1376,6 +1378,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         sample_rx,
                         audio_processor: processor,
                         noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
+                        screen_share_codec: self.screen_share_codec,
                         start_mic_on_call,
                         start_camera_on_call,
                     }) {
@@ -2019,6 +2022,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: SetNoiseCancellation({enabled})");
                 self.noise_cancellation_enabled
                     .store(enabled, std::sync::atomic::Ordering::Relaxed);
+            }
+            UserEvent::SetScreenShareCodec(codec) => {
+                log::info!("user_event: SetScreenShareCodec({codec:?})");
+                self.screen_share_codec = codec;
             }
             UserEvent::SetScreenShareResolution(resolution) => {
                 log::info!("user_event: SetScreenShareResolution({resolution:?})");
@@ -3071,6 +3078,7 @@ pub enum UserEvent {
     DefaultInputDeviceChanged,
     AudioCaptureError,
     SetNoiseCancellation(bool),
+    SetScreenShareCodec(ScreenShareCodec),
     SetScreenShareResolution(ScreenShareResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
@@ -3217,6 +3225,7 @@ impl RenderEventLoop {
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
                     }
+                    Message::SetScreenShareCodec(codec) => UserEvent::SetScreenShareCodec(codec),
                     Message::SetScreenShareResolution(resolution) => {
                         UserEvent::SetScreenShareResolution(resolution)
                     }
