@@ -64,6 +64,10 @@ struct Cli {
     /// Override RUST_LOG level
     #[arg(long)]
     rust_log: Option<String>,
+
+    /// Limit the scenario to its first N participants
+    #[arg(long = "participants", value_name = "COUNT")]
+    participant_count: Option<usize>,
 }
 
 // ── Color palette for participant prefixes ───────────────────────────────────
@@ -161,7 +165,12 @@ fn pipe_output(child: &mut Child, prefix: String, mut shutdown_rx: broadcast::Re
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
 
-async fn run_scenario(scenario_name: &str, config: &Config, rust_log: &str) {
+async fn run_scenario(
+    scenario_name: &str,
+    config: &Config,
+    rust_log: &str,
+    participant_count: Option<usize>,
+) {
     let scenario = config.scenarios.get(scenario_name).unwrap_or_else(|| {
         eprintln!(
             "{} Unknown scenario '{}'. Use --list to see available scenarios.",
@@ -171,10 +180,22 @@ async fn run_scenario(scenario_name: &str, config: &Config, rust_log: &str) {
         std::process::exit(1);
     });
 
+    let participant_count = participant_count.unwrap_or(scenario.participants.len());
+    if participant_count == 0 || participant_count > scenario.participants.len() {
+        eprintln!(
+            "{} --participants must be between 1 and {} for scenario '{}'.",
+            "error:".red().bold(),
+            scenario.participants.len(),
+            scenario_name
+        );
+        std::process::exit(1);
+    }
+
     // Resolve participant profiles
     let participants: Vec<(String, Participant)> = scenario
         .participants
         .iter()
+        .take(participant_count)
         .map(|key| {
             let p = config.participants.get(key).unwrap_or_else(|| {
                 eprintln!(
@@ -390,5 +411,5 @@ async fn main() {
 
     let rust_log = cli.rust_log.as_deref().unwrap_or(&config.defaults.rust_log);
 
-    run_scenario(&scenario, &config, rust_log).await;
+    run_scenario(&scenario, &config, rust_log, cli.participant_count).await;
 }

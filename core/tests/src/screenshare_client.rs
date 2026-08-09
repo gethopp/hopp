@@ -35,8 +35,8 @@ pub fn call_start_with_name(
     event_socket: &EventSocket,
     name: &str,
 ) -> io::Result<()> {
-    let audio_token = livekit_utils::generate_token(&format!("{name} Audio"));
-    let video_token = livekit_utils::generate_token(&format!("{name} Video"));
+    let audio_token = livekit_utils::generate_token(&format!("{name}:audio"));
+    let video_token = livekit_utils::generate_token(&format!("{name}:video"));
     sender.send(Message::CallStart(CallStartMessage {
         audio_token,
         video_token,

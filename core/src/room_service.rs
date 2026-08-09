@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::participant::ConnectionQuality;
-use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource};
+use livekit::track::{LocalTrack, LocalVideoTrack, TrackSource, VideoQuality};
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::{DataPacket, Room, RoomEvent, RoomOptions};
@@ -33,7 +33,7 @@ const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
 const MAX_FRAMERATE: f64 = 40.0;
 const CAMERA_TRACK_NAME: &str = "camera";
-const CAMERA_MAX_BITRATE: u64 = 3_500_000; // ~3.5Mbps for 1080p
+const CAMERA_MAX_BITRATE: u64 = 1_700_000;
 const CAMERA_MAX_FRAMERATE: f64 = 30.0;
 
 // Bitrate constants (in bits per second)
@@ -842,7 +842,9 @@ async fn room_service_commands(
                 let inner_clone = inner.clone();
 
                 let connect_fut = tokio::time::timeout(Duration::from_secs(30), async {
-                    let (room, rx) = Room::connect(&url, &token, RoomOptions::default())
+                    let mut room_options = RoomOptions::default();
+                    room_options.dynacast = true;
+                    let (room, rx) = Room::connect(&url, &token, room_options)
                         .await
                         .map_err(|e| format!("{e:?}"))?;
                     let denoiser =
@@ -875,8 +877,8 @@ async fn room_service_commands(
                     // Publish camera track (muted) — non-fatal
                     let camera_source = NativeVideoSource::new(
                         VideoResolution {
-                            width: 1920,
-                            height: 1080,
+                            width: 1280,
+                            height: 720,
                         },
                         false,
                     );
@@ -892,7 +894,7 @@ async fn room_service_commands(
                             TrackPublishOptions {
                                 source: TrackSource::Camera,
                                 video_codec: VideoCodec::H264,
-                                simulcast: false,
+                                simulcast: true,
                                 video_encoding: Some(VideoEncoding {
                                     max_bitrate: CAMERA_MAX_BITRATE,
                                     max_framerate: CAMERA_MAX_FRAMERATE,
@@ -1139,6 +1141,11 @@ async fn room_service_commands(
                     "room_service_commands: Finished room setup in {}ms",
                     total_connect_start.elapsed().as_millis()
                 );
+                {
+                    let mut inner_room = inner.room.lock().await;
+                    *inner_room = Some(room);
+                }
+                update_camera_quality(&inner).await;
                 let snapshot = inner.snapshot_sender.build_snapshot();
                 let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(snapshot)));
                 tokio::spawn(handle_room_events(RoomEventContext {
@@ -1156,14 +1163,13 @@ async fn room_service_commands(
                     },
                     connection_quality: inner.connection_quality.clone(),
                     audio_handle: audio_handle.clone(),
+                    inner: inner.clone(),
                 }));
                 log::info!("room_service_commands: Spawned handle_room_events");
                 if let Some(video_rx) = video_rx_opt {
                     tokio::spawn(drain_video_room_events(video_rx));
                     log::info!("room_service_commands: Spawned video_room event drainer");
                 }
-                let mut inner_room = inner.room.lock().await;
-                *inner_room = Some(room);
             }
             RoomServiceCommand::DestroyRoom => {
                 if let Some(task) = stats_task.take() {
@@ -1482,14 +1488,32 @@ async fn room_service_commands(
                 }
             }
             RoomServiceCommand::MuteCameraTrack => {
-                if let Some(track) = inner.camera_track.lock().unwrap().as_ref() {
-                    track.mute();
+                let track_updated = {
+                    let camera_track = inner.camera_track.lock().unwrap();
+                    if let Some(track) = camera_track.as_ref() {
+                        track.mute();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if track_updated {
+                    update_camera_quality(&inner).await;
                 }
                 log::info!("room_service_commands: Camera track muted");
             }
             RoomServiceCommand::UnmuteCameraTrack => {
-                if let Some(track) = inner.camera_track.lock().unwrap().as_ref() {
-                    track.unmute();
+                let track_updated = {
+                    let camera_track = inner.camera_track.lock().unwrap();
+                    if let Some(track) = camera_track.as_ref() {
+                        track.unmute();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if track_updated {
+                    update_camera_quality(&inner).await;
                 }
                 log::info!("room_service_commands: Camera track unmuted");
             }
@@ -2004,6 +2028,61 @@ struct RoomEventContext {
     remote_screen_share: RemoteScreenShare,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     audio_handle: TokioHandle,
+    inner: Arc<RoomServiceInner>,
+}
+
+fn camera_quality(active: usize) -> VideoQuality {
+    match active {
+        0..=3 => VideoQuality::High,
+        4..=6 => VideoQuality::Medium,
+        _ => VideoQuality::Low,
+    }
+}
+
+async fn update_camera_quality(inner: &RoomServiceInner) {
+    let (active, camera_publications) = {
+        let room = inner.room.lock().await;
+        let Some(room) = room.as_ref() else {
+            return;
+        };
+        let local_camera_active =
+            room.local_participant()
+                .track_publications()
+                .values()
+                .any(|publication| {
+                    publication.source() == TrackSource::Camera && !publication.is_muted()
+                });
+        let remote_participants = room.remote_participants();
+        let active = usize::from(local_camera_active)
+            + remote_participants
+                .values()
+                .filter(|participant| {
+                    participant
+                        .track_publications()
+                        .values()
+                        .any(|publication| {
+                            publication.source() == TrackSource::Camera && !publication.is_muted()
+                        })
+                })
+                .count();
+        let camera_publications = remote_participants
+            .values()
+            .flat_map(|participant| participant.track_publications().into_values())
+            .filter(|publication| publication.source() == TrackSource::Camera)
+            .collect::<Vec<_>>();
+        (active, camera_publications)
+    };
+    let quality = camera_quality(active);
+    let mut updated = 0;
+    for publication in camera_publications {
+        if publication.simulcasted() {
+            publication.set_video_quality(quality);
+            updated += 1;
+        }
+    }
+    log::info!(
+        "camera quality: active={active}, quality={quality:?}, updated_publications={updated}"
+    );
 }
 
 async fn drain_video_room_events(mut receiver: mpsc::UnboundedReceiver<RoomEvent>) {
@@ -2023,6 +2102,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
         remote_screen_share,
         connection_quality,
         audio_handle,
+        inner,
     } = ctx;
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -2177,7 +2257,6 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 if !insert_participant_if_absent(&participants, &identity, &participant) {
                     continue;
                 }
-
                 if let Err(e) =
                     event_loop_proxy.send_event(UserEvent::ParticipantConnected(ParticipantData {
                         name,
@@ -2215,6 +2294,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         );
                     }
                 }
+                update_camera_quality(&inner).await;
 
                 if let Err(e) = event_loop_proxy.send_event(UserEvent::ParticipantDisconnected(
                     ParticipantData { name, identity },
@@ -2236,6 +2316,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     publication.source(),
                     participant.identity()
                 );
+                if publication.source() == TrackSource::Camera {
+                    update_camera_quality(&inner).await;
+                }
             }
             RoomEvent::ActiveSpeakersChanged { speakers } => {
                 log::trace!("handle_room_events: Active speakers changed");
@@ -2300,6 +2383,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                 );
                             }
                         }
+                        update_camera_quality(&inner).await;
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
                         log::info!("handle_room_events: Screen share muted from {}", identity);
@@ -2403,6 +2487,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             &identity,
                             &event_loop_proxy,
                         );
+                        update_camera_quality(&inner).await;
                     }
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
                         log::info!(
@@ -2458,7 +2543,6 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         participant_identity
                     );
                 }
-
                 match track {
                     livekit::track::RemoteTrack::Audio(audio_track) => {
                         log::info!(
@@ -2501,6 +2585,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             }
                         }
                         TrackSource::Camera => {
+                            update_camera_quality(&inner).await;
                             if !publication.is_muted() {
                                 log::info!(
                                     "handle_room_events: Camera track subscribed and already unmuted for {}",
@@ -2654,6 +2739,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     publication.name(),
                     publication.kind()
                 );
+                if publication.source() == TrackSource::Camera {
+                    update_camera_quality(&inner).await;
+                }
             }
             RoomEvent::ConnectionQualityChanged {
                 quality,

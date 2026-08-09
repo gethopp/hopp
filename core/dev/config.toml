@@ -26,6 +26,51 @@ name = "Iason"
 camera_name = ""
 screenshare = false
 
+[participants.camera-clone-1]
+name = "Camera Clone 1"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-2]
+name = "Camera Clone 2"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-3]
+name = "Camera Clone 3"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-4]
+name = "Camera Clone 4"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-5]
+name = "Camera Clone 5"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-6]
+name = "Camera Clone 6"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-7]
+name = "Camera Clone 7"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-8]
+name = "Camera Clone 8"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
+[participants.camera-clone-9]
+name = "Camera Clone 9"
+camera_name = "MacBook Pro Camera"
+screenshare = false
+
 # Named scenarios, each lists which participants to spawn
 [scenarios.solo]
 description = "Single participant with camera + screenshare"
@@ -38,3 +83,17 @@ participants = ["streamer", "viewer"]
 [scenarios.solo-minimal]
 description = "Single participant, no camera, no screenshare"
 participants = ["viewer"]
+
+[scenarios.camera-clones]
+description = "Up to nine camera participants for bandwidth measurements"
+participants = [
+    "camera-clone-1",
+    "camera-clone-2",
+    "camera-clone-3",
+    "camera-clone-4",
+    "camera-clone-5",
+    "camera-clone-6",
+    "camera-clone-7",
+    "camera-clone-8",
+    "camera-clone-9",
+]
