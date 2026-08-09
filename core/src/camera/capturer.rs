@@ -120,11 +120,14 @@ impl CameraCapturer {
     }
 
     pub fn set_screensharing_active(&self, active: bool) {
-        if active {
+        let target = if active {
             self.stream_config.set_low_quality();
+            "640x360@15fps"
         } else {
             self.stream_config.set_high_quality();
-        }
+            "1280x720@30fps"
+        };
+        log::info!("CameraCapturer::set_screensharing_active: active={active}, target={target}");
     }
 }
 
