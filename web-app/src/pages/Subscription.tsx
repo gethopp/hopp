@@ -192,6 +192,7 @@ export function Subscription() {
     if (subscription.status === "active") return "paid";
     // A card-on-file trial is on the paid plan (just not billed yet).
     if (subscription.status === "trialing") return "paid";
+    if (subscription.status === "past_due") return "paid";
 
     return "free";
   };
@@ -234,23 +235,24 @@ export function Subscription() {
   }
 
   // Whether to show the "manage your subscription" view (vs the upgrade/pricing
-  // page). A card-on-file trialing/active team manages/cancels from here.
+  // page). A card-on-file trialing/active/past-due team manages billing from here.
   // Legacy (pre-cutoff) trial teams report a "trialing" status but have no
   // Stripe subscription (has_stripe_subscription === false), so they fall
   // through to the pricing page to start a real subscription instead of hitting
   // a broken billing portal. Canceled subscriptions also intentionally fall
   // through to the upgrade page so the team can re-subscribe.
-  const hasActiveSubscription = (subscription: SubscriptionResponse): boolean => {
+  const hasManageableSubscription = (subscription: SubscriptionResponse): boolean => {
     if (subscription.manual_upgrade) return true;
     if (subscription.status === "active" && subscription.has_stripe_subscription) return true;
     if (subscription.status === "trialing" && subscription.has_stripe_subscription) return true;
+    if (subscription.status === "past_due" && subscription.has_stripe_subscription) return true;
     return false;
   };
 
   const isTrialing = subscriptionStatus?.status === "trialing";
 
-  // If user has an active subscription (including canceled but still within period), show subscription details
-  if (subscriptionStatus && hasActiveSubscription(subscriptionStatus)) {
+  // Existing subscriptions that can be managed stay on the billing view.
+  if (subscriptionStatus && hasManageableSubscription(subscriptionStatus)) {
     return (
       <div className="space-y-6">
         <div>
