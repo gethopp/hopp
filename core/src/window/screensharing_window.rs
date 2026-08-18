@@ -10,8 +10,9 @@
 //! - Shadow tokens for consistent depth
 //! - Pill-shaped control buttons with solid/gradient backgrounds
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant as StdInstant};
 
 use iced::mouse;
@@ -42,6 +43,9 @@ use super::aspect_ratio::{
     WindowConstant,
 };
 use super::drawing_helpers;
+use crate::components::call_controls::{
+    CallControlsDensity, CallControlsMessage, CallControlsState,
+};
 use crate::components::dropdown::{dropdown_overlay, dropdown_trigger_button, DropdownItemDef};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR};
 use crate::components::segmented_control::{
@@ -55,6 +59,7 @@ use crate::graphics::graphics_window_context::{
     ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
 };
 use crate::graphics::yuv_renderer::YuvVideoProgram;
+use crate::livekit::participant::ParticipantInfo;
 use crate::utils::clock;
 use crate::utils::geometry::{Extent, Position};
 use crate::windows::colors::ColorToken;
@@ -79,6 +84,10 @@ pub fn screensharing_window_attributes() -> WindowAttributes {
     };
     attrs
 }
+
+const SCREENSHARE_CALL_CONTROLS_MIN_WIDTH: f32 = 640.0;
+const SCREENSHARE_SEGMENTED_CONTROLS_WIDTH: f32 = 132.0;
+const SCREENSHARE_SETTINGS_BUTTON_WIDTH: f32 = 44.0;
 
 /// Available screen area detected at runtime by probing with a temporary window.
 /// This replaces hardcoded OS chrome offsets (menubar, taskbar, dock) with
@@ -325,6 +334,7 @@ pub enum ScreensharingWindowError {
 
 #[derive(Debug, Clone)]
 pub enum ScreensharingMessage {
+    CallControls(CallControlsMessage),
     TabSelected(&'static str),
     ToggleDropdown,
     DismissDropdown,
@@ -436,6 +446,8 @@ pub struct ScreensharingWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: ScreensharingState,
+    call_controls: CallControlsState,
+    call_participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     /// Target size of a programmatic resize in flight (logical pixels).
     programmatic_resize_target: Option<(f64, f64)>,
     /// True when the mouse cursor is inside the participant image area.
@@ -467,9 +479,43 @@ pub struct ScreensharingWindow {
     custom_cursor_point: winit::window::CustomCursor,
 }
 
+pub struct ScreensharingParticipants {
+    pub remote: Vec<(String, String, bool)>,
+    pub state: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+}
+
+impl ScreensharingParticipants {
+    fn from_shared(
+        state: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+        sharer_identity: Option<&str>,
+    ) -> Self {
+        let remote = state
+            .read()
+            .map(|participants| {
+                participants
+                    .iter()
+                    .filter(|(identity, _)| identity.as_str() != "local")
+                    .map(|(identity, info)| {
+                        (
+                            identity.clone(),
+                            info.name().to_string(),
+                            sharer_identity == Some(identity.as_str()),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self { remote, state }
+    }
+}
+
 pub struct ScreensharingWindowConfig {
     pub screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
-    pub participants: Vec<(String, String, bool)>,
+    pub participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+    pub sharer_identity: Option<String>,
+    pub camera_active: bool,
+    pub selected_camera_name: Option<String>,
+    pub selected_mic_name: Option<String>,
     pub draw_persist: bool,
     pub last_mode: Option<socket_lib::StoredMode>,
     pub redraw_rx: std::sync::mpsc::Receiver<RedrawCommand>,
@@ -549,6 +595,10 @@ impl ScreensharingWindow {
         let ScreensharingWindowConfig {
             screen_share_buffer,
             participants,
+            sharer_identity,
+            camera_active,
+            selected_camera_name,
+            selected_mic_name,
             draw_persist,
             last_mode,
             redraw_rx,
@@ -684,8 +734,14 @@ impl ScreensharingWindow {
             (pointer, pencil, point)
         };
 
+        let ScreensharingParticipants {
+            remote,
+            state: call_participants,
+        } = ScreensharingParticipants::from_shared(participants, sharer_identity.as_deref());
         let (initial_state, participants_manager) =
-            build_initial_state(&participants, draw_persist, &last_mode);
+            build_initial_state(&remote, draw_persist, &last_mode);
+        let call_controls =
+            CallControlsState::new(camera_active, selected_camera_name, selected_mic_name);
         let redraw_in_progress = Arc::new(AtomicBool::new(false));
         let redraw_thread = spawn_redraw_thread(
             redraw_rx,
@@ -705,6 +761,8 @@ impl ScreensharingWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state: initial_state,
+            call_controls,
+            call_participants,
             screen_area,
             programmatic_resize_target: None,
             mouse_in_participant_area: false,
@@ -847,27 +905,41 @@ impl ScreensharingWindow {
         self.state.remote_control_allowed = allowed;
     }
 
+    pub fn set_camera_active(&mut self, active: bool, device_name: Option<String>) {
+        self.call_controls.set_camera_active(active, device_name);
+    }
+
+    pub fn set_selected_mic_name(&mut self, name: Option<String>) {
+        self.call_controls.set_selected_mic_name(name);
+    }
+
     /// Update the window for a new sharer: refresh the display name and swap
     /// the redraw channel so the newly spawned `process_video_stream` can
     /// drive redraws.
     pub fn update_window_with_new_sharer(
         &mut self,
         screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
-        participants: &[(String, String, bool)],
+        participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+        sharer_identity: Option<String>,
         draw_persist: bool,
         last_mode: Option<socket_lib::StoredMode>,
-        new_rx: std::sync::mpsc::Receiver<RedrawCommand>,
-        new_tx: std::sync::mpsc::Sender<RedrawCommand>,
+        (new_rx, new_tx): (
+            std::sync::mpsc::Receiver<RedrawCommand>,
+            std::sync::mpsc::Sender<RedrawCommand>,
+        ),
     ) {
         // A fresh buffer Arc is created per room/stream — point the window at it.
         self.screen_share_buffer = screen_share_buffer;
+        let ScreensharingParticipants { remote, state } =
+            ScreensharingParticipants::from_shared(participants, sharer_identity.as_deref());
+        self.call_participants = state;
 
-        let (state, participants_manager) =
-            build_initial_state(participants, draw_persist, &last_mode);
+        let (state, participants_manager) = build_initial_state(&remote, draw_persist, &last_mode);
         self.state = state;
         self.participants_manager = participants_manager;
 
         // Window-level state.
+        self.call_controls.dismiss_dropdowns();
         self.local_participant_in_control = false;
         self.programmatic_resize_target = None;
         self.mouse_in_participant_area = false;
@@ -994,6 +1066,7 @@ impl ScreensharingWindow {
                 let logical_x = (position.x / scale_factor as f64) as f32;
                 let logical_y = (position.y / scale_factor as f64) as f32;
                 let inside = !self.state.dropdown_open
+                    && !self.call_controls.has_open_dropdown()
                     && logical_x >= rect.x
                     && logical_x < rect.x + rect.width
                     && logical_y >= rect.y
@@ -1395,7 +1468,9 @@ impl ScreensharingWindow {
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
                     Self::view(
-                        &self.state,
+                        (&self.state, &self.call_controls),
+                        &self.call_participants,
+                        self.viewport.logical_size().width,
                         &self.screen_share_buffer,
                         &self.participants_manager,
                         &self.click_animation_renderer,
@@ -1490,6 +1565,10 @@ impl ScreensharingWindow {
                 if new_size.width > 0 && new_size.height > 0 {
                     let logical: winit::dpi::LogicalSize<f64> =
                         new_size.to_logical(self.window.scale_factor());
+
+                    if logical.width < SCREENSHARE_CALL_CONTROLS_MIN_WIDTH as f64 {
+                        self.call_controls.dismiss_dropdowns();
+                    }
 
                     // Classify this resize event.
                     if let Some((target_w, target_h)) = self.programmatic_resize_target {
@@ -1593,7 +1672,9 @@ impl ScreensharingWindow {
     }
 
     fn view<'a>(
-        state: &'a ScreensharingState,
+        (state, call_controls): (&'a ScreensharingState, &'a CallControlsState),
+        call_participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
+        viewport_width: f32,
         screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
         participants: &'a ParticipantsManager,
         click_animation_renderer: &'a ClickAnimationRenderer,
@@ -1620,45 +1701,69 @@ impl ScreensharingWindow {
             ScreensharingMessage::TabSelected,
         );
 
-        // ── Header: stack-based layout so the segmented control is truly
-        //    centered across the full window width, independent of name width.
-        //    Layer 1: name on the left
-        //    Layer 2: segmented control absolutely centered
+        // ── Header: keep call controls between the centered drawing controls and settings.
+        let traffic_light_spacer = if cfg!(target_os = "macos") { 68.0 } else { 0.0 };
+        let show_call_controls = viewport_width >= SCREENSHARE_CALL_CONTROLS_MIN_WIDTH;
+        let header_left_padding = if cfg!(target_os = "macos") {
+            WindowConstant::PADDING
+        } else {
+            WindowConstant::HEADER_SIDE_PADDING
+        };
         let cog_button = dropdown_trigger_button(
             ICON_COG,
             state.dropdown_open,
             ScreensharingMessage::ToggleDropdown,
         );
 
-        let traffic_light_spacer = if cfg!(target_os = "macos") { 68.0 } else { 0.0 };
+        let header_content: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
+            if show_call_controls {
+                let header_ends = row![
+                    Space::new().width(Length::Fixed(traffic_light_spacer)),
+                    name_label,
+                    Space::new().width(Length::Fill),
+                    cog_button,
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
+                let center_and_call_controls = row![
+                    Space::new().width(Length::Fixed(SCREENSHARE_SETTINGS_BUTTON_WIDTH)),
+                    Space::new().width(Length::Fill),
+                    seg_ctrl,
+                    container(
+                        call_controls
+                            .view(call_participants, CallControlsDensity::Compact)
+                            .map(ScreensharingMessage::CallControls),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+                    Space::new().width(Length::Fixed(SCREENSHARE_SETTINGS_BUTTON_WIDTH)),
+                ]
+                .width(Length::Fill)
+                .align_y(Alignment::Center);
+                stack![center_and_call_controls, header_ends].into()
+            } else {
+                let header_ends = row![
+                    Space::new().width(Length::Fixed(traffic_light_spacer)),
+                    name_label,
+                    Space::new().width(Length::Fill),
+                    cog_button,
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
+                let header_center = container(seg_ctrl)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill);
+                stack![header_ends, header_center].into()
+            };
 
-        let header_ends = row![
-            Space::new().width(Length::Fixed(traffic_light_spacer)),
-            name_label,
-            Space::new().width(Length::Fill),
-            cog_button,
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
-
-        let header_center = container(seg_ctrl)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
-
-        let header_left_padding = if cfg!(target_os = "macos") {
-            WindowConstant::PADDING
-        } else {
-            WindowConstant::HEADER_SIDE_PADDING
-        };
-
-        let header = container(stack![header_ends, header_center])
+        let header = container(header_content)
             .width(Length::Fill)
             .padding(Padding {
                 top: 4.0,
                 right: WindowConstant::HEADER_SIDE_PADDING,
-                bottom: WindowConstant::PADDING,
+                bottom: 4.0,
                 left: header_left_padding,
             });
 
@@ -1808,7 +1913,7 @@ impl ScreensharingWindow {
                 .clip(true)
                 .into();
 
-        if state.dropdown_open {
+        let base = if state.dropdown_open {
             let items = [
                 DropdownItemDef {
                     label: "Fade Out",
@@ -1835,12 +1940,45 @@ impl ScreensharingWindow {
             )
         } else {
             base
+        };
+
+        if viewport_width >= SCREENSHARE_CALL_CONTROLS_MIN_WIDTH {
+            let call_controls_slot_width = viewport_width
+                - header_left_padding
+                - WindowConstant::HEADER_SIDE_PADDING
+                - SCREENSHARE_SEGMENTED_CONTROLS_WIDTH
+                - SCREENSHARE_SETTINGS_BUTTON_WIDTH * 2.0;
+            let call_controls_slot_width = call_controls_slot_width / 2.0;
+            let trailing_padding = WindowConstant::HEADER_SIDE_PADDING
+                + SCREENSHARE_SETTINGS_BUTTON_WIDTH
+                + (call_controls_slot_width - CallControlsDensity::Compact.total_width()).max(0.0)
+                    / 2.0;
+            call_controls.wrap_dropdown(
+                base,
+                ScreensharingMessage::CallControls,
+                CallControlsDensity::Compact,
+                WindowConstant::HEADER_HEIGHT,
+                trailing_padding,
+            )
+        } else {
+            base
         }
     }
 
     /// Handle a screensharing UI message (state update).
     fn update(&mut self, message: ScreensharingMessage) {
         match message {
+            ScreensharingMessage::CallControls(message) => {
+                if matches!(
+                    &message,
+                    CallControlsMessage::MicDropdownToggle
+                        | CallControlsMessage::CameraDropdownToggle
+                ) {
+                    self.state.dropdown_open = false;
+                }
+                self.call_controls
+                    .update(message, &self.call_participants, &self.event_loop_proxy);
+            }
             ScreensharingMessage::TabSelected(id) => {
                 self.state.tab_anim =
                     seg_ctrl_mod::start_animation(SEGMENTED_BUTTONS, self.state.active_tab, id);
@@ -1850,6 +1988,7 @@ impl ScreensharingWindow {
                 log::info!("ScreensharingWindow: tab selected = {}", id);
             }
             ScreensharingMessage::ToggleDropdown => {
+                self.call_controls.dismiss_dropdowns();
                 self.state.dropdown_open = !self.state.dropdown_open;
                 log::info!(
                     "ScreensharingWindow: dropdown toggled = {}",
@@ -2013,7 +2152,9 @@ impl ScreensharingWindow {
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
             Self::view(
-                &self.state,
+                (&self.state, &self.call_controls),
+                &self.call_participants,
+                self.viewport.logical_size().width,
                 &self.screen_share_buffer,
                 &self.participants_manager,
                 &self.click_animation_renderer,

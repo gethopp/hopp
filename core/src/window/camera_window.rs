@@ -38,10 +38,10 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use thiserror::Error;
 
-use crate::audio::capturer::list_audio_inputs;
-use crate::camera::capturer::CameraCapturer;
+use crate::components::call_controls::{
+    CallControlsDensity, CallControlsMessage, CallControlsState,
+};
 use crate::components::fonts::{self as fonts_mod, GEIST_MEDIUM, GEIST_REGULAR, ICONS_FONT};
-use crate::components::split_button::{split_button, split_button_dropdown_wrap, SplitButtonItem};
 use crate::components::toast::{self, ToastPosition, ToastState};
 use crate::graphics::graphics_window_context::{
     ContextManager, GraphicsWindowContext, GraphicsWindowContextError,
@@ -52,7 +52,6 @@ use crate::livekit::video::VideoBufferManager;
 use crate::windows::colors::ColorToken;
 use crate::windows::shadows::ShadowToken;
 use crate::UserEvent;
-use socket_lib::CameraStartMessage;
 
 /// Initial camera window dimensions (logical pixels).
 const CAMERA_WINDOW_WIDTH: f64 = 1035.0;
@@ -122,11 +121,7 @@ const HIDE_NAME_TILE_THRESHOLD: f32 = 150.0;
 
 const COMPACT_TOP_INSET: f32 = 24.0;
 
-const ICON_MICROPHONE_ON: char = '\u{F105}';
 const ICON_MICROPHONE_OFF: char = '\u{F106}';
-const ICON_SCREEN_SHARE: char = '\u{F102}';
-const ICON_VIDEO: char = '\u{F101}';
-const ICON_PHONE_OFF: char = '\u{F103}';
 const ICON_PIN_ANGLE: char = '\u{F10B}';
 
 const PIN_CORNER_WIDTH: f64 = CAMERA_WINDOW_MIN_WIDTH;
@@ -155,20 +150,10 @@ pub enum CameraWindowError {
 
 #[derive(Debug, Clone)]
 pub enum CameraMessage {
-    MicToggle,
-    ScreenShare,
-    OpenScreenSharePicker,
-    VideoToggle,
-    EndCall,
+    CallControls(CallControlsMessage),
     ToggleSelfVisibility,
     /// Mouse entered or left the local participant tile (for hover-only chrome).
     LocalTileHover(bool),
-    CameraDropdownToggle,
-    CameraDropdownDismiss,
-    SelectCamera(String),
-    MicDropdownToggle,
-    MicDropdownDismiss,
-    SelectMic(String),
     PinToCorner,
 }
 
@@ -176,7 +161,6 @@ struct CameraState {
     // TODO: why do we keep state for this instead of reusing the viewport_size from the CameraWindow?
     viewport_size: IcedSize,
     /// Local camera on/off state, updated from StartCamera/StopCamera handlers.
-    camera_active: bool,
     /// When true, the local participant tile is hidden (floating control restores it).
     self_hidden: bool,
     /// True while the pointer is over the local tile (show hide-self control).
@@ -184,29 +168,16 @@ struct CameraState {
     /// Window narrower than `COMPACT_WIDTH_THRESHOLD` hides header, name labels, etc.
     is_compact: bool,
     toast: Option<ToastState>,
-    camera_dropdown_open: bool,
-    available_cameras: Vec<socket_lib::CameraDevice>,
-    selected_camera_name: Option<String>,
-    mic_dropdown_open: bool,
-    available_mics: Vec<socket_lib::AudioDevice>,
-    selected_mic_name: Option<String>,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
             viewport_size: IcedSize::new(CAMERA_WINDOW_WIDTH as f32, CAMERA_WINDOW_HEIGHT as f32),
-            camera_active: false,
             self_hidden: false,
             local_tile_hovered: false,
             is_compact: false,
             toast: None,
-            camera_dropdown_open: false,
-            available_cameras: Vec::new(),
-            selected_camera_name: None,
-            mic_dropdown_open: false,
-            available_mics: Vec::new(),
-            selected_mic_name: None,
         }
     }
 }
@@ -226,6 +197,7 @@ pub struct CameraWindow {
     cursor: mouse::Cursor,
     modifiers: ModifiersState,
     state: CameraState,
+    call_controls: CallControlsState,
     participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     redraw_tx: mpsc::Sender<RedrawCommand>,
@@ -332,10 +304,9 @@ impl CameraWindow {
             .unwrap_or(false);
         let state = CameraState {
             viewport_size: IcedSize::new(logical.width, logical.height),
-            camera_active,
-            selected_mic_name: active_mic_name,
             ..Default::default()
         };
+        let call_controls = CallControlsState::new(camera_active, None, active_mic_name);
 
         let (redraw_tx, redraw_rx) = mpsc::channel();
         let redraw_thread = Some(spawn_redraw_thread(redraw_rx, window.clone()));
@@ -353,6 +324,7 @@ impl CameraWindow {
             cursor: mouse::Cursor::Unavailable,
             modifiers: ModifiersState::default(),
             state,
+            call_controls,
             participants,
             event_loop_proxy,
             redraw_tx,
@@ -423,10 +395,9 @@ impl CameraWindow {
             .unwrap_or(false);
         self.state = CameraState {
             viewport_size: IcedSize::new(logical.width, logical.height),
-            camera_active,
-            selected_mic_name: active_mic_name,
             ..Default::default()
         };
+        self.call_controls = CallControlsState::new(camera_active, None, active_mic_name);
         self.last_rendered_frame_ids.clear();
         self.screensharing_active = false;
         self.resize_timer = None;
@@ -478,14 +449,11 @@ impl CameraWindow {
 
     /// Update the local camera active state. Call from StartCamera/StopCamera handlers.
     pub fn set_camera_active(&mut self, active: bool, device_name: Option<String>) {
-        self.state.camera_active = active;
-        if active {
-            self.state.selected_camera_name = device_name;
-        }
+        self.call_controls.set_camera_active(active, device_name);
     }
 
     pub fn set_selected_mic_name(&mut self, name: Option<String>) {
-        self.state.selected_mic_name = name;
+        self.call_controls.set_selected_mic_name(name);
     }
 
     /// Handle a winit `WindowEvent` — forward to iced and manage resize / redraw.
@@ -516,7 +484,13 @@ impl CameraWindow {
 
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
-                    Self::view(&self.state, &self.participants, true, &mut HashMap::new()),
+                    Self::view(
+                        &self.state,
+                        &self.call_controls,
+                        &self.participants,
+                        true,
+                        &mut HashMap::new(),
+                    ),
                     self.viewport.logical_size(),
                     cache,
                     &mut self.renderer,
@@ -673,79 +647,14 @@ impl CameraWindow {
     /// - Responsive participant grid with name labels
     fn view<'a>(
         state: &'a CameraState,
+        call_controls: &'a CallControlsState,
         participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         outer_skip: bool,
         last_rendered_frame_ids: &mut HashMap<String, u64>,
     ) -> iced::Element<'a, CameraMessage, Theme, iced::Renderer> {
-        // ── Control buttons ────────────────────────────────────────────────
-        let is_muted = participants
-            .read()
-            .ok()
-            .and_then(|p| p.get("local").map(|info| info.muted()))
-            .unwrap_or(false);
-
-        let mic_bg = if is_muted {
-            ColorToken::Gray400.to_color()
-        } else {
-            ColorToken::Orange400.to_color()
-        };
-        let mic_icon = if is_muted {
-            ICON_MICROPHONE_OFF
-        } else {
-            ICON_MICROPHONE_ON
-        };
-        let mic_button = split_button(
-            mic_icon,
-            mic_bg,
-            CameraMessage::MicToggle,
-            Some(CameraMessage::MicDropdownToggle),
-            state.mic_dropdown_open,
-        );
-
-        let video_bg_color = if state.camera_active {
-            ColorToken::Green400.to_color()
-        } else {
-            ColorToken::Gray400.to_color()
-        };
-        let video_button = split_button(
-            ICON_VIDEO,
-            video_bg_color,
-            CameraMessage::VideoToggle,
-            Some(CameraMessage::CameraDropdownToggle),
-            state.camera_dropdown_open,
-        );
-
-        let is_screensharing = participants
-            .read()
-            .ok()
-            .and_then(|participants| {
-                participants
-                    .get("local")
-                    .map(ParticipantInfo::is_screensharing)
-            })
-            .unwrap_or(false);
-        let screen_bg_color = if is_screensharing {
-            ColorToken::Green400.to_color()
-        } else {
-            ColorToken::Gray400.to_color()
-        };
-        let screen_button = split_button(
-            ICON_SCREEN_SHARE,
-            screen_bg_color,
-            CameraMessage::ScreenShare,
-            Some(CameraMessage::OpenScreenSharePicker),
-            false,
-        );
-
-        let end_call_button = split_button(
-            ICON_PHONE_OFF,
-            ColorToken::Red500.to_color(),
-            CameraMessage::EndCall,
-            None,
-            false,
-        );
-
-        let controls = row![mic_button, video_button, screen_button, end_call_button].spacing(8);
+        let controls = call_controls
+            .view(participants, CallControlsDensity::Regular)
+            .map(CameraMessage::CallControls);
 
         // ── Header with centered controls (space for native traffic lights)
         let header = row![
@@ -811,58 +720,15 @@ impl CameraWindow {
             })
             .clip(true);
 
-        let base: iced::Element<'a, CameraMessage, Theme, iced::Renderer> =
-            if state.camera_dropdown_open {
-                let items: Vec<SplitButtonItem> = state
-                    .available_cameras
-                    .iter()
-                    .map(|cam| {
-                        let is_selected = match &state.selected_camera_name {
-                            Some(name) => name == &cam.name,
-                            None => cam.default,
-                        };
-                        SplitButtonItem {
-                            label: cam.name.clone(),
-                            selected: is_selected,
-                        }
-                    })
-                    .collect();
-
-                split_button_dropdown_wrap(
-                    base_inner.into(),
-                    &items,
-                    CameraMessage::CameraDropdownDismiss,
-                    |i| CameraMessage::SelectCamera(state.available_cameras[i].name.clone()),
-                    HEADER_HEIGHT + 2.0,
-                    state.viewport_size.width / 2.0 - 13.0,
-                )
-            } else if state.mic_dropdown_open {
-                let items: Vec<SplitButtonItem> = state
-                    .available_mics
-                    .iter()
-                    .map(|dev| {
-                        let is_selected = match &state.selected_mic_name {
-                            Some(sel) => sel == &dev.name,
-                            None => dev.default,
-                        };
-                        SplitButtonItem {
-                            label: dev.name.clone(),
-                            selected: is_selected,
-                        }
-                    })
-                    .collect();
-
-                split_button_dropdown_wrap(
-                    base_inner.into(),
-                    &items,
-                    CameraMessage::MicDropdownDismiss,
-                    |i| CameraMessage::SelectMic(state.available_mics[i].name.clone()),
-                    HEADER_HEIGHT + 2.0,
-                    state.viewport_size.width / 2.0 + 44.0,
-                )
-            } else {
-                base_inner.into()
-            };
+        let trailing_padding =
+            (state.viewport_size.width - CallControlsDensity::Regular.total_width()) / 2.0;
+        let base = call_controls.wrap_dropdown(
+            base_inner.into(),
+            CameraMessage::CallControls,
+            CallControlsDensity::Regular,
+            HEADER_HEIGHT + 2.0,
+            trailing_padding,
+        );
 
         let floating_show_btn = if state.self_hidden {
             Some(
@@ -937,75 +803,9 @@ impl CameraWindow {
     /// Handle a camera UI message (state update).
     fn update(&mut self, message: CameraMessage) {
         match message {
-            CameraMessage::MicToggle => {
-                let is_muted = self
-                    .participants
-                    .read()
-                    .ok()
-                    .and_then(|p| p.get("local").map(|info| info.muted()))
-                    .unwrap_or(false);
-
-                let event = if is_muted {
-                    UserEvent::UnmuteAudio
-                } else {
-                    UserEvent::MuteAudio
-                };
-                log::info!("CameraWindow: mic toggle -> {:?}", event);
-                if let Err(e) = self.event_loop_proxy.send_event(event) {
-                    log::error!("CameraWindow: failed to send mic toggle event: {e:?}");
-                }
-            }
-            CameraMessage::ScreenShare => {
-                let is_screensharing = self
-                    .participants
-                    .read()
-                    .ok()
-                    .and_then(|participants| {
-                        participants
-                            .get("local")
-                            .map(ParticipantInfo::is_screensharing)
-                    })
-                    .unwrap_or(false);
-
-                let event = if is_screensharing {
-                    UserEvent::StopScreenShare
-                } else {
-                    UserEvent::GetAvailableContent
-                };
-
-                log::info!("CameraWindow: screen share toggle -> {:?}", event);
-                if let Err(error) = self.event_loop_proxy.send_event(event) {
-                    log::error!("CameraWindow: failed to send screen share event: {error:?}");
-                }
-            }
-            CameraMessage::OpenScreenSharePicker => {
-                log::info!("CameraWindow: opening screen share picker");
-                if let Err(error) = self
-                    .event_loop_proxy
-                    .send_event(UserEvent::GetAvailableContent)
-                {
-                    log::error!("CameraWindow: failed to open screen share picker: {error:?}");
-                }
-            }
-            CameraMessage::VideoToggle => {
-                let event = if self.state.camera_active {
-                    UserEvent::StopCamera
-                } else {
-                    UserEvent::StartCamera {
-                        msg: CameraStartMessage { device_name: None },
-                        from_socket: false,
-                    }
-                };
-                log::info!("CameraWindow: video toggle -> {:?}", event);
-                if let Err(e) = self.event_loop_proxy.send_event(event) {
-                    log::error!("CameraWindow: failed to send camera event: {e:?}");
-                }
-            }
-            CameraMessage::EndCall => {
-                log::info!("CameraWindow: end call -> CallEnd");
-                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::CallEnd) {
-                    log::error!("CameraWindow: failed to send CallEnd event: {e:?}");
-                }
+            CameraMessage::CallControls(message) => {
+                self.call_controls
+                    .update(message, &self.participants, &self.event_loop_proxy)
             }
             CameraMessage::ToggleSelfVisibility => {
                 self.state.self_hidden = !self.state.self_hidden;
@@ -1015,53 +815,6 @@ impl CameraWindow {
             }
             CameraMessage::LocalTileHover(hovered) => {
                 self.state.local_tile_hovered = hovered;
-            }
-            CameraMessage::CameraDropdownToggle => {
-                self.state.mic_dropdown_open = false;
-                if !self.state.camera_dropdown_open {
-                    self.state.available_cameras = CameraCapturer::list_devices();
-                }
-                self.state.camera_dropdown_open = !self.state.camera_dropdown_open;
-            }
-            CameraMessage::CameraDropdownDismiss => {
-                self.state.camera_dropdown_open = false;
-            }
-            CameraMessage::SelectCamera(name) => {
-                self.state.camera_dropdown_open = false;
-                self.state.selected_camera_name = Some(name.clone());
-                let msg = CameraStartMessage {
-                    device_name: Some(name),
-                };
-                if let Err(e) = self.event_loop_proxy.send_event(UserEvent::StartCamera {
-                    msg,
-                    from_socket: false,
-                }) {
-                    log::error!("Failed to send StartCamera: {e:?}");
-                }
-            }
-            CameraMessage::MicDropdownToggle => {
-                self.state.camera_dropdown_open = false;
-                if !self.state.mic_dropdown_open {
-                    self.state.available_mics = list_audio_inputs();
-                }
-                self.state.mic_dropdown_open = !self.state.mic_dropdown_open;
-            }
-            CameraMessage::MicDropdownDismiss => {
-                self.state.mic_dropdown_open = false;
-            }
-            CameraMessage::SelectMic(name) => {
-                self.state.mic_dropdown_open = false;
-                self.state.selected_mic_name = Some(name.clone());
-                let msg = socket_lib::AudioCaptureMessage { device_name: name };
-                if let Err(e) = self
-                    .event_loop_proxy
-                    .send_event(UserEvent::StartAudioCapture {
-                        msg,
-                        from_socket: false,
-                    })
-                {
-                    log::error!("Failed to send StartAudioCapture: {e:?}");
-                }
             }
             CameraMessage::PinToCorner => {
                 if self.state.is_compact {
@@ -1154,6 +907,7 @@ impl CameraWindow {
         let mut interface = UserInterface::build(
             Self::view(
                 &self.state,
+                &self.call_controls,
                 &self.participants,
                 false,
                 &mut self.last_rendered_frame_ids,

@@ -745,24 +745,6 @@ impl RoomService {
     }
 }
 
-fn collect_remote_participants(
-    participants: &Arc<std::sync::RwLock<HashMap<String, ParticipantInfo>>>,
-    sharer_identity: &str,
-) -> Vec<(String, String, bool)> {
-    let guard = participants.read().unwrap();
-    guard
-        .iter()
-        .filter(|(key, _)| *key != "local")
-        .map(|(identity, info)| {
-            (
-                identity.clone(),
-                info.name().to_string(),
-                identity == sharer_identity,
-            )
-        })
-        .collect()
-}
-
 /// Handles room service commands in an async loop.
 ///
 /// This function processes commands sent through the `service_rx` channel and executes
@@ -2023,9 +2005,9 @@ fn start_remote_screen_share_stream(
 
     snapshot_sender.send_participants_snapshot();
 
-    let remote_participants = collect_remote_participants(participants, &sharer_identity);
     if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
-        participants: remote_participants,
+        participants: participants.clone(),
+        sharer_identity: Some(sharer_identity),
         redraw_rx: Some(redraw_rx),
         redraw_tx: Some(redraw_tx),
     }) {
