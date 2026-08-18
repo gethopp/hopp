@@ -2257,8 +2257,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             sharer_identity.clone(),
                             draw_persist,
                             last_mode,
-                            rx,
-                            tx,
+                            (rx, tx),
                         );
                     }
                     screensharing_window.focus_window();

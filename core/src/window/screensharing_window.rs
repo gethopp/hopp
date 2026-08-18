@@ -923,8 +923,10 @@ impl ScreensharingWindow {
         sharer_identity: Option<String>,
         draw_persist: bool,
         last_mode: Option<socket_lib::StoredMode>,
-        new_rx: std::sync::mpsc::Receiver<RedrawCommand>,
-        new_tx: std::sync::mpsc::Sender<RedrawCommand>,
+        (new_rx, new_tx): (
+            std::sync::mpsc::Receiver<RedrawCommand>,
+            std::sync::mpsc::Sender<RedrawCommand>,
+        ),
     ) {
         // A fresh buffer Arc is created per room/stream — point the window at it.
         self.screen_share_buffer = screen_share_buffer;
@@ -1466,8 +1468,7 @@ impl ScreensharingWindow {
                 let cache = self.cache.take().unwrap_or_default();
                 let mut interface = UserInterface::build(
                     Self::view(
-                        &self.state,
-                        &self.call_controls,
+                        (&self.state, &self.call_controls),
                         &self.call_participants,
                         self.viewport.logical_size().width,
                         &self.screen_share_buffer,
@@ -1671,8 +1672,7 @@ impl ScreensharingWindow {
     }
 
     fn view<'a>(
-        state: &'a ScreensharingState,
-        call_controls: &'a CallControlsState,
+        (state, call_controls): (&'a ScreensharingState, &'a CallControlsState),
         call_participants: &'a Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         viewport_width: f32,
         screen_share_buffer: &'a Arc<crate::livekit::video::VideoBufferManager>,
@@ -2152,8 +2152,7 @@ impl ScreensharingWindow {
         let cache = self.cache.take().unwrap_or_default();
         let mut interface = UserInterface::build(
             Self::view(
-                &self.state,
-                &self.call_controls,
+                (&self.state, &self.call_controls),
                 &self.call_participants,
                 self.viewport.logical_size().width,
                 &self.screen_share_buffer,
