@@ -800,10 +800,23 @@ impl<'a> Application<'a> {
         &mut self,
         event_loop: &ActiveEventLoop,
         buffer: Arc<crate::livekit::video::VideoBufferManager>,
-        participants: Vec<(String, String, bool)>,
+        participants: Arc<
+            std::sync::RwLock<
+                std::collections::HashMap<String, crate::livekit::participant::ParticipantInfo>,
+            >,
+        >,
+        sharer_identity: Option<String>,
         redraw_rx: Option<std::sync::mpsc::Receiver<window::screensharing_window::RedrawCommand>>,
         redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     ) {
+        let selected_camera_name = self
+            .camera_capturer
+            .lock()
+            .unwrap()
+            .active_device_name()
+            .map(str::to_owned);
+        let camera_active = selected_camera_name.is_some();
+        let selected_mic_name = self.audio_capturer.active_device_name().map(str::to_owned);
         let (redraw_rx, redraw_tx) = redraw_rx.zip(redraw_tx).unwrap_or_else(|| {
             let (tx, rx) =
                 std::sync::mpsc::channel::<window::screensharing_window::RedrawCommand>();
@@ -815,6 +828,10 @@ impl<'a> Application<'a> {
             ScreensharingWindowConfig {
                 screen_share_buffer: buffer,
                 participants,
+                sharer_identity,
+                camera_active,
+                selected_camera_name,
+                selected_mic_name,
                 draw_persist: self.controller_draw_persist,
                 last_mode: self.last_mode.clone(),
                 redraw_rx,
@@ -833,6 +850,24 @@ impl<'a> Application<'a> {
         log::info!("close_camera_window");
         if let Some(cam) = &mut self.camera_window {
             cam.hide();
+        }
+    }
+
+    fn set_call_controls_camera(&mut self, active: bool, device_name: Option<String>) {
+        if let Some(window) = &mut self.camera_window {
+            window.set_camera_active(active, device_name.clone());
+        }
+        if let Some(window) = &mut self.screensharing_window {
+            window.set_camera_active(active, device_name);
+        }
+    }
+
+    fn set_call_controls_mic(&mut self, name: Option<String>) {
+        if let Some(window) = &mut self.camera_window {
+            window.set_selected_mic_name(name.clone());
+        }
+        if let Some(window) = &mut self.screensharing_window {
+            window.set_selected_mic_name(name);
         }
     }
 
@@ -1464,6 +1499,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.stop_mic();
                 self.audio_player.stop();
                 self.stop_camera();
+                self.set_call_controls_mic(None);
+                self.set_call_controls_camera(false, None);
 
                 if let Some(cm) = self.context_manager.as_mut() {
                     if let Some(wm) = self.window_manager.as_mut() {
@@ -1708,8 +1745,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 log::debug!("user_event: Room service created: {room_service:?}");
                 let room_service = room_service.unwrap();
+                let participants = room_service.participants();
                 if let Some(cam) = self.camera_window.as_mut() {
-                    cam.set_participants(room_service.participants());
+                    cam.set_participants(participants.clone());
                 }
                 self.room_service = Some(room_service);
             }
@@ -1972,13 +2010,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if result.is_ok() {
-                    if let Some(cam) = &mut self.camera_window {
-                        cam.set_selected_mic_name(
-                            self.audio_capturer
-                                .active_device_name()
-                                .map(|s| s.to_string()),
-                        );
-                    }
+                    let active_mic_name =
+                        self.audio_capturer.active_device_name().map(str::to_owned);
+                    self.set_call_controls_mic(active_mic_name);
                     if !from_socket {
                         if let Some(device_name) = self.audio_capturer.active_device_name() {
                             if let Err(e) = self
@@ -2148,10 +2182,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     capturer.active_device_name().map(|s| s.to_string())
                 };
 
-                if let Some(cam) = &mut self.camera_window {
-                    cam.set_camera_active(true, actual_name.clone());
-                }
-
                 if !from_socket {
                     if let Some(name) = &actual_name {
                         if let Err(e) = self.socket.send(Message::ActiveCameraChanged(name.clone()))
@@ -2162,13 +2192,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 room_service.send_participants_snapshot();
+                self.set_call_controls_camera(true, actual_name);
             }
             UserEvent::StopCamera => {
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
-                if let Some(cam) = &mut self.camera_window {
-                    cam.set_camera_active(false, None);
-                }
+                self.set_call_controls_camera(false, None);
                 if let Some(room_service) = self.room_service.as_ref() {
                     room_service.send_participants_snapshot();
                     let participants = room_service.participants();
@@ -2193,10 +2222,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::OpenScreensharing => {
                 log::info!("user_event: OpenScreensharing");
                 let buffer = Arc::new(crate::livekit::video::VideoBufferManager::default());
-                self.open_screensharing_window(event_loop, buffer, Vec::new(), None, None);
+                self.open_screensharing_window(
+                    event_loop,
+                    buffer,
+                    Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+                    None,
+                    None,
+                    None,
+                );
             }
             UserEvent::OpenScreenShareWindow {
                 participants,
+                sharer_identity,
                 redraw_rx,
                 redraw_tx,
             } => {
@@ -2216,7 +2253,8 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
                         screensharing_window.update_window_with_new_sharer(
                             buffer,
-                            &participants,
+                            participants,
+                            sharer_identity.clone(),
                             draw_persist,
                             last_mode,
                             rx,
@@ -2231,6 +2269,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             event_loop,
                             screen_share_buffer,
                             participants,
+                            sharer_identity,
                             redraw_rx,
                             redraw_tx,
                         );
@@ -2306,13 +2345,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::DefaultInputDeviceChanged => {
                 self.audio_capturer.handle_default_device_changed(false);
-                if let Some(cam) = &mut self.camera_window {
-                    cam.set_selected_mic_name(
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    );
-                }
+                self.set_call_controls_mic(
+                    self.audio_capturer.active_device_name().map(str::to_owned),
+                );
                 if let Some(device_name) = self.audio_capturer.active_device_name() {
                     if let Err(e) = self
                         .socket
@@ -2325,13 +2360,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::AudioCaptureError => {
                 log::warn!("user_event: AudioCaptureError - capture thread died");
                 self.audio_capturer.handle_default_device_changed(true);
-                if let Some(cam) = &mut self.camera_window {
-                    cam.set_selected_mic_name(
-                        self.audio_capturer
-                            .active_device_name()
-                            .map(|s| s.to_string()),
-                    );
-                }
+                self.set_call_controls_mic(
+                    self.audio_capturer.active_device_name().map(str::to_owned),
+                );
                 if let Some(device_name) = self.audio_capturer.active_device_name() {
                     if let Err(e) = self
                         .socket
@@ -3052,7 +3083,12 @@ pub enum UserEvent {
     OpenCamera,
     OpenScreensharing,
     OpenScreenShareWindow {
-        participants: Vec<(String, String, bool)>,
+        participants: Arc<
+            std::sync::RwLock<
+                std::collections::HashMap<String, crate::livekit::participant::ParticipantInfo>,
+            >,
+        >,
+        sharer_identity: Option<String>,
         redraw_rx: Option<
             std::sync::Arc<
                 std::sync::Mutex<
@@ -3207,7 +3243,10 @@ impl RenderEventLoop {
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
-                        participants: Vec::new(),
+                        participants: Arc::new(std::sync::RwLock::new(
+                            std::collections::HashMap::new(),
+                        )),
+                        sharer_identity: None,
                         redraw_rx: None,
                         redraw_tx: None,
                     },

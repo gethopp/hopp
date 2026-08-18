@@ -17,15 +17,47 @@ pub struct SplitButtonItem {
     pub selected: bool,
 }
 
-/// Build the split button element.
-/// Accepts icon as char (icon font). Returns just the button.
-/// `dropdown_open` highlights the chevron when the dropdown is visible.
-pub fn split_button<'a, Message: Clone + 'a>(
+#[derive(Debug, Clone, Copy)]
+pub struct SplitButtonSize {
+    main_width: f32,
+    dropdown_width: f32,
+    hit_height: f32,
+    inset: f32,
+    icon_size: f32,
+    chevron_size: f32,
+}
+
+impl SplitButtonSize {
+    pub const fn regular() -> Self {
+        Self {
+            main_width: 32.0,
+            dropdown_width: 22.0,
+            hit_height: 22.0,
+            inset: 2.0,
+            icon_size: 16.0,
+            chevron_size: 14.0,
+        }
+    }
+
+    pub const fn compact() -> Self {
+        Self {
+            main_width: 26.0,
+            dropdown_width: 18.0,
+            hit_height: 22.0,
+            inset: 2.0,
+            icon_size: 14.0,
+            chevron_size: 12.0,
+        }
+    }
+}
+
+pub fn split_button_sized<'a, Message: Clone + 'a>(
     icon_char: char,
     bg: Color,
     on_main_press: Message,
     on_dropdown_toggle: Option<Message>,
     dropdown_open: bool,
+    size: SplitButtonSize,
 ) -> iced::Element<'a, Message, Theme, iced::Renderer> {
     let hover_bg = {
         let c = ColorToken::Gray600.to_color();
@@ -34,7 +66,7 @@ pub fn split_button<'a, Message: Clone + 'a>(
 
     let icon = text(icon_char.to_string())
         .font(ICONS_FONT)
-        .size(16.0)
+        .size(size.icon_size)
         .color(Color::WHITE)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center);
@@ -46,8 +78,8 @@ pub fn split_button<'a, Message: Clone + 'a>(
             .center_x(Length::Fill)
             .center_y(Length::Fill),
     )
-    .width(Length::Fixed(32.0))
-    .height(Length::Fixed(22.0))
+    .width(Length::Fixed(size.main_width))
+    .height(Length::Fixed(size.hit_height))
     .on_press(on_main_press.clone())
     .padding(Padding::from([1, 0]))
     .style(move |_theme: &Theme, status| hit_area_style(status, hover_bg));
@@ -58,7 +90,7 @@ pub fn split_button<'a, Message: Clone + 'a>(
         if let Some(dropdown_msg) = on_dropdown_toggle {
             let chevron = text(ICON_CHEVRON_DOWN.to_string())
                 .font(ICONS_FONT)
-                .size(14.0)
+                .size(size.chevron_size)
                 .color(Color::WHITE)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center);
@@ -70,8 +102,8 @@ pub fn split_button<'a, Message: Clone + 'a>(
                     .center_x(Length::Fill)
                     .center_y(Length::Fill),
             )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
+            .width(Length::Fixed(size.dropdown_width))
+            .height(Length::Fixed(size.hit_height))
             .on_press(dropdown_msg)
             .padding(0)
             .style(move |_theme: &Theme, status| {
@@ -87,14 +119,14 @@ pub fn split_button<'a, Message: Clone + 'a>(
             main_btn.into()
         };
 
-    let inner_layer = container(inner_row).padding(Padding::new(2.0));
+    let inner_layer = container(inner_row).padding(Padding::new(size.inset));
 
     let total_width = if has_dropdown {
-        2.0 + 32.0 + 1.0 + 22.0 + 2.0
+        size.inset * 2.0 + size.main_width + 1.0 + size.dropdown_width
     } else {
-        2.0 + 32.0 + 2.0
+        size.inset * 2.0 + size.main_width
     };
-    let total_height = 2.0 + 22.0 + 2.0;
+    let total_height = size.inset * 2.0 + size.hit_height;
 
     let base_btn = button(Space::new())
         .width(Length::Fixed(total_width))
