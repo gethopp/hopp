@@ -1,5 +1,39 @@
+use crate::application_catalog::NOTIFICATION_CENTER_BUNDLE_ID;
 use serde::{Deserialize, Serialize};
 pub use socket_lib::{ScreenSharePickerMode, ScreenShareResolution, StoredMode};
+use std::collections::HashSet;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct AppVeilApplication {
+    pub bundle_id: String,
+    pub enabled: bool,
+}
+
+fn default_app_veil_applications() -> Vec<AppVeilApplication> {
+    vec![AppVeilApplication {
+        bundle_id: NOTIFICATION_CENTER_BUNDLE_ID.to_string(),
+        enabled: false,
+    }]
+}
+
+pub fn enabled_app_veil_bundle_ids(
+    applications: &[AppVeilApplication],
+) -> Result<Vec<String>, String> {
+    let mut seen = HashSet::with_capacity(applications.len());
+    let mut enabled = Vec::new();
+    for application in applications {
+        if application.bundle_id.trim().is_empty() {
+            return Err("App Veil bundle identifiers cannot be empty".to_string());
+        }
+        if !seen.insert(application.bundle_id.as_str()) {
+            return Err("App Veil applications cannot contain duplicates".to_string());
+        }
+        if application.enabled {
+            enabled.push(application.bundle_id.clone());
+        }
+    }
+    Ok(enabled)
+}
 
 fn default_true() -> bool {
     true
@@ -34,6 +68,8 @@ pub struct UserSettings {
     pub telemetry_enabled: bool,
     #[serde(default = "default_true")]
     pub auto_update_enabled: bool,
+    #[serde(default = "default_app_veil_applications")]
+    pub app_veil_applications: Vec<AppVeilApplication>,
 }
 
 impl Default for UserSettings {
@@ -54,6 +90,7 @@ impl Default for UserSettings {
             shortcut_end_call: None,
             telemetry_enabled: true,
             auto_update_enabled: true,
+            app_veil_applications: default_app_veil_applications(),
         }
     }
 }
@@ -504,6 +541,28 @@ impl AppState {
         }
     }
 
+    pub fn set_app_veil_applications(
+        &mut self,
+        applications: Vec<AppVeilApplication>,
+    ) -> Result<Vec<String>, String> {
+        let enabled_bundle_ids = enabled_app_veil_bundle_ids(&applications)?;
+        let _lock = self.lock.lock().unwrap();
+        let settings = self
+            .state
+            .user_settings
+            .get_or_insert_with(UserSettings::default);
+        let previous = std::mem::replace(&mut settings.app_veil_applications, applications);
+        if !self.save() {
+            self.state
+                .user_settings
+                .as_mut()
+                .unwrap()
+                .app_veil_applications = previous;
+            return Err("Failed to save App Veil settings".to_string());
+        }
+        Ok(enabled_bundle_ids)
+    }
+
     /// Saves the current state to disk.
     ///
     /// # Returns
@@ -541,5 +600,80 @@ impl AppState {
             Err(e) => log::error!("Failed to serialize app state: {e}"),
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod app_veil_tests {
+    use super::*;
+
+    fn row(bundle_id: &str, enabled: bool) -> AppVeilApplication {
+        AppVeilApplication {
+            bundle_id: bundle_id.to_string(),
+            enabled,
+        }
+    }
+
+    #[test]
+    fn app_veil_default_and_migration_seed_notification_center_once() {
+        assert_eq!(
+            UserSettings::default().app_veil_applications,
+            vec![row(NOTIFICATION_CENTER_BUNDLE_ID, false)]
+        );
+
+        let mut legacy = serde_json::to_value(UserSettings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("app_veil_applications");
+        let migrated: UserSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            migrated.app_veil_applications,
+            vec![row(NOTIFICATION_CENTER_BUNDLE_ID, false)]
+        );
+
+        let mut explicit_empty = serde_json::to_value(UserSettings::default()).unwrap();
+        explicit_empty["app_veil_applications"] = serde_json::json!([]);
+        let settings: UserSettings = serde_json::from_value(explicit_empty).unwrap();
+        assert!(settings.app_veil_applications.is_empty());
+    }
+
+    #[test]
+    fn app_veil_full_replacement_covers_add_remove_toggle_and_validation() {
+        let applications = vec![row("com.example.one", true), row("com.example.two", false)];
+        assert_eq!(
+            enabled_app_veil_bundle_ids(&applications).unwrap(),
+            vec!["com.example.one".to_string()]
+        );
+        assert!(enabled_app_veil_bundle_ids(&[row("", true)]).is_err());
+        assert!(enabled_app_veil_bundle_ids(&[
+            row("com.example.duplicate", true),
+            row("com.example.duplicate", false),
+        ])
+        .is_err());
+
+        let directory = std::env::temp_dir().join(format!(
+            "hopp-app-veil-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut state = AppState::new(&directory);
+        state
+            .set_app_veil_applications(applications.clone())
+            .unwrap();
+        drop(state);
+        let mut state = AppState::new(&directory);
+        assert_eq!(state.user_settings().app_veil_applications, applications);
+        state
+            .set_app_veil_applications(vec![row("com.example.two", true)])
+            .unwrap();
+        drop(state);
+        let state = AppState::new(&directory);
+        assert_eq!(
+            state.user_settings().app_veil_applications,
+            vec![row("com.example.two", true)]
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

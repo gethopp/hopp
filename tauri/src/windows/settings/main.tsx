@@ -5,7 +5,14 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { typedInvoke, type ScreenSharePickerMode, type ScreenShareResolution } from "@/core_payloads";
+import { Switch } from "@/components/ui/switch";
+import {
+  typedInvoke,
+  type AppVeilApplication,
+  type InstalledApplication,
+  type ScreenSharePickerMode,
+  type ScreenShareResolution,
+} from "@/core_payloads";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { tauriUtils } from "@/windows/window-utils";
 import { OS, URLS } from "@/constants";
@@ -220,6 +227,182 @@ function ShortcutRow({
   );
 }
 
+function applicationIcon(application: InstalledApplication): string | undefined {
+  if (!application.icon_png) return undefined;
+  let binary = "";
+  for (const byte of application.icon_png) binary += String.fromCharCode(byte);
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
+function AppVeilSettings({
+  rows,
+  installedApplications,
+  onChange,
+}: {
+  rows: AppVeilApplication[];
+  installedApplications: InstalledApplication[];
+  onChange: (rows: AppVeilApplication[]) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [highlighted, setHighlighted] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const addedBundleIds = new Set(rows.map((row) => row.bundle_id));
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const results =
+    normalizedQuery ?
+      installedApplications
+        .filter((application) => application.name.toLocaleLowerCase().includes(normalizedQuery))
+        .slice(0, 8)
+    : [];
+  const nameCounts = installedApplications.reduce<Record<string, number>>((counts, application) => {
+    counts[application.name] = (counts[application.name] ?? 0) + 1;
+    return counts;
+  }, {});
+  const commit = async (nextRows: AppVeilApplication[]) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onChange(nextRows);
+    } catch (error) {
+      console.error("Failed to update App Veil settings", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const add = async (application: InstalledApplication) => {
+    if (addedBundleIds.has(application.bundle_id)) return;
+    await commit([...rows, { bundle_id: application.bundle_id, enabled: true }]);
+    setQuery("");
+    setHighlighted(0);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <span className="text-sm text-gray-500 dark:text-gray-400">
+        Hide selected applications from viewers when sharing a screen. You will still see and use them normally.
+      </span>
+
+      <div className="relative">
+        <Input
+          aria-label="Add application to App Veil"
+          role="combobox"
+          aria-expanded={results.length > 0}
+          aria-controls="app-veil-results"
+          aria-activedescendant={results[highlighted] ? `app-veil-result-${highlighted}` : undefined}
+          placeholder="Add application…"
+          value={query}
+          disabled={saving}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setHighlighted(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setQuery("");
+              setHighlighted(0);
+            } else if (event.key === "ArrowDown" && results.length) {
+              event.preventDefault();
+              setHighlighted((index) => (index + 1) % results.length);
+            } else if (event.key === "ArrowUp" && results.length) {
+              event.preventDefault();
+              setHighlighted((index) => (index + results.length - 1) % results.length);
+            } else if (event.key === "Enter" && results[highlighted]) {
+              event.preventDefault();
+              const selected = results[highlighted];
+              if (selected) void add(selected);
+            }
+          }}
+        />
+        {normalizedQuery && (
+          <div
+            id="app-veil-results"
+            role="listbox"
+            className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+          >
+            {results.length === 0 ?
+              <div className="px-2 py-3 text-sm text-gray-500">No installed applications found.</div>
+            : results.map((application, index) => {
+                const added = addedBundleIds.has(application.bundle_id);
+                const icon = applicationIcon(application);
+                return (
+                  <button
+                    id={`app-veil-result-${index}`}
+                    role="option"
+                    aria-selected={index === highlighted}
+                    key={application.bundle_id}
+                    disabled={added || saving}
+                    className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm ${
+                      index === highlighted ? "bg-gray-100 dark:bg-gray-800" : ""
+                    } disabled:opacity-60`}
+                    onMouseEnter={() => setHighlighted(index)}
+                    onClick={() => void add(application)}
+                  >
+                    {icon && <img src={icon} alt="" className="size-7 shrink-0" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-gray-700 dark:text-gray-300">{application.name}</span>
+                      {(nameCounts[application.name] ?? 0) > 1 && (
+                        <span className="block truncate text-xs text-gray-500">{application.bundle_id}</span>
+                      )}
+                    </span>
+                    {added && <span className="text-xs text-gray-500">Added</span>}
+                  </button>
+                );
+              })
+            }
+          </div>
+        )}
+      </div>
+
+      <div className="max-h-[220px] overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700">
+        {rows.length === 0 ?
+          <div className="px-3 py-4 text-sm text-gray-500">No applications are hidden yet.</div>
+        : rows.map((row) => {
+            const application = installedApplications.find((candidate) => candidate.bundle_id === row.bundle_id);
+            const name = application?.name ?? "Application not found";
+            const icon = application && applicationIcon(application);
+            return (
+              <div
+                key={row.bundle_id}
+                className="group flex min-h-11 items-center gap-2 border-b border-gray-200 px-3 py-2 last:border-b-0 dark:border-gray-700"
+              >
+                {icon ?
+                  <img src={icon} alt="" className="size-7 shrink-0" />
+                : <div aria-hidden className="size-7 shrink-0 rounded bg-gray-100 dark:bg-gray-800" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-gray-700 dark:text-gray-300">{name}</span>
+                  {!application && <span className="block truncate text-xs text-gray-500">{row.bundle_id}</span>}
+                </span>
+                <Switch
+                  aria-label={`Hide ${application?.name ?? row.bundle_id} from viewers`}
+                  checked={row.enabled}
+                  disabled={!application || saving}
+                  onCheckedChange={(enabled) =>
+                    void commit(
+                      rows.map((candidate) =>
+                        candidate.bundle_id === row.bundle_id ? { ...candidate, enabled } : candidate,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove ${application?.name ?? row.bundle_id} from App Veil`}
+                  disabled={saving}
+                  className="size-7 rounded text-lg text-gray-500 opacity-0 hover:bg-gray-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gray-400 group-hover:opacity-100 dark:hover:bg-gray-800"
+                  onClick={() => void commit(rows.filter((candidate) => candidate.bundle_id !== row.bundle_id))}
+                >
+                  −
+                </button>
+              </div>
+            );
+          })
+        }
+      </div>
+    </div>
+  );
+}
+
 function SettingsWindow() {
   useDisableNativeContextMenu();
 
@@ -230,6 +413,13 @@ function SettingsWindow() {
     queryFn: () => typedInvoke("get_user_settings"),
     select: (data) => data,
     refetchOnWindowFocus: true,
+  });
+
+  const { data: installedApplications = [] } = useQuery({
+    queryKey: ["installed-applications"],
+    queryFn: () => typedInvoke("list_installed_applications"),
+    enabled: OS === "macos",
+    staleTime: Infinity,
   });
 
   useEffect(() => {
@@ -267,7 +457,7 @@ function SettingsWindow() {
   if (!settings) return null;
 
   return (
-    <div className="h-full min-h-full text-black dark:text-white flex flex-col">
+    <div className="h-full min-h-full overflow-y-auto text-black dark:text-white flex flex-col">
       <div data-tauri-drag-region className="h-[32px] min-w-full w-full" />
 
       <div className="flex-1 flex flex-col px-5 pb-5 py-4">
@@ -367,6 +557,27 @@ function SettingsWindow() {
           </div>
 
           <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+          {OS === "macos" && (
+            <>
+              <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
+                <h3 className="text-base font-medium text-black dark:text-white">App Veil</h3>
+                <AppVeilSettings
+                  rows={settings.app_veil_applications}
+                  installedApplications={installedApplications}
+                  onChange={async (applications) => {
+                    try {
+                      await typedInvoke("set_app_veil_applications", { applications });
+                    } finally {
+                      await refetchSettings();
+                    }
+                  }}
+                />
+              </div>
+
+              <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+            </>
+          )}
 
           <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
             <h3 className="text-base font-medium text-black dark:text-white">Shortcuts</h3>

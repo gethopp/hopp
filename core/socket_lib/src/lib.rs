@@ -258,6 +258,7 @@ pub enum Message {
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
+    SetAppVeilBundleIds(Vec<String>),
     SetTelemetryEnabled(bool),
     /// Microphone RMS level in [0.0, 1.0], emitted ~1 Hz from core capturer.
     MicrophoneAudioLevel(f32),
@@ -618,6 +619,28 @@ mod tests {
 
         assert!(matches!(content.content_type, ContentType::Window));
         assert_eq!(content.id, 42);
+    }
+
+    #[test]
+    fn test_app_veil_bundle_ids_transport_round_trip() {
+        let ((_server_sender, server_events), (client_sender, _client_events)) = test_pair();
+        let bundle_ids = vec![
+            "com.apple.notificationcenterui".to_string(),
+            "com.example.private".to_string(),
+        ];
+
+        client_sender
+            .send(Message::SetAppVeilBundleIds(bundle_ids.clone()))
+            .unwrap();
+
+        let message = server_events
+            .events
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        match message {
+            Message::SetAppVeilBundleIds(received) => assert_eq!(received, bundle_ids),
+            _ => panic!("expected app veil bundle IDs"),
+        }
     }
 
     #[test]

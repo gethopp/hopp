@@ -87,6 +87,17 @@ export interface CoreParticipantState {
 export type ScreenShareResolution = "P1080" | "P1440" | "P4K";
 export type ScreenSharePickerMode = "Screen" | "Window";
 
+export interface AppVeilApplication {
+  bundle_id: string;
+  enabled: boolean;
+}
+
+export interface InstalledApplication {
+  bundle_id: string;
+  name: string;
+  icon_png: number[] | null;
+}
+
 export interface UserSettings {
   call_feedback_popup: boolean;
   show_dock_icon_in_call: boolean;
@@ -103,6 +114,7 @@ export interface UserSettings {
   shortcut_end_call: string;
   telemetry_enabled: boolean;
   auto_update_enabled: boolean;
+  app_veil_applications: AppVeilApplication[];
 }
 
 export type CoreRoleChange = "Sharer" | "Controller" | "None";
@@ -192,6 +204,8 @@ export interface CommandMap {
 
   // User settings (Settings window)
   get_user_settings: { args: void; return: UserSettings };
+  list_installed_applications: { args: void; return: InstalledApplication[] };
+  set_app_veil_applications: { args: { applications: AppVeilApplication[] }; return: void };
   set_call_feedback_popup: { args: { enabled: boolean }; return: void };
   set_telemetry_enabled: { args: { enabled: boolean }; return: void };
   set_show_dock_icon_in_call: { args: { enabled: boolean }; return: void };

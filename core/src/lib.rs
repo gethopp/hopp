@@ -29,6 +29,8 @@ pub mod camera {
 
 pub mod capture {
     pub mod capturer;
+    #[cfg(target_os = "macos")]
+    pub(crate) mod running_applications_observer;
 }
 
 pub mod graphics {
@@ -59,6 +61,8 @@ pub(crate) mod windows;
 
 use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer, MonitorId, ScreenshareExt, ScreenshareFunctions};
+#[cfg(target_os = "macos")]
+use capture::running_applications_observer::RunningApplicationsObserver;
 use graphics::graphics_context::participant::CursorMode;
 use graphics::graphics_context::GraphicsContext;
 use graphics::graphics_window_context::ContextManager;
@@ -403,6 +407,8 @@ pub struct Application<'a> {
     clipboard_controller: Option<ClipboardController>,
     screen_selection: Option<ScreenSelectionState>,
     pending_overlay_repair: Option<MonitorId>,
+    #[cfg(target_os = "macos")]
+    running_applications_observer: Option<RunningApplicationsObserver>,
 }
 
 #[derive(Error, Debug)]
@@ -491,6 +497,8 @@ impl<'a> Application<'a> {
             clipboard_controller,
             screen_selection: None,
             pending_overlay_repair: None,
+            #[cfg(target_os = "macos")]
+            running_applications_observer: None,
         })
     }
 
@@ -719,6 +727,15 @@ impl<'a> Application<'a> {
             .as_ref()
             .map_or(1.0, |monitor| monitor.scale_factor());
 
+        #[cfg(target_os = "macos")]
+        if matches!(screenshare_input.content.content_type, ContentType::Display) {
+            self.running_applications_observer =
+                RunningApplicationsObserver::new(self.event_loop_proxy.clone());
+        }
+
+        let app_veil_enabled =
+            matches!(screenshare_input.content.content_type, ContentType::Display)
+                && screen_capturer.app_veil_enabled();
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -729,7 +746,13 @@ impl<'a> Application<'a> {
             scale,
         );
         if let Err(error) = res {
-            log::error!("screenshare: error starting capture: {error:?}");
+            #[cfg(target_os = "macos")]
+            {
+                self.running_applications_observer = None;
+            }
+            log::error!(
+                "screenshare: error starting capture: {error:?}; app_veil_enabled={app_veil_enabled}"
+            );
             return Err(ServerError::StreamCreationError);
         }
 
@@ -932,6 +955,10 @@ impl<'a> Application<'a> {
 
     fn stop_screenshare(&mut self) {
         log::info!("stop_screenshare");
+        #[cfg(target_os = "macos")]
+        {
+            self.running_applications_observer = None;
+        }
         let screen_capturer = self.screen_capturer.lock();
         if let Err(e) = screen_capturer {
             log::error!("stop_screenshare: Error locking screen capturer: {e:?}");
@@ -1669,6 +1696,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.participants_manager_mut().clear_draw_caches();
                     gfx.window().request_redraw();
                 }
+            }
+            UserEvent::SetAppVeilBundleIds(bundle_ids) => {
+                self.screen_capturer
+                    .lock()
+                    .unwrap()
+                    .set_app_veil_bundle_ids(bundle_ids);
+            }
+            UserEvent::RefreshAppVeilFilter => {
+                self.screen_capturer
+                    .lock()
+                    .unwrap()
+                    .refresh_app_veil_filter();
             }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
@@ -3042,6 +3081,8 @@ pub enum UserEvent {
     RequestRedraw,
     SharerPosition(f64, f64),
     CaptureFrameChanged,
+    SetAppVeilBundleIds(Vec<String>),
+    RefreshAppVeilFilter,
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
@@ -3263,6 +3304,9 @@ impl RenderEventLoop {
                     }
                     Message::SetTelemetryEnabled(enabled) => {
                         UserEvent::SetTelemetryEnabled(enabled)
+                    }
+                    Message::SetAppVeilBundleIds(bundle_ids) => {
+                        UserEvent::SetAppVeilBundleIds(bundle_ids)
                     }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {
