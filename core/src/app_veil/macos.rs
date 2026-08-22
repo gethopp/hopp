@@ -3,7 +3,7 @@ use std::{
     ffi::c_void,
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc,
+        mpsc, Arc, Mutex,
     },
     thread::JoinHandle,
     time::Duration,
@@ -169,8 +169,9 @@ struct Window {
 
 pub struct AppVeilHost {
     bundle_ids: Vec<String>,
+    observed_bundle_ids: Arc<Mutex<HashSet<String>>>,
     geometry_poller: GeometryPoller,
-    _running_applications_observer: Option<RunningApplicationsObserver>,
+    _running_applications_observer: RunningApplicationsObserver,
 }
 
 impl AppVeilHost {
@@ -178,20 +179,27 @@ impl AppVeilHost {
         display_id: u32,
         bundle_ids: Vec<String>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
-    ) -> Self {
-        let running_applications_observer =
-            RunningApplicationsObserver::new(event_loop_proxy.clone());
+    ) -> Option<Self> {
+        let observed_bundle_ids = Arc::new(Mutex::new(
+            bundle_ids.iter().cloned().collect::<HashSet<_>>(),
+        ));
+        let running_applications_observer = RunningApplicationsObserver::new(
+            event_loop_proxy.clone(),
+            observed_bundle_ids.clone(),
+        )?;
         let geometry_poller = GeometryPoller::new(display_id, bundle_ids.clone(), event_loop_proxy);
-        Self {
+        Some(Self {
             bundle_ids,
+            observed_bundle_ids,
             geometry_poller,
             _running_applications_observer: running_applications_observer,
-        }
+        })
     }
 
     pub fn set_bundle_ids(&mut self, bundle_ids: Vec<String>) {
         if self.bundle_ids != bundle_ids {
             self.geometry_poller.set_bundle_ids(bundle_ids.clone());
+            *self.observed_bundle_ids.lock().unwrap() = bundle_ids.iter().cloned().collect();
             self.bundle_ids = bundle_ids;
         }
     }

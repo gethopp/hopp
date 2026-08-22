@@ -1,7 +1,12 @@
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
+
 use objc2::{rc::Retained, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
-    NSWorkspaceDidTerminateApplicationNotification,
+    NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey,
+    NSWorkspaceDidLaunchApplicationNotification, NSWorkspaceDidTerminateApplicationNotification,
 };
 use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol};
 use winit::event_loop::EventLoopProxy;
@@ -10,6 +15,7 @@ use crate::UserEvent;
 
 struct RunningApplicationsObserverIvars {
     event_loop_proxy: EventLoopProxy<UserEvent>,
+    bundle_ids: Arc<Mutex<HashSet<String>>>,
 }
 
 objc2::define_class!(
@@ -22,7 +28,24 @@ objc2::define_class!(
 
     impl RunningApplicationsObserverTarget {
         #[unsafe(method(runningApplicationChanged:))]
-        fn running_application_changed(&self, _notification: &NSNotification) {
+        fn running_application_changed(&self, notification: &NSNotification) {
+            let bundle_id = notification
+                .userInfo()
+                .and_then(|user_info| unsafe { user_info.objectForKey(NSWorkspaceApplicationKey) })
+                .and_then(|application| {
+                    application
+                        .downcast_ref::<NSRunningApplication>()
+                        .and_then(|application| application.bundleIdentifier())
+                });
+            let Some(bundle_id) = bundle_id else {
+                return;
+            };
+            let bundle_id = bundle_id.to_string();
+            if !self.ivars().bundle_ids.lock().unwrap().contains(&bundle_id) {
+                log::info!("RunningApplicationsObserver: ignoring unprotected app: {bundle_id}");
+                return;
+            }
+            log::info!("RunningApplicationsObserver: protected app launched/terminated: {bundle_id}");
             let _ = self
                 .ivars()
                 .event_loop_proxy
@@ -37,10 +60,22 @@ pub struct RunningApplicationsObserver {
 }
 
 impl RunningApplicationsObserver {
-    pub fn new(event_loop_proxy: EventLoopProxy<UserEvent>) -> Option<Self> {
-        let main_thread_marker = objc2::MainThreadMarker::new()?;
-        let target = RunningApplicationsObserverTarget::alloc(main_thread_marker)
-            .set_ivars(RunningApplicationsObserverIvars { event_loop_proxy });
+    pub fn new(
+        event_loop_proxy: EventLoopProxy<UserEvent>,
+        bundle_ids: Arc<Mutex<HashSet<String>>>,
+    ) -> Option<Self> {
+        let Some(main_thread_marker) = objc2::MainThreadMarker::new() else {
+            log::error!(
+                "RunningApplicationsObserver: not created on the main thread; application-launch filtering will be degraded"
+            );
+            return None;
+        };
+        let target = RunningApplicationsObserverTarget::alloc(main_thread_marker).set_ivars(
+            RunningApplicationsObserverIvars {
+                event_loop_proxy,
+                bundle_ids,
+            },
+        );
         let target: Retained<RunningApplicationsObserverTarget> =
             unsafe { objc2::msg_send![super(target), init] };
         let workspace = NSWorkspace::sharedWorkspace();

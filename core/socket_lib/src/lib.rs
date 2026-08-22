@@ -248,6 +248,8 @@ pub enum Message {
     RoleChange(CoreRoleEvent),
     CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
     RoomConnectionFailed(String),
+    /// App Veil could not be initialized; protected apps may be visible while sharing.
+    AppVeilFailed(String),
     ControllerDrawPersistChanged(bool),
     SharerDrawPersistChanged(bool),
     LastModeChanged(StoredMode),

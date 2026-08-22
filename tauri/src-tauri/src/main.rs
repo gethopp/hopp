@@ -1184,6 +1184,12 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::AppVeilFailed(reason) => {
+                log::error!("forward_core_events: app veil failed: {reason}");
+                if let Err(e) = app.emit("core_app_veil_failed", &reason) {
+                    log::error!("forward_core_events: failed to emit app veil failed: {e:?}");
+                }
+            }
             Message::QueryPreferredCamera => {
                 log::info!("forward_core_events: query preferred camera");
                 let data = app.state::<Mutex<AppData>>();

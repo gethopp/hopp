@@ -741,11 +741,21 @@ impl<'a> Application<'a> {
 
         #[cfg(target_os = "macos")]
         if is_display_share {
-            self.app_veil_host = Some(AppVeilHost::new(
+            let app_veil_bundle_ids = screen_capturer.app_veil_bundle_ids().to_vec();
+            self.app_veil_host = AppVeilHost::new(
                 screenshare_input.content.id,
-                screen_capturer.app_veil_bundle_ids().to_vec(),
+                app_veil_bundle_ids.clone(),
                 self.event_loop_proxy.clone(),
-            ));
+            );
+            if self.app_veil_host.is_none() && !app_veil_bundle_ids.is_empty() {
+                log::error!("screenshare: App Veil unavailable, failed to create running applications observer");
+                if let Err(e) = self.socket.send(Message::AppVeilFailed(
+                    "App Veil is unavailable: protected apps may be visible while sharing your screen"
+                        .to_string(),
+                )) {
+                    log::error!("screenshare: error sending AppVeilFailed: {e:?}");
+                }
+            }
         }
 
         let app_veil_enabled = is_display_share && screen_capturer.app_veil_enabled();
