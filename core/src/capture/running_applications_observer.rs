@@ -1,9 +1,9 @@
-use objc2::{rc::Retained, runtime::AnyObject, ClassType, DefinedClass, MainThreadOnly};
-use objc2_app_kit::NSWorkspace;
-use objc2_foundation::{
-    NSDictionary, NSKeyValueChangeKey, NSKeyValueObservingOptions, NSObject,
-    NSObjectNSKeyValueObserverRegistration, NSObjectProtocol, NSString,
+use objc2::{rc::Retained, ClassType, DefinedClass, MainThreadOnly};
+use objc2_app_kit::{
+    NSWorkspace, NSWorkspaceDidLaunchApplicationNotification,
+    NSWorkspaceDidTerminateApplicationNotification,
 };
+use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
@@ -21,14 +21,8 @@ objc2::define_class!(
     unsafe impl NSObjectProtocol for RunningApplicationsObserverTarget {}
 
     impl RunningApplicationsObserverTarget {
-        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
-        fn observe_running_applications(
-            &self,
-            _key_path: Option<&NSString>,
-            _object: Option<&AnyObject>,
-            _change: Option<&NSDictionary<NSKeyValueChangeKey, AnyObject>>,
-            _context: *mut std::ffi::c_void,
-        ) {
+        #[unsafe(method(runningApplicationChanged:))]
+        fn running_application_changed(&self, _notification: &NSNotification) {
             let _ = self
                 .ivars()
                 .event_loop_proxy
@@ -40,7 +34,6 @@ objc2::define_class!(
 pub struct RunningApplicationsObserver {
     workspace: Retained<NSWorkspace>,
     target: Retained<RunningApplicationsObserverTarget>,
-    key_path: Retained<NSString>,
 }
 
 impl RunningApplicationsObserver {
@@ -51,20 +44,21 @@ impl RunningApplicationsObserver {
         let target: Retained<RunningApplicationsObserverTarget> =
             unsafe { objc2::msg_send![super(target), init] };
         let workspace = NSWorkspace::sharedWorkspace();
-        let key_path = NSString::from_str("runningApplications");
         unsafe {
-            workspace.as_super().addObserver_forKeyPath_options_context(
-                target.as_super(),
-                &key_path,
-                NSKeyValueObservingOptions::New,
-                std::ptr::null_mut(),
-            );
+            let notification_center = workspace.notificationCenter();
+            for notification in [
+                NSWorkspaceDidLaunchApplicationNotification,
+                NSWorkspaceDidTerminateApplicationNotification,
+            ] {
+                notification_center.addObserver_selector_name_object(
+                    target.as_super(),
+                    objc2::sel!(runningApplicationChanged:),
+                    Some(notification),
+                    None,
+                );
+            }
         }
-        Some(Self {
-            workspace,
-            target,
-            key_path,
-        })
+        Some(Self { workspace, target })
     }
 }
 
@@ -72,8 +66,8 @@ impl Drop for RunningApplicationsObserver {
     fn drop(&mut self) {
         unsafe {
             self.workspace
-                .as_super()
-                .removeObserver_forKeyPath(self.target.as_super(), &self.key_path);
+                .notificationCenter()
+                .removeObserver(self.target.as_super());
         }
     }
 }

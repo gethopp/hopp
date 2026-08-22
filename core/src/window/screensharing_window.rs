@@ -18,14 +18,14 @@ use std::time::{Duration, Instant as StdInstant};
 use iced::mouse;
 use iced::widget::{canvas, column, container, row, shader, stack, text, Space};
 use iced::{
-    gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Radians, Rectangle,
-    Shadow, Vector,
+    alignment, gradient, Alignment, Background, Border, Color, Length, Padding, Pixels, Point,
+    Radians, Rectangle, Shadow, Size, Vector,
 };
 use iced_core::clipboard::Kind;
 use iced_wgpu::graphics::Viewport;
 use iced_winit::core::renderer::Style;
 use iced_winit::core::time::Instant;
-use iced_winit::core::{window, Event, Size, Theme};
+use iced_winit::core::{window, Event, Theme};
 use iced_winit::runtime::user_interface::Cache;
 use iced_winit::runtime::UserInterface;
 use iced_winit::{conversion, Clipboard};
@@ -390,6 +390,7 @@ struct ScreensharingState {
     draw_persist: bool,
     /// Whether the sharer currently allows remote control input.
     remote_control_allowed: bool,
+    app_veil_snapshot: crate::room_service::AppVeilSnapshot,
     /// True after the user manually resizes the window; suppresses auto-maximize.
     user_has_resized: bool,
     /// Multi-click detection state.
@@ -419,6 +420,7 @@ impl Default for ScreensharingState {
             dropdown_open: false,
             draw_persist: false,
             remote_control_allowed: true,
+            app_veil_snapshot: Default::default(),
             user_has_resized: false,
             last_click_count: 0,
             last_click_button: 0,
@@ -428,6 +430,72 @@ impl Default for ScreensharingState {
             sharer_name: "Screen".to_string(),
             queued_modifier_events: Vec::new(),
         }
+    }
+}
+
+fn project_app_veil_rect(
+    rect: &crate::room_service::NormalizedRect,
+    bounds: Rectangle,
+) -> Rectangle {
+    Rectangle {
+        x: rect.x * bounds.width,
+        y: rect.y * bounds.height,
+        width: rect.width * bounds.width,
+        height: rect.height * bounds.height,
+    }
+}
+
+fn app_veil_label_visible(rect: Rectangle) -> bool {
+    rect.width >= 160.0 && rect.height >= 40.0
+}
+
+struct AppVeilOverlay<'a> {
+    snapshot: &'a crate::room_service::AppVeilSnapshot,
+}
+
+impl<Message> canvas::Program<Message> for AppVeilOverlay<'_> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        for window in &self.snapshot.windows {
+            let rect = project_app_veil_rect(&window.frame, bounds);
+            let path = canvas::Path::rounded_rectangle(
+                Point::new(rect.x, rect.y),
+                Size::new(rect.width, rect.height),
+                10.0.into(),
+            );
+            for fragment in &window.visible_fragments {
+                frame.with_clip(project_app_veil_rect(fragment, bounds), |frame| {
+                    frame.fill(&path, ColorToken::Slate900.to_color());
+                    if app_veil_label_visible(rect) {
+                        frame.fill_text(canvas::Text {
+                            content: "Hidden with App Veil".to_string(),
+                            position: Point::new(
+                                rect.x + rect.width / 2.0,
+                                rect.y + rect.height / 2.0,
+                            ),
+                            color: Color::WHITE,
+                            size: Pixels(14.0),
+                            font: GEIST_MEDIUM,
+                            align_x: alignment::Horizontal::Center.into(),
+                            align_y: alignment::Vertical::Center,
+                            ..Default::default()
+                        });
+                    }
+                });
+            }
+        }
+
+        vec![frame.into_geometry()]
     }
 }
 
@@ -911,6 +979,11 @@ impl ScreensharingWindow {
 
     pub fn set_selected_mic_name(&mut self, name: Option<String>) {
         self.call_controls.set_selected_mic_name(name);
+    }
+
+    pub fn set_app_veil_snapshot(&mut self, snapshot: crate::room_service::AppVeilSnapshot) {
+        self.state.app_veil_snapshot = snapshot;
+        self.window.request_redraw();
     }
 
     /// Update the window for a new sharer: refresh the display name and swap
@@ -1809,6 +1882,18 @@ impl ScreensharingWindow {
             .height(Length::Fill)
             .into();
 
+        let app_veil_overlay: iced::Element<'a, ScreensharingMessage, Theme, iced::Renderer> =
+            if state.app_veil_snapshot.windows.is_empty() {
+                Space::new().into()
+            } else {
+                canvas(AppVeilOverlay {
+                    snapshot: &state.app_veil_snapshot,
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            };
+
         let remote_control_disabled_label: iced::Element<
             'a,
             ScreensharingMessage,
@@ -1859,7 +1944,12 @@ impl ScreensharingWindow {
             Space::new().into()
         };
 
-        let layered_content = stack![video_content, canvas_overlay, remote_control_disabled_label];
+        let layered_content = stack![
+            video_content,
+            app_veil_overlay,
+            canvas_overlay,
+            remote_control_disabled_label
+        ];
 
         let content_area = container(
             container(layered_content)
@@ -2233,5 +2323,44 @@ impl Drop for ScreensharingWindow {
     fn drop(&mut self) {
         let _ = self.redraw_tx.send(RedrawCommand::Stop);
         self.redraw_thread.take();
+    }
+}
+
+#[cfg(test)]
+mod app_veil_tests {
+    use super::*;
+
+    #[test]
+    fn projects_normalized_app_veil_rect_into_canvas_bounds() {
+        let rect = crate::room_service::NormalizedRect {
+            x: 0.25,
+            y: 0.5,
+            width: 0.5,
+            height: 0.25,
+        };
+
+        assert_eq!(
+            project_app_veil_rect(
+                &rect,
+                Rectangle::new(Point::new(10.0, 20.0), Size::new(800.0, 400.0))
+            ),
+            Rectangle::new(Point::new(200.0, 200.0), Size::new(400.0, 100.0))
+        );
+    }
+
+    #[test]
+    fn app_veil_label_requires_minimum_projected_size() {
+        assert!(app_veil_label_visible(Rectangle::new(
+            Point::ORIGIN,
+            Size::new(160.0, 40.0)
+        )));
+        assert!(!app_veil_label_visible(Rectangle::new(
+            Point::ORIGIN,
+            Size::new(159.0, 40.0)
+        )));
+        assert!(!app_veil_label_visible(Rectangle::new(
+            Point::ORIGIN,
+            Size::new(160.0, 39.0)
+        )));
     }
 }

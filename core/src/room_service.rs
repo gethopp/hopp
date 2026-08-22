@@ -31,6 +31,7 @@ const TOPIC_PARTICIPANT_IN_CONTROL: &str = "participant_in_control";
 const TOPIC_TICK_RESPONSE: &str = "tick_response";
 const VIDEO_TRACK_NAME: &str = "screen_share";
 const TOPIC_DRAW: &str = "draw";
+const TOPIC_APP_VEIL: &str = "app_veil";
 const MAX_FRAMERATE: f64 = 40.0;
 const CAMERA_TRACK_NAME: &str = "camera";
 const CAMERA_MAX_BITRATE: u64 = 1_700_000;
@@ -39,6 +40,104 @@ const CAMERA_MAX_FRAMERATE: f64 = 30.0;
 // Bitrate constants (in bits per second)
 const AV1_BITRATE_DEFAULT: u64 = 5_000_000; // 5 Mbps
 const H264_BITRATE_DEFAULT: u64 = 12_000_000; // 12 Mbps
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct NormalizedRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppVeilWindow {
+    pub frame: NormalizedRect,
+    pub visible_fragments: Vec<NormalizedRect>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AppVeilSnapshot {
+    pub windows: Vec<AppVeilWindow>,
+    pub keyboard_input_blocked: bool,
+}
+
+fn canonical_participant_identity(identity: &str) -> &str {
+    identity
+        .strip_suffix(":audio")
+        .or_else(|| identity.strip_suffix(":video"))
+        .unwrap_or(identity)
+}
+
+fn participant_identities_match(left: &str, right: &str) -> bool {
+    canonical_participant_identity(left) == canonical_participant_identity(right)
+}
+
+fn sanitize_normalized_rect(rect: NormalizedRect) -> Option<NormalizedRect> {
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !rect.width.is_finite()
+        || !rect.height.is_finite()
+        || rect.width <= 0.0
+        || rect.height <= 0.0
+    {
+        return None;
+    }
+    let x = rect.x.clamp(0.0, 1.0);
+    let y = rect.y.clamp(0.0, 1.0);
+    let right = (rect.x + rect.width).clamp(0.0, 1.0);
+    let bottom = (rect.y + rect.height).clamp(0.0, 1.0);
+    (right > x && bottom > y).then_some(NormalizedRect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    })
+}
+
+fn intersect_normalized_rect(
+    rect: NormalizedRect,
+    bounds: NormalizedRect,
+) -> Option<NormalizedRect> {
+    let x = rect.x.max(bounds.x);
+    let y = rect.y.max(bounds.y);
+    let right = (rect.x + rect.width).min(bounds.x + bounds.width);
+    let bottom = (rect.y + rect.height).min(bounds.y + bounds.height);
+    (right > x && bottom > y).then_some(NormalizedRect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    })
+}
+
+fn sanitize_app_veil_snapshot(mut snapshot: AppVeilSnapshot) -> AppVeilSnapshot {
+    snapshot.windows = snapshot
+        .windows
+        .into_iter()
+        .filter_map(|window| {
+            let frame = sanitize_normalized_rect(window.frame)?;
+            let visible_fragments = window
+                .visible_fragments
+                .into_iter()
+                .filter_map(sanitize_normalized_rect)
+                .filter_map(|fragment| intersect_normalized_rect(fragment, frame))
+                .collect::<Vec<_>>();
+            (!visible_fragments.is_empty()).then_some(AppVeilWindow {
+                frame,
+                visible_fragments,
+            })
+        })
+        .collect();
+    snapshot
+}
+
+fn should_publish_app_veil_snapshot(
+    force: bool,
+    published: Option<&AppVeilSnapshot>,
+    current: &AppVeilSnapshot,
+) -> bool {
+    force || published != Some(current)
+}
 
 pub struct CreateRoomParams {
     pub token: String,
@@ -80,6 +179,7 @@ enum RoomServiceCommand {
     PublishPasteFromClipboard(PasteFromClipboardData),
     PublishClipboardData(ClipboardDataPayload),
     PublishClickAnimation(ClientPoint),
+    PublishAppVeilSnapshot { force: bool },
 }
 
 impl std::fmt::Debug for RoomServiceCommand {
@@ -115,6 +215,9 @@ impl std::fmt::Debug for RoomServiceCommand {
             Self::PublishPasteFromClipboard(..) => write!(f, "PublishPasteFromClipboard"),
             Self::PublishClipboardData(..) => write!(f, "PublishClipboardData"),
             Self::PublishClickAnimation(..) => write!(f, "PublishClickAnimation"),
+            Self::PublishAppVeilSnapshot { force } => {
+                write!(f, "PublishAppVeilSnapshot {{ force: {force} }}")
+            }
         }
     }
 }
@@ -130,6 +233,7 @@ struct RemoteScreenShare {
     buffer: Arc<std::sync::Mutex<Option<Arc<VideoBufferManager>>>>,
     stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
     publisher_identity: Arc<std::sync::Mutex<Option<String>>>,
+    app_veil_snapshot: Arc<std::sync::Mutex<Option<(String, AppVeilSnapshot)>>>,
 }
 
 /*
@@ -152,6 +256,8 @@ pub(crate) struct RoomServiceInner {
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
     snapshot_sender: SnapshotSender,
+    app_veil_snapshot: std::sync::Mutex<Option<AppVeilSnapshot>>,
+    published_app_veil_snapshot: std::sync::Mutex<Option<AppVeilSnapshot>>,
 }
 
 impl RoomServiceInner {
@@ -200,7 +306,14 @@ impl RoomServiceInner {
                 .lock()
                 .unwrap()
                 .take();
+            self.remote_screen_share
+                .app_veil_snapshot
+                .lock()
+                .unwrap()
+                .take();
         }
+        self.published_app_veil_snapshot.lock().unwrap().take();
+        self.app_veil_snapshot.lock().unwrap().take();
     }
 }
 
@@ -301,12 +414,15 @@ impl RoomService {
                 buffer: Arc::new(std::sync::Mutex::new(None)),
                 stop_tx: Arc::new(std::sync::Mutex::new(None)),
                 publisher_identity: Arc::new(std::sync::Mutex::new(None)),
+                app_veil_snapshot: Arc::new(std::sync::Mutex::new(None)),
             },
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             video_health_summary: std::sync::Mutex::new(Default::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
             cancel_connect: std::sync::Mutex::new(Vec::new()),
             snapshot_sender,
+            app_veil_snapshot: std::sync::Mutex::new(None),
+            published_app_veil_snapshot: std::sync::Mutex::new(None),
         });
         let audio_runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -321,6 +437,7 @@ impl RoomService {
         let (service_command_tx, service_command_rx) = mpsc::unbounded_channel();
         async_runtime.spawn(room_service_commands(
             service_command_rx,
+            service_command_tx.clone(),
             inner.clone(),
             livekit_server_url,
             audio_handle,
@@ -691,6 +808,45 @@ impl RoomService {
         }
     }
 
+    pub fn set_app_veil_snapshot(&self, snapshot: AppVeilSnapshot) {
+        let mut current = self.inner.app_veil_snapshot.lock().unwrap();
+        if current.as_ref() == Some(&snapshot) {
+            return;
+        }
+        *current = Some(snapshot);
+        drop(current);
+        if let Err(error) = self
+            .service_command_tx
+            .send(RoomServiceCommand::PublishAppVeilSnapshot { force: false })
+        {
+            log::error!("set_app_veil_snapshot: failed to send command: {error:?}");
+        }
+    }
+
+    pub fn app_veil_snapshot(&self) -> AppVeilSnapshot {
+        let publisher = self
+            .inner
+            .remote_screen_share
+            .publisher_identity
+            .lock()
+            .unwrap()
+            .clone();
+        let snapshot = self
+            .inner
+            .remote_screen_share
+            .app_veil_snapshot
+            .lock()
+            .unwrap();
+        match (publisher, snapshot.as_ref()) {
+            (Some(publisher), Some((sender, snapshot)))
+                if participant_identities_match(&publisher, sender) =>
+            {
+                snapshot.clone()
+            }
+            _ => AppVeilSnapshot::default(),
+        }
+    }
+
     /// Retrieves the camera video source buffer.
     pub fn get_camera_buffer_source(&self) -> Option<NativeVideoSource> {
         log::info!("get_camera_buffer_source");
@@ -784,6 +940,7 @@ impl RoomService {
 /// active room connection.
 async fn room_service_commands(
     mut service_rx: mpsc::UnboundedReceiver<RoomServiceCommand>,
+    service_command_tx: mpsc::UnboundedSender<RoomServiceCommand>,
     inner: Arc<RoomServiceInner>,
     livekit_server_url: String,
     audio_handle: tokio::runtime::Handle,
@@ -1158,10 +1315,12 @@ async fn room_service_commands(
                         buffer: inner.remote_screen_share.buffer.clone(),
                         stop_tx: inner.remote_screen_share.stop_tx.clone(),
                         publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
+                        app_veil_snapshot: inner.remote_screen_share.app_veil_snapshot.clone(),
                     },
                     connection_quality: inner.connection_quality.clone(),
                     audio_handle: audio_handle.clone(),
                     inner: inner.clone(),
+                    service_command_tx: service_command_tx.clone(),
                 }));
                 log::info!("room_service_commands: Spawned handle_room_events");
                 if let Some(video_rx) = video_rx_opt {
@@ -1705,6 +1864,49 @@ async fn room_service_commands(
                     log::error!("room_service_commands: Failed to publish click animation: {e:?}");
                 }
             }
+            RoomServiceCommand::PublishAppVeilSnapshot { force } => {
+                let Some(snapshot) = inner.app_veil_snapshot.lock().unwrap().clone() else {
+                    continue;
+                };
+                if !should_publish_app_veil_snapshot(
+                    force,
+                    inner.published_app_veil_snapshot.lock().unwrap().as_ref(),
+                    &snapshot,
+                ) {
+                    continue;
+                }
+                let payload = match serde_json::to_vec(&snapshot) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        log::error!(
+                            "room_service_commands: Failed to serialize App Veil snapshot: {error:?}"
+                        );
+                        continue;
+                    }
+                };
+                let room = inner.room.lock().await;
+                let Some(room) = room.as_ref() else {
+                    log::warn!("room_service_commands: Room doesn't exist for App Veil snapshot");
+                    continue;
+                };
+                match room
+                    .local_participant()
+                    .publish_data(DataPacket {
+                        payload,
+                        reliable: true,
+                        topic: Some(TOPIC_APP_VEIL.to_string()),
+                        ..Default::default()
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        *inner.published_app_veil_snapshot.lock().unwrap() = Some(snapshot);
+                    }
+                    Err(error) => log::error!(
+                        "room_service_commands: Failed to publish App Veil snapshot: {error:?}"
+                    ),
+                }
+            }
         }
     }
 }
@@ -1963,6 +2165,14 @@ fn start_remote_screen_share_stream(
 
     *remote_screen_share.publisher_identity.lock().unwrap() =
         Some(participant_identity.to_string());
+    let mut app_veil_snapshot = remote_screen_share.app_veil_snapshot.lock().unwrap();
+    if app_veil_snapshot
+        .as_ref()
+        .is_some_and(|(sender, _)| !participant_identities_match(sender, participant_identity))
+    {
+        app_veil_snapshot.take();
+    }
+    drop(app_veil_snapshot);
 
     let (stop_tx, stop_rx) = mpsc::unbounded_channel();
     *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
@@ -2027,6 +2237,7 @@ struct RoomEventContext {
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
     audio_handle: TokioHandle,
     inner: Arc<RoomServiceInner>,
+    service_command_tx: mpsc::UnboundedSender<RoomServiceCommand>,
 }
 
 fn camera_quality(active: usize) -> VideoQuality {
@@ -2101,6 +2312,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
         connection_quality,
         audio_handle,
         inner,
+        service_command_tx,
     } = ctx;
     while let Some(msg) = receiver.recv().await {
         match msg {
@@ -2110,6 +2322,50 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 kind: _,
                 participant,
             } => {
+                if topic.as_deref() == Some(TOPIC_APP_VEIL) {
+                    let Some(participant) = participant else {
+                        log::warn!("handle_room_events: App Veil sender is missing");
+                        continue;
+                    };
+                    let sender = participant.identity().as_str().to_string();
+                    if sender == user_identity {
+                        continue;
+                    }
+                    let snapshot = match serde_json::from_slice::<AppVeilSnapshot>(&payload) {
+                        Ok(snapshot) => sanitize_app_veil_snapshot(snapshot),
+                        Err(error) => {
+                            log::warn!("handle_room_events: Invalid App Veil snapshot: {error:?}");
+                            continue;
+                        }
+                    };
+                    let publisher = remote_screen_share
+                        .publisher_identity
+                        .lock()
+                        .unwrap()
+                        .clone();
+                    if publisher
+                        .as_deref()
+                        .is_some_and(|publisher| !participant_identities_match(publisher, &sender))
+                    {
+                        log::debug!(
+                            "handle_room_events: Ignoring App Veil snapshot from non-sharer {sender}"
+                        );
+                        continue;
+                    }
+                    *remote_screen_share.app_veil_snapshot.lock().unwrap() =
+                        Some((sender, snapshot.clone()));
+                    if publisher.is_some() {
+                        if let Err(error) =
+                            event_loop_proxy.send_event(UserEvent::AppVeilSnapshot(snapshot))
+                        {
+                            log::error!(
+                                "handle_room_events: Failed to send AppVeilSnapshot: {error:?}"
+                            );
+                        }
+                    }
+                    continue;
+                }
+
                 // participant_in_control uses raw UTF-8 identity, not JSON. Handle before deserialize.
                 // TODO(@konsalex): Maybe follow a JSON  type
                 // type, payload approach to be easier to work with?
@@ -2268,11 +2524,40 @@ async fn handle_room_events(ctx: RoomEventContext) {
 
                 snapshot_sender.send_participants_snapshot();
             }
+            RoomEvent::ParticipantActive(_) => {
+                let _ = service_command_tx
+                    .send(RoomServiceCommand::PublishAppVeilSnapshot { force: true });
+            }
             RoomEvent::ParticipantDisconnected(participant) => {
                 let identity = participant.identity().as_str().to_string();
                 let name = participant.name();
 
                 log::info!("handle_room_events: Participant disconnected: {}", identity);
+
+                let disconnected_current_sharer = remote_screen_share
+                    .publisher_identity
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|publisher| participant_identities_match(publisher, &identity));
+                if disconnected_current_sharer {
+                    if let Some(tx) = remote_screen_share.stop_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    remote_screen_share
+                        .publisher_identity
+                        .lock()
+                        .unwrap()
+                        .take();
+                    remote_screen_share.app_veil_snapshot.lock().unwrap().take();
+                    if let Err(error) =
+                        event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                    {
+                        log::error!(
+                            "handle_room_events: Failed to send CloseScreenShareWindow event: {error:?}"
+                        );
+                    }
+                }
 
                 // Stop streams and remove from HashMap
                 let any_camera_active_after = {
@@ -2420,6 +2705,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                 .lock()
                                 .unwrap()
                                 .take();
+                            remote_screen_share.app_veil_snapshot.lock().unwrap().take();
                         }
 
                         // Derive the audio participant identity to clear is_screensharing
@@ -2687,6 +2973,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                         .lock()
                                         .unwrap()
                                         .take();
+                                    remote_screen_share.app_veil_snapshot.lock().unwrap().take();
 
                                     // Derive audio identity to clear is_screensharing
                                     let audio_identity = participant_identity
@@ -2753,8 +3040,132 @@ async fn handle_room_events(ctx: RoomEventContext) {
                 log::info!("Connection quality changed: {:?}", quality);
                 *connection_quality.lock().unwrap() = Some(quality);
             }
+            RoomEvent::Reconnected => {
+                let _ = service_command_tx
+                    .send(RoomServiceCommand::PublishAppVeilSnapshot { force: true });
+            }
             _ => {}
         }
     }
     log::info!("handle_room_events: ended")
+}
+
+#[cfg(test)]
+mod app_veil_tests {
+    use super::*;
+
+    fn window(frame: NormalizedRect, visible_fragments: Vec<NormalizedRect>) -> AppVeilWindow {
+        AppVeilWindow {
+            frame,
+            visible_fragments,
+        }
+    }
+
+    fn snapshot(windows: Vec<AppVeilWindow>) -> AppVeilSnapshot {
+        AppVeilSnapshot {
+            windows,
+            keyboard_input_blocked: false,
+        }
+    }
+
+    #[test]
+    fn app_veil_snapshot_round_trips_without_client_event_wrapper() {
+        let rect = NormalizedRect {
+            x: 0.1,
+            y: 0.2,
+            width: 0.3,
+            height: 0.4,
+        };
+        let expected = snapshot(vec![window(rect, vec![rect])]);
+        let payload = serde_json::to_vec(&expected).unwrap();
+
+        assert_eq!(
+            serde_json::from_slice::<AppVeilSnapshot>(&payload).unwrap(),
+            expected
+        );
+        assert!(!String::from_utf8(payload).unwrap().contains("type"));
+    }
+
+    #[test]
+    fn app_veil_snapshot_sanitizes_untrusted_rectangles() {
+        let sanitized = sanitize_app_veil_snapshot(snapshot(vec![window(
+            NormalizedRect {
+                x: -0.1,
+                y: 0.8,
+                width: 0.4,
+                height: 0.4,
+            },
+            vec![
+                NormalizedRect {
+                    x: -0.1,
+                    y: 0.8,
+                    width: 0.4,
+                    height: 0.4,
+                },
+                NormalizedRect {
+                    x: f32::NAN,
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+                NormalizedRect {
+                    x: 0.2,
+                    y: 0.2,
+                    width: 0.0,
+                    height: 0.5,
+                },
+                NormalizedRect {
+                    x: 2.0,
+                    y: 2.0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+            ],
+        )]));
+
+        assert_eq!(sanitized.windows.len(), 1);
+        let rect = sanitized.windows[0].frame;
+        assert_eq!((rect.x, rect.y), (0.0, 0.8));
+        assert!((rect.width - 0.3).abs() < f32::EPSILON);
+        assert!((rect.height - 0.2).abs() < f32::EPSILON);
+        assert_eq!(sanitized.windows[0].visible_fragments, vec![rect]);
+    }
+
+    #[test]
+    fn app_veil_identity_matching_ignores_media_suffix() {
+        assert!(participant_identities_match("person:audio", "person:video"));
+        assert!(participant_identities_match("person", "person:audio"));
+        assert!(!participant_identities_match(
+            "person-a:audio",
+            "person-b:video"
+        ));
+    }
+
+    #[test]
+    fn app_veil_publication_deduplicates_unless_forced() {
+        let current = snapshot(vec![]);
+        let rect = NormalizedRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        };
+        let changed = snapshot(vec![window(rect, vec![rect])]);
+
+        assert!(!should_publish_app_veil_snapshot(
+            false,
+            Some(&current),
+            &current
+        ));
+        assert!(should_publish_app_veil_snapshot(
+            false,
+            Some(&current),
+            &changed
+        ));
+        assert!(should_publish_app_veil_snapshot(
+            true,
+            Some(&current),
+            &current
+        ));
+    }
 }

@@ -356,6 +356,10 @@ impl Capturer {
         !self.app_veil_filter.excluded_bundle_ids.is_empty()
     }
 
+    pub fn app_veil_bundle_ids(&self) -> &[String] {
+        &self.app_veil_filter.excluded_bundle_ids
+    }
+
     pub fn refresh_app_veil_filter(&mut self) {
         let Some(stream) = self.active_stream.as_mut() else {
             return;
