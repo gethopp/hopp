@@ -403,10 +403,20 @@ function AppVeilSettings({
   );
 }
 
+type SectionId = "call" | "app-veil" | "shortcuts" | "misc";
+
+const SECTIONS: { id: SectionId; title: string; macOnly?: boolean }[] = [
+  { id: "call", title: "Call settings" },
+  { id: "app-veil", title: "App Veil", macOnly: true },
+  { id: "shortcuts", title: "Shortcuts" },
+  { id: "misc", title: "Miscellaneous" },
+];
+
 function SettingsWindow() {
   useDisableNativeContextMenu();
 
   const [serverUrl, setServerUrl] = useState("");
+  const [section, setSection] = useState<SectionId>("call");
 
   const { data: settings, refetch: refetchSettings } = useQuery({
     queryKey: ["user-settings"],
@@ -456,221 +466,224 @@ function SettingsWindow() {
 
   if (!settings) return null;
 
+  const visibleSections = SECTIONS.filter((s) => !s.macOnly || OS === "macos");
+
   return (
-    <div className="h-full min-h-full overflow-y-auto text-black dark:text-white flex flex-col">
+    <div className="h-full min-h-full overflow-hidden text-black dark:text-white flex flex-col">
       <div data-tauri-drag-region className="h-[32px] min-w-full w-full" />
 
-      <div className="flex-1 flex flex-col px-5 pb-5 py-4">
-        <h1 className="text-[22px] font-semibold mb-6  text-black dark:text-white">Settings</h1>
+      <div className="flex-1 flex flex-col min-h-0 px-5 pb-5 py-4">
+        <h1 className="text-[22px] font-semibold mb-6 text-black dark:text-white">Settings</h1>
 
-        <div className="flex flex-col gap-5">
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Call settings</h3>
-            <div className="flex flex-col gap-3">
-              <CheckboxRow
-                title="Call feedback popup"
-                description="Show a feedback popup when call ends"
-                checked={settings.call_feedback_popup}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_call_feedback_popup", { enabled: v }).then(() => refetchSettings());
+        <div className="flex-1 flex min-h-0 gap-8">
+          <nav className="w-[150px] shrink-0 flex flex-col gap-1">
+            {visibleSections.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                className={`rounded-md px-3 py-1.5 text-left text-sm ${
+                  section === s.id ?
+                    "bg-gray-200 font-medium text-black dark:bg-gray-700 dark:text-white"
+                  : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                }`}
+              >
+                {s.title}
+              </button>
+            ))}
+          </nav>
+
+          <main className="flex-1 min-w-0 overflow-y-auto pr-1">
+            {section === "call" && (
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-3">
+                  <h3 className="text-base font-medium text-black dark:text-white">Call settings</h3>
+                  <CheckboxRow
+                    title="Call feedback popup"
+                    description="Show a feedback popup when call ends"
+                    checked={settings.call_feedback_popup}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_call_feedback_popup", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                  <CheckboxRow
+                    title="Show dock icon when in call"
+                    description="Hide dock icon to save space when you are in a call"
+                    checked={settings.show_dock_icon_in_call}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_show_dock_icon_in_call", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                </div>
+
+                <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+                <div className="flex flex-col gap-3">
+                  <h3 className="text-base font-medium text-black dark:text-white">Camera settings</h3>
+                  <CheckboxRow
+                    title="Start camera on call start"
+                    description="Open camera when you start the call"
+                    checked={settings.start_camera_on_call}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_start_camera_on_call", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                </div>
+
+                <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+                <div className="flex flex-col gap-3">
+                  <h3 className="text-base font-medium text-black dark:text-white">Audio settings</h3>
+                  <CheckboxRow
+                    title="Start microphone on call start"
+                    description="Unmute microphone when you start the call"
+                    checked={settings.start_mic_on_call}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                  <CheckboxRow
+                    title="Noise cancellation"
+                    description="Noise suppression on microphone input"
+                    checked={settings.noise_cancellation_enabled}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                </div>
+
+                <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
+
+                <div className="flex flex-col gap-3">
+                  <h3 className="text-base font-medium text-black dark:text-white">Screen share settings</h3>
+                  <CheckboxRow
+                    title="Enable remote control by default"
+                    description="Allow teammates to control your computer when screen sharing starts"
+                    checked={settings.remote_control_enabled}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_remote_control_enabled", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                  <ResolutionRow
+                    value={settings.screen_share_resolution}
+                    onValueChange={(resolution) => {
+                      typedInvoke("set_screen_share_resolution", { resolution }).then(() => refetchSettings());
+                    }}
+                  />
+                  {OS === "macos" && (
+                    <PickerModeRow
+                      value={settings.screen_share_picker_mode}
+                      onValueChange={(mode) => {
+                        typedInvoke("set_screen_share_picker_mode", { mode }).then(() => refetchSettings());
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {section === "app-veil" && OS === "macos" && (
+              <AppVeilSettings
+                rows={settings.app_veil_applications}
+                installedApplications={installedApplications}
+                onChange={async (applications) => {
+                  try {
+                    await typedInvoke("set_app_veil_applications", { applications });
+                  } finally {
+                    await refetchSettings();
+                  }
                 }}
               />
-              <CheckboxRow
-                title="Show dock icon when in call"
-                description="Hide dock icon to save space when you are in a call"
-                checked={settings.show_dock_icon_in_call}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_show_dock_icon_in_call", { enabled: v }).then(() => refetchSettings());
-                }}
-              />
-            </div>
-          </div>
+            )}
 
-          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Camera settings</h3>
-            <div className="flex flex-col gap-3">
-              <CheckboxRow
-                title="Start camera on call start"
-                description="Open camera when you start the call"
-                checked={settings.start_camera_on_call}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_start_camera_on_call", { enabled: v }).then(() => refetchSettings());
-                }}
-              />
-            </div>
-          </div>
-
-          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Audio settings</h3>
-            <div className="flex flex-col gap-3">
-              <CheckboxRow
-                title="Start microphone on call start"
-                description="Unmute microphone when you start the call"
-                checked={settings.start_mic_on_call}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_start_mic_on_call", { enabled: v }).then(() => refetchSettings());
-                }}
-              />
-              <CheckboxRow
-                title="Noise cancellation"
-                description="Noise suppression on microphone input"
-                checked={settings.noise_cancellation_enabled}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_noise_cancellation", { enabled: v }).then(() => refetchSettings());
-                }}
-              />
-            </div>
-          </div>
-
-          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Screen share settings</h3>
-            <div className="flex flex-col gap-3">
-              <CheckboxRow
-                title="Enable remote control by default"
-                description="Allow teammates to control your computer when screen sharing starts"
-                checked={settings.remote_control_enabled}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_remote_control_enabled", { enabled: v }).then(() => refetchSettings());
-                }}
-              />
-              <ResolutionRow
-                value={settings.screen_share_resolution}
-                onValueChange={(resolution) => {
-                  typedInvoke("set_screen_share_resolution", { resolution }).then(() => refetchSettings());
-                }}
-              />
-              {OS === "macos" && (
-                <PickerModeRow
-                  value={settings.screen_share_picker_mode}
-                  onValueChange={(mode) => {
-                    typedInvoke("set_screen_share_picker_mode", { mode }).then(() => refetchSettings());
-                  }}
+            {section === "shortcuts" && (
+              <div className="flex flex-col gap-3">
+                <ShortcutRow
+                  title="Mute / unmute mic"
+                  description="Toggle microphone during call"
+                  value={settings.shortcut_toggle_mic}
+                  onCommit={(accel) => commitShortcut("mic", accel)}
                 />
-              )}
-            </div>
-          </div>
-
-          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-
-          {OS === "macos" && (
-            <>
-              <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-                <h3 className="text-base font-medium text-black dark:text-white">App Veil</h3>
-                <AppVeilSettings
-                  rows={settings.app_veil_applications}
-                  installedApplications={installedApplications}
-                  onChange={async (applications) => {
-                    try {
-                      await typedInvoke("set_app_veil_applications", { applications });
-                    } finally {
-                      await refetchSettings();
-                    }
-                  }}
+                <ShortcutRow
+                  title="Toggle camera"
+                  description="Turn camera on or off during call"
+                  value={settings.shortcut_toggle_camera}
+                  onCommit={(accel) => commitShortcut("camera", accel)}
+                />
+                <ShortcutRow
+                  title="Toggle screen share"
+                  description="Start or stop screen sharing"
+                  value={settings.shortcut_toggle_screenshare}
+                  onCommit={(accel) => commitShortcut("screenshare", accel)}
+                />
+                <ShortcutRow
+                  title="End call"
+                  description="Leave the current call"
+                  value={settings.shortcut_end_call}
+                  onCommit={(accel) => commitShortcut("end_call", accel)}
                 />
               </div>
+            )}
 
-              <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-            </>
-          )}
-
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Shortcuts</h3>
-            <div className="flex flex-col gap-3">
-              <ShortcutRow
-                title="Mute / unmute mic"
-                description="Toggle microphone during call"
-                value={settings.shortcut_toggle_mic}
-                onCommit={(accel) => commitShortcut("mic", accel)}
-              />
-              <ShortcutRow
-                title="Toggle camera"
-                description="Turn camera on or off during call"
-                value={settings.shortcut_toggle_camera}
-                onCommit={(accel) => commitShortcut("camera", accel)}
-              />
-              <ShortcutRow
-                title="Toggle screen share"
-                description="Start or stop screen sharing"
-                value={settings.shortcut_toggle_screenshare}
-                onCommit={(accel) => commitShortcut("screenshare", accel)}
-              />
-              <ShortcutRow
-                title="End call"
-                description="Leave the current call"
-                value={settings.shortcut_end_call}
-                onCommit={(accel) => commitShortcut("end_call", accel)}
-              />
-            </div>
-          </div>
-
-          <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
-
-          <div className="grid grid-cols-[minmax(100px,140px)_1fr] gap-8">
-            <h3 className="text-base font-medium text-black dark:text-white">Miscellaneous</h3>
-            <div className="flex flex-col gap-3">
-              <CheckboxRow
-                title="Send anonymous telemetry"
-                description="Help improve Hopp by sending anonymous usage data and error reports"
-                checked={settings.telemetry_enabled}
-                onCheckedChange={(v) => {
-                  typedInvoke("set_telemetry_enabled", { enabled: v }).then(() => {
-                    refetchSettings();
-                    if (v) {
-                      posthog.opt_in_capturing();
-                    } else {
-                      posthog.opt_out_capturing();
-                    }
-                  });
-                }}
-              />
-              {OS === "macos" && (
+            {section === "misc" && (
+              <div className="flex flex-col gap-3">
                 <CheckboxRow
-                  title="Automatic updates"
-                  description="Download and install updates automatically when you're not in a call"
-                  checked={settings.auto_update_enabled}
+                  title="Send anonymous telemetry"
+                  description="Help improve Hopp by sending anonymous usage data and error reports"
+                  checked={settings.telemetry_enabled}
                   onCheckedChange={(v) => {
-                    typedInvoke("set_auto_update_enabled", { enabled: v }).then(() => refetchSettings());
+                    typedInvoke("set_telemetry_enabled", { enabled: v }).then(() => {
+                      refetchSettings();
+                      if (v) {
+                        posthog.opt_in_capturing();
+                      } else {
+                        posthog.opt_out_capturing();
+                      }
+                    });
                   }}
                 />
-              )}
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Backend URL</span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  Change backend server. Leave empty to use default.
-                </span>
-                <Input
-                  type="text"
-                  placeholder={URLS.API_BASE_URL}
-                  value={serverUrl}
-                  onChange={(e) => setServerUrl(e.target.value)}
-                  onKeyDown={async (e) => {
-                    if (e.key === "Enter") {
+                {OS === "macos" && (
+                  <CheckboxRow
+                    title="Automatic updates"
+                    description="Download and install updates automatically when you're not in a call"
+                    checked={settings.auto_update_enabled}
+                    onCheckedChange={(v) => {
+                      typedInvoke("set_auto_update_enabled", { enabled: v }).then(() => refetchSettings());
+                    }}
+                  />
+                )}
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Backend URL</span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    Change backend server. Leave empty to use default.
+                  </span>
+                  <Input
+                    type="text"
+                    placeholder={URLS.API_BASE_URL}
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter") {
+                        const trimmed = serverUrl.trim() || null;
+                        await tauriUtils.setHoppServerUrl(trimmed);
+                        useStore.getState().setCustomServerUrl(trimmed);
+                        posthog.capture("custom_backend_url_changed");
+                        refetchSettings();
+                      }
+                    }}
+                    onBlur={async () => {
                       const trimmed = serverUrl.trim() || null;
-                      await tauriUtils.setHoppServerUrl(trimmed);
-                      useStore.getState().setCustomServerUrl(trimmed);
-                      posthog.capture("custom_backend_url_changed");
-                      refetchSettings();
-                    }
-                  }}
-                  onBlur={async () => {
-                    const trimmed = serverUrl.trim() || null;
-                    if (trimmed !== settings.hopp_server_url) {
-                      await tauriUtils.setHoppServerUrl(trimmed);
-                      useStore.getState().setCustomServerUrl(trimmed);
-                      posthog.capture("custom_backend_url_changed");
-                      refetchSettings();
-                    }
-                  }}
-                />
+                      if (trimmed !== settings.hopp_server_url) {
+                        await tauriUtils.setHoppServerUrl(trimmed);
+                        useStore.getState().setCustomServerUrl(trimmed);
+                        posthog.capture("custom_backend_url_changed");
+                        refetchSettings();
+                      }
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </main>
         </div>
       </div>
     </div>
