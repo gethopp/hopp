@@ -407,7 +407,7 @@ type SectionId = "call" | "app-veil" | "shortcuts" | "misc";
 
 const SECTIONS: { id: SectionId; title: string; macOnly?: boolean }[] = [
   { id: "call", title: "Call settings" },
-  { id: "app-veil", title: "App Veil", macOnly: true },
+  { id: "app-veil", title: "App Veil (beta)", macOnly: true },
   { id: "shortcuts", title: "Shortcuts" },
   { id: "misc", title: "Miscellaneous" },
 ];
