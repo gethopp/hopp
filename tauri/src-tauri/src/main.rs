@@ -19,7 +19,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::{AppState, UserSettings},
+    app_state::{AppState, AppVeilApplication, UserSettings},
+    application_catalog::InstalledApplication,
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
     recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
 };
@@ -694,6 +695,30 @@ fn get_user_settings(app: tauri::AppHandle) -> UserSettings {
 }
 
 #[tauri::command(async)]
+fn list_installed_applications() -> Result<Vec<InstalledApplication>, String> {
+    Ok(hopp::application_catalog::list_installed_applications())
+}
+
+#[tauri::command(async)]
+fn set_app_veil_applications(
+    app: tauri::AppHandle,
+    applications: Vec<AppVeilApplication>,
+) -> Result<(), String> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    let enabled_bundle_ids = data.app_state.set_app_veil_applications(applications)?;
+    data.sender
+        .send(Message::SetAppVeilBundleIds(enabled_bundle_ids))
+        .map_err(|error| {
+            log::error!("set_app_veil_applications: failed to send settings: {error:?}");
+            sentry_utils::simple_event(format!(
+                "Failed to send App Veil settings to core: {error}"
+            ));
+            "App Veil was saved but could not be applied until Hopp restarts".to_string()
+        })
+}
+
+#[tauri::command(async)]
 fn set_shortcut_toggle_mic(app: tauri::AppHandle, accel: String) {
     log::info!("set_shortcut_toggle_mic: {accel}");
     let data = app.state::<Mutex<AppData>>();
@@ -1159,6 +1184,12 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     );
                 }
             }
+            Message::AppVeilFailed(reason) => {
+                log::error!("forward_core_events: app veil failed: {reason}");
+                if let Err(e) = app.emit("core_app_veil_failed", &reason) {
+                    log::error!("forward_core_events: failed to emit app veil failed: {e:?}");
+                }
+            }
             Message::QueryPreferredCamera => {
                 log::info!("forward_core_events: query preferred camera");
                 let data = app.state::<Mutex<AppData>>();
@@ -1365,6 +1396,16 @@ fn main() {
             let screen_share_picker_mode = app_state.user_settings().screen_share_picker_mode;
             if let Err(e) = sender.send(Message::SetScreenSharePickerMode(screen_share_picker_mode)) {
                 log::error!("Failed to send initial screen_share_picker_mode: {e:?}");
+            }
+            let app_veil_bundle_ids = app_state
+                .user_settings()
+                .app_veil_applications
+                .into_iter()
+                .filter(|application| application.enabled)
+                .map(|application| application.bundle_id)
+                .collect();
+            if let Err(e) = sender.send(Message::SetAppVeilBundleIds(app_veil_bundle_ids)) {
+                log::error!("Failed to send initial App Veil settings: {e:?}");
             }
             if let Err(e) = sender.send(Message::ControllerDrawPersistChanged(app_state.controller_draw_persist())) {
                 log::error!("Failed to send initial controller_draw_persist: {e:?}");
@@ -1672,6 +1713,8 @@ fn main() {
             create_feedback_window,
             create_settings_window,
             get_user_settings,
+            list_installed_applications,
+            set_app_veil_applications,
             set_call_feedback_popup,
             set_telemetry_enabled,
             set_show_dock_icon_in_call,

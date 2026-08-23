@@ -16,7 +16,16 @@ use std::sync::{
     mpsc, Arc, Mutex,
 };
 
-use super::CapturerError;
+use super::{AppVeilCaptureFilter, CapturerError};
+
+const HOPP_BUNDLE_ID: &str = "com.hopp.app";
+
+fn should_exclude_application(bundle_id: &str, excluded_bundle_ids: &[String]) -> bool {
+    bundle_id != HOPP_BUNDLE_ID
+        && excluded_bundle_ids
+            .iter()
+            .any(|excluded| excluded == bundle_id)
+}
 
 #[allow(dead_code)]
 pub enum StreamRuntimeMessage {
@@ -130,6 +139,7 @@ pub struct Stream {
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
     target_process_id: Option<i32>,
+    app_veil_filter: AppVeilCaptureFilter,
 }
 
 impl Stream {
@@ -139,6 +149,7 @@ impl Stream {
         scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
+        app_veil_filter: AppVeilCaptureFilter,
     ) -> Result<Self, CapturerError> {
         Ok(Stream {
             sc_stream: None,
@@ -155,7 +166,34 @@ impl Stream {
             })),
             scale,
             target_process_id: None,
+            app_veil_filter,
         })
+    }
+
+    fn display_filter(
+        &self,
+        shareable_content: &SCShareableContent,
+    ) -> Result<SCContentFilter, CapturerError> {
+        let display = shareable_content
+            .displays()
+            .into_iter()
+            .find(|display| display.display_id() == self.source.id)
+            .ok_or(CapturerError::SelectedSourceNotFound)?;
+        let applications = shareable_content
+            .applications()
+            .into_iter()
+            .filter(|application| {
+                should_exclude_application(
+                    &application.bundle_identifier(),
+                    &self.app_veil_filter.excluded_bundle_ids,
+                )
+            })
+            .collect::<Vec<_>>();
+        let application_refs = applications.iter().collect::<Vec<_>>();
+        Ok(SCContentFilter::create()
+            .with_display(&display)
+            .with_excluding_applications(&application_refs, &[])
+            .build())
     }
 
     pub fn start_capture(&mut self) -> Result<(), CapturerError> {
@@ -186,10 +224,7 @@ impl Stream {
                     self.stream_resolution.width as u32,
                     self.stream_resolution.height as u32,
                 );
-                let filter = SCContentFilter::create()
-                    .with_display(&display)
-                    .with_excluding_windows(&[])
-                    .build();
+                let filter = self.display_filter(&shareable_content)?;
                 (width, height, filter, false)
             }
             ContentType::Window => {
@@ -464,6 +499,28 @@ impl Stream {
         }
     }
 
+    pub fn update_app_veil_filter(
+        &mut self,
+        app_veil_filter: AppVeilCaptureFilter,
+    ) -> Result<(), CapturerError> {
+        self.app_veil_filter = app_veil_filter;
+        if !matches!(self.source.content_type, ContentType::Display) {
+            return Ok(());
+        }
+        let Some(stream) = self.sc_stream.as_ref() else {
+            return Ok(());
+        };
+        let shareable_content = SCShareableContent::get().map_err(|error| {
+            log::error!("update_app_veil_filter: failed to get shareable content: {error}");
+            CapturerError::DesktopCapturerCreationError
+        })?;
+        let filter = self.display_filter(&shareable_content)?;
+        stream.update_content_filter(&filter).map_err(|error| {
+            log::error!("update_app_veil_filter: SCK filter update failed: {error}");
+            CapturerError::DesktopCapturerCreationError
+        })
+    }
+
     pub fn stop_capture(&mut self) {
         if let Some(ref stream) = self.sc_stream {
             if let Err(e) = stream.stop_capture() {
@@ -491,6 +548,7 @@ impl Stream {
             output_extent: self.output_extent.clone(),
             scale: self.scale,
             target_process_id: self.target_process_id,
+            app_veil_filter: self.app_veil_filter.clone(),
         })
     }
 
@@ -512,5 +570,22 @@ impl Stream {
 
     pub fn target_window_id(&self) -> Option<u32> {
         matches!(self.source.content_type, ContentType::Window).then_some(self.source.id)
+    }
+}
+
+#[cfg(test)]
+mod app_veil_tests {
+    use super::*;
+
+    #[test]
+    fn bundle_matching_is_exact_and_never_excludes_hopp() {
+        let excluded = vec!["com.example.Mail".to_string(), HOPP_BUNDLE_ID.to_string()];
+
+        assert!(should_exclude_application("com.example.Mail", &excluded));
+        assert!(!should_exclude_application(
+            "com.example.Mail.helper",
+            &excluded
+        ));
+        assert!(!should_exclude_application(HOPP_BUNDLE_ID, &excluded));
     }
 }

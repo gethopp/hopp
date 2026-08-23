@@ -10,7 +10,7 @@ use livekit::webrtc::{
 };
 use std::sync::{mpsc, Arc, Mutex};
 
-use super::CapturerError;
+use super::{AppVeilCaptureFilter, CapturerError};
 use socket_lib::{Content, ContentType};
 
 const FRAME_CAPTURE_INTERVAL_MS: u64 = 18;
@@ -320,6 +320,7 @@ impl Stream {
         _scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
+        _app_veil_filter: AppVeilCaptureFilter,
     ) -> Result<Self, CapturerError> {
         let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
         let frame = Arc::new(Mutex::new(Frame {
@@ -482,6 +483,13 @@ impl Stream {
         };
 
         Ok(new_stream)
+    }
+
+    pub fn update_app_veil_filter(
+        &mut self,
+        _app_veil_filter: AppVeilCaptureFilter,
+    ) -> Result<(), CapturerError> {
+        Ok(())
     }
 
     /// Returns the current count of consecutive capture failures.

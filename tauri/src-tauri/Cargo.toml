@@ -21,8 +21,8 @@ smappservice-rs = "0.1.2"
 accessibility-sys = "0.2.0"
 av-foundation = "0.5.2"
 core-graphics = "0.24.0"
-objc2-app-kit = { version = "0.3.1", features = ["NSApplication"] }
-objc2-foundation = { version = "0.3.1", features = ["NSNotification", "NSString", "NSOperation", "block2"] }
+objc2-app-kit = { version = "0.3.1", features = ["NSApplication", "NSBitmapImageRep", "NSColorSpace", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.1", features = ["NSData", "NSDictionary", "NSBundle", "NSGeometry", "NSNotification", "NSOperation", "NSString", "NSURL", "NSValue", "block2"] }
 objc2-quartz-core = { version = "0.3.1", features = ["objc2-core-foundation"] }
 objc2 = "0.6.1"
 block2 = "0.6"

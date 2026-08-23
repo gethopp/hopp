@@ -120,6 +120,24 @@ export function CallCenter() {
     };
   }, []);
 
+  useEffect(() => {
+    const unlisten = listen<string>("core_app_veil_failed", async (event) => {
+      const windows = await getAllWindows();
+      const main = windows.find((w) => w.label === "main");
+      if (main) {
+        const focused = await main.isFocused();
+        if (!focused) {
+          await main.show();
+          await main.setFocus();
+        }
+      }
+      toast.error(event.payload || "App Veil is unavailable", { duration: 6000 });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   if (!callTokens) return null;
 
   return (

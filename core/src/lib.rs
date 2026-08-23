@@ -16,6 +16,10 @@ pub mod livekit {
 pub mod room_service;
 mod snapshot_sender;
 
+#[cfg(target_os = "macos")]
+#[path = "app_veil/macos.rs"]
+mod app_veil;
+
 pub mod input {
     pub mod clipboard;
     pub mod keyboard;
@@ -29,6 +33,8 @@ pub mod camera {
 
 pub mod capture {
     pub mod capturer;
+    #[cfg(target_os = "macos")]
+    pub(crate) mod running_applications_observer;
 }
 
 pub mod graphics {
@@ -57,6 +63,8 @@ pub(crate) mod overlay_window;
 pub(crate) mod window_manager;
 pub(crate) mod windows;
 
+#[cfg(target_os = "macos")]
+use app_veil::AppVeilHost;
 use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer, MonitorId, ScreenshareExt, ScreenshareFunctions};
 use graphics::graphics_context::participant::CursorMode;
@@ -227,32 +235,40 @@ fn subtract_frame(frame: Frame, occluder: Frame, output: &mut Vec<Frame>) {
     );
 }
 
-fn visible_windows(windows: Vec<SelectableWindow>) -> Vec<SelectableWindow> {
+fn visible_window_fragments(windows: Vec<SelectableWindow>) -> Vec<(SelectableWindow, Vec<Frame>)> {
     let mut occluders = Vec::with_capacity(windows.len());
-    windows
-        .into_iter()
-        .filter(|window| {
-            if !valid_selection_frame(window.frame) {
-                return false;
-            }
+    let mut visible = Vec::with_capacity(windows.len());
+    for window in windows {
+        if !valid_selection_frame(window.frame) {
+            continue;
+        }
 
-            // ponytail: rectangle fragments are enough for desktop-sized window lists;
-            // replace with a sweep line if the 100 ms refresh ever profiles poorly.
-            let mut fragments = vec![window.frame];
-            for occluder in &occluders {
-                let mut remaining = Vec::with_capacity(fragments.len() * 4);
-                for fragment in fragments {
-                    subtract_frame(fragment, *occluder, &mut remaining);
-                }
-                if remaining.is_empty() {
-                    return false;
-                }
-                fragments = remaining;
+        // ponytail: rectangle fragments are enough for desktop-sized window lists;
+        // replace with a sweep line if the 100 ms refresh ever profiles poorly.
+        let mut fragments = vec![window.frame];
+        for occluder in &occluders {
+            let mut remaining = Vec::with_capacity(fragments.len() * 4);
+            for fragment in fragments {
+                subtract_frame(fragment, *occluder, &mut remaining);
             }
+            fragments = remaining;
+            if fragments.is_empty() {
+                break;
+            }
+        }
 
+        if !fragments.is_empty() {
             occluders.push(window.frame);
-            true
-        })
+            visible.push((window, fragments));
+        }
+    }
+    visible
+}
+
+fn visible_windows(windows: Vec<SelectableWindow>) -> Vec<SelectableWindow> {
+    visible_window_fragments(windows)
+        .into_iter()
+        .map(|(window, _)| window)
         .collect()
 }
 
@@ -403,6 +419,8 @@ pub struct Application<'a> {
     clipboard_controller: Option<ClipboardController>,
     screen_selection: Option<ScreenSelectionState>,
     pending_overlay_repair: Option<MonitorId>,
+    #[cfg(target_os = "macos")]
+    app_veil_host: Option<AppVeilHost>,
 }
 
 #[derive(Error, Debug)]
@@ -491,6 +509,8 @@ impl<'a> Application<'a> {
             clipboard_controller,
             screen_selection: None,
             pending_overlay_repair: None,
+            #[cfg(target_os = "macos")]
+            app_veil_host: None,
         })
     }
 
@@ -689,6 +709,8 @@ impl<'a> Application<'a> {
             screenshare_input.resolution,
             screenshare_input.content,
         );
+        let is_display_share =
+            matches!(screenshare_input.content.content_type, ContentType::Display);
 
         self.stop_screenshare();
         self.close_screensharing_window();
@@ -711,14 +733,32 @@ impl<'a> Application<'a> {
             }
         };
 
-        let selected_monitor =
-            matches!(screenshare_input.content.content_type, ContentType::Display).then(|| {
-                screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id)
-            });
+        let selected_monitor = is_display_share
+            .then(|| screen_capturer.get_selected_monitor(&monitors, screenshare_input.content.id));
         let scale = selected_monitor
             .as_ref()
             .map_or(1.0, |monitor| monitor.scale_factor());
 
+        #[cfg(target_os = "macos")]
+        if is_display_share {
+            let app_veil_bundle_ids = screen_capturer.app_veil_bundle_ids().to_vec();
+            self.app_veil_host = AppVeilHost::new(
+                screenshare_input.content.id,
+                app_veil_bundle_ids.clone(),
+                self.event_loop_proxy.clone(),
+            );
+            if self.app_veil_host.is_none() && !app_veil_bundle_ids.is_empty() {
+                log::error!("screenshare: App Veil unavailable, failed to create running applications observer");
+                if let Err(e) = self.socket.send(Message::AppVeilFailed(
+                    "App Veil is unavailable: protected apps may be visible while sharing your screen"
+                        .to_string(),
+                )) {
+                    log::error!("screenshare: error sending AppVeilFailed: {e:?}");
+                }
+            }
+        }
+
+        let app_veil_enabled = is_display_share && screen_capturer.app_veil_enabled();
         let res = screen_capturer.start_capture(
             screenshare_input.content,
             Extent {
@@ -729,7 +769,13 @@ impl<'a> Application<'a> {
             scale,
         );
         if let Err(error) = res {
-            log::error!("screenshare: error starting capture: {error:?}");
+            #[cfg(target_os = "macos")]
+            {
+                self.app_veil_host = None;
+            }
+            log::error!(
+                "screenshare: error starting capture: {error:?}; app_veil_enabled={app_veil_enabled}"
+            );
             return Err(ServerError::StreamCreationError);
         }
 
@@ -755,6 +801,17 @@ impl<'a> Application<'a> {
             })
             .or_else(|| monitors.first().cloned());
         drop(screen_capturer);
+
+        #[cfg(target_os = "macos")]
+        if !is_display_share {
+            if let Some(room_service) = self.room_service.as_ref() {
+                room_service.set_app_veil_snapshot(Default::default());
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        if let Some(room_service) = self.room_service.as_ref() {
+            room_service.set_app_veil_snapshot(Default::default());
+        }
 
         if let Some(monitor) = overlay_monitor {
             let res = self.create_overlay_window(
@@ -932,6 +989,14 @@ impl<'a> Application<'a> {
 
     fn stop_screenshare(&mut self) {
         log::info!("stop_screenshare");
+        #[cfg(target_os = "macos")]
+        {
+            if self.app_veil_host.take().is_some() {
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.set_app_veil_snapshot(Default::default());
+                }
+            }
+        }
         let screen_capturer = self.screen_capturer.lock();
         if let Err(e) = screen_capturer {
             log::error!("stop_screenshare: Error locking screen capturer: {e:?}");
@@ -1670,6 +1735,41 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     gfx.window().request_redraw();
                 }
             }
+            UserEvent::SetAppVeilBundleIds(bundle_ids) => {
+                #[cfg(target_os = "macos")]
+                let host_bundle_ids = bundle_ids.clone();
+                self.screen_capturer
+                    .lock()
+                    .unwrap()
+                    .set_app_veil_bundle_ids(bundle_ids);
+                #[cfg(target_os = "macos")]
+                if let Some(host) = self.app_veil_host.as_mut() {
+                    host.set_bundle_ids(host_bundle_ids);
+                }
+            }
+            UserEvent::RefreshAppVeilFilter => {
+                self.screen_capturer
+                    .lock()
+                    .unwrap()
+                    .refresh_app_veil_filter();
+            }
+            #[cfg(target_os = "macos")]
+            UserEvent::PolledAppVeilSnapshot(poller_id, revision, snapshot) => {
+                if self
+                    .app_veil_host
+                    .as_ref()
+                    .is_some_and(|host| host.accepts_snapshot(poller_id, revision))
+                {
+                    if let Some(room_service) = self.room_service.as_ref() {
+                        room_service.set_app_veil_snapshot(snapshot);
+                    }
+                }
+            }
+            UserEvent::AppVeilSnapshot(snapshot) => {
+                if let Some(screensharing_window) = self.screensharing_window.as_mut() {
+                    screensharing_window.set_app_veil_snapshot(snapshot);
+                }
+            }
             UserEvent::Tick(time) => {
                 debug!("user_event: Tick");
                 if self.room_service.is_none() {
@@ -2277,6 +2377,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 } else {
                     log::warn!("user_event: Room service not available");
+                }
+                if let (Some(screensharing_window), Some(room_service)) = (
+                    self.screensharing_window.as_mut(),
+                    self.room_service.as_ref(),
+                ) {
+                    screensharing_window.set_app_veil_snapshot(room_service.app_veil_snapshot());
                 }
                 if let Some(screensharing_window) = &self.screensharing_window {
                     if let Some(room_service) = self.room_service.as_ref() {
@@ -3042,6 +3148,11 @@ pub enum UserEvent {
     RequestRedraw,
     SharerPosition(f64, f64),
     CaptureFrameChanged,
+    SetAppVeilBundleIds(Vec<String>),
+    RefreshAppVeilFilter,
+    #[cfg(target_os = "macos")]
+    PolledAppVeilSnapshot(u64, u64, room_service::AppVeilSnapshot),
+    AppVeilSnapshot(room_service::AppVeilSnapshot),
     Tick(u128),
     ParticipantConnected(ParticipantData),
     ParticipantDisconnected(ParticipantData),
@@ -3263,6 +3374,9 @@ impl RenderEventLoop {
                     }
                     Message::SetTelemetryEnabled(enabled) => {
                         UserEvent::SetTelemetryEnabled(enabled)
+                    }
+                    Message::SetAppVeilBundleIds(bundle_ids) => {
+                        UserEvent::SetAppVeilBundleIds(bundle_ids)
                     }
                     // Ping is on purpose empty. We use it only for keeping the connection alive.
                     Message::Ping => {

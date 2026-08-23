@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 pub mod app_activation;
 pub mod app_state;
+pub mod application_catalog;
 pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod sleep_prevention;

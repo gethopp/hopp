@@ -30,6 +30,12 @@ use std::sync::{mpsc, Arc, Mutex};
 mod stream;
 use stream::{Stream, StreamRuntimeMessage};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppVeilCaptureFilter {
+    pub excluded_bundle_ids: Vec<String>,
+    pub revealed_window_ids: Vec<u32>,
+}
+
 // Constants for magic numbers
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
 const POLL_STREAM_TIMEOUT_SECS: u64 = 100;
@@ -141,6 +147,8 @@ pub struct Capturer {
     /// particularly for updating the UI when users stop screen sharing through
     /// system controls. This ensures proper cleanup of tracks and room connections.
     event_loop_proxy: EventLoopProxy<UserEvent>,
+
+    app_veil_filter: AppVeilCaptureFilter,
 }
 
 impl Capturer {
@@ -162,6 +170,7 @@ impl Capturer {
             tx,
             active_stream: None,
             event_loop_proxy,
+            app_veil_filter: AppVeilCaptureFilter::default(),
         }
     }
 
@@ -207,6 +216,7 @@ impl Capturer {
             scale,
             self.tx.clone(),
             buffer_source,
+            self.app_veil_filter.clone(),
         )?;
 
         stream.start_capture()?;
@@ -335,6 +345,29 @@ impl Capturer {
     /// - `false`: No capture is in progress
     pub fn has_active_stream(&self) -> bool {
         self.active_stream.is_some()
+    }
+
+    pub fn set_app_veil_bundle_ids(&mut self, excluded_bundle_ids: Vec<String>) {
+        self.app_veil_filter.excluded_bundle_ids = excluded_bundle_ids;
+        self.refresh_app_veil_filter();
+    }
+
+    pub fn app_veil_enabled(&self) -> bool {
+        !self.app_veil_filter.excluded_bundle_ids.is_empty()
+    }
+
+    pub fn app_veil_bundle_ids(&self) -> &[String] {
+        &self.app_veil_filter.excluded_bundle_ids
+    }
+
+    pub fn refresh_app_veil_filter(&mut self) {
+        let Some(stream) = self.active_stream.as_mut() else {
+            return;
+        };
+        if let Err(error) = stream.update_app_veil_filter(self.app_veil_filter.clone()) {
+            log::error!("refresh_app_veil_filter: failed to update capture filter: {error:?}");
+            sentry_utils::upload_logs_event("App Veil capture filter update failed".to_string());
+        }
     }
 
     pub fn frame(&self) -> Option<Arc<Mutex<Frame>>> {
