@@ -693,16 +693,33 @@ func addParticipantToSlackCall(botToken, callID string, user *models.User) error
 	return api.CallAddParticipants(callID, []slack.CallParticipant{participant})
 }
 
+// buildDesktopJoinURL builds the hopp:// deep link that opens a session directly
+// in the desktop app. Slack prefers this URL over the HTTPS join URL when the
+// desktop app is installed, so users land in the app instead of the browser.
+// The session ID is query-encoded, and the desktop app parses this shape in
+// `processDeepLinkUrl` (tauri/src/lib/deepLinkUtils.ts).
+func buildDesktopJoinURL(sessionID string) string {
+	deepLink := url.URL{
+		Scheme:   "hopp",
+		Path:     "/join-session",
+		RawQuery: url.Values{"sessionId": []string{sessionID}}.Encode(),
+	}
+	return deepLink.String()
+}
+
 // createSlackCall creates a call using Slack's Calls API for native call UI
 func (h *SlackHandler) createSlackCall(botToken, externalID, createdBySlackUserID, creatorName, joinURL, channelID string) (*SlackCall, error) {
 	api := newSlackClient(botToken)
 
 	// Create the call using the SDK
+	// DesktopAppJoinURL sends users to the desktop app, while JoinURL stays as the
+	// HTTPS fallback for anyone without the app installed.
 	call, err := api.AddCall(slack.AddCallParameters{
-		JoinURL:          joinURL,
-		ExternalUniqueID: externalID,
-		CreatedBy:        createdBySlackUserID,
-		Title:            fmt.Sprintf("%s started a Hopp pairing session", creatorName),
+		JoinURL:           joinURL,
+		DesktopAppJoinURL: buildDesktopJoinURL(externalID),
+		ExternalUniqueID:  externalID,
+		CreatedBy:         createdBySlackUserID,
+		Title:             fmt.Sprintf("%s started a Hopp pairing session", creatorName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("calls.add error: %w", err)
