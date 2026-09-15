@@ -239,6 +239,7 @@ impl Stream {
                 let frame = window.frame();
                 let filter = SCContentFilter::create().with_window(&window).build();
                 let backing_scale = f64::from(filter.point_pixel_scale());
+                let capture_scale = backing_scale.max(2.0);
                 *self.frame.lock().unwrap() = Frame {
                     origin_x: frame.origin.x,
                     origin_y: frame.origin.y,
@@ -247,8 +248,8 @@ impl Stream {
                         height: frame.size.height,
                     },
                 };
-                let native_width = (frame.size.width * backing_scale) as u32;
-                let native_height = (frame.size.height * backing_scale) as u32;
+                let native_width = (frame.size.width * capture_scale) as u32;
+                let native_height = (frame.size.height * capture_scale) as u32;
                 let (width, height) = capture_dimensions(
                     native_width,
                     native_height,
@@ -373,8 +374,9 @@ impl Stream {
                 let scale_factor = info.scale_factor.unwrap_or(1.0);
                 if crop_window {
                     if let Some(screen_rect) = info.screen_rect {
-                        let native_width = (screen_rect.size.width * scale_factor) as u32;
-                        let native_height = (screen_rect.size.height * scale_factor) as u32;
+                        let capture_scale = scale_factor.max(2.0);
+                        let native_width = (screen_rect.size.width * capture_scale) as u32;
+                        let native_height = (screen_rect.size.height * capture_scale) as u32;
                         let next_resize_target = capture_dimensions(
                             native_width,
                             native_height,
