@@ -422,16 +422,23 @@ pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_windo
      * working as expected, probably for the same reason as the window size.
      */
     let mut scale = 1.0;
-    /* The tray rect position is in physical units */
+    /* The tray rect position is in physical units. Its top edge can sit just
+     * outside the monitor (for example y == -2 on an external display), so
+     * use the icon center for monitor detection. */
     let tray_pos: PhysicalPosition<i32> = tray_rect.position.to_physical(1.0);
+    let tray_size_at_1x: PhysicalSize<f64> = tray_rect.size.to_physical(1.0);
+    let tray_center = PhysicalPosition::new(
+        tray_pos.x + (tray_size_at_1x.width / 2.0) as i32,
+        tray_pos.y + (tray_size_at_1x.height / 2.0) as i32,
+    );
     let mut found_monitor = false;
     let monitors = window.available_monitors();
     if let Ok(monitors) = monitors {
         for monitor in monitors {
             let monitor_pos = monitor.position();
             let monitor_size = monitor.size();
-            let x_offset = tray_pos.x - monitor_pos.x;
-            let y_offset = tray_pos.y - monitor_pos.y;
+            let x_offset = tray_center.x - monitor_pos.x;
+            let y_offset = tray_center.y - monitor_pos.y;
             if (x_offset >= 0)
                 && (x_offset <= (monitor_size.width as i32))
                 && (y_offset >= 0)
@@ -449,7 +456,7 @@ pub fn center_window_on_tray(window: &WebviewWindow, tray_rect: Rect, show_windo
 
     if !found_monitor {
         log::warn!(
-            "center_window_on_tray: Tray position {tray_pos:?} is outside all monitors, skipping"
+            "center_window_on_tray: Tray center {tray_center:?} is outside all monitors, skipping"
         );
         return;
     }
