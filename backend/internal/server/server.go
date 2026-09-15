@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"hopp-backend/internal/callstate"
 	"hopp-backend/internal/common"
@@ -273,7 +274,24 @@ func (s *Server) setupMetrics() {
 		return
 	}
 
-	prometheus.MustRegister(prometheus.NewGaugeFunc(
+	// Collectors register into Prometheus's global registry, so initializing more
+	// than one Redis-enabled server in a single process (e.g. across tests) would
+	// otherwise fail on a duplicate registration. Register (unlike MustRegister)
+	// returns the error, so we can tolerate the already-registered case.
+	register := func(c prometheus.Collector) {
+		err := prometheus.Register(c)
+		if err == nil {
+			return
+		}
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			s.Echo.Logger.Warn("Prometheus collector already registered, skipping")
+			return
+		}
+		s.Echo.Logger.Errorf("Failed to register Prometheus collector: %v", err)
+	}
+
+	register(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
 			Subsystem: "redis",
 			Name:      "connected_clients",
@@ -293,7 +311,7 @@ func (s *Server) setupMetrics() {
 	))
 
 	if s.CallState != nil {
-		prometheus.MustRegister(prometheus.NewGaugeFunc(
+		register(prometheus.NewGaugeFunc(
 			prometheus.GaugeOpts{
 				Subsystem: "callstate",
 				Name:      "active_rooms",

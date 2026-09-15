@@ -9,7 +9,7 @@ import Logo from "@/assets/Hopp.png";
 import LoginScreen from "@/assets/LoginScreen.png";
 
 import { BACKEND_URLS } from "@/constants";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useHoppStore } from "@/store/store";
 import { toast } from "react-hot-toast";
@@ -17,6 +17,8 @@ import { useCookies } from "react-cookie";
 import { CgSpinner } from "react-icons/cg";
 import { useAPI } from "@/hooks/useQueryClients";
 import { AnimatedTooltip } from "@/components/ui/animated-tooltip";
+import { Turnstile, TurnstileHandle } from "@/components/Turnstile";
+import { isTurnstileEnabled } from "@/lib/turnstile";
 
 const people = [
   {
@@ -79,6 +81,16 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     teamInviteUUID: uuid || "",
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<TurnstileHandle>(null);
+  // The verified action must match the endpoint the token is used on.
+  const turnstileAction = isSignUp ? "signup" : "signin";
+
+  // Toggling sign-up/sign-in re-renders the widget with a new action, so drop any
+  // token minted for the previous action.
+  useEffect(() => {
+    setTurnstileToken("");
+  }, [turnstileAction]);
 
   const {
     data: invitationDetails,
@@ -158,6 +170,12 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isTurnstileEnabled && !turnstileToken) {
+      toast.error("Please complete the captcha before continuing.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -170,6 +188,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
         body: JSON.stringify({
           email: formData.email,
           password: formData.password,
+          ...(turnstileToken && { turnstile_token: turnstileToken }),
           ...(isSignUp && {
             first_name: formData.firstName,
             last_name: formData.lastName,
@@ -183,6 +202,9 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
       const data = (await response.json()) as AuthResponse;
 
       if (!response.ok) {
+        // Tokens are single-use, so refresh the widget for the next attempt.
+        turnstileRef.current?.reset();
+        setTurnstileToken("");
         throw new Error(data.message || "Authentication failed");
       }
 
@@ -253,16 +275,16 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <CardTitle className="text-xl">
                   {isInvitation && invitationDetails ?
                     `Join ${invitationDetails.name} team on Hopp`
-                  : isSignUp ?
-                    "Create an account"
-                  : "Welcome back"}
+                    : isSignUp ?
+                      "Create an account"
+                      : "Welcome back"}
                 </CardTitle>
                 <CardDescription>
                   {isInvitation && invitationDetails ?
                     "Sign up to join your team"
-                  : isSignUp ?
-                    "Sign up for a new account"
-                  : "Login with your email or social account"}
+                    : isSignUp ?
+                      "Sign up for a new account"
+                      : "Login with your email or social account"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -331,14 +353,22 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                           value={formData.password}
                           onChange={handleInputChange}
                           required
+                          {...(isSignUp && { minLength: 12, maxLength: 72 })}
+                          aria-describedby={isSignUp ? "password-help" : undefined}
                         />
+                        {isSignUp && (
+                          <p id="password-help" className="text-xs text-muted-foreground">
+                            Must be at least 12 characters.
+                          </p>
+                        )}
                       </div>
+                      <Turnstile ref={turnstileRef} action={turnstileAction} onToken={setTurnstileToken} />
                       <Button type="submit" className="w-full" disabled={isLoading}>
                         {isLoading ?
                           "Loading..."
-                        : isSignUp ?
-                          "Sign Up"
-                        : "Sign In"}
+                          : isSignUp ?
+                            "Sign Up"
+                            : "Sign In"}
                       </Button>
                     </div>
                     {!isInvitation && (
@@ -354,7 +384,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                               Sign in
                             </button>
                           </>
-                        : <>
+                          : <>
                             Don&apos;t have an account?{" "}
                             <button
                               type="button"

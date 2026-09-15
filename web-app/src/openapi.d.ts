@@ -184,7 +184,7 @@ export interface paths {
             email: string;
             /**
              * Format: password
-             * @description User's password
+             * @description User's password (12-72 characters)
              */
             password: string;
             /** @description Name of the team (required unless team_invite_uuid is provided) */
@@ -194,6 +194,8 @@ export interface paths {
              * @description UUID for team invitation (if joining an existing team)
              */
             team_invite_uuid?: string;
+            /** @description Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise. */
+            turnstile_token?: string;
           };
         };
       };
@@ -237,6 +239,89 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/sign-in": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Manual sign in endpoint */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /**
+             * Format: email
+             * @description User's email address
+             */
+            email: string;
+            /**
+             * Format: password
+             * @description User's password
+             */
+            password: string;
+            /** @description Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise. */
+            turnstile_token?: string;
+          };
+        };
+      };
+      responses: {
+        /** @description Successfully signed in */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              /** @description JWT authentication token */
+              token?: string;
+            };
+          };
+        };
+        /** @description Invalid input */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Invalid email or password */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Too many sign-in attempts; retry after the window elapses */
+        429: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/forgot-password": {
     parameters: {
       query?: never;
@@ -265,6 +350,8 @@ export interface paths {
              * @description User's email address
              */
             email: string;
+            /** @description Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise. */
+            turnstile_token?: string;
           };
         };
       };
@@ -330,7 +417,7 @@ export interface paths {
           "application/json": {
             /**
              * Format: password
-             * @description New password
+             * @description New password (12-72 characters; 72 is bcrypt's byte ceiling)
              */
             password: string;
           };

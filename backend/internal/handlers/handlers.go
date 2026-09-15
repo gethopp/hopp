@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo-contrib/session"
@@ -36,16 +37,40 @@ type AuthHandler struct {
 }
 
 type SignInRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email          string `json:"email" validate:"required,email"`
+	Password       string `json:"password" validate:"required"`
+	TurnstileToken string `json:"turnstile_token"`
 }
 
 type ForgotPasswordRequest struct {
-	Email string `json:"email" validate:"required,email"`
+	Email          string `json:"email" validate:"required,email"`
+	TurnstileToken string `json:"turnstile_token"`
 }
 
 type ResetPasswordRequest struct {
 	Password string `json:"password" validate:"required"`
+}
+
+const (
+	// minPasswordLength is the authoritative minimum for new passwords, applied
+	// to both signup and reset; all character types are allowed.
+	minPasswordLength = 12
+	// maxPasswordBytes is bcrypt's hard input ceiling. Input beyond 72 bytes is
+	// silently truncated by bcrypt, so reject it up front with a clear 400
+	// instead of leaking a confusing 500 later.
+	maxPasswordBytes = 72
+)
+
+// validateNewPassword enforces the shared new-password policy for signup and
+// reset. Callers should run it before hashing.
+func validateNewPassword(password string) error {
+	if utf8.RuneCountInString(password) < minPasswordLength {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Password must be at least %d characters long.", minPasswordLength))
+	}
+	if len(password) > maxPasswordBytes {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Password must be at most %d bytes long.", maxPasswordBytes))
+	}
+	return nil
 }
 
 func NewAuthHandler(db *gorm.DB, cfg *config.Config, jwt common.JWTIssuer, redis *redis.Client, socialAuth common.SocialAuthProvider) *AuthHandler {
@@ -340,9 +365,10 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		FirstName      string `json:"first_name" validate:"required"`
 		LastName       string `json:"last_name" validate:"required"`
 		Email          string `json:"email" validate:"required,email"`
-		Password       string `json:"password" validate:"required,min=8"`
+		Password       string `json:"password" validate:"required"`
 		TeamName       string `json:"team_name"`
 		TeamInviteUUID string `json:"team_invite_uuid"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 
 	req := new(SignUpRequest)
@@ -352,6 +378,15 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 
 	if err := c.Validate(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// Verify Turnstile and the password policy before any DB lookup or hashing.
+	if err := h.verifyTurnstile(c, req.TurnstileToken, turnstileActionSignUp); err != nil {
+		return err
+	}
+
+	if err := validateNewPassword(req.Password); err != nil {
+		return err
 	}
 
 	u := &models.User{
@@ -439,6 +474,18 @@ func (h *AuthHandler) ManualSignIn(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
+	// Verify Turnstile before touching the throttle, database, or password hash.
+	if err := h.verifyTurnstile(c, req.TurnstileToken, turnstileActionSignIn); err != nil {
+		return err
+	}
+
+	// Throttle by normalized email (five attempts per minute). Runs before the
+	// user lookup so behavior doesn't diverge by account existence
+	// (also known as timing attack in my village: https://en.wikipedia.org/wiki/Timing_attack)
+	if err := h.checkSignInRateLimit(c, req.Email); err != nil {
+		return err
+	}
+
 	u := &models.User{}
 	result := h.DB.Where("email = ?", req.Email).First(u)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -448,6 +495,8 @@ func (h *AuthHandler) ManualSignIn(c echo.Context) error {
 	if !u.CheckPassword(req.Password) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid email or password")
 	}
+
+	h.clearSignInRateLimit(c, req.Email)
 
 	// Create a JWT token
 	token, err := h.JwtIssuer.GenerateToken(u.Email)
@@ -469,6 +518,18 @@ func (h *AuthHandler) ForgotPassword(c echo.Context) error {
 	}
 	if err := c.Validate(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	if err := h.verifyTurnstile(c, req.TurnstileToken, turnstileActionForgotPassword); err != nil {
+		return err
+	}
+
+	emailAllowed := h.allowResetEmail(c, req.Email)
+
+	// Throttled: return the same generic response but do not send another email.
+	if !emailAllowed {
+		c.Logger().Infof("forgot-password: throttled, skipping email send")
+		return c.JSON(http.StatusOK, map[string]string{"message": verificationMessage})
 	}
 
 	// Check if the user exists
@@ -512,6 +573,11 @@ func (h *AuthHandler) ResetPassword(c echo.Context) error {
 	if err := c.Validate(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+
+	if err := validateNewPassword(req.Password); err != nil {
+		return err
+	}
+
 	tokenString := c.Param("token")
 	if tokenString == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Missing token")

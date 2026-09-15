@@ -390,7 +390,9 @@ paths:
                 password:
                   type: string
                   format: password
-                  description: User's password
+                  minLength: 12
+                  maxLength: 72
+                  description: User's password (12-72 characters)
                 team_name:
                   type: string
                   description: Name of the team (required unless team_invite_uuid is provided)
@@ -398,6 +400,9 @@ paths:
                   type: string
                   format: uuid
                   description: UUID for team invitation (if joining an existing team)
+                turnstile_token:
+                  type: string
+                  description: Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise.
       responses:
         "200":
           description: Successfully signed up
@@ -424,6 +429,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/sign-in:
+    post:
+      summary: Manual sign in endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: User's email address
+                password:
+                  type: string
+                  format: password
+                  description: User's password
+                turnstile_token:
+                  type: string
+                  description: Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise.
+      responses:
+        "200":
+          description: Successfully signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT authentication token
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many sign-in attempts; retry after the window elapses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/forgot-password:
     post:
       summary: Request password reset email
@@ -441,6 +500,9 @@ paths:
                   type: string
                   format: email
                   description: User's email address
+                turnstile_token:
+                  type: string
+                  description: Cloudflare Turnstile token. Required when Turnstile is enabled server-side; ignored otherwise.
       responses:
         "200":
           description: Success message (always returned regardless of whether email exists)
@@ -482,7 +544,9 @@ paths:
                 password:
                   type: string
                   format: password
-                  description: New password
+                  minLength: 12
+                  maxLength: 72
+                  description: New password (12-72 characters; 72 is bcrypt's byte ceiling)
       responses:
         "200":
           description: Password reset successfully
