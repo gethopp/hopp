@@ -470,9 +470,9 @@ function SettingsWindow() {
 
   return (
     <div className="h-full min-h-full overflow-hidden text-black dark:text-white flex flex-col">
-      <div data-tauri-drag-region className="h-[32px] min-w-full w-full" />
+      <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-50 h-[32px]" />
 
-      <div className="flex-1 flex flex-col min-h-0 px-5 pb-5 py-4">
+      <div className="flex-1 flex flex-col min-h-0 px-5 pb-5 pt-12">
         <h1 className="text-[22px] font-semibold mb-6 text-black dark:text-white">Settings</h1>
 
         <div className="flex-1 flex min-h-0 gap-8">
