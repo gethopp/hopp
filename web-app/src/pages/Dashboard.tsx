@@ -156,11 +156,11 @@ export function Dashboard() {
           assets: [
             {
               name: "hopp_x64.dmg",
-              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp.app.x64.tar.gz",
+              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp_x64.app.tar.gz",
             },
             {
               name: "hopp_aarch64.dmg",
-              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp.app.aarch64.tar.gz",
+              browser_download_url: "https://github.com/gethopp/hopp/releases/latest/download/hopp_aarch64.app.tar.gz",
             },
             {
               name: "hopp.msi.zip",
