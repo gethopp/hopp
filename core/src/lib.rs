@@ -3041,6 +3041,20 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     } else if wm.is_active_window(window_id) {
                         log::info!("window_event: active window resized to {:?}", new_size);
                         wm.resize_active_window(new_size);
+                        let monitor_size = wm
+                            .active_gfx_mut()
+                            .and_then(|gfx| gfx.window().current_monitor())
+                            .map(|monitor| monitor.size());
+                        if monitor_size == Some(new_size)
+                            && self.pending_overlay_repair.is_none()
+                            && self.remote_control.as_ref().is_some_and(|remote_control| {
+                                let overlay_window =
+                                    remote_control.cursor_controller.get_overlay_window();
+                                !overlay_window.matches_size(new_size)
+                            })
+                        {
+                            self.pending_overlay_repair = wm.active_monitor_id();
+                        }
                     }
                 }
             }
