@@ -8,7 +8,7 @@
 use core::fmt;
 use std::sync::{Arc, Mutex};
 
-use winit::dpi::PhysicalPosition;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
 
 use crate::utils::geometry::{Extent, Frame, Position};
 
@@ -101,6 +101,10 @@ impl OverlayWindow {
             display_info,
             scaled,
         }
+    }
+
+    pub fn matches_size(&self, size: PhysicalSize<u32>) -> bool {
+        self.extent.width == size.width as f64 && self.extent.height == size.height as f64
     }
 
     pub fn source_to_global(&self, position: Position) -> Option<Position> {
