@@ -73,6 +73,9 @@ type Config struct {
 		// at checkout. Set to 0 to disable the trial (charge immediately).
 		TrialPeriodDays int64
 	}
+	Turnstile struct {
+		SecretKey string
+	}
 }
 
 func Load() (*Config, error) {
@@ -200,7 +203,16 @@ func Load() (*Config, error) {
 	c.Stripe.SuccessURL = fmt.Sprintf("https://%s/subscription/success", c.Server.DeployDomain)
 	c.Stripe.CancelURL = fmt.Sprintf("https://%s/subscription/cancel", c.Server.DeployDomain)
 
+	c.Turnstile.SecretKey = os.Getenv("CLOUDFLARE_SECRET_KEY")
+
 	return c, nil
+}
+
+// IsTurnstileEnabled reports whether Cloudflare Turnstile verification is
+// configured. Self-hosted deployments without CLOUDFLARE_SECRET_KEY skip
+// verification so email/password auth remains usable, mirroring IsStripeEnabled.
+func (c *Config) IsTurnstileEnabled() bool {
+	return c.Turnstile.SecretKey != ""
 }
 
 // IsStripeEnabled reports whether Stripe billing is configured. Self-hosted

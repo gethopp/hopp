@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,21 +6,32 @@ import { toast } from "react-hot-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Logo from "@/assets/Hopp.png";
 import { useAPI } from "@/hooks/useQueryClients";
+import { Turnstile, TurnstileHandle } from "@/components/Turnstile";
+import { isTurnstileEnabled } from "@/lib/turnstile";
 
 export function ForgotPassword() {
   const { useMutation } = useAPI();
   const [isFormSubmitted, setFormSubmitted] = useState(false);
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   const forgotPasswordMutation = useMutation("post", "/api/forgot-password");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isTurnstileEnabled && !turnstileToken) {
+      toast.error("Please complete the captcha before continuing.");
+      return;
+    }
+
     try {
       const data = await forgotPasswordMutation.mutateAsync({
         body: {
           email: email,
+          ...(turnstileToken && { turnstile_token: turnstileToken }),
         },
       });
       setMessage(
@@ -28,6 +39,9 @@ export function ForgotPassword() {
       );
       setFormSubmitted(true);
     } catch (error) {
+      // Tokens are single-use, so refresh the widget for the next attempt.
+      turnstileRef.current?.reset();
+      setTurnstileToken("");
       const errorMessage = error instanceof Error ? error.message : "Something went wrong, please try again.";
       toast.error(errorMessage);
     }
@@ -52,7 +66,7 @@ export function ForgotPassword() {
                   </Button>
                 </a>
               </CardContent>
-            : <CardContent>
+              : <CardContent>
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-1">
                     <Label htmlFor="email">E-mail</Label>
@@ -65,6 +79,7 @@ export function ForgotPassword() {
                       placeholder="e.g. dwight@dundermifflin.com"
                     />
                   </div>
+                  <Turnstile ref={turnstileRef} action="forgot_password" onToken={setTurnstileToken} />
                   <Button type="submit" className="w-full">
                     Send Email
                   </Button>

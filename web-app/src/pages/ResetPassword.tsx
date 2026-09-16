@@ -63,13 +63,24 @@ export function ResetPassword() {
                   </Button>
                 </a>
               </CardContent>
-            : <CardContent>
+              : <CardContent>
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-1">
                     <Label htmlFor="password">Password*</Label>
-                    <Input required id="password" name="password" type="password" />
+                    <Input
+                      required
+                      id="password"
+                      name="password"
+                      type="password"
+                      minLength={12}
+                      maxLength={72}
+                      aria-describedby="password-help"
+                    />
+                    <p id="password-help" className="text-xs text-muted-foreground">
+                      Must be at least 12 characters.
+                    </p>
                     <Label htmlFor="reEnterPassword">Re-enter password*</Label>
-                    <Input required id="reEnterPassword" name="reEnterPassword" type="password" />
+                    <Input required id="reEnterPassword" name="reEnterPassword" type="password" minLength={12} maxLength={72} />
                   </div>
                   <Button type="submit" className="w-full">
                     Reset password
