@@ -848,7 +848,7 @@ impl CameraWindow {
             let mon_pos: winit::dpi::LogicalPosition<f64> = monitor.position().to_logical(scale);
 
             let x = mon_pos.x + mon_size.width - PIN_CORNER_WIDTH - PIN_CORNER_MARGIN;
-            let y = mon_pos.y;
+            let y = mon_pos.y + PIN_CORNER_MARGIN;
 
             let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
                 PIN_CORNER_WIDTH,
