@@ -190,6 +190,26 @@ impl KeyboardLayoutTrait for KeyboardLayout {
         independent_codes.insert("Meta", 0x37);
         independent_codes.insert("Alt", 0x3A);
         independent_codes.insert("CapsLock", 0x39);
+        independent_codes.insert("F1", 0x7A);
+        independent_codes.insert("F2", 0x78);
+        independent_codes.insert("F3", 0x63);
+        independent_codes.insert("F4", 0x76);
+        independent_codes.insert("F5", 0x60);
+        independent_codes.insert("F6", 0x61);
+        independent_codes.insert("F7", 0x62);
+        independent_codes.insert("F8", 0x64);
+        independent_codes.insert("F9", 0x65);
+        independent_codes.insert("F10", 0x6D);
+        independent_codes.insert("F11", 0x67);
+        independent_codes.insert("F12", 0x6F);
+        independent_codes.insert("F13", 0x69);
+        independent_codes.insert("F14", 0x6B);
+        independent_codes.insert("F15", 0x71);
+        independent_codes.insert("F16", 0x6A);
+        independent_codes.insert("F17", 0x40);
+        independent_codes.insert("F18", 0x4F);
+        independent_codes.insert("F19", 0x50);
+        independent_codes.insert("F20", 0x5A);
         independent_codes
     }
 }
