@@ -335,6 +335,17 @@ func (s *Server) setupGothProviders() {
 		slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"),
 		github.New(s.Config.Auth.GitHubKey, s.Config.Auth.GitHubSecret, s.Config.Auth.GitHubRedirect, "user:email", "read:user"),
 	)
+
+	if s.Config.IsOIDCConfigured() {
+		// An unreachable or misconfigured identity provider must not keep the
+		// server from starting, the other login methods still work.
+		provider, err := handlers.NewOIDCProvider(s.Config)
+		if err != nil {
+			s.Echo.Logger.Warnf("OIDC login disabled, provider setup failed: %v", err)
+			return
+		}
+		goth.UseProviders(provider)
+	}
 }
 
 func (s *Server) setupEmailClient() {
@@ -378,6 +389,7 @@ func (s *Server) setupRoutes() {
 		return c.String(200, "OK")
 	})
 	api.GET("/metrics", echoprometheus.NewHandler())
+	api.GET("/config", auth.GetInstanceConfig)
 	// Add invitation details endpoint
 	api.GET("/invitation-details/:uuid", auth.GetInvitationDetails)
 

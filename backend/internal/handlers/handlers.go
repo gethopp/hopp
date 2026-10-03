@@ -92,6 +92,11 @@ func (r *RealGothicProvider) CompleteUserAuth(res http.ResponseWriter, req *http
 }
 
 func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
+	isOIDC := c.Param("provider") == oidcProviderName
+	if isOIDC {
+		addOIDCCodeVerifier(c)
+	}
+
 	user, err := h.SocialAuth.CompleteUserAuth(c.Response(), c.Request())
 	if err != nil {
 		return err
@@ -100,6 +105,18 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	if user.Email == "" {
 		c.Logger().Error("User email is empty from provider")
 		return echo.NewHTTPError(http.StatusBadRequest, "Email is required but not provided by the authentication provider")
+	}
+
+	if isOIDC {
+		// Accounts are matched by email, so an unverified address must not be
+		// able to take over an existing account.
+		if !oidcEmailVerified(user) {
+			c.Logger().Warn("OIDC login rejected, email is not verified by the identity provider")
+			return c.Redirect(http.StatusFound, "/login?error=email_not_verified")
+		}
+		if user.FirstName == "" {
+			user.FirstName = oidcFallbackFirstName(user)
+		}
 	}
 
 	var u models.User
@@ -347,6 +364,10 @@ func (h *AuthHandler) SocialLogin(c echo.Context) error {
 	q := req.URL.Query()
 	q.Set("provider", provider)
 	req.URL.RawQuery = q.Encode()
+
+	if provider == oidcProviderName {
+		return beginOIDCAuth(c)
+	}
 
 	gothic.BeginAuthHandler(c.Response(), req)
 	return nil

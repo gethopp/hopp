@@ -29,6 +29,7 @@ require (
 	github.com/twitchtv/twirp v8.1.3+incompatible
 	github.com/wader/gormstore/v2 v2.0.3
 	golang.org/x/crypto v0.46.0
+	golang.org/x/oauth2 v0.34.0
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/driver/sqlite v1.6.0
@@ -126,7 +127,6 @@ require (
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect
 	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect

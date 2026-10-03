@@ -306,6 +306,26 @@ components:
           type: string
           format: date-time
 
+    InstanceConfig:
+      type: object
+      description: Public configuration of this instance, used by clients to decide which flows to offer
+      required:
+        - oidc
+      properties:
+        oidc:
+          type: object
+          description: Generic OpenID Connect login
+          required:
+            - enabled
+            - display_name
+          properties:
+            enabled:
+              type: boolean
+              description: True when an OpenID Connect provider is configured and reachable
+            display_name:
+              type: string
+              description: Label for the login button
+
   securitySchemes:
     BearerAuth:
       type: http
@@ -331,6 +351,18 @@ paths:
       responses:
         "200":
           description: Metrics in Prometheus format
+
+  /api/config:
+    get:
+      summary: Public instance configuration
+      description: Unauthenticated. Tells clients which login flows are available on this instance.
+      responses:
+        "200":
+          description: Instance configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceConfig"
 
   /api/auth/social/:provider:
     get:
