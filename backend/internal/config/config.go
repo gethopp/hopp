@@ -40,6 +40,9 @@ type Config struct {
 			ClientSecret string // optional, public clients rely on PKCE alone
 			DisplayName  string // label of the login button
 			Redirect     string
+			// SingleTeam makes new OIDC users without an invitation join the
+			// first team of the instance instead of creating their own.
+			SingleTeam bool
 		}
 	}
 	Livekit struct {
@@ -161,6 +164,7 @@ func Load() (*Config, error) {
 		c.Auth.OIDC.DisplayName = "SSO"
 	}
 	c.Auth.OIDC.Redirect = fmt.Sprintf("https://%s/api/auth/social/oidc/callback", c.Server.DeployDomain)
+	c.Auth.OIDC.SingleTeam = os.Getenv("OIDC_SINGLE_TEAM") == "true"
 
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
 	c.Database.RedisURI = os.Getenv("REDIS_URI")

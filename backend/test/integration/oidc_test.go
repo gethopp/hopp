@@ -291,6 +291,30 @@ func TestOIDC_DefaultCreatesOwnTeamPerUser(t *testing.T) {
 	assert.True(t, grace.IsAdmin)
 }
 
+func TestOIDC_SingleTeamJoinsFirstTeam(t *testing.T) {
+	idp := newFakeIDP(t)
+	srv, cleanup := setupTestServerWithOIDC(t, idp, func(cfg *config.Config) {
+		cfg.Auth.OIDC.SingleTeam = true
+	})
+	defer cleanup()
+
+	require.Equal(t, http.StatusFound, oidcLogin(t, srv, idp, verifiedClaims("ada@gmail.com", "Ada"), nil).Code)
+	require.Equal(t, http.StatusFound, oidcLogin(t, srv, idp, verifiedClaims("grace@gmail.com", "Grace"), nil).Code)
+
+	var ada, grace models.User
+	require.NoError(t, srv.DB.Where("email = ?", "ada@gmail.com").First(&ada).Error)
+	require.NoError(t, srv.DB.Where("email = ?", "grace@gmail.com").First(&grace).Error)
+
+	// The first user bootstraps the team as admin, everyone else joins it.
+	assert.True(t, ada.IsAdmin)
+	assert.False(t, grace.IsAdmin)
+	assert.Equal(t, *ada.TeamID, *grace.TeamID)
+
+	var teams int64
+	require.NoError(t, srv.DB.Model(&models.Team{}).Count(&teams).Error)
+	assert.Equal(t, int64(1), teams)
+}
+
 func TestOIDC_InvitedUserJoinsInvitingTeam(t *testing.T) {
 	idp := newFakeIDP(t)
 	srv, cleanup := setupTestServerWithOIDC(t, idp, nil)

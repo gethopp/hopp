@@ -152,6 +152,19 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				sess.Save(c.Request(), c.Response())
 			}
 
+			// Single-team mode: OIDC users without an invitation join the first
+			// team of the instance. On an empty instance there is none yet, so
+			// the first user falls through and creates it as admin.
+			if assignedTeamID == nil && isOIDC && h.Config.Auth.OIDC.SingleTeam {
+				var team models.Team
+				err := tx.Order("id ASC").First(&team).Error
+				if err == nil {
+					assignedTeamID = &team.ID
+				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("failed to look up team: %w", err)
+				}
+			}
+
 			var isAdmin = false
 			// If no team invitation, we need to create a new team
 			if assignedTeamID == nil {
