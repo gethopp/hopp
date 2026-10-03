@@ -35,6 +35,38 @@ export function Settings() {
 
   const updateProfileMutation = useMutation("put", "/api/auth/update-user-name");
 
+  // Only team admins can rename the team, so only they need its current name.
+  const { data: teamName, refetch: refetchTeamName } = useQuery("get", "/api/auth/get-invite-uuid", undefined, {
+    queryHash: `team-name-${authToken}`,
+    select: (data) => data.team_name,
+    enabled: !!user?.is_admin,
+  });
+
+  const [teamNameInput, setTeamNameInput] = useState("");
+
+  useEffect(() => {
+    setTeamNameInput(teamName || "");
+  }, [teamName]);
+
+  const updateTeamMutation = useMutation("patch", "/api/auth/team");
+
+  const handleTeamSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = teamNameInput.trim();
+    if (name === "") {
+      toast.error("Team name can't be empty");
+      return;
+    }
+    try {
+      await updateTeamMutation.mutateAsync({ body: { name } });
+      await refetchTeamName();
+      toast.success("Team name updated successfully");
+    } catch (error) {
+      toast.error("Failed to update team name");
+      console.error(error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -96,6 +128,25 @@ export function Settings() {
 
         <Button type="submit">Save Changes</Button>
       </form>
+
+      {user?.is_admin && (
+        <form onSubmit={handleTeamSubmit} className="space-y-4">
+          <h3 className="h3-subsection">Team</h3>
+          <div className="space-y-1">
+            <Label htmlFor="teamName">Team Name</Label>
+            <Input
+              id="teamName"
+              value={teamNameInput}
+              onChange={(e) => setTeamNameInput(e.target.value)}
+              placeholder="Team Name"
+            />
+          </div>
+
+          <Button type="submit" disabled={updateTeamMutation.isPending}>
+            Save Team Name
+          </Button>
+        </form>
+      )}
     </div>
   );
 }
