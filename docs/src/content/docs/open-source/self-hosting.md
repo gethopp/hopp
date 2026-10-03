@@ -57,6 +57,24 @@ curl https://hopp.example.com/api/health
 
 Open `https://hopp.example.com` in a browser and sign up. The first registered account becomes the team admin owner.
 
+## Access control
+
+By default anyone who can reach your instance can sign up and create their own team. Lock it down in `.env`:
+
+| Variable                 | Effect when set to `true`                                                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `DISABLE_SIGNUP`         | New accounts need a team invitation link. The very first account of a fresh instance can still be created.     |
+| `DISABLE_PASSWORD_LOGIN` | Email/password sign-in, sign-up and password reset are rejected. Only the configured OAuth providers are left. |
+
+Notes:
+
+- With `DISABLE_SIGNUP`, create your admin account first, then invite teammates from the dashboard. Existing users keep signing in as before.
+- `DISABLE_PASSWORD_LOGIN` requires at least one OAuth provider (`GOOGLE_*`, `GITHUB_*` or `SLACK_*`), otherwise the backend refuses to start.
+- OAuth providers without a key and secret are not offered on the login page.
+- Billing is off unless `STRIPE_SECRET_KEY` is set. Without it every team has full access and the web app hides the subscription page.
+
+Restart the backend after changing these: `docker compose up -d backend`.
+
 ## Firewall
 
 Many cloud providers (Scaleway DEV, Hetzner Cloud, basic DigitalOcean droplets) do **not** apply a firewall by default — these ports will already be reachable. Skip this section unless your provider has a security group, network ACL, or you've enabled `ufw`/`firewalld` on the host.
