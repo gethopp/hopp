@@ -386,6 +386,7 @@ func (s *Server) setupRoutes() {
 		return c.String(200, "OK")
 	})
 	api.GET("/metrics", echoprometheus.NewHandler())
+	api.GET("/config", auth.GetInstanceConfig)
 	// Add invitation details endpoint
 	api.GET("/invitation-details/:uuid", auth.GetInvitationDetails)
 
@@ -406,10 +407,10 @@ func (s *Server) setupRoutes() {
 	// Authentication endpoints
 	api.GET("/auth/social/:provider", auth.SocialLogin)
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
-	api.POST("/sign-up", auth.ManualSignUp)
-	api.POST("/sign-in", auth.ManualSignIn)
-	api.POST("/forgot-password", auth.ForgotPassword)
-	api.PATCH("/reset-password/:token", auth.ResetPassword)
+	api.POST("/sign-up", auth.ManualSignUp, auth.RequirePasswordLogin)
+	api.POST("/sign-in", auth.ManualSignIn, auth.RequirePasswordLogin)
+	api.POST("/forgot-password", auth.ForgotPassword, auth.RequirePasswordLogin)
+	api.PATCH("/reset-password/:token", auth.ResetPassword, auth.RequirePasswordLogin)
 
 	// Protected API routes group
 	protectedAPI := api.Group("/auth", s.JwtIssuer.Middleware())

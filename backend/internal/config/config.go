@@ -33,6 +33,12 @@ type Config struct {
 		GitHubRedirect string
 		CallbackURL    string
 		SessionSecret  string
+		// DisableSignup rejects new accounts that do not come with a team
+		// invitation. The very first account of an instance is still allowed.
+		DisableSignup bool
+		// DisablePasswordLogin turns off email/password authentication, leaving
+		// only the configured social providers.
+		DisablePasswordLogin bool
 	}
 	Livekit struct {
 		APIKey    string
@@ -144,6 +150,12 @@ func Load() (*Config, error) {
 	c.Auth.GitHubKey = os.Getenv("GITHUB_KEY")
 	c.Auth.GitHubSecret = os.Getenv("GITHUB_SECRET")
 	c.Auth.GitHubRedirect = fmt.Sprintf("https://%s/api/auth/social/github/callback", c.Server.DeployDomain)
+
+	c.Auth.DisableSignup = os.Getenv("DISABLE_SIGNUP") == "true"
+	c.Auth.DisablePasswordLogin = os.Getenv("DISABLE_PASSWORD_LOGIN") == "true"
+	if c.Auth.DisablePasswordLogin && len(c.SocialProviders()) == 0 {
+		return nil, fmt.Errorf("DISABLE_PASSWORD_LOGIN is set but no social login provider is configured, nobody could sign in")
+	}
 
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
 	c.Database.RedisURI = os.Getenv("REDIS_URI")

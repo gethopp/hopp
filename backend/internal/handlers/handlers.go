@@ -138,6 +138,13 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 			var isAdmin = false
 			// If no team invitation, we need to create a new team
 			if assignedTeamID == nil {
+				allowed, err := h.uninvitedSignupAllowed(tx)
+				if err != nil {
+					return err
+				}
+				if !allowed {
+					return errSignupDisabled
+				}
 				isAdmin = true
 				// Provider-specific handling to get team name
 				switch providerName {
@@ -304,6 +311,11 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 		return nil
 	})
 
+	if errors.Is(err, errSignupDisabled) {
+		// This is a browser redirect from the provider, so send the user back to
+		// the login page instead of answering with a JSON error.
+		return c.Redirect(http.StatusFound, "/login?error=signup_disabled")
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
@@ -420,6 +432,14 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	// user insert (e.g. duplicate email) can't leave an orphan team behind.
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if u.TeamID == nil {
+			allowed, err := h.uninvitedSignupAllowed(tx)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return errSignupDisabled
+			}
+
 			teamName := strings.TrimSpace(req.TeamName)
 			if teamName == "" {
 				teamName = fmt.Sprintf("%s-Team", u.FirstName)
@@ -436,6 +456,9 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 		// overwriting the team_id decided above.
 		return tx.Omit(clause.Associations).Create(u).Error
 	})
+	if errors.Is(err, errSignupDisabled) {
+		return echo.NewHTTPError(http.StatusForbidden, signupDisabledMessage)
+	}
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return echo.NewHTTPError(409, "user with this email already exists")
 	}

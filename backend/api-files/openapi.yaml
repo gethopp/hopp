@@ -306,6 +306,31 @@ components:
           type: string
           format: date-time
 
+    InstanceConfig:
+      type: object
+      description: Public configuration of this instance, used by clients to hide flows the backend would reject
+      required:
+        - signup_enabled
+        - password_login_enabled
+        - billing_enabled
+        - auth_providers
+      properties:
+        signup_enabled:
+          type: boolean
+          description: False when DISABLE_SIGNUP is set and the instance already has users; new accounts then need a team invitation
+        password_login_enabled:
+          type: boolean
+          description: False when DISABLE_PASSWORD_LOGIN is set; only social providers can be used
+        billing_enabled:
+          type: boolean
+          description: True when Stripe billing is configured
+        auth_providers:
+          type: array
+          description: Social login providers that are configured on this instance
+          items:
+            type: string
+            enum: [google, slack, github]
+
   securitySchemes:
     BearerAuth:
       type: http
@@ -331,6 +356,18 @@ paths:
       responses:
         "200":
           description: Metrics in Prometheus format
+
+  /api/config:
+    get:
+      summary: Public instance configuration
+      description: Unauthenticated. Tells clients which sign-up and login flows are enabled on this instance.
+      responses:
+        "200":
+          description: Instance configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceConfig"
 
   /api/auth/social/:provider:
     get:
