@@ -112,6 +112,22 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     },
   );
 
+  // Tells us which sign-up and login flows this instance allows, so we don't
+  // offer ones the backend would reject.
+  const { data: instanceConfig, isLoading: isLoadingConfig } = useQuery("get", "/api/config");
+  const signupEnabled = instanceConfig?.signup_enabled ?? true;
+  const passwordLoginEnabled = instanceConfig?.password_login_enabled ?? true;
+  const authProviders = instanceConfig?.auth_providers ?? [];
+  const hasSocialLogin = authProviders.includes("google") || authProviders.includes("github");
+
+  useEffect(() => {
+    if (searchParams.get("error") === "signup_disabled") {
+      toast.error("Sign-up is disabled on this instance. Ask a team admin for an invitation link.", {
+        id: "signup-disabled",
+      });
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     if (invitationError) {
       toast.error("Failed to fetch invitation details, contact your admin for a new invitation link");
@@ -253,12 +269,12 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     </div>
   );
 
-  if (isLoadingInvitation) {
+  if (isLoadingInvitation || isLoadingConfig) {
     return (
       <div className="flex flex-row items-center justify-center min-w-screen min-h-screen">
         <div className="flex flex-row items-center gap-2">
           <CgSpinner className="size-5 animate-spin" />
-          <p>Loading invitation...</p>
+          <p>{isLoadingInvitation ? "Loading invitation..." : "Loading..."}</p>
         </div>
       </div>
     );
@@ -275,103 +291,123 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <CardTitle className="text-xl">
                   {isInvitation && invitationDetails ?
                     `Join ${invitationDetails.name} team on Hopp`
-                    : isSignUp ?
-                      "Create an account"
-                      : "Welcome back"}
+                  : isSignUp ?
+                    "Create an account"
+                  : "Welcome back"}
                 </CardTitle>
                 <CardDescription>
                   {isInvitation && invitationDetails ?
                     "Sign up to join your team"
-                    : isSignUp ?
-                      "Sign up for a new account"
-                      : "Login with your email or social account"}
+                  : isSignUp ?
+                    "Sign up for a new account"
+                  : passwordLoginEnabled ?
+                    "Login with your email or social account"
+                  : "Login with your social account"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleEmailAuth}>
                   <div className="grid gap-6 relative">
-                    <div className="flex flex-col gap-4 relative z-0">
-                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGoogleLogin}>
-                        <FaGoogle className="size-5 mr-2" />
-                        {isSignUp ? "Sign up with Google" : "Login with Google"}
-                        {cookies.lastUsedLogin === "google" && <LastUsedPill />}
-                      </Button>
-                      <Button type="button" variant="outline" className="w-full relative" onClick={handleGitHubLogin}>
-                        <GrGithub className="size-5 mr-2" />
-                        {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
-                        {cookies.lastUsedLogin === "github" && <LastUsedPill />}
-                      </Button>
-                      {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
-                      {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
+                    {hasSocialLogin && (
+                      <div className="flex flex-col gap-4 relative z-0">
+                        {authProviders.includes("google") && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full relative"
+                            onClick={handleGoogleLogin}
+                          >
+                            <FaGoogle className="size-5 mr-2" />
+                            {isSignUp ? "Sign up with Google" : "Login with Google"}
+                            {cookies.lastUsedLogin === "google" && <LastUsedPill />}
+                          </Button>
+                        )}
+                        {authProviders.includes("github") && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full relative"
+                            onClick={handleGitHubLogin}
+                          >
+                            <GrGithub className="size-5 mr-2" />
+                            {isSignUp ? "Sign up with GitHub" : "Login with GitHub"}
+                            {cookies.lastUsedLogin === "github" && <LastUsedPill />}
+                          </Button>
+                        )}
+                        {/* Will still keep the code, but deactivate for now, as we don't have Slack usage */}
+                        {/* <Button type="button" variant="outline" className="w-full" onClick={handleSlackLogin}>
                         <FaSlack className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Slack" : "Login with Slack"}
                       </Button> */}
-                    </div>
-                    {!isSignUp && (
+                      </div>
+                    )}
+                    {!isSignUp && hasSocialLogin && passwordLoginEnabled && (
                       <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
                         <span className="relative z-10 bg-background px-2 text-muted-foreground">
                           Or continue with email
                         </span>
                       </div>
                     )}
-                    <div className="grid gap-4">
-                      {isSignUp && (
-                        <>
-                          <div className="grid gap-2">
-                            <Label htmlFor="firstName">First Name</Label>
-                            <Input id="firstName" value={formData.firstName} onChange={handleInputChange} required />
+                    {passwordLoginEnabled && (
+                      <div className="grid gap-4">
+                        {isSignUp && (
+                          <>
+                            <div className="grid gap-2">
+                              <Label htmlFor="firstName">First Name</Label>
+                              <Input id="firstName" value={formData.firstName} onChange={handleInputChange} required />
+                            </div>
+                            <div className="grid gap-2">
+                              <Label htmlFor="lastName">Last Name</Label>
+                              <Input id="lastName" value={formData.lastName} onChange={handleInputChange} required />
+                            </div>
+                          </>
+                        )}
+                        <div className="grid gap-2">
+                          <Label htmlFor="email">Email</Label>
+                          <Input
+                            id="email"
+                            type="email"
+                            value={formData.email}
+                            onChange={handleInputChange}
+                            placeholder="10x_engineer@unicorn.com"
+                            required
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <div className="flex items-center">
+                            <Label htmlFor="password">Password</Label>
+                            {!isSignUp && (
+                              <a href="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">
+                                Forgot your password?
+                              </a>
+                            )}
                           </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="lastName">Last Name</Label>
-                            <Input id="lastName" value={formData.lastName} onChange={handleInputChange} required />
-                          </div>
-                        </>
-                      )}
-                      <div className="grid gap-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          value={formData.email}
-                          onChange={handleInputChange}
-                          placeholder="10x_engineer@unicorn.com"
-                          required
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <div className="flex items-center">
-                          <Label htmlFor="password">Password</Label>
-                          {!isSignUp && (
-                            <a href="/forgot-password" className="ml-auto text-sm underline-offset-4 hover:underline">
-                              Forgot your password?
-                            </a>
+                          <Input
+                            id="password"
+                            type="password"
+                            value={formData.password}
+                            onChange={handleInputChange}
+                            required
+                            {...(isSignUp && { minLength: 12, maxLength: 72 })}
+                            aria-describedby={isSignUp ? "password-help" : undefined}
+                          />
+                          {isSignUp && (
+                            <p id="password-help" className="text-xs text-muted-foreground">
+                              Must be at least 12 characters.
+                            </p>
                           )}
                         </div>
-                        <Input
-                          id="password"
-                          type="password"
-                          value={formData.password}
-                          onChange={handleInputChange}
-                          required
-                          {...(isSignUp && { minLength: 12, maxLength: 72 })}
-                          aria-describedby={isSignUp ? "password-help" : undefined}
-                        />
-                        {isSignUp && (
-                          <p id="password-help" className="text-xs text-muted-foreground">
-                            Must be at least 12 characters.
-                          </p>
-                        )}
-                      </div>
-                      <Turnstile ref={turnstileRef} action={turnstileAction} onToken={setTurnstileToken} />
-                      <Button type="submit" className="w-full" disabled={isLoading}>
-                        {isLoading ?
-                          "Loading..."
+                        <Turnstile ref={turnstileRef} action={turnstileAction} onToken={setTurnstileToken} />
+                        <Button type="submit" className="w-full" disabled={isLoading}>
+                          {isLoading ?
+                            "Loading..."
                           : isSignUp ?
                             "Sign Up"
-                            : "Sign In"}
-                      </Button>
-                    </div>
-                    {!isInvitation && (
+                          : "Sign In"}
+                        </Button>
+                      </div>
+                    )}
+                    {!isInvitation && passwordLoginEnabled && signupEnabled && (
                       <div className="text-center text-sm">
                         {isSignUp ?
                           <>
@@ -384,7 +420,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                               Sign in
                             </button>
                           </>
-                          : <>
+                        : <>
                             Don&apos;t have an account?{" "}
                             <button
                               type="button"
