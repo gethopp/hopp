@@ -221,3 +221,19 @@ func (c *Config) IsTurnstileEnabled() bool {
 func (c *Config) IsStripeEnabled() bool {
 	return c.Stripe.SecretKey != ""
 }
+
+// SocialProviders returns the names of the social login providers that have
+// both a key and a secret configured, in the order they are registered.
+func (c *Config) SocialProviders() []string {
+	providers := []string{}
+	if c.Auth.GoogleKey != "" && c.Auth.GoogleSecret != "" {
+		providers = append(providers, "google")
+	}
+	if c.Auth.SlackKey != "" && c.Auth.SlackSecret != "" {
+		providers = append(providers, "slack")
+	}
+	if c.Auth.GitHubKey != "" && c.Auth.GitHubSecret != "" {
+		providers = append(providers, "github")
+	}
+	return providers
+}

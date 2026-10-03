@@ -330,11 +330,19 @@ func (s *Server) setupGothProviders() {
 	// Set the session secret for Goth
 	gothic.Store = s.Store
 
-	goth.UseProviders(
-		google.New(s.Config.Auth.GoogleKey, s.Config.Auth.GoogleSecret, s.Config.Auth.GoogleRedirect, "email", "profile", "openid"),
-		slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"),
-		github.New(s.Config.Auth.GitHubKey, s.Config.Auth.GitHubSecret, s.Config.Auth.GitHubRedirect, "user:email", "read:user"),
-	)
+	// goth keeps providers in a package-level registry, so start clean and
+	// register only the ones that are configured.
+	goth.ClearProviders()
+	for _, name := range s.Config.SocialProviders() {
+		switch name {
+		case "google":
+			goth.UseProviders(google.New(s.Config.Auth.GoogleKey, s.Config.Auth.GoogleSecret, s.Config.Auth.GoogleRedirect, "email", "profile", "openid"))
+		case "slack":
+			goth.UseProviders(slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"))
+		case "github":
+			goth.UseProviders(github.New(s.Config.Auth.GitHubKey, s.Config.Auth.GitHubSecret, s.Config.Auth.GitHubRedirect, "user:email", "read:user"))
+		}
+	}
 }
 
 func (s *Server) setupEmailClient() {
