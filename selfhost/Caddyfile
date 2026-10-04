@@ -7,6 +7,8 @@
 # Caddy automatically obtains and renews Let's Encrypt certificates.
 
 {$DOMAIN} {
+    # The web app is a single large HTML file, compressing it roughly halves the download.
+    encode zstd gzip
     reverse_proxy backend:1926
 }
 
