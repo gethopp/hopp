@@ -58,8 +58,11 @@ export function Settings() {
       return;
     }
     try {
-      await updateTeamMutation.mutateAsync({ body: { name } });
-      await refetchTeamName();
+      const team = await updateTeamMutation.mutateAsync({ body: { name } });
+      // Show what the server stored; the refetch only keeps the cache in sync
+      // and does not throw, so it must not decide whether we report success.
+      setTeamNameInput(team?.name ?? name);
+      void refetchTeamName();
       toast.success("Team name updated successfully");
     } catch (error) {
       toast.error("Failed to update team name");
