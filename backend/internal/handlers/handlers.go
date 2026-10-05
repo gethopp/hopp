@@ -159,12 +159,14 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				sess.Save(c.Request(), c.Response())
 			}
 
-			// Single-team mode: OIDC users without an invitation join the first
-			// team of the instance. On an empty instance there is none yet, so
-			// the first user falls through and creates it as admin.
-			if assignedTeamID == nil && isOIDC && h.Config.Auth.OIDC.SingleTeam {
+			// Single-team mode: OIDC users without an invitation join the team
+			// marked as the OIDC team, never any other team of the instance. If
+			// there is none yet, the first user falls through and creates it as
+			// admin.
+			singleTeam := isOIDC && h.Config.Auth.OIDC.SingleTeam
+			if assignedTeamID == nil && singleTeam {
 				var team models.Team
-				err := tx.Order("id ASC").First(&team).Error
+				err := tx.Where("is_oidc_team = ?", true).Order("id ASC").First(&team).Error
 				if err == nil {
 					assignedTeamID = &team.ID
 				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -218,7 +220,8 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 
 				// Create a new team
 				team := models.Team{
-					Name: teamName,
+					Name:       teamName,
+					IsOIDCTeam: singleTeam,
 				}
 				if err := tx.Create(&team).Error; err != nil {
 					return fmt.Errorf("failed to create team: %w", err)

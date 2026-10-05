@@ -40,8 +40,9 @@ type Config struct {
 			ClientSecret string // optional, public clients rely on PKCE alone
 			DisplayName  string // label of the login button
 			Redirect     string
-			// SingleTeam makes new OIDC users without an invitation join the
-			// first team of the instance instead of creating their own.
+			// SingleTeam puts new OIDC users without an invitation into one
+			// shared team, created by the first of them, instead of giving
+			// each their own.
 			SingleTeam bool
 		}
 	}

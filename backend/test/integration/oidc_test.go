@@ -436,6 +436,53 @@ func TestOIDC_SingleTeamJoinsFirstTeam(t *testing.T) {
 	assert.Equal(t, int64(1), teams)
 }
 
+func TestOIDC_SingleTeamNeverJoinsExistingTeams(t *testing.T) {
+	idp := newFakeIDP(t)
+	srv, cleanup := setupTestServerWithOIDC(t, idp, func(cfg *config.Config) {
+		cfg.Auth.OIDC.SingleTeam = true
+	})
+	defer cleanup()
+
+	// A team that was not created through OIDC, e.g. by a password sign-up.
+	existing := createTestUser(t, srv.DB, "owner@gmail.com", "Owner", "User", "securepassword123", false)
+
+	require.Equal(t, http.StatusFound, oidcLogin(t, srv, idp, verifiedClaims("ada@gmail.com", "Ada"), nil).Code)
+	require.Equal(t, http.StatusFound, oidcLogin(t, srv, idp, verifiedClaims("grace@gmail.com", "Grace"), nil).Code)
+
+	var ada, grace models.User
+	require.NoError(t, srv.DB.Where("email = ?", "ada@gmail.com").First(&ada).Error)
+	require.NoError(t, srv.DB.Where("email = ?", "grace@gmail.com").First(&grace).Error)
+
+	// The first OIDC user gets a new team as admin instead of the existing one.
+	assert.NotEqual(t, *existing.TeamID, *ada.TeamID)
+	assert.True(t, ada.IsAdmin)
+	assert.Equal(t, *ada.TeamID, *grace.TeamID)
+	assert.False(t, grace.IsAdmin)
+
+	var members int64
+	require.NoError(t, srv.DB.Model(&models.User{}).Where("team_id = ?", *existing.TeamID).Count(&members).Error)
+	assert.Equal(t, int64(1), members)
+}
+
+func TestOIDC_SingleTeamJoinsTeamMarkedByOperator(t *testing.T) {
+	idp := newFakeIDP(t)
+	srv, cleanup := setupTestServerWithOIDC(t, idp, func(cfg *config.Config) {
+		cfg.Auth.OIDC.SingleTeam = true
+	})
+	defer cleanup()
+
+	createTestTeam(t, srv.DB, "Some Other Team")
+	adopted := createTestTeam(t, srv.DB, "Company Team")
+	require.NoError(t, srv.DB.Exec("UPDATE teams SET is_oidc_team = true WHERE id = ?", adopted.ID).Error)
+
+	require.Equal(t, http.StatusFound, oidcLogin(t, srv, idp, verifiedClaims("ada@gmail.com", "Ada"), nil).Code)
+
+	var ada models.User
+	require.NoError(t, srv.DB.Where("email = ?", "ada@gmail.com").First(&ada).Error)
+	assert.Equal(t, adopted.ID, *ada.TeamID)
+	assert.False(t, ada.IsAdmin)
+}
+
 func TestOIDC_InvitedUserJoinsInvitingTeam(t *testing.T) {
 	idp := newFakeIDP(t)
 	srv, cleanup := setupTestServerWithOIDC(t, idp, nil)
