@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/assets/Hopp.png";
-import LoginScreen from "@/assets/LoginScreen.png";
+import LoginScreen from "@/assets/LoginScreen.webp";
 
 import { BACKEND_URLS } from "@/constants";
 import { useEffect, useRef, useState } from "react";

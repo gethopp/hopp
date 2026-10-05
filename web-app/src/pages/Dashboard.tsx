@@ -17,7 +17,7 @@ import { AuthenticationDialog } from "@/components/AuthenticationDialog";
 import { SubscriptionSuccessModal } from "@/components/SubscriptionSuccessModal";
 import { usePostHog } from "posthog-js/react";
 import { WindowsDownloadModal } from "@/components/WindowsDownloadModal";
-import PairingBuddy from "@/assets/PairingBuddy.png";
+import PairingBuddy from "@/assets/PairingBuddy.webp";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
 import { HiOutlineQuestionMarkCircle } from "react-icons/hi2";
 
