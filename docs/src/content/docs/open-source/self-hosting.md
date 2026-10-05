@@ -77,7 +77,7 @@ How accounts are handled:
 
 - Users are matched by email address. The provider must send `email_verified: true`, otherwise the login is rejected.
 - A new user without an invitation gets their own team, like with the other login methods. Set `OIDC_SINGLE_TEAM=true` if everyone from your provider belongs together: the first user creates the team and becomes its admin, everyone after that joins it.
-- Use an `https` issuer. Tokens are trusted because they are fetched directly from the provider's token endpoint over TLS.
+- The issuer and its endpoints must use `https`; plain `http` is accepted for `localhost` only. ID tokens are verified against the provider's signing keys (`jwks_uri`).
 - If the provider cannot be reached when the backend starts, OIDC login is disabled with a warning in the log and the other login methods keep working. Restart the backend once the provider is back.
 
 ## Firewall

@@ -4,15 +4,20 @@
 package integration
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v3"
 	"github.com/labstack/gommon/log"
 	"github.com/markbates/goth"
 	"github.com/stretchr/testify/assert"
@@ -26,8 +31,44 @@ import (
 
 const oidcTestClientID = "hopp-test-client"
 
-// fakeIDP is a minimal OpenID Connect provider for a public client: discovery
-// and a token endpoint that enforces PKCE (S256).
+const oidcTestKeyID = "test-key"
+
+var (
+	oidcTestKeysOnce sync.Once
+	// oidcTestKey signs the fake provider's ID tokens and is published in its
+	// key set; oidcForeignKey is a key the provider does not publish.
+	oidcTestKey, oidcForeignKey *rsa.PrivateKey
+)
+
+func oidcTestKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PrivateKey) {
+	oidcTestKeysOnce.Do(func() {
+		var err error
+		oidcTestKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		oidcForeignKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+	})
+	return oidcTestKey, oidcForeignKey
+}
+
+// signIDToken returns the claims as a JWT signed with RS256.
+func signIDToken(t *testing.T, key *rsa.PrivateKey, claims map[string]interface{}) string {
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{Key: key, KeyID: oidcTestKeyID}},
+		nil,
+	)
+	require.NoError(t, err)
+	payload, err := json.Marshal(claims)
+	require.NoError(t, err)
+	signed, err := signer.Sign(payload)
+	require.NoError(t, err)
+	token, err := signed.CompactSerialize()
+	require.NoError(t, err)
+	return token
+}
+
+// fakeIDP is a minimal OpenID Connect provider for a public client: discovery,
+// a key set and a token endpoint that enforces PKCE (S256).
 type fakeIDP struct {
 	server *httptest.Server
 	// claims are merged into the ID token returned for the next login.
@@ -37,10 +78,14 @@ type fakeIDP struct {
 	challenge string
 	// tokenRequests counts successful token exchanges.
 	tokenRequests int
+	// mintIDToken overrides how the ID token is produced, to hand out tokens a
+	// real provider never would.
+	mintIDToken func(claims map[string]interface{}) string
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
 	idp := &fakeIDP{}
+	signingKey, _ := oidcTestKeys(t)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +93,14 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 			"issuer":                 idp.server.URL,
 			"authorization_endpoint": idp.server.URL + "/authorize",
 			"token_endpoint":         idp.server.URL + "/token",
+			"jwks_uri":               idp.server.URL + "/jwks",
 		})
+	})
+
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
+			{Key: &signingKey.PublicKey, KeyID: oidcTestKeyID, Algorithm: "RS256", Use: "sig"},
+		}})
 	})
 
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +126,10 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 		for k, v := range idp.claims {
 			claims[k] = v
 		}
-		payload, _ := json.Marshal(claims)
-		header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-		idToken := header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+		idToken := signIDToken(t, signingKey, claims)
+		if idp.mintIDToken != nil {
+			idToken = idp.mintIDToken(claims)
+		}
 
 		idp.tokenRequests++
 		w.Header().Set("Content-Type", "application/json")
@@ -261,6 +314,74 @@ func TestOIDC_CallerSuppliedVerifierIsIgnored(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Header().Get("Location"), "/login?token=")
+}
+
+func TestOIDC_InvalidIDTokenSignatureRejected(t *testing.T) {
+	_, foreignKey := oidcTestKeys(t)
+
+	unsigned := func(claims map[string]interface{}) string {
+		payload, _ := json.Marshal(claims)
+		header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+		return header + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+	}
+	signedByForeignKey := func(claims map[string]interface{}) string {
+		return signIDToken(t, foreignKey, claims)
+	}
+	tampered := func(claims map[string]interface{}) string {
+		key, _ := oidcTestKeys(t)
+		parts := strings.Split(signIDToken(t, key, claims), ".")
+		claims["email"] = "someone.else@gmail.com"
+		payload, _ := json.Marshal(claims)
+		return parts[0] + "." + base64.RawURLEncoding.EncodeToString(payload) + "." + parts[2]
+	}
+
+	for name, mint := range map[string]func(map[string]interface{}) string{
+		"unsigned token":          unsigned,
+		"signed by a foreign key": signedByForeignKey,
+		"payload changed":         tampered,
+	} {
+		t.Run(name, func(t *testing.T) {
+			idp := newFakeIDP(t)
+			srv, cleanup := setupTestServerWithOIDC(t, idp, nil)
+			defer cleanup()
+			createTestUser(t, srv.DB, "ada@gmail.com", "Ada", "Existing", "securepassword123", false)
+			idp.mintIDToken = mint
+
+			rec := oidcLogin(t, srv, idp, verifiedClaims("ada@gmail.com", "Ada"), nil)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.NotContains(t, rec.Header().Get("Location"), "token=")
+		})
+	}
+}
+
+func TestOIDC_InsecureEndpointsRejected(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Auth.OIDC.ClientID = oidcTestClientID
+
+	// A plain http issuer is refused before any request is made.
+	cfg.Auth.OIDC.IssuerURL = "http://idp.example.com"
+	_, err := handlers.NewOIDCProvider(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must use https")
+
+	// So is a discovery document that points to a plain http endpoint.
+	var issuer string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"issuer":                 issuer,
+			"authorization_endpoint": issuer + "/authorize",
+			"token_endpoint":         "http://idp.example.com/token",
+			"jwks_uri":               issuer + "/jwks",
+		})
+	}))
+	defer idp.Close()
+	issuer = idp.URL
+
+	cfg.Auth.OIDC.IssuerURL = issuer
+	_, err = handlers.NewOIDCProvider(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "token_endpoint must use https")
 }
 
 func TestOIDC_StateMismatchRejected(t *testing.T) {

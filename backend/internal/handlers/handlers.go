@@ -108,6 +108,13 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	}
 
 	if isOIDC {
+		// goth validates issuer, audience and expiry of the ID token but not
+		// its signature, so verify it before trusting any claim.
+		if err := verifyOIDCIDToken(user.IDToken); err != nil {
+			c.Logger().Warnf("OIDC login rejected: %v", err)
+			return echo.NewHTTPError(http.StatusUnauthorized, "Invalid ID token")
+		}
+
 		// Accounts are matched by email, so an unverified address must not be
 		// able to take over an existing account.
 		if !oidcEmailVerified(user) {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -28,11 +29,26 @@ const (
 	oidcDiscoveryTimeout   = 10 * time.Second
 )
 
+// oidcDiscovery is the part of the issuer's discovery document we use.
+type oidcDiscovery struct {
+	Issuer             string `json:"issuer"`
+	AuthEndpoint       string `json:"authorization_endpoint"`
+	TokenEndpoint      string `json:"token_endpoint"`
+	UserInfoEndpoint   string `json:"userinfo_endpoint"`
+	EndSessionEndpoint string `json:"end_session_endpoint"`
+	JWKSURI            string `json:"jwks_uri"`
+}
+
 // NewOIDCProvider builds the generic OpenID Connect provider from the issuer's
-// discovery document. No client secret is needed for public clients, the
-// authorization code is always protected with PKCE.
+// discovery document and loads the issuer's signing keys. No client secret is
+// needed for public clients, the authorization code is always protected with
+// PKCE.
 func NewOIDCProvider(cfg *config.Config) (goth.Provider, error) {
 	oidc := cfg.Auth.OIDC
+
+	if err := requireSecureOIDCURL("OIDC_ISSUER_URL", oidc.IssuerURL); err != nil {
+		return nil, err
+	}
 
 	// Discovery is done here rather than by goth so it can time out instead of
 	// blocking server start when the identity provider does not answer.
@@ -46,15 +62,38 @@ func NewOIDCProvider(cfg *config.Config) (goth.Provider, error) {
 		return nil, fmt.Errorf("discovery request returned status %d", res.StatusCode)
 	}
 
-	var discovery openidConnect.OpenIDConfig
+	var discovery oidcDiscovery
 	if err := json.NewDecoder(res.Body).Decode(&discovery); err != nil {
 		return nil, fmt.Errorf("invalid discovery document: %w", err)
 	}
 	if strings.TrimRight(discovery.Issuer, "/") != oidc.IssuerURL {
 		return nil, fmt.Errorf("issuer %q in discovery document does not match OIDC_ISSUER_URL", discovery.Issuer)
 	}
-	if discovery.AuthEndpoint == "" || discovery.TokenEndpoint == "" {
-		return nil, fmt.Errorf("discovery document lacks the authorization or token endpoint")
+
+	endpoints := []struct {
+		name, url string
+		required  bool
+	}{
+		{"authorization_endpoint", discovery.AuthEndpoint, true},
+		{"token_endpoint", discovery.TokenEndpoint, true},
+		{"jwks_uri", discovery.JWKSURI, true},
+		{"userinfo_endpoint", discovery.UserInfoEndpoint, false},
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.url == "" {
+			if endpoint.required {
+				return nil, fmt.Errorf("discovery document lacks %s", endpoint.name)
+			}
+			continue
+		}
+		if err := requireSecureOIDCURL(endpoint.name, endpoint.url); err != nil {
+			return nil, err
+		}
+	}
+
+	keys, err := newOIDCKeySet(discovery.JWKSURI, client)
+	if err != nil {
+		return nil, err
 	}
 
 	provider, err := openidConnect.NewCustomisedURL(
@@ -67,7 +106,18 @@ func NewOIDCProvider(cfg *config.Config) (goth.Provider, error) {
 		return nil, err
 	}
 	provider.SetName(oidcProviderName)
+
+	oidcKeys = keys
 	return provider, nil
+}
+
+// verifyOIDCIDToken checks the signature of an ID token against the keys of
+// the configured issuer.
+func verifyOIDCIDToken(idToken string) error {
+	if oidcKeys == nil {
+		return errors.New("no OIDC signing keys loaded")
+	}
+	return oidcKeys.verify(idToken)
 }
 
 // beginOIDCAuth redirects to the identity provider like gothic.BeginAuthHandler,
