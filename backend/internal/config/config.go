@@ -153,8 +153,8 @@ func Load() (*Config, error) {
 
 	c.Auth.DisableSignup = os.Getenv("DISABLE_SIGNUP") == "true"
 	c.Auth.DisablePasswordLogin = os.Getenv("DISABLE_PASSWORD_LOGIN") == "true"
-	if c.Auth.DisablePasswordLogin && len(c.SocialProviders()) == 0 {
-		return nil, fmt.Errorf("DISABLE_PASSWORD_LOGIN is set but no social login provider is configured, nobody could sign in")
+	if c.Auth.DisablePasswordLogin && !c.hasWebLoginProvider() {
+		return nil, fmt.Errorf("DISABLE_PASSWORD_LOGIN is set but neither Google nor GitHub login is configured, nobody could sign in")
 	}
 
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
@@ -248,4 +248,16 @@ func (c *Config) SocialProviders() []string {
 		providers = append(providers, "github")
 	}
 	return providers
+}
+
+// hasWebLoginProvider reports whether a social provider is configured that
+// the web app offers a login button for. Slack is registered when configured,
+// but its button is disabled in the web app, so it does not count.
+func (c *Config) hasWebLoginProvider() bool {
+	for _, provider := range c.SocialProviders() {
+		if provider != "slack" {
+			return true
+		}
+	}
+	return false
 }

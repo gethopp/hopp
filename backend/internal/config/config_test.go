@@ -14,6 +14,13 @@ func TestLoad_DisablePasswordLoginRequiresProvider(t *testing.T) {
 		t.Fatal("expected Load to fail when password login is disabled and no provider is configured")
 	}
 
+	// Slack alone is not enough: the web app has no Slack login button.
+	t.Setenv("SLACK_KEY", "key")
+	t.Setenv("SLACK_SECRET", "secret")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected Load to fail when only Slack is configured")
+	}
+
 	t.Setenv("GITHUB_KEY", "key")
 	t.Setenv("GITHUB_SECRET", "secret")
 

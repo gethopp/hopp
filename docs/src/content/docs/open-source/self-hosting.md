@@ -69,7 +69,7 @@ By default anyone who can reach your instance can sign up and create their own t
 Notes:
 
 - With `DISABLE_SIGNUP`, create your admin account first, then invite teammates from the dashboard. Existing users keep signing in as before.
-- `DISABLE_PASSWORD_LOGIN` requires at least one OAuth provider (`GOOGLE_*`, `GITHUB_*` or `SLACK_*`), otherwise the backend refuses to start.
+- `DISABLE_PASSWORD_LOGIN` requires Google or GitHub login to be configured (`GOOGLE_*` or `GITHUB_*`), otherwise the backend refuses to start. Slack alone does not count, the web app has no Slack login button.
 - OAuth providers without a key and secret are not offered on the login page.
 - Billing is off unless `STRIPE_SECRET_KEY` is set. Without it every team has full access and the web app hides the subscription page.
 
