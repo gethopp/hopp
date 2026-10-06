@@ -328,7 +328,7 @@ export const Sidebar = () => {
                 )}
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-[200px]" side="top" align="start">
-                <DropdownMenuItem onClick={() => openUrl("https://pair.gethopp.app")}>Profile</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openUrl(Constants.webAppUrl)}>Profile</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setTab("debug")}>Debug</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => tauriUtils.openSettingsWindow()}>Settings</DropdownMenuItem>
                 <DropdownMenuSeparator />
