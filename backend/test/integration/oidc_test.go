@@ -78,6 +78,8 @@ type fakeIDP struct {
 	challenge string
 	// tokenRequests counts successful token exchanges.
 	tokenRequests int
+	// tokenAttempts counts every request to the token endpoint.
+	tokenAttempts int
 	// mintIDToken overrides how the ID token is produced, to hand out tokens a
 	// real provider never would.
 	mintIDToken func(claims map[string]interface{}) string
@@ -105,6 +107,7 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())
+		idp.tokenAttempts++
 
 		// Public client: no secret, the code verifier is the only proof.
 		sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
@@ -314,6 +317,39 @@ func TestOIDC_CallerSuppliedVerifierIsIgnored(t *testing.T) {
 
 	assert.Equal(t, http.StatusFound, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Header().Get("Location"), "/login?token=")
+}
+
+func TestOIDC_CallbackWithoutVerifierRejected(t *testing.T) {
+	idp := newFakeIDP(t)
+	srv, cleanup := setupTestServerWithOIDC(t, idp, nil)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/social/oidc", nil)
+	rec := httptest.NewRecorder()
+	srv.Echo.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusTemporaryRedirect, rec.Code, rec.Body.String())
+	authURL, err := url.Parse(rec.Header().Get("Location"))
+	require.NoError(t, err)
+
+	// The callback arrives with goth's own session but without the application
+	// session that holds the verifier.
+	callback := url.Values{}
+	callback.Set("code", "auth-code")
+	callback.Set("state", authURL.Query().Get("state"))
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/social/oidc/callback?"+callback.Encode(), nil)
+	forwarded := 0
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name != "session" {
+			req.AddCookie(cookie)
+			forwarded++
+		}
+	}
+	require.NotZero(t, forwarded, "goth's session cookie must be forwarded")
+	rec = httptest.NewRecorder()
+	srv.Echo.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Equal(t, 0, idp.tokenAttempts, "no token exchange without a verifier")
 }
 
 func TestOIDC_InvalidIDTokenSignatureRejected(t *testing.T) {

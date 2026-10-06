@@ -94,7 +94,12 @@ func (r *RealGothicProvider) CompleteUserAuth(res http.ResponseWriter, req *http
 func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	isOIDC := c.Param("provider") == oidcProviderName
 	if isOIDC {
-		addOIDCCodeVerifier(c)
+		if err := addOIDCCodeVerifier(c); err != nil {
+			c.Logger().Warnf("OIDC login rejected: %v", err)
+			// Returning here skips gothic's own cleanup of its session cookie.
+			_ = gothic.Logout(c.Response(), c.Request())
+			return echo.NewHTTPError(http.StatusBadRequest, "Login session expired, please sign in again")
+		}
 	}
 
 	user, err := h.SocialAuth.CompleteUserAuth(c.Response(), c.Request())
@@ -165,6 +170,11 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 			// admin.
 			singleTeam := isOIDC && h.Config.Auth.OIDC.SingleTeam
 			if assignedTeamID == nil && singleTeam {
+				// Held until the transaction ends, so a concurrent first
+				// sign-in waits here and then finds the team created below.
+				if err := lockOIDCTeamSetup(tx); err != nil {
+					return fmt.Errorf("failed to lock OIDC team setup: %w", err)
+				}
 				var team models.Team
 				err := tx.Where("is_oidc_team = ?", true).Order("id ASC").First(&team).Error
 				if err == nil {

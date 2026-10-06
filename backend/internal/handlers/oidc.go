@@ -17,6 +17,7 @@ import (
 	"github.com/markbates/goth/gothic"
 	"github.com/markbates/goth/providers/openidConnect"
 	"golang.org/x/oauth2"
+	"gorm.io/gorm"
 )
 
 const (
@@ -27,6 +28,9 @@ const (
 	// to the identity provider and the callback.
 	oidcVerifierSessionKey = "oidc_pkce_verifier"
 	oidcDiscoveryTimeout   = 10 * time.Second
+	// oidcTeamSetupLockKey is the PostgreSQL advisory lock taken while the
+	// OIDC team is looked up and created. The value is arbitrary but fixed.
+	oidcTeamSetupLockKey int64 = 0x686f70706f696463
 )
 
 // oidcDiscovery is the part of the issuer's discovery document we use.
@@ -156,22 +160,44 @@ func beginOIDCAuth(c echo.Context) error {
 
 // addOIDCCodeVerifier moves the PKCE code verifier from the session into the
 // callback request, where goth picks it up for the token exchange. Any
-// code_verifier sent by the caller is discarded.
-func addOIDCCodeVerifier(c echo.Context) {
+// code_verifier sent by the caller is discarded. It fails if the session holds
+// no verifier or the verifier cannot be removed from it, so the caller can
+// reject the callback before any token exchange.
+func addOIDCCodeVerifier(c echo.Context) error {
 	req := c.Request()
 	q := req.URL.Query()
 	q.Del("code_verifier")
+	req.URL.RawQuery = q.Encode()
 
-	if sess, err := session.Get("session", c); err == nil {
-		if verifier, ok := sess.Values[oidcVerifierSessionKey].(string); ok {
-			q.Set("code_verifier", verifier)
-			// Single use
-			delete(sess.Values, oidcVerifierSessionKey)
-			sess.Save(req, c.Response())
-		}
+	sess, err := session.Get("session", c)
+	if err != nil {
+		return fmt.Errorf("loading login session: %w", err)
+	}
+	verifier, ok := sess.Values[oidcVerifierSessionKey].(string)
+	if !ok || verifier == "" {
+		return errors.New("login session holds no PKCE verifier")
 	}
 
+	// Single use
+	delete(sess.Values, oidcVerifierSessionKey)
+	if err := sess.Save(req, c.Response()); err != nil {
+		return fmt.Errorf("removing PKCE verifier from login session: %w", err)
+	}
+
+	q.Set("code_verifier", verifier)
 	req.URL.RawQuery = q.Encode()
+	return nil
+}
+
+// lockOIDCTeamSetup serializes the lookup and creation of the OIDC team, so
+// two first sign-ins at the same time cannot each create one. The lock is
+// released when the transaction ends. SQLite, used in tests only, has no
+// advisory locks.
+func lockOIDCTeamSetup(tx *gorm.DB) error {
+	if tx.Name() != "postgres" {
+		return nil
+	}
+	return tx.Exec("SELECT pg_advisory_xact_lock(?)", oidcTeamSetupLockKey).Error
 }
 
 // oidcEmailVerified reports whether the identity provider vouches for the
