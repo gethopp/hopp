@@ -33,6 +33,12 @@ type Config struct {
 		GitHubRedirect string
 		CallbackURL    string
 		SessionSecret  string
+		// DisableSignup rejects new accounts that do not come with a team
+		// invitation. The very first account of an instance is still allowed.
+		DisableSignup bool
+		// DisablePasswordLogin turns off email/password authentication, leaving
+		// only the configured social providers.
+		DisablePasswordLogin bool
 	}
 	Livekit struct {
 		APIKey    string
@@ -145,6 +151,12 @@ func Load() (*Config, error) {
 	c.Auth.GitHubSecret = os.Getenv("GITHUB_SECRET")
 	c.Auth.GitHubRedirect = fmt.Sprintf("https://%s/api/auth/social/github/callback", c.Server.DeployDomain)
 
+	c.Auth.DisableSignup = os.Getenv("DISABLE_SIGNUP") == "true"
+	c.Auth.DisablePasswordLogin = os.Getenv("DISABLE_PASSWORD_LOGIN") == "true"
+	if c.Auth.DisablePasswordLogin && !c.hasWebLoginProvider() {
+		return nil, fmt.Errorf("DISABLE_PASSWORD_LOGIN is set but neither Google nor GitHub login is configured, nobody could sign in")
+	}
+
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
 	c.Database.RedisURI = os.Getenv("REDIS_URI")
 
@@ -220,4 +232,32 @@ func (c *Config) IsTurnstileEnabled() bool {
 // as Pro.
 func (c *Config) IsStripeEnabled() bool {
 	return c.Stripe.SecretKey != ""
+}
+
+// SocialProviders returns the names of the social login providers that have
+// both a key and a secret configured, in the order they are registered.
+func (c *Config) SocialProviders() []string {
+	providers := []string{}
+	if c.Auth.GoogleKey != "" && c.Auth.GoogleSecret != "" {
+		providers = append(providers, "google")
+	}
+	if c.Auth.SlackKey != "" && c.Auth.SlackSecret != "" {
+		providers = append(providers, "slack")
+	}
+	if c.Auth.GitHubKey != "" && c.Auth.GitHubSecret != "" {
+		providers = append(providers, "github")
+	}
+	return providers
+}
+
+// hasWebLoginProvider reports whether a social provider is configured that
+// the web app offers a login button for. Slack is registered when configured,
+// but its button is disabled in the web app, so it does not count.
+func (c *Config) hasWebLoginProvider() bool {
+	for _, provider := range c.SocialProviders() {
+		if provider != "slack" {
+			return true
+		}
+	}
+	return false
 }

@@ -330,11 +330,19 @@ func (s *Server) setupGothProviders() {
 	// Set the session secret for Goth
 	gothic.Store = s.Store
 
-	goth.UseProviders(
-		google.New(s.Config.Auth.GoogleKey, s.Config.Auth.GoogleSecret, s.Config.Auth.GoogleRedirect, "email", "profile", "openid"),
-		slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"),
-		github.New(s.Config.Auth.GitHubKey, s.Config.Auth.GitHubSecret, s.Config.Auth.GitHubRedirect, "user:email", "read:user"),
-	)
+	// goth keeps providers in a package-level registry, so start clean and
+	// register only the ones that are configured.
+	goth.ClearProviders()
+	for _, name := range s.Config.SocialProviders() {
+		switch name {
+		case "google":
+			goth.UseProviders(google.New(s.Config.Auth.GoogleKey, s.Config.Auth.GoogleSecret, s.Config.Auth.GoogleRedirect, "email", "profile", "openid"))
+		case "slack":
+			goth.UseProviders(slack.New(s.Config.Auth.SlackKey, s.Config.Auth.SlackSecret, s.Config.Auth.SlackRedirect, "users:read", "users:read.email", "team:read"))
+		case "github":
+			goth.UseProviders(github.New(s.Config.Auth.GitHubKey, s.Config.Auth.GitHubSecret, s.Config.Auth.GitHubRedirect, "user:email", "read:user"))
+		}
+	}
 }
 
 func (s *Server) setupEmailClient() {
@@ -378,6 +386,7 @@ func (s *Server) setupRoutes() {
 		return c.String(200, "OK")
 	})
 	api.GET("/metrics", echoprometheus.NewHandler())
+	api.GET("/config", auth.GetInstanceConfig)
 	// Add invitation details endpoint
 	api.GET("/invitation-details/:uuid", auth.GetInvitationDetails)
 
@@ -398,10 +407,10 @@ func (s *Server) setupRoutes() {
 	// Authentication endpoints
 	api.GET("/auth/social/:provider", auth.SocialLogin)
 	api.GET("/auth/social/:provider/callback", auth.SocialLoginCallback)
-	api.POST("/sign-up", auth.ManualSignUp)
-	api.POST("/sign-in", auth.ManualSignIn)
-	api.POST("/forgot-password", auth.ForgotPassword)
-	api.PATCH("/reset-password/:token", auth.ResetPassword)
+	api.POST("/sign-up", auth.ManualSignUp, auth.RequirePasswordLogin)
+	api.POST("/sign-in", auth.ManualSignIn, auth.RequirePasswordLogin)
+	api.POST("/forgot-password", auth.ForgotPassword, auth.RequirePasswordLogin)
+	api.PATCH("/reset-password/:token", auth.ResetPassword, auth.RequirePasswordLogin)
 
 	// Protected API routes group
 	protectedAPI := api.Group("/auth", s.JwtIssuer.Middleware())
