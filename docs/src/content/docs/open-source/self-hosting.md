@@ -57,6 +57,29 @@ curl https://hopp.example.com/api/health
 
 Open `https://hopp.example.com` in a browser and sign up. The first registered account becomes the team admin owner.
 
+## Single sign-on (OpenID Connect)
+
+Hopp can sign users in through any OpenID Connect provider (Keycloak, Authentik, Pocket ID, ...) in addition to the built-in login methods.
+
+1. Register a client at your provider with the redirect URI `https://<DOMAIN>/api/auth/social/oidc/callback`. Both confidential and public clients work; the authorization code flow always uses PKCE (S256).
+2. Set in `.env`:
+
+```env
+OIDC_ISSUER_URL=https://id.example.com
+OIDC_CLIENT_ID=<client id>
+OIDC_CLIENT_SECRET=<client secret, leave empty for public clients>
+OIDC_DISPLAY_NAME=Example SSO
+```
+
+3. Restart the backend: `docker compose up -d backend`. The login page now shows a "Login with Example SSO" button. The desktop app signs in through the web app, so it works there too.
+
+How accounts are handled:
+
+- Users are matched by email address. The provider must send `email_verified: true`, otherwise the login is rejected.
+- A new user without an invitation gets their own team, like with the other login methods. Set `OIDC_SINGLE_TEAM=true` if everyone from your provider belongs together: the first OIDC user creates the team and becomes its admin, everyone after that joins it. Teams that already exist are never joined this way. To use an existing team instead, mark it once before enabling the switch: `UPDATE teams SET is_oidc_team = true WHERE id = <team id>;`
+- The issuer and its endpoints must use `https`; plain `http` is accepted for `localhost` only. ID tokens are verified against the provider's signing keys (`jwks_uri`).
+- If the provider cannot be reached when the backend starts, OIDC login is disabled with a warning in the log and the other login methods keep working. Restart the backend once the provider is back.
+
 ## Firewall
 
 Many cloud providers (Scaleway DEV, Hetzner Cloud, basic DigitalOcean droplets) do **not** apply a firewall by default — these ports will already be reachable. Skip this section unless your provider has a security group, network ACL, or you've enabled `ufw`/`firewalld` on the host.

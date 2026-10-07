@@ -33,6 +33,18 @@ type Config struct {
 		GitHubRedirect string
 		CallbackURL    string
 		SessionSecret  string
+		// OIDC configures an optional generic OpenID Connect provider.
+		OIDC struct {
+			IssuerURL    string
+			ClientID     string
+			ClientSecret string // optional, public clients rely on PKCE alone
+			DisplayName  string // label of the login button
+			Redirect     string
+			// SingleTeam puts new OIDC users without an invitation into one
+			// shared team, created by the first of them, instead of giving
+			// each their own.
+			SingleTeam bool
+		}
 	}
 	Livekit struct {
 		APIKey    string
@@ -145,6 +157,16 @@ func Load() (*Config, error) {
 	c.Auth.GitHubSecret = os.Getenv("GITHUB_SECRET")
 	c.Auth.GitHubRedirect = fmt.Sprintf("https://%s/api/auth/social/github/callback", c.Server.DeployDomain)
 
+	c.Auth.OIDC.IssuerURL = strings.TrimRight(os.Getenv("OIDC_ISSUER_URL"), "/")
+	c.Auth.OIDC.ClientID = os.Getenv("OIDC_CLIENT_ID")
+	c.Auth.OIDC.ClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	c.Auth.OIDC.DisplayName = os.Getenv("OIDC_DISPLAY_NAME")
+	if c.Auth.OIDC.DisplayName == "" {
+		c.Auth.OIDC.DisplayName = "SSO"
+	}
+	c.Auth.OIDC.Redirect = fmt.Sprintf("https://%s/api/auth/social/oidc/callback", c.Server.DeployDomain)
+	c.Auth.OIDC.SingleTeam = os.Getenv("OIDC_SINGLE_TEAM") == "true"
+
 	c.Database.DSN = os.Getenv("DATABASE_DSN")
 	c.Database.RedisURI = os.Getenv("REDIS_URI")
 
@@ -220,4 +242,10 @@ func (c *Config) IsTurnstileEnabled() bool {
 // as Pro.
 func (c *Config) IsStripeEnabled() bool {
 	return c.Stripe.SecretKey != ""
+}
+
+// IsOIDCConfigured reports whether the generic OpenID Connect provider is
+// configured. Only the issuer and client ID are required.
+func (c *Config) IsOIDCConfigured() bool {
+	return c.Auth.OIDC.IssuerURL != "" && c.Auth.OIDC.ClientID != ""
 }
