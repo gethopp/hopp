@@ -667,7 +667,7 @@ func lookupSlackUserByEmail(botToken, email string) (string, error) {
 // It first tries to look up the user's Slack ID by email. If found, uses the native
 // Slack user format (which enables automatic status updates). Falls back to external
 // user format if the email lookup fails.
-func addParticipantToSlackCall(botToken, callID string, user *models.User) error {
+func addParticipantToSlackCall(botToken, callID string, user *models.UserProfile) error {
 	api := newSlackClient(botToken)
 
 	var participant slack.CallParticipant
@@ -722,7 +722,7 @@ func (h *SlackHandler) createSlackCall(botToken, externalID, createdBySlackUserI
 
 // removeParticipantFromSlackCall removes a user from a Slack call.
 // It uses the user's email to look up their Slack ID, falling back to external_id.
-func removeParticipantFromSlackCall(botToken, callID string, user *models.User) error {
+func removeParticipantFromSlackCall(botToken, callID string, user *models.UserProfile) error {
 	api := newSlackClient(botToken)
 
 	var participant slack.CallParticipant
@@ -793,7 +793,7 @@ func (h *SlackHandler) LeaveRoom(c echo.Context) error {
 				}
 			}()
 		} else {
-			h.logger.Warnf("Failed to get Slack metadata for participant removal for team %s", user.Team)
+			h.logger.Warnf("Failed to get Slack metadata for participant removal for team %v", user.TeamID)
 		}
 	}
 

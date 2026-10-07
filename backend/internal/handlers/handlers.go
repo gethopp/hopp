@@ -190,12 +190,14 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 			}
 
 			u = models.User{
-				FirstName: user.FirstName,
-				LastName:  user.LastName,
-				Email:     user.Email,
-				AvatarURL: user.AvatarURL,
-				TeamID:    assignedTeamID,
-				IsAdmin:   isAdmin,
+				UserProfile: models.UserProfile{
+					FirstName: user.FirstName,
+					LastName:  user.LastName,
+					Email:     user.Email,
+					AvatarURL: user.AvatarURL,
+					TeamID:    assignedTeamID,
+					IsAdmin:   isAdmin,
+				},
 			}
 			if err := tx.Create(&u).Error; err != nil {
 				return fmt.Errorf("failed to create user: %w", err)
@@ -390,10 +392,12 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 	}
 
 	u := &models.User{
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Email:     req.Email,
-		Password:  req.Password,
+		UserProfile: models.UserProfile{
+			FirstName: req.FirstName,
+			LastName:  req.LastName,
+			Email:     req.Email,
+		},
+		Password: req.Password,
 	}
 
 	if burner.IsBurnerEmail(u.Email) {
@@ -679,7 +683,9 @@ func (h *AuthHandler) AuthenticateApp(c echo.Context) error {
 }
 
 func (h *AuthHandler) User(c echo.Context) error {
-	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	// Full row: the /user response includes metadata, email_subscriptions and
+	// unsubscribe_id, which are not part of the slim UserProfile.
+	user, isAuthenticated := h.getAuthenticatedFullUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized here")
 	}
@@ -729,7 +735,7 @@ func (h *AuthHandler) GenerateDebugCallToken(c echo.Context) error {
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return c.String(http.StatusNotFound, "User not found")
 	}
-	tokens, err := generateLiveKitTokens(&h.ServerState, "random-name-for-now", &user)
+	tokens, err := generateLiveKitTokens(&h.ServerState, "random-name-for-now", &user.UserProfile)
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "Failed to generate callee tokens")
 	}
@@ -756,13 +762,18 @@ func (h *AuthHandler) UpdateName(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	user.FirstName = req.FirstName
-	user.LastName = req.LastName
-
-	if err := h.DB.Save(user).Error; err != nil {
+	// Targeted column update so the slim profile never overwrites the wide
+	// columns (hashed_password, metadata, ...) that it does not carry.
+	if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"first_name": req.FirstName,
+		"last_name":  req.LastName,
+	}).Error; err != nil {
 		c.Logger().Error("Failed to save to db:", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user")
 	}
+
+	user.FirstName = req.FirstName
+	user.LastName = req.LastName
 
 	return c.JSON(http.StatusOK, user)
 }
@@ -985,7 +996,9 @@ func (h *AuthHandler) SendTeamInvites(c echo.Context) error {
 
 // UpdateOnboardingFormStatus updates the user's metadata to mark the onboarding form as completed
 func (h *AuthHandler) UpdateOnboardingFormStatus(c echo.Context) error {
-	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	// Full row: this handler merges into the JSON `metadata` column, which is
+	// not part of the slim UserProfile.
+	user, isAuthenticated := h.getAuthenticatedFullUserFromJWT(c)
 	if !isAuthenticated {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
 	}
@@ -1059,7 +1072,6 @@ func (h *AuthHandler) CreateRoom(c echo.Context) error {
 	room := models.Room{
 		Name:   req.Name,
 		UserID: user.ID,
-		Team:   user.Team,
 		TeamID: user.TeamID,
 	}
 
@@ -1290,7 +1302,9 @@ func (h *AuthHandler) GetLivekitServerURL(c echo.Context) error {
 // SubscribeToLinuxWaitingList subscribes the user to the Linux waiting list
 // and unsubscribes from marketing emails
 func (h *AuthHandler) SubscribeToLinuxWaitingList(c echo.Context) error {
-	user, isAuthenticated := h.getAuthenticatedUserFromJWT(c)
+	// Full row: this handler mutates the JSON `email_subscriptions` column, which
+	// is not part of the slim UserProfile.
+	user, isAuthenticated := h.getAuthenticatedFullUserFromJWT(c)
 	if !isAuthenticated {
 		return c.String(http.StatusUnauthorized, "Unauthorized request")
 	}
@@ -1352,13 +1366,17 @@ func (h *AuthHandler) ChangeTeam(c echo.Context) error {
 	c.Logger().Infof("Changing user %s team to %d", user.ID, invitation.TeamID)
 
 	teamID := uint(invitation.TeamID)
-	user.TeamID = &teamID
-	user.Team = &invitation.Team
-	user.IsAdmin = false
-
-	if err := h.DB.Save(&user).Error; err != nil {
+	// Targeted column update so the slim profile never overwrites the wide
+	// columns it does not carry.
+	if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"team_id":  teamID,
+		"is_admin": false,
+	}).Error; err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update user team")
 	}
+
+	user.TeamID = &teamID
+	user.IsAdmin = false
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":   "Successfully changed team",
@@ -1379,14 +1397,10 @@ func (h *AuthHandler) RemoveTeammate(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "User is not part of any team")
 	}
 
-	// Preload team to avoid extra query for email
-	if err := h.DB.Preload("Team").Where("id = ?", user.ID).First(user).Error; err != nil {
+	team, err := models.GetTeamByID(h.DB, strconv.Itoa(int(*user.TeamID)))
+	if err != nil {
 		c.Logger().Error("Failed to load user team:", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load user")
-	}
-
-	if user.Team == nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "User team not found")
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to load user team")
 	}
 
 	teammateID := c.Param("userId")
@@ -1414,7 +1428,7 @@ func (h *AuthHandler) RemoveTeammate(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "user not in your team")
 	}
 
-	oldTeamName := user.Team.Name
+	oldTeamName := team.Name
 	var newTeamName string
 
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {

@@ -165,14 +165,25 @@ func (s *Server) setupDatabase() {
 	if strings.HasPrefix(dsn, "file:") {
 		// Use SQLite driver for testing
 		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+		if err != nil {
+			s.Echo.Logger.Fatal(err)
+		}
 	} else {
-		// Use PostgreSQL driver for production
 		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
+		if err != nil {
+			s.Echo.Logger.Fatal(err)
+		}
+
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			s.Echo.Logger.Fatal(dbErr)
+		}
+		sqlDB.SetMaxOpenConns(10)
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
+		sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 	}
 
-	if err != nil {
-		s.Echo.Logger.Fatal(err)
-	}
 	s.DB = db
 }
 
