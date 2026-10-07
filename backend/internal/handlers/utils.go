@@ -75,7 +75,7 @@ func getTeamMembersRawJSON(accessToken string) ([]byte, error) {
 	return body, nil
 }
 
-func generateLiveKitTokens(s *common.ServerState, roomName string, participant *models.User) (livekitutil.LivekitTokenSet, error) {
+func generateLiveKitTokens(s *common.ServerState, roomName string, participant *models.UserProfile) (livekitutil.LivekitTokenSet, error) {
 	// Create an access token (make sure these are loaded from your config)
 	videoID := fmt.Sprintf("room:%s:%s:video", roomName, participant.ID)
 	audioID := fmt.Sprintf("room:%s:%s:audio", roomName, participant.ID)
@@ -137,15 +137,39 @@ func generateLiveKitTokens(s *common.ServerState, roomName string, participant *
 	}, nil
 }
 
-// GetAuthenticatedUser returns the authenticated user from the session
-// Returns nil and false if the user is not authenticated or not found
-func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.User, bool) {
+// getAuthenticatedUserFromJWTCommon returns the authenticated user's slim
+// profile from the JWT. It fetches only the UserProfile columns, which is all
+// the read-only request paths need, and keeps the wide `users` row off the wire
+// on hot endpoints. Returns nil and false if the user is not authenticated or
+// not found.
+//
+// The returned *models.UserProfile is a partial record: never pass it to
+// db.Save. Handlers that mutate JSON columns or need the full row must use
+// getAuthenticatedFullUserFromJWT instead.
+func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.UserProfile, bool) {
 	email, err := jwtIssuer.GetUserEmail(c)
 	if err != nil {
 		return nil, false
 	}
 
-	// Fetch user from database
+	// Fetch user profile from database
+	user, err := models.GetUserProfileByEmail(db, email)
+	if err != nil {
+		return nil, false
+	}
+
+	return user, true
+}
+
+// getAuthenticatedFullUserFromJWTCommon returns the full authenticated user row.
+// Use this only on paths that read or write fields outside UserProfile
+// (metadata, email_subscriptions, hashed_password, ...).
+func getAuthenticatedFullUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssuer, db *gorm.DB) (*models.User, bool) {
+	email, err := jwtIssuer.GetUserEmail(c)
+	if err != nil {
+		return nil, false
+	}
+
 	user, err := models.GetUserByEmail(db, email)
 	if err != nil {
 		return nil, false
@@ -154,11 +178,15 @@ func getAuthenticatedUserFromJWTCommon(c echo.Context, jwtIssuer common.JWTIssue
 	return user, true
 }
 
-func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
+func (h *AuthHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.UserProfile, bool) {
 	return getAuthenticatedUserFromJWTCommon(c, h.JwtIssuer, h.DB)
 }
 
-func (bh *BillingHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.User, bool) {
+func (h *AuthHandler) getAuthenticatedFullUserFromJWT(c echo.Context) (*models.User, bool) {
+	return getAuthenticatedFullUserFromJWTCommon(c, h.JwtIssuer, h.DB)
+}
+
+func (bh *BillingHandler) getAuthenticatedUserFromJWT(c echo.Context) (*models.UserProfile, bool) {
 	return getAuthenticatedUserFromJWTCommon(c, bh.JwtIssuer, bh.DB)
 }
 
@@ -172,21 +200,16 @@ func sameTeam(a, b *uint) bool {
 // checkUserHasAccess checks if a user has an active subscription or trial.
 // Returns true if the user is a Pro subscriber or has an active trial, false otherwise.
 // Returns an error if the subscription check fails.
-func checkUserHasAccess(db *gorm.DB, user *models.User, stripeEnabled bool) (bool, error) {
+func checkUserHasAccess(db *gorm.DB, user *models.UserProfile, stripeEnabled bool) (bool, error) {
 	// If user has no team, they have no subscription or trial access
 	if user.TeamID == nil {
 		return false, nil
 	}
 
-	userWithSub, err := models.GetUserWithSubscription(db, user, stripeEnabled)
+	access, err := models.GetTeamAccess(db, *user.TeamID, stripeEnabled)
 	if err != nil {
 		return false, fmt.Errorf("failed to get user subscription: %w", err)
 	}
 
-	hasAccess := userWithSub.IsPro
-	if !hasAccess && userWithSub.IsTrial && userWithSub.TrialEndsAt != nil {
-		hasAccess = userWithSub.TrialEndsAt.After(time.Now())
-	}
-
-	return hasAccess, nil
+	return access.Active(time.Now()), nil
 }
