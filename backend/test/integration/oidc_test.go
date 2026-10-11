@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v3"
+	"github.com/go-jose/go-jose/v4"
 	"github.com/labstack/gommon/log"
 	"github.com/markbates/goth"
 	"github.com/stretchr/testify/assert"
@@ -350,6 +350,52 @@ func TestOIDC_CallbackWithoutVerifierRejected(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Equal(t, 0, idp.tokenAttempts, "no token exchange without a verifier")
+}
+
+// The OIDC-only checks must apply whenever goth completes the OIDC provider,
+// not only when the callback arrives on the /oidc/callback route. Otherwise a
+// caller can send an OIDC code to another provider's callback and skip the
+// email_verified check.
+func TestOIDC_CallbackOnOtherProviderRouteRejected(t *testing.T) {
+	for name, callbackPath := range map[string]string{
+		"provider query param":  "/api/auth/social/github/callback?provider=oidc&",
+		"goth session fallback": "/api/auth/social/github/callback?",
+	} {
+		t.Run(name, func(t *testing.T) {
+			idp := newFakeIDP(t)
+			srv, cleanup := setupTestServerWithOIDC(t, idp, nil)
+			defer cleanup()
+			victim := createTestUser(t, srv.DB, "victim@gmail.com", "Victim", "User", "securepassword123", true)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/auth/social/oidc", nil)
+			rec := httptest.NewRecorder()
+			srv.Echo.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusTemporaryRedirect, rec.Code, rec.Body.String())
+			authURL, err := url.Parse(rec.Header().Get("Location"))
+			require.NoError(t, err)
+
+			// The attacker replaces the server's code_challenge with their own
+			// before visiting the provider, so they hold a matching verifier.
+			attackerVerifier := "attacker-chosen-verifier-attacker-chosen-verifier"
+			sum := sha256.Sum256([]byte(attackerVerifier))
+			idp.challenge = base64.RawURLEncoding.EncodeToString(sum[:])
+			idp.claims = map[string]interface{}{"email": victim.Email, "email_verified": false, "given_name": "Mallory"}
+
+			callback := url.Values{}
+			callback.Set("code", "auth-code")
+			callback.Set("state", authURL.Query().Get("state"))
+			callback.Set("code_verifier", attackerVerifier)
+			req = httptest.NewRequest(http.MethodGet, callbackPath+callback.Encode(), nil)
+			for _, cookie := range rec.Result().Cookies() {
+				req.AddCookie(cookie)
+			}
+			rec = httptest.NewRecorder()
+			srv.Echo.ServeHTTP(rec, req)
+
+			assert.NotContains(t, rec.Header().Get("Location"), "token=", "no JWT for an unverified email")
+			assert.Equal(t, 0, idp.tokenRequests, "no token exchange outside the OIDC callback")
+		})
+	}
 }
 
 func TestOIDC_InvalidIDTokenSignatureRejected(t *testing.T) {

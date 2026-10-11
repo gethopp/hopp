@@ -92,7 +92,16 @@ func (r *RealGothicProvider) CompleteUserAuth(res http.ResponseWriter, req *http
 }
 
 func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
-	isOIDC := c.Param("provider") == oidcProviderName
+	providerName := c.Param("provider")
+	// gothic resolves the provider from the query, falling back to its session.
+	// Pin it to the route so provider-specific checks below always apply to
+	// the provider that completes the login.
+	req := c.Request()
+	q := req.URL.Query()
+	q.Set("provider", providerName)
+	req.URL.RawQuery = q.Encode()
+
+	isOIDC := providerName == oidcProviderName
 	if isOIDC {
 		if err := addOIDCCodeVerifier(c); err != nil {
 			c.Logger().Warnf("OIDC login rejected: %v", err)
@@ -115,7 +124,7 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	if isOIDC {
 		// goth validates issuer, audience and expiry of the ID token but not
 		// its signature, so verify it before trusting any claim.
-		if err := verifyOIDCIDToken(user.IDToken); err != nil {
+		if err := verifyOIDCIDToken(c.Request().Context(), user.IDToken); err != nil {
 			c.Logger().Warnf("OIDC login rejected: %v", err)
 			return echo.NewHTTPError(http.StatusUnauthorized, "Invalid ID token")
 		}
@@ -134,7 +143,6 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	var u models.User
 	// Will be used to get Slack's team name in case its not an invite
 	var teamName string
-	providerName := c.Param("provider")
 	isNewUser := false // Flag to track if a new user was created
 
 	// Execute everything in a transaction

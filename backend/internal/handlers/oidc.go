@@ -1,9 +1,11 @@
 package handlers
 
 import (
-	"encoding/json"
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"hopp-backend/internal/config"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
 	"github.com/markbates/goth"
@@ -27,83 +30,62 @@ const (
 	// oidcVerifierSessionKey holds the PKCE code verifier between the redirect
 	// to the identity provider and the callback.
 	oidcVerifierSessionKey = "oidc_pkce_verifier"
-	oidcDiscoveryTimeout   = 10 * time.Second
+	// oidcHTTPTimeout bounds discovery at startup and later key downloads, so
+	// an unresponsive identity provider cannot block the server.
+	oidcHTTPTimeout = 10 * time.Second
 	// oidcTeamSetupLockKey is the PostgreSQL advisory lock taken while the
 	// OIDC team is looked up and created. The value is arbitrary but fixed.
 	oidcTeamSetupLockKey int64 = 0x686f70706f696463
 )
 
-// oidcDiscovery is the part of the issuer's discovery document we use.
-type oidcDiscovery struct {
-	Issuer             string `json:"issuer"`
-	AuthEndpoint       string `json:"authorization_endpoint"`
-	TokenEndpoint      string `json:"token_endpoint"`
-	UserInfoEndpoint   string `json:"userinfo_endpoint"`
-	EndSessionEndpoint string `json:"end_session_endpoint"`
-	JWKSURI            string `json:"jwks_uri"`
-}
+// oidcIDTokenVerifier checks ID tokens against the configured issuer's keys. It
+// is set when the provider is registered, like goth's own provider registry.
+var oidcIDTokenVerifier *oidc.IDTokenVerifier
 
 // NewOIDCProvider builds the generic OpenID Connect provider from the issuer's
-// discovery document and loads the issuer's signing keys. No client secret is
-// needed for public clients, the authorization code is always protected with
-// PKCE.
+// discovery document. No client secret is needed for public clients, the
+// authorization code is always protected with PKCE.
 func NewOIDCProvider(cfg *config.Config) (goth.Provider, error) {
-	oidc := cfg.Auth.OIDC
-
-	if err := requireSecureOIDCURL("OIDC_ISSUER_URL", oidc.IssuerURL); err != nil {
+	oidcCfg := cfg.Auth.OIDC
+	if err := requireSecureOIDCURL("OIDC_ISSUER_URL", oidcCfg.IssuerURL); err != nil {
 		return nil, err
 	}
 
-	// Discovery is done here rather than by goth so it can time out instead of
-	// blocking server start when the identity provider does not answer.
-	client := &http.Client{Timeout: oidcDiscoveryTimeout}
-	res, err := client.Get(oidc.IssuerURL + "/.well-known/openid-configuration")
+	client := &http.Client{Timeout: oidcHTTPTimeout}
+	discovered, err := oidc.NewProvider(oidc.ClientContext(context.Background(), client), oidcCfg.IssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("discovery request failed: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("discovery request returned status %d", res.StatusCode)
+		return nil, fmt.Errorf("discovery failed: %w", err)
 	}
 
-	var discovery oidcDiscovery
-	if err := json.NewDecoder(res.Body).Decode(&discovery); err != nil {
+	var metadata struct {
+		JWKSURI            string `json:"jwks_uri"`
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := discovered.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("invalid discovery document: %w", err)
 	}
-	if strings.TrimRight(discovery.Issuer, "/") != oidc.IssuerURL {
-		return nil, fmt.Errorf("issuer %q in discovery document does not match OIDC_ISSUER_URL", discovery.Issuer)
-	}
 
-	endpoints := []struct {
-		name, url string
-		required  bool
-	}{
-		{"authorization_endpoint", discovery.AuthEndpoint, true},
-		{"token_endpoint", discovery.TokenEndpoint, true},
-		{"jwks_uri", discovery.JWKSURI, true},
-		{"userinfo_endpoint", discovery.UserInfoEndpoint, false},
+	endpoint := discovered.Endpoint()
+	userInfoURL := discovered.UserInfoEndpoint()
+	type namedURL struct{ name, url string }
+	endpoints := []namedURL{
+		{"authorization_endpoint", endpoint.AuthURL},
+		{"token_endpoint", endpoint.TokenURL},
+		{"jwks_uri", metadata.JWKSURI},
 	}
-	for _, endpoint := range endpoints {
-		if endpoint.url == "" {
-			if endpoint.required {
-				return nil, fmt.Errorf("discovery document lacks %s", endpoint.name)
-			}
-			continue
-		}
-		if err := requireSecureOIDCURL(endpoint.name, endpoint.url); err != nil {
+	if userInfoURL != "" {
+		endpoints = append(endpoints, namedURL{"userinfo_endpoint", userInfoURL})
+	}
+	for _, e := range endpoints {
+		if err := requireSecureOIDCURL(e.name, e.url); err != nil {
 			return nil, err
 		}
 	}
 
-	keys, err := newOIDCKeySet(discovery.JWKSURI, client)
-	if err != nil {
-		return nil, err
-	}
-
 	provider, err := openidConnect.NewCustomisedURL(
-		oidc.ClientID, oidc.ClientSecret, oidc.Redirect,
-		discovery.AuthEndpoint, discovery.TokenEndpoint, discovery.Issuer,
-		discovery.UserInfoEndpoint, discovery.EndSessionEndpoint,
+		oidcCfg.ClientID, oidcCfg.ClientSecret, oidcCfg.Redirect,
+		endpoint.AuthURL, endpoint.TokenURL, oidcCfg.IssuerURL,
+		userInfoURL, metadata.EndSessionEndpoint,
 		"openid", "email", "profile",
 	)
 	if err != nil {
@@ -111,17 +93,38 @@ func NewOIDCProvider(cfg *config.Config) (goth.Provider, error) {
 	}
 	provider.SetName(oidcProviderName)
 
-	oidcKeys = keys
+	oidcIDTokenVerifier = discovered.Verifier(&oidc.Config{ClientID: oidcCfg.ClientID})
 	return provider, nil
 }
 
-// verifyOIDCIDToken checks the signature of an ID token against the keys of
-// the configured issuer.
-func verifyOIDCIDToken(idToken string) error {
-	if oidcKeys == nil {
-		return errors.New("no OIDC signing keys loaded")
+// verifyOIDCIDToken checks the ID token's signature, issuer, audience and
+// expiry against the configured issuer.
+func verifyOIDCIDToken(ctx context.Context, rawIDToken string) error {
+	if oidcIDTokenVerifier == nil {
+		return errors.New("OIDC provider is not registered")
 	}
-	return oidcKeys.verify(idToken)
+	_, err := oidcIDTokenVerifier.Verify(ctx, rawIDToken)
+	return err
+}
+
+// requireSecureOIDCURL rejects plain http for anything but loopback hosts, so
+// tokens and keys are only fetched over TLS. http on localhost is allowed for
+// development and tests.
+func requireSecureOIDCURL(name, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("%s is not a valid URL: %q", name, raw)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" {
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must use https: %q", name, raw)
 }
 
 // beginOIDCAuth redirects to the identity provider like gothic.BeginAuthHandler,
@@ -216,11 +219,6 @@ func oidcEmailVerified(user goth.User) bool {
 // oidcFallbackFirstName picks a first name for providers that send no
 // given_name claim.
 func oidcFallbackFirstName(user goth.User) string {
-	for _, candidate := range []string{user.Name, user.NickName} {
-		if candidate != "" {
-			return candidate
-		}
-	}
-	name, _, _ := strings.Cut(user.Email, "@")
-	return name
+	localPart, _, _ := strings.Cut(user.Email, "@")
+	return cmp.Or(user.Name, user.NickName, localPart)
 }
