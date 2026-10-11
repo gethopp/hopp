@@ -1755,13 +1755,14 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             #[cfg(target_os = "macos")]
             UserEvent::PolledAppVeilSnapshot(poller_id, revision, snapshot) => {
-                if self
+                if let Some(host) = self
                     .app_veil_host
-                    .as_ref()
-                    .is_some_and(|host| host.accepts_snapshot(poller_id, revision))
+                    .as_mut()
+                    .filter(|host| host.accepts_snapshot(poller_id, revision))
                 {
+                    host.apply_snapshot(&snapshot);
                     if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.set_app_veil_snapshot(snapshot);
+                        room_service.set_app_veil_snapshot(snapshot.controller);
                     }
                 }
             }
@@ -3165,7 +3166,7 @@ pub enum UserEvent {
     SetAppVeilBundleIds(Vec<String>),
     RefreshAppVeilFilter,
     #[cfg(target_os = "macos")]
-    PolledAppVeilSnapshot(u64, u64, room_service::AppVeilSnapshot),
+    PolledAppVeilSnapshot(u64, u64, app_veil::HostSnapshot),
     AppVeilSnapshot(room_service::AppVeilSnapshot),
     Tick(u128),
     ParticipantConnected(ParticipantData),
