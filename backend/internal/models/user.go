@@ -38,19 +38,24 @@ func (es *EmailSubscriptions) Scan(value interface{}) error {
 	return json.Unmarshal(b, &es)
 }
 
+type UserProfile struct {
+	ID        string    `json:"id" gorm:"unique;not null"` // Standard field for the primary key
+	FirstName string    `gorm:"not null" json:"first_name" validate:"required"`
+	LastName  string    `gorm:"not null" json:"last_name" validate:"required"`
+	Email     string    `gorm:"not null;unique" json:"email" validate:"required,email"`
+	IsAdmin   bool      `gorm:"default:false" json:"is_admin"`
+	TeamID    *uint     `json:"team_id" gorm:"default:null"`
+	AvatarURL string    `json:"avatar_url"`
+	CreatedAt time.Time `json:"created_at"` // Automatically managed by GORM for creation time
+	UpdatedAt time.Time `json:"updated_at"` // Automatically managed by GORM for update time
+}
+
 type User struct {
-	ID             string    `json:"id" gorm:"unique;not null"` // Standard field for the primary key
-	FirstName      string    `gorm:"not null" json:"first_name" validate:"required"`
-	LastName       string    `gorm:"not null" json:"last_name" validate:"required"`
-	Email          string    `gorm:"not null;unique" json:"email" validate:"required,email"`
-	IsAdmin        bool      `gorm:"default:false" json:"is_admin"`
-	TeamID         *uint     `json:"team_id" gorm:"default:null"`
-	Team           *Team     `json:"team,omitempty"`
-	Password       string    `gorm:"-" json:"password" validate:"required,min=8"`
-	HashedPassword string    `json:"-"` // Removed "not null" constraint
-	AvatarURL      string    `json:"avatar_url"`
-	CreatedAt      time.Time `json:"created_at"` // Automatically managed by GORM for creation time
-	UpdatedAt      time.Time `json:"updated_at"` // Automatically managed by GORM for update time
+	UserProfile `gorm:"embedded"`
+
+	Team           *Team  `json:"team,omitempty"`
+	Password       string `gorm:"-" json:"password" validate:"required,min=8"`
+	HashedPassword string `json:"-"` // Removed "not null" constraint
 	// Can keep data like Slack workspace friends etc
 	SocialMetadata map[string]interface{} `gorm:"serializer:json" json:"social_metadata,omitempty"`
 	// General user metadata for onboarding, preferences, etc.
@@ -121,6 +126,24 @@ func GetUserByEmail(db *gorm.DB, email string) (*User, error) {
 	return &user, nil
 }
 
+// GetUserProfileByEmail fetches only the UserProfile columns for a user. It is
+// the slim variant used on hot, read-only paths (auth middleware, websocket
+// handshake, teammate/presence polling) to avoid shipping the wide `users` row
+// (hashed_password, social_metadata, metadata, email_subscriptions, ...) on
+// every request.
+func GetUserProfileByEmail(db *gorm.DB, email string) (*UserProfile, error) {
+	var profile UserProfile
+	result := db.Model(&User{}).Where("email = ?", email).First(&profile)
+
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, errors.New("User not found")
+		}
+		return nil, result.Error
+	}
+	return &profile, nil
+}
+
 func GetUserByID(db *gorm.DB, id string) (*User, error) {
 	var user *User
 	result := db.Where("id = ?", id).First(&user)
@@ -134,28 +157,23 @@ func GetUserByID(db *gorm.DB, id string) (*User, error) {
 	return user, nil
 }
 
-func (u *User) GetRedisChannel() string {
+func (u *UserProfile) GetRedisChannel() string {
 	return redisutil.GetUserChannel(u.ID)
 }
 
 type UserWithActivity struct {
-	User
+	UserProfile
 	IsActive bool `json:"is_active"`
 }
 
-func (u *User) GetTeammates(db *gorm.DB) ([]UserWithActivity, error) {
-	// First preload the user's team
-	if err := db.Preload("Team").Where("id = ?", u.ID).First(u).Error; err != nil {
-		return nil, err
-	}
-
-	if u.Team == nil {
+func (u *UserProfile) GetTeammates(db *gorm.DB) ([]UserWithActivity, error) {
+	if u.TeamID == nil {
 		return []UserWithActivity{}, nil
 	}
 
-	var teammates []User
-	if err := db.Select("id, first_name, last_name, email, avatar_url, team_id, is_admin, created_at, updated_at").
-		Where("team_id = ? AND id != ?", u.TeamID, u.ID).
+	var teammates []UserProfile
+	if err := db.Model(&User{}).
+		Where("team_id = ? AND id != ?", *u.TeamID, u.ID).
 		Find(&teammates).Error; err != nil {
 		return nil, err
 	}
@@ -164,8 +182,8 @@ func (u *User) GetTeammates(db *gorm.DB) ([]UserWithActivity, error) {
 	teammatesWithActivity := make([]UserWithActivity, len(teammates))
 	for i, teammate := range teammates {
 		teammatesWithActivity[i] = UserWithActivity{
-			User:     teammate,
-			IsActive: false, // Will be set by the handler
+			UserProfile: teammate,
+			IsActive:    false, // Will be set by the handler
 		}
 	}
 
@@ -173,7 +191,7 @@ func (u *User) GetTeammates(db *gorm.DB) ([]UserWithActivity, error) {
 }
 
 // GetDisplayName returns the user's display name
-func (u *User) GetDisplayName() string {
+func (u *UserProfile) GetDisplayName() string {
 	if u.LastName == "" {
 		return u.FirstName
 	}
@@ -262,11 +280,20 @@ func GetAdminUserForTeam(db *gorm.DB, teamID uint) (*User, error) {
 	return &adminUser, nil
 }
 
-type UserWithSubscription struct {
-	User
+type TeamAccess struct {
 	IsPro       bool       `json:"is_pro"`
 	IsTrial     bool       `json:"is_trial"`
 	TrialEndsAt *time.Time `json:"trial_ends_at,omitempty"`
+}
+
+// Active reports whether the team is Pro or still within its trial window.
+func (a TeamAccess) Active(now time.Time) bool {
+	return a.IsPro || (a.IsTrial && a.TrialEndsAt != nil && a.TrialEndsAt.After(now))
+}
+
+type UserWithSubscription struct {
+	User
+	TeamAccess
 }
 
 // hardPaywallCutoff is the launch date of the card-required trial. Teams created
@@ -282,39 +309,37 @@ func IsTeamPostCutoff(team *Team) bool {
 	return !team.CreatedAt.Before(hardPaywallCutoff)
 }
 
-// GetUserWithSubscription returns a user with subscription information.
-// When stripeEnabled is false (self-hosted deployments without Stripe), every
-// user is treated as Pro and the trial is bypassed.
-// 1. Check if team is manually upgraded, if so return true to `is_pro`
-// 2. Fetch if any sub for their team exists and if its active
-// 3. If no sub, return `IsTrial` and `TrialEndsAt`
-func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*UserWithSubscription, error) {
+// GetTeamAccess computes a team's access state (pro/trial).
+// When stripeEnabled is false (self-hosted deployments without Stripe), the team
+// is always treated as Pro.
+// 1. Check if team is manually upgraded, if so return pro
+// 2. Fetch if any sub for the team exists and is active
+// 3. If no sub, return trial state derived from the team creation date
+func GetTeamAccess(db *gorm.DB, teamID uint, stripeEnabled bool) (TeamAccess, error) {
 	if !stripeEnabled {
-		return &UserWithSubscription{User: *user, IsPro: true}, nil
+		return TeamAccess{IsPro: true}, nil
 	}
 
-	team, err := GetTeamByID(db, strconv.Itoa(int(*user.TeamID)))
+	team, err := GetTeamByID(db, strconv.Itoa(int(teamID)))
 	if err != nil {
-		return nil, err
+		return TeamAccess{}, err
 	}
 
 	if team.IsManualUpgrade {
-		return &UserWithSubscription{User: *user, IsPro: true}, nil
+		return TeamAccess{IsPro: true}, nil
 	}
 
-	sub, err := GetSubscriptionByTeamID(db, *user.TeamID)
+	sub, err := GetSubscriptionByTeamID(db, teamID)
 	if err != nil {
-		return nil, err
+		return TeamAccess{}, err
 	}
 
 	if sub != nil && sub.IsActive() {
-		result := &UserWithSubscription{User: *user, IsPro: true}
 		if sub.Status == StatusTrialing {
-			trialEndsAt := sub.CurrentPeriodEnd
-			result.IsTrial = true
-			result.TrialEndsAt = &trialEndsAt
+			ends := sub.CurrentPeriodEnd
+			return TeamAccess{IsPro: true, IsTrial: true, TrialEndsAt: &ends}, nil
 		}
-		return result, nil
+		return TeamAccess{IsPro: true}, nil
 	}
 
 	// Teams created on/after the cutoff get no free trial. Access requires an
@@ -322,15 +347,26 @@ func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*User
 	// checkUserHasAccess return false so the existing 402 paths enforce the
 	// paywall without any new middleware.
 	if IsTeamPostCutoff(team) {
-		return &UserWithSubscription{User: *user, IsPro: false, IsTrial: false}, nil
+		return TeamAccess{}, nil
 	}
 
 	const trialDays = 14
-	trialEndsAt := team.CreatedAt.AddDate(0, 0, trialDays)
-	return &UserWithSubscription{
-		User:        *user,
-		IsTrial:     true,
-		TrialEndsAt: &trialEndsAt,
-		IsPro:       false,
-	}, nil
+	ends := team.CreatedAt.AddDate(0, 0, trialDays)
+	return TeamAccess{IsTrial: true, TrialEndsAt: &ends}, nil
+}
+
+// GetUserWithSubscription returns a user with subscription information.
+// When stripeEnabled is false (self-hosted deployments without Stripe), every
+// user is treated as Pro and the trial is bypassed.
+func GetUserWithSubscription(db *gorm.DB, user *User, stripeEnabled bool) (*UserWithSubscription, error) {
+	if !stripeEnabled {
+		return &UserWithSubscription{User: *user, TeamAccess: TeamAccess{IsPro: true}}, nil
+	}
+
+	access, err := GetTeamAccess(db, *user.TeamID, stripeEnabled)
+	if err != nil {
+		return nil, err
+	}
+
+	return &UserWithSubscription{User: *user, TeamAccess: access}, nil
 }

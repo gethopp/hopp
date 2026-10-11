@@ -74,12 +74,14 @@ func createTestUser(t *testing.T, db *gorm.DB, email, firstName, lastName, passw
 	}
 
 	user := &models.User{
-		FirstName: firstName,
-		LastName:  lastName,
-		Email:     email,
-		Password:  password,
-		TeamID:    &teamID,
-		IsAdmin:   isAdmin,
+		UserProfile: models.UserProfile{
+			FirstName: firstName,
+			LastName:  lastName,
+			Email:     email,
+			TeamID:    &teamID,
+			IsAdmin:   isAdmin,
+		},
+		Password: password,
 		EmailSubscriptions: models.EmailSubscriptions{
 			MarketingEmails: true,
 		},

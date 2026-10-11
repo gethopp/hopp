@@ -51,7 +51,7 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 			return err
 		}
 
-		user, err := models.GetUserByEmail(server.DB, email)
+		user, err := models.GetUserProfileByEmail(server.DB, email)
 		if err != nil {
 			return err
 		}
@@ -351,7 +351,7 @@ func initiateCall(ctx echo.Context, s *common.ServerState, ws *websocket.Conn, r
 	}
 
 	// Check if caller has access (paid or active trial)
-	hasAccess, err := checkUserHasAccess(s.DB, caller, s.Config.IsStripeEnabled())
+	hasAccess, err := checkUserHasAccess(s.DB, &caller.UserProfile, s.Config.IsStripeEnabled())
 	if err != nil {
 		ctx.Logger().Error("Error getting caller subscription: ", err)
 		s.Redis.Del(rdbCtx, dedupeKey)
@@ -462,14 +462,14 @@ func acceptCall(ctx echo.Context, s *common.ServerState, calleeID string, messag
 	roomName := uuid.New().String()
 	ctx.Logger().Info("Creating room: ", roomName, " for users ", callerID, " ", calleeID)
 
-	calleeTokens, err := generateLiveKitTokens(s, roomName, callee)
+	calleeTokens, err := generateLiveKitTokens(s, roomName, &callee.UserProfile)
 	if err != nil {
 		ctx.Logger().Error(err)
 		sendCommonErrorMessage(s, "Failed to generate callee tokens", callerID, calleeID)
 		return
 	}
 
-	callerTokens, err := generateLiveKitTokens(s, roomName, caller)
+	callerTokens, err := generateLiveKitTokens(s, roomName, &caller.UserProfile)
 	if err != nil {
 		ctx.Logger().Error(err)
 		sendCommonErrorMessage(s, "Failed to generate caller tokens", callerID, calleeID)
