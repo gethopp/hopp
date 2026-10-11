@@ -90,10 +90,13 @@ export function HoppSidebar() {
     refetchInterval: 10_000,
   });
 
+  // Self-hosted instances without Stripe have nothing to manage here
+  const { data: instanceConfig } = useQuery("get", "/api/config");
+
   // Add subscription item for admin users
   const navigationItems = [
     ...items,
-    ...(user?.is_admin ?
+    ...(user?.is_admin && instanceConfig?.billing_enabled ?
       [
         {
           title: "Subscription",

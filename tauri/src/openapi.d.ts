@@ -74,6 +74,45 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/config": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Public instance configuration
+     * @description Unauthenticated. Tells clients which sign-up and login flows are enabled on this instance.
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Instance configuration */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["InstanceConfig"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/social/:provider": {
     parameters: {
       query?: never;
@@ -2811,6 +2850,17 @@ export interface components {
       created_at?: string;
       /** Format: date-time */
       updated_at?: string;
+    };
+    /** @description Public configuration of this instance, used by clients to hide flows the backend would reject */
+    InstanceConfig: {
+      /** @description False when DISABLE_SIGNUP is set and the instance already has users; new accounts then need a team invitation */
+      signup_enabled: boolean;
+      /** @description False when DISABLE_PASSWORD_LOGIN is set; only social providers can be used */
+      password_login_enabled: boolean;
+      /** @description True when Stripe billing is configured */
+      billing_enabled: boolean;
+      /** @description Social login providers that are configured on this instance */
+      auth_providers: ("google" | "slack" | "github")[];
     };
   };
   responses: never;
