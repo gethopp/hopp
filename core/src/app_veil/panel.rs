@@ -1,4 +1,4 @@
-use std::{cell::Cell, ffi::c_void, rc::Rc, sync::Once};
+use std::{ffi::c_void, sync::Once};
 
 use core_foundation::{
     base::{CFType, CFTypeRef, TCFType},
@@ -17,8 +17,8 @@ pub(super) const WIDTH: f64 = 184.0;
 pub(super) const HEIGHT: f64 = 36.0;
 pub(super) const INSET: f64 = 12.0;
 
-struct EyeButtonIvars {
-    visible: Rc<Cell<bool>>,
+pub(super) struct EyeButtonIvars {
+    toggle_visibility: Box<dyn Fn()>,
     hidden_image: Retained<NSImage>,
     visible_image: Retained<NSImage>,
     status: Retained<NSTextField>,
@@ -28,16 +28,14 @@ objc2::define_class!(
     #[unsafe(super = NSButton)]
     #[thread_kind = objc2::MainThreadOnly]
     #[ivars = EyeButtonIvars]
-    struct AppVeilEyeButton;
+    pub(super) struct AppVeilEyeButton;
 
     unsafe impl NSObjectProtocol for AppVeilEyeButton {}
 
     impl AppVeilEyeButton {
-        #[unsafe(method(togglePreview:))]
-        fn toggle_preview(&self, _sender: &NSButton) {
-            // shortcut: visual preview only; wire per-window capture visibility in the next increment.
-            self.ivars().visible.set(!self.ivars().visible.get());
-            self.update_appearance();
+        #[unsafe(method(toggleVisibility:))]
+        fn toggle_visibility(&self, _sender: &NSButton) {
+            (self.ivars().toggle_visibility)();
         }
     }
 );
@@ -45,11 +43,11 @@ objc2::define_class!(
 impl AppVeilEyeButton {
     fn new(
         mtm: MainThreadMarker,
-        visible: Rc<Cell<bool>>,
         status: Retained<NSTextField>,
+        toggle_visibility: Box<dyn Fn()>,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(EyeButtonIvars {
-            visible,
+            toggle_visibility,
             hidden_image: eye_image(include_bytes!("../../resources/icons/EyeOff.svg")),
             visible_image: eye_image(include_bytes!("../../resources/icons/EyeOn.svg")),
             status,
@@ -66,14 +64,13 @@ impl AppVeilEyeButton {
         unsafe {
             // The button owns itself through the content view; the target is weak.
             this.setTarget(Some(&this));
-            this.setAction(Some(objc2::sel!(togglePreview:)));
+            this.setAction(Some(objc2::sel!(toggleVisibility:)));
         }
-        this.update_appearance();
+        this.update_appearance(false);
         this
     }
 
-    fn update_appearance(&self) {
-        let visible = self.ivars().visible.get();
+    pub(super) fn update_appearance(&self, visible: bool) {
         self.ivars().status.setStringValue(&NSString::from_str(if visible {
             "Visible"
         } else {
@@ -104,7 +101,10 @@ impl AppVeilEyeButton {
     }
 }
 
-pub(super) fn content(mtm: MainThreadMarker, visible: Rc<Cell<bool>>) -> Retained<NSBox> {
+pub(super) fn content(
+    mtm: MainThreadMarker,
+    toggle_visibility: Box<dyn Fn()>,
+) -> (Retained<NSBox>, Retained<AppVeilEyeButton>) {
     register_font();
     let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(WIDTH, HEIGHT));
     let background = NSBox::initWithFrame(NSBox::alloc(mtm), bounds);
@@ -128,6 +128,7 @@ pub(super) fn content(mtm: MainThreadMarker, visible: Rc<Cell<bool>>) -> Retaine
     let status = NSTextField::labelWithString(&NSString::from_str("Hidden"), mtm);
     status.setFont(Some(&font));
     status.setFrame(NSRect::new(NSPoint::new(96.0, 10.0), NSSize::new(40.0, 16.0)));
+    let button = AppVeilEyeButton::new(mtm, status.clone(), toggle_visibility);
     if let Some(view) = background.contentView() {
         view.addSubview(&label);
         view.addSubview(&status);
@@ -142,9 +143,9 @@ pub(super) fn content(mtm: MainThreadMarker, visible: Rc<Cell<bool>>) -> Retaine
         button_background.setBorderColor(&color(ColorToken::Slate400));
         button_background.setFillColor(&color(ColorToken::Slate600));
         view.addSubview(&button_background);
-        view.addSubview(&AppVeilEyeButton::new(mtm, visible, status));
+        view.addSubview(&button);
     }
-    background
+    (background, button)
 }
 
 fn color(token: ColorToken) -> Retained<NSColor> {

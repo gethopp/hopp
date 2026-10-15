@@ -16,6 +16,9 @@ pub mod livekit {
 pub mod room_service;
 mod snapshot_sender;
 
+#[path = "app_veil/state.rs"]
+pub mod app_veil_state;
+
 #[cfg(target_os = "macos")]
 #[path = "app_veil/macos.rs"]
 mod app_veil;
@@ -65,6 +68,7 @@ pub(crate) mod windows;
 
 #[cfg(target_os = "macos")]
 use app_veil::AppVeilHost;
+use app_veil_state::AppVeilState;
 use camera::capturer::{poll_camera_stream, CameraCapturer};
 use capture::capturer::{poll_stream, Capturer, MonitorId, ScreenshareExt, ScreenshareFunctions};
 use graphics::graphics_context::participant::CursorMode;
@@ -741,7 +745,12 @@ impl<'a> Application<'a> {
 
         #[cfg(target_os = "macos")]
         if is_display_share {
-            let app_veil_bundle_ids = screen_capturer.app_veil_bundle_ids().to_vec();
+            let app_veil_bundle_ids = screen_capturer
+                .app_veil_state()
+                .applications
+                .iter()
+                .map(|application| application.bundle_id.clone())
+                .collect::<Vec<_>>();
             self.app_veil_host = AppVeilHost::new(
                 screenshare_input.content.id,
                 app_veil_bundle_ids.clone(),
@@ -984,6 +993,20 @@ impl<'a> Application<'a> {
         }
         if let Err(e) = self.socket.send(Message::DrawingDisabled) {
             log::error!("Failed to send DrawingDisabled: {e:?}");
+        }
+    }
+
+    fn refresh_app_veil_capture(&mut self, state: AppVeilState, force: bool) {
+        let mut capturer = self.screen_capturer.lock().unwrap();
+        capturer.refresh_app_veil_filter(state, force);
+        drop(capturer);
+        #[cfg(target_os = "macos")]
+        if let Some(host) = self.app_veil_host.as_mut() {
+            if let Some(snapshot) = host.update_visibility() {
+                if let Some(room_service) = self.room_service.as_ref() {
+                    room_service.set_app_veil_snapshot(snapshot);
+                }
+            }
         }
     }
 
@@ -1737,21 +1760,27 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::SetAppVeilBundleIds(bundle_ids) => {
                 #[cfg(target_os = "macos")]
-                let host_bundle_ids = bundle_ids.clone();
-                self.screen_capturer
-                    .lock()
-                    .unwrap()
-                    .set_app_veil_bundle_ids(bundle_ids);
-                #[cfg(target_os = "macos")]
-                if let Some(host) = self.app_veil_host.as_mut() {
-                    host.set_bundle_ids(host_bundle_ids);
-                }
+                let state = if let Some(host) = self.app_veil_host.as_mut() {
+                    host.set_bundle_ids(bundle_ids);
+                    host.state()
+                } else {
+                    AppVeilState::new(bundle_ids)
+                };
+                #[cfg(not(target_os = "macos"))]
+                let state = AppVeilState::new(bundle_ids);
+                self.refresh_app_veil_capture(state, false);
             }
-            UserEvent::RefreshAppVeilFilter => {
-                self.screen_capturer
-                    .lock()
-                    .unwrap()
-                    .refresh_app_veil_filter();
+            UserEvent::RefreshAppVeilFilter(state) => {
+                #[cfg(target_os = "macos")]
+                let state = match self
+                    .app_veil_host
+                    .as_ref()
+                    .map(AppVeilHost::state)
+                {
+                    Some(current) if current.capture_policy_eq(&state) => current,
+                    _ => return,
+                };
+                self.refresh_app_veil_capture(state, true);
             }
             #[cfg(target_os = "macos")]
             UserEvent::PolledAppVeilSnapshot(poller_id, revision, snapshot) => {
@@ -1760,10 +1789,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .as_mut()
                     .filter(|host| host.accepts_snapshot(poller_id, revision))
                 {
-                    host.apply_snapshot(&snapshot);
-                    if let Some(room_service) = self.room_service.as_ref() {
-                        room_service.set_app_veil_snapshot(snapshot.controller);
-                    }
+                    host.apply_snapshot(snapshot);
+                    let state = host.state();
+                    self.refresh_app_veil_capture(state, false);
                 }
             }
             UserEvent::AppVeilSnapshot(snapshot) => {
@@ -3164,7 +3192,7 @@ pub enum UserEvent {
     SharerPosition(f64, f64),
     CaptureFrameChanged,
     SetAppVeilBundleIds(Vec<String>),
-    RefreshAppVeilFilter,
+    RefreshAppVeilFilter(AppVeilState),
     #[cfg(target_os = "macos")]
     PolledAppVeilSnapshot(u64, u64, app_veil::HostSnapshot),
     AppVeilSnapshot(room_service::AppVeilSnapshot),

@@ -10,7 +10,8 @@ use livekit::webrtc::{
 };
 use std::sync::{mpsc, Arc, Mutex};
 
-use super::{AppVeilCaptureFilter, CapturerError};
+use super::CapturerError;
+use crate::app_veil_state::AppVeilState;
 use socket_lib::{Content, ContentType};
 
 const FRAME_CAPTURE_INTERVAL_MS: u64 = 18;
@@ -320,7 +321,7 @@ impl Stream {
         _scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
-        _app_veil_filter: AppVeilCaptureFilter,
+        _app_veil_state: AppVeilState,
     ) -> Result<Self, CapturerError> {
         let stream_buffer = Arc::new(Mutex::new(StreamBuffer::new(1, 1)));
         let frame = Arc::new(Mutex::new(Frame {
@@ -487,7 +488,7 @@ impl Stream {
 
     pub fn update_app_veil_filter(
         &mut self,
-        _app_veil_filter: AppVeilCaptureFilter,
+        _app_veil_state: AppVeilState,
     ) -> Result<(), CapturerError> {
         Ok(())
     }

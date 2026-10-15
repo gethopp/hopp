@@ -8,7 +8,7 @@ use std::{
         mpsc, Arc, Mutex,
     },
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use core_foundation::{
@@ -24,8 +24,8 @@ use core_graphics::{
     geometry::{CGPoint, CGRect, CGSize},
     window::{
         copy_window_info, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-        kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly, kCGWindowNumber,
-        kCGWindowOwnerPID,
+        kCGWindowListExcludeDesktopElements, kCGWindowListOptionAll, kCGWindowListOptionOnScreenOnly,
+        kCGWindowNumber, kCGWindowOwnerPID,
     },
 };
 use objc2::{
@@ -40,6 +40,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 use winit::event_loop::EventLoopProxy;
 
 use crate::{
+    app_veil_state::{AppVeilState, TrackedApplication, TrackedWindow},
     capture::running_applications_observer::RunningApplicationsObserver,
     room_service::{AppVeilSnapshot, AppVeilWindow, NormalizedRect},
     subtract_frame,
@@ -53,6 +54,7 @@ mod panel;
 const HOPP_BUNDLE_ID: &str = "com.hopp.app";
 const NOTIFICATION_CENTER_BUNDLE_ID: &str = "com.apple.notificationcenterui";
 const GEOMETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const PANEL_SETTLE_DELAY: Duration = Duration::from_millis(200);
 const AX_ERROR_CANNOT_COMPLETE: i32 = -25204;
 const AX_COPY_STOP_ON_ERROR: u32 = 1;
 const AX_VALUE_CGPOINT: u32 = 1;
@@ -67,8 +69,51 @@ struct PanelAnchor {
 
 #[derive(Debug, Clone, Default)]
 pub struct HostSnapshot {
-    pub controller: AppVeilSnapshot,
+    windows: Vec<HostWindow>,
     panels: Vec<PanelAnchor>,
+    applications: Option<Vec<TrackedApplication>>,
+    last_revealed_window_ids: Option<Vec<u32>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HostWindow {
+    id: u32,
+    bundle_id: String,
+    controller: AppVeilWindow,
+}
+
+impl HostSnapshot {
+    fn retain_bundle_ids(&mut self, bundle_ids: &[String]) {
+        let previous_window_count = self.windows.len();
+        self.windows
+            .retain(|window| bundle_ids.contains(&window.bundle_id));
+        if self.windows.len() != previous_window_count {
+            self.last_revealed_window_ids = None;
+        }
+        self.panels
+            .retain(|anchor| self.windows.iter().any(|window| window.id == anchor.window_id));
+    }
+
+    fn controller_snapshot(&self, revealed_window_ids: &[u32]) -> AppVeilSnapshot {
+        AppVeilSnapshot {
+            windows: self
+                .windows
+                .iter()
+                .filter(|window| !revealed_window_ids.contains(&window.id))
+                .map(|window| window.controller.clone())
+                .collect(),
+            keyboard_input_blocked: false,
+        }
+    }
+
+    fn changed_controller_snapshot(&mut self, revealed_window_ids: Vec<u32>) -> Option<AppVeilSnapshot> {
+        if self.last_revealed_window_ids.as_ref() == Some(&revealed_window_ids) {
+            return None;
+        }
+        let snapshot = self.controller_snapshot(&revealed_window_ids);
+        self.last_revealed_window_ids = Some(revealed_window_ids);
+        Some(snapshot)
+    }
 }
 
 enum GeometryPollerMessage {
@@ -94,6 +139,7 @@ impl GeometryPoller {
     ) -> Self {
         let id = NEXT_GEOMETRY_POLLER_ID.fetch_add(1, Ordering::Relaxed);
         let mut geometry_active = None;
+        let mut qualified_windows = HashMap::new();
         Self::spawn(
             id,
             display_id,
@@ -107,16 +153,22 @@ impl GeometryPoller {
                         geometry_active = Some(is_active);
                     }
                     if !is_active {
+                        qualified_windows.clear();
                         if state_changed {
                             let _ = event_loop_proxy.send_event(UserEvent::PolledAppVeilSnapshot(
                                 id,
                                 revision,
-                                HostSnapshot::default(),
+                                HostSnapshot {
+                                    applications: tracked_applications(bundle_ids),
+                                    ..HostSnapshot::default()
+                                },
                             ));
                         }
                         return;
                     }
-                    if let Some(snapshot) = snapshot(display_id, bundle_ids) {
+                    if let Some(snapshot) =
+                        snapshot_with_qualified_windows(display_id, bundle_ids, &mut qualified_windows)
+                    {
                         let _ = event_loop_proxy
                             .send_event(UserEvent::PolledAppVeilSnapshot(id, revision, snapshot));
                     }
@@ -190,12 +242,30 @@ struct Window {
 }
 
 pub struct AppVeilHost {
-    bundle_ids: Vec<String>,
-    observed_bundle_ids: Arc<Mutex<HashSet<String>>>,
+    state: Arc<Mutex<AppVeilState>>,
+    event_loop_proxy: EventLoopProxy<UserEvent>,
     geometry_poller: GeometryPoller,
     _running_applications_observer: RunningApplicationsObserver,
-    panels: HashMap<u32, Retained<NSPanel>>,
-    preview_visibility: HashMap<u32, Rc<Cell<bool>>>,
+    panels: HashMap<u32, HostPanel>,
+    snapshot: HostSnapshot,
+}
+
+struct HostPanel {
+    window: Retained<NSPanel>,
+    button: Retained<panel::AppVeilEyeButton>,
+    active: Rc<Cell<bool>>,
+    last_moved_at: Option<Instant>,
+}
+
+fn panel_is_settled(last_moved_at: Option<Instant>, now: Instant) -> bool {
+    last_moved_at.map_or(true, |last_moved| now.duration_since(last_moved) >= PANEL_SETTLE_DELAY)
+}
+
+impl Drop for HostPanel {
+    fn drop(&mut self) {
+        self.active.set(false);
+        self.window.close();
+    }
 }
 
 impl AppVeilHost {
@@ -204,29 +274,47 @@ impl AppVeilHost {
         bundle_ids: Vec<String>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
     ) -> Option<Self> {
-        let observed_bundle_ids = Arc::new(Mutex::new(
-            bundle_ids.iter().cloned().collect::<HashSet<_>>(),
-        ));
-        let running_applications_observer = RunningApplicationsObserver::new(
-            event_loop_proxy.clone(),
-            observed_bundle_ids.clone(),
-        )?;
-        let geometry_poller = GeometryPoller::new(display_id, bundle_ids.clone(), event_loop_proxy);
+        let state = Arc::new(Mutex::new(AppVeilState::new(bundle_ids.clone())));
+        let running_applications_observer =
+            RunningApplicationsObserver::new(event_loop_proxy.clone(), state.clone())?;
+        let geometry_poller = GeometryPoller::new(display_id, bundle_ids, event_loop_proxy.clone());
         Some(Self {
-            bundle_ids,
-            observed_bundle_ids,
+            state,
+            event_loop_proxy,
             geometry_poller,
             _running_applications_observer: running_applications_observer,
             panels: HashMap::new(),
-            preview_visibility: HashMap::new(),
+            snapshot: HostSnapshot::default(),
         })
     }
 
     pub fn set_bundle_ids(&mut self, bundle_ids: Vec<String>) {
-        if self.bundle_ids != bundle_ids {
+        let mut state = self.state.lock().unwrap();
+        let current: Vec<_> = state
+            .applications
+            .iter()
+            .map(|application| application.bundle_id.clone())
+            .collect();
+        if current != bundle_ids {
             self.geometry_poller.set_bundle_ids(bundle_ids.clone());
-            *self.observed_bundle_ids.lock().unwrap() = bundle_ids.iter().cloned().collect();
-            self.bundle_ids = bundle_ids;
+            let mut applications = AppVeilState::new(bundle_ids.clone()).applications;
+            for application in &mut applications {
+                if let Some(previous) = state
+                    .applications
+                    .iter_mut()
+                    .find(|previous| previous.bundle_id == application.bundle_id)
+                {
+                    application.windows = std::mem::take(&mut previous.windows);
+                }
+            }
+            state.applications = applications;
+            self.snapshot.retain_bundle_ids(&bundle_ids);
+            self.panels.retain(|window_id, _| {
+                self.snapshot
+                    .panels
+                    .iter()
+                    .any(|anchor| anchor.window_id == *window_id)
+            });
         }
     }
 
@@ -234,32 +322,31 @@ impl AppVeilHost {
         self.geometry_poller.id == poller_id && self.geometry_poller.revision == revision
     }
 
-    pub fn apply_snapshot(&mut self, snapshot: &HostSnapshot) {
+    pub fn apply_snapshot(&mut self, mut snapshot: HostSnapshot) {
         let Some(main_thread_marker) = MainThreadMarker::new() else {
             log::error!("App Veil panels must be updated on the main thread");
             return;
         };
-        self.panels.retain(|window_id, panel| {
-            if snapshot
+        self.panels.retain(|window_id, _| {
+            snapshot
                 .panels
                 .iter()
                 .any(|anchor| anchor.window_id == *window_id)
-            {
-                true
-            } else {
-                panel.close();
-                false
-            }
         });
         let desktop_height = CGDisplay::main().bounds().size.height;
         for anchor in &snapshot.panels {
             let rect = panel_rect(anchor.frame, desktop_height);
-            let visible = self
-                .preview_visibility
-                .entry(anchor.window_id)
-                .or_default()
-                .clone();
+            let window_moved = self
+                .snapshot
+                .windows
+                .iter()
+                .find(|window| window.id == anchor.window_id)
+                .zip(snapshot.windows.iter().find(|window| window.id == anchor.window_id))
+                .is_some_and(|(previous, current)| previous.controller.frame != current.controller.frame);
             let panel = self.panels.entry(anchor.window_id).or_insert_with(|| {
+                let state = self.state.clone();
+                let event_loop_proxy = self.event_loop_proxy.clone();
+                let window_id = anchor.window_id;
                 let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
                     NSPanel::alloc(main_thread_marker),
                     rect,
@@ -280,25 +367,124 @@ impl AppVeilHost {
                 );
                 panel.setOpaque(false);
                 panel.setBackgroundColor(Some(&NSColor::clearColor()));
-                panel.setContentView(Some(&panel::content(main_thread_marker, visible)));
-                // shortcut: legacy sharing flag is best-effort; add SCK exclusion with interactive controls.
+                let active = Rc::new(Cell::new(true));
+                let callback_active = active.clone();
+                let (content, button) = panel::content(
+                    main_thread_marker,
+                    Box::new(move || {
+                        if !callback_active.get() {
+                            return;
+                        }
+                        let mut state = state.lock().unwrap();
+                        let Some(window) = state
+                            .applications
+                            .iter_mut()
+                            .flat_map(|application| &mut application.windows)
+                            .find(|window| window.window_id == window_id)
+                        else {
+                            return;
+                        };
+                        window.visible = !window.visible;
+                        let _ = event_loop_proxy
+                            .send_event(UserEvent::RefreshAppVeilFilter(state.clone()));
+                    }),
+                );
+                panel.setContentView(Some(&content));
                 panel.setSharingType(NSWindowSharingType::None);
-                panel.orderFrontRegardless();
-                panel
+                HostPanel {
+                    window: panel,
+                    button,
+                    active,
+                    last_moved_at: None,
+                }
             });
-            if panel.frame() != rect {
-                panel.setFrame_display(rect, true);
+            if window_moved || panel.window.frame() != rect {
+                panel.last_moved_at = Some(Instant::now());
+                if panel.window.isVisible() {
+                    panel.window.orderOut(None);
+                }
+            }
+            if panel.window.frame() != rect {
+                panel.window.setFrame_display(rect, true);
             }
         }
+        if let Some(applications) = snapshot.applications.take() {
+            self.state.lock().unwrap().update_windows(applications);
+        }
+        snapshot.last_revealed_window_ids = if self.snapshot.windows == snapshot.windows {
+            self.snapshot.last_revealed_window_ids.take()
+        } else {
+            None
+        };
+        self.snapshot = snapshot;
+    }
+
+    pub fn state(&self) -> AppVeilState {
+        let mut state = self.state.lock().unwrap();
+        state.control_panels_ids = self
+            .panels
+            .values()
+            .map(|panel| panel.window.windowNumber() as u32)
+            .collect();
+        state.control_panels_ids.sort_unstable();
+        state.clone()
+    }
+
+    pub fn update_visibility(&mut self) -> Option<AppVeilSnapshot> {
+        let visible_window_ids: Vec<_> = self
+            .state
+            .lock()
+            .unwrap()
+            .applications
+            .iter()
+            .flat_map(|application| &application.windows)
+            .filter(|window| window.visible)
+            .map(|window| window.window_id)
+            .collect();
+        for (window_id, panel) in &self.panels {
+            panel.button.update_appearance(visible_window_ids.contains(window_id));
+            if panel_is_settled(panel.last_moved_at, Instant::now()) && !panel.window.isVisible() {
+                panel.window.orderFrontRegardless();
+            }
+        }
+        self.snapshot.changed_controller_snapshot(visible_window_ids)
     }
 }
 
-impl Drop for AppVeilHost {
-    fn drop(&mut self) {
-        for panel in self.panels.values() {
-            panel.close();
-        }
+fn tracked_applications(bundle_ids: &[String]) -> Option<Vec<TrackedApplication>> {
+    let descriptions = copy_window_info(kCGWindowListOptionAll, kCGNullWindowID)?;
+    let mut applications = AppVeilState::new(bundle_ids.to_vec()).applications;
+    let mut bundle_ids_by_pid = HashMap::new();
+    for description in descriptions.get_all_values() {
+        let description =
+            unsafe { CFDictionary::<CFString, CFType>::wrap_under_get_rule(description as _) };
+        let (Some(window_id), Some(owner_pid)) = (
+            number(&description, unsafe { kCGWindowNumber }),
+            number(&description, unsafe { kCGWindowOwnerPID }),
+        ) else {
+            continue;
+        };
+        let bundle_id = bundle_ids_by_pid.entry(owner_pid).or_insert_with(|| {
+            NSRunningApplication::runningApplicationWithProcessIdentifier(owner_pid)
+                .and_then(|application| application.bundleIdentifier())
+                .map(|bundle_id| bundle_id.to_string())
+        });
+        let Some(application) = applications
+            .iter_mut()
+            .find(|application| Some(&application.bundle_id) == bundle_id.as_ref())
+        else {
+            continue;
+        };
+        application.windows.push(TrackedWindow {
+            window_id: window_id as u32,
+            owner_pid,
+            visible: false,
+        });
     }
+    for application in &mut applications {
+        application.windows.sort_unstable_by_key(|window| window.window_id);
+    }
+    Some(applications)
 }
 
 fn geometry_enabled(bundle_ids: &[String]) -> bool {
@@ -323,7 +509,41 @@ fn has_running_protected_application(bundle_ids: &[String]) -> bool {
     })
 }
 
+#[cfg(test)]
 fn snapshot(display_id: u32, bundle_ids: &[String]) -> Option<HostSnapshot> {
+    snapshot_with_qualified_windows(display_id, bundle_ids, &mut HashMap::new())
+}
+
+fn retain_qualified_windows(
+    qualified_windows: &mut HashMap<u32, i32>,
+    applications: &[TrackedApplication],
+) {
+    qualified_windows.retain(|window_id, owner_pid| {
+        applications.iter().any(|application| {
+            application.windows.iter().any(|window| {
+                window.window_id == *window_id && window.owner_pid == *owner_pid
+            })
+        })
+    });
+}
+
+fn qualify_standard_window(
+    qualified_windows: &mut HashMap<u32, i32>,
+    window_id: u32,
+    owner_pid: i32,
+    ax_frame_matches: bool,
+) -> bool {
+    if ax_frame_matches {
+        qualified_windows.insert(window_id, owner_pid);
+    }
+    qualified_windows.get(&window_id) == Some(&owner_pid)
+}
+
+fn snapshot_with_qualified_windows(
+    display_id: u32,
+    bundle_ids: &[String],
+    qualified_windows: &mut HashMap<u32, i32>,
+) -> Option<HostSnapshot> {
     if !geometry_enabled(bundle_ids) {
         return Some(HostSnapshot::default());
     }
@@ -335,26 +555,34 @@ fn snapshot(display_id: u32, bundle_ids: &[String]) -> Option<HostSnapshot> {
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         kCGNullWindowID,
     )?;
+    let applications = tracked_applications(bundle_ids);
+    if let Some(applications) = &applications {
+        retain_qualified_windows(qualified_windows, applications);
+    }
     let protected: HashSet<&str> = bundle_ids.iter().map(String::as_str).collect();
     let mut application_frames = HashMap::new();
     let windows = descriptions
         .get_all_values()
         .into_iter()
         .filter_map(|description| {
-            window_from_description(description, &protected, &mut application_frames)
+            window_from_description(
+                description,
+                &protected,
+                &mut application_frames,
+                qualified_windows,
+            )
         })
         .collect();
-    Some(snapshot_from_windows(
-        windows,
-        display_frame(display),
-        bundle_ids,
-    ))
+    let mut snapshot = snapshot_from_windows(windows, display_frame(display), bundle_ids);
+    snapshot.applications = applications;
+    Some(snapshot)
 }
 
 fn window_from_description(
     description: *const c_void,
     protected: &HashSet<&str>,
     application_frames: &mut HashMap<i32, Vec<Frame>>,
+    qualified_windows: &mut HashMap<u32, i32>,
 ) -> Option<Window> {
     let description =
         unsafe { CFDictionary::<CFString, CFType>::wrap_under_get_rule(description as _) };
@@ -377,7 +605,9 @@ fn window_from_description(
         let ax_frames = application_frames
             .entry(process_id)
             .or_insert_with(|| application_window_frames(process_id));
-        if !ax_frames.contains(&frame) {
+        let ax_frame_matches = ax_frames.contains(&frame);
+        let qualified = qualify_standard_window(qualified_windows, id, process_id, ax_frame_matches);
+        if !qualified {
             return None;
         }
     }
@@ -544,7 +774,7 @@ fn snapshot_from_windows(
     protected_bundle_ids: &[String],
 ) -> HostSnapshot {
     let protected: HashSet<&str> = protected_bundle_ids.iter().map(String::as_str).collect();
-    let protected_window_ids: HashSet<u32> = windows
+    let mut window_bundle_ids: HashMap<u32, String> = windows
         .iter()
         .filter(|window| {
             window.bundle_id.as_deref().is_some_and(|bundle_id| {
@@ -552,7 +782,7 @@ fn snapshot_from_windows(
                     && protected.contains(bundle_id)
             })
         })
-        .map(|window| window.id)
+        .map(|window| (window.id, window.bundle_id.clone().unwrap()))
         .collect();
     let windows: Vec<_> = windows
         .into_iter()
@@ -578,29 +808,32 @@ fn snapshot_from_windows(
             .collect(),
     )
     .into_iter()
-    .filter(|(window, _)| protected_window_ids.contains(&window.id))
-    .map(|(window, fragments)| {
+    .filter_map(|(window, fragments)| {
+        let bundle_id = window_bundle_ids.remove(&window.id)?;
         if let Some(frame) = panel_anchor(window.frame, &fragments) {
             panels.push(PanelAnchor {
                 window_id: window.id,
                 frame,
             });
         }
-        AppVeilWindow {
-            frame: normalize(window.frame, display),
-            visible_fragments: fragments
-                .into_iter()
-                .map(|fragment| normalize(fragment, display))
-                .collect(),
-        }
+        Some(HostWindow {
+            id: window.id,
+            bundle_id,
+            controller: AppVeilWindow {
+                frame: normalize(window.frame, display),
+                visible_fragments: fragments
+                    .into_iter()
+                    .map(|fragment| normalize(fragment, display))
+                    .collect(),
+            },
+        })
     })
     .collect();
     HostSnapshot {
-        controller: AppVeilSnapshot {
-            windows: veils,
-            keyboard_input_blocked: false,
-        },
+        windows: veils,
         panels,
+        applications: None,
+        last_revealed_window_ids: None,
     }
 }
 
@@ -667,6 +900,24 @@ mod tests {
     const CLOCK_PROCESS_CPUTIME_ID: u32 = 12;
     const CLOCK_THREAD_CPUTIME_ID: u32 = 16;
 
+    #[test]
+    fn panel_stays_hidden_until_movement_has_settled() {
+        let started_at = Instant::now();
+        assert!(panel_is_settled(None, started_at));
+        assert!(!panel_is_settled(Some(started_at), started_at));
+        assert!(!panel_is_settled(
+            Some(started_at),
+            started_at + Duration::from_millis(199),
+        ));
+        assert!(panel_is_settled(Some(started_at), started_at + PANEL_SETTLE_DELAY));
+        let moved_again_at = started_at + Duration::from_millis(150);
+        assert!(!panel_is_settled(Some(moved_again_at), started_at + PANEL_SETTLE_DELAY));
+        assert!(panel_is_settled(
+            Some(moved_again_at),
+            moved_again_at + PANEL_SETTLE_DELAY,
+        ));
+    }
+
     extern "C" {
         fn clock_gettime_nsec_np(clock_id: u32) -> u64;
         fn AXValueCreate(value_type: u32, value: *const c_void) -> CFTypeRef;
@@ -687,6 +938,42 @@ mod tests {
             origin_y: y,
             extent: Extent { width, height },
         }
+    }
+
+    #[test]
+    fn qualified_window_identity_survives_movement_but_not_owner_or_inventory_changes() {
+        let mut qualified_windows = HashMap::new();
+        assert!(!qualify_standard_window(&mut qualified_windows, 7, 42, false));
+        assert!(qualify_standard_window(&mut qualified_windows, 7, 42, true));
+        assert!(qualify_standard_window(&mut qualified_windows, 7, 42, false));
+        assert!(!qualify_standard_window(&mut qualified_windows, 8, 42, false));
+        assert!(!qualify_standard_window(&mut qualified_windows, 7, 43, false));
+
+        let mut applications = vec![TrackedApplication {
+            bundle_id: "protected".into(),
+            windows: vec![TrackedWindow {
+                window_id: 7,
+                owner_pid: 42,
+                visible: false,
+            }],
+        }];
+        // The all-window inventory retains minimized windows even without an on-screen anchor.
+        retain_qualified_windows(&mut qualified_windows, &applications);
+        assert!(qualify_standard_window(&mut qualified_windows, 7, 42, false));
+
+        applications[0].windows[0].owner_pid = 43;
+        retain_qualified_windows(&mut qualified_windows, &applications);
+        assert!(qualified_windows.is_empty());
+        assert!(!qualify_standard_window(&mut qualified_windows, 7, 43, false));
+
+        assert!(qualify_standard_window(&mut qualified_windows, 7, 43, true));
+        applications[0].windows.clear();
+        retain_qualified_windows(&mut qualified_windows, &applications);
+        assert!(qualified_windows.is_empty());
+
+        assert!(qualify_standard_window(&mut qualified_windows, 7, 43, true));
+        retain_qualified_windows(&mut qualified_windows, &[]);
+        assert!(qualified_windows.is_empty());
     }
 
     fn ax_attributes(subrole: &str, frame: Frame) -> CFArray {
@@ -786,7 +1073,7 @@ mod tests {
         log::info!(
             "App Veil benchmark scene: display_id={display_id} protected_bundle={} veils={} panels={}",
             bundle_ids[0],
-            initial.controller.windows.len(),
+            initial.windows.len(),
             initial.panels.len(),
         );
 
@@ -808,7 +1095,7 @@ mod tests {
                     });
                     let elapsed = started_at.elapsed();
                     let counts = snapshot
-                        .map(|snapshot| (snapshot.controller.windows.len(), snapshot.panels.len()));
+                        .map(|snapshot| (snapshot.windows.len(), snapshot.panels.len()));
                     let _ = sender.send((started_at, cpu_before, elapsed, counts));
                 },
             );
@@ -897,7 +1184,7 @@ mod tests {
             }],
         );
         assert!(covered_anchor.panels.is_empty());
-        assert_eq!(covered_anchor.controller.windows.len(), 1);
+        assert_eq!(covered_anchor.windows.len(), 1);
         let split_fragments = snapshot_at(
             protected_window,
             vec![Window {
@@ -912,7 +1199,7 @@ mod tests {
             off_display_edge.panels[0].frame,
             frame(1612.0, -148.0, 184.0, 36.0),
         );
-        assert_eq!(off_display_edge.controller.windows.len(), 1);
+        assert_eq!(off_display_edge.windows.len(), 1);
         let off_display_top = snapshot_at(frame(1200.0, -600.0, 208.0, 200.0), Vec::new());
         assert_eq!(
             off_display_top.panels[0].frame,
@@ -951,13 +1238,13 @@ mod tests {
             })
             .collect();
         let snapshot = snapshot_from_windows(windows, display, &["protected".into()]);
-        assert_eq!(snapshot.controller.windows.len(), 2);
+        assert_eq!(snapshot.windows.len(), 2);
         assert_eq!(
-            snapshot.controller.windows[0].frame,
+            snapshot.controller_snapshot(&[]).windows[0].frame,
             normalize(document, display),
         );
         assert_eq!(
-            snapshot.controller.windows[0].visible_fragments,
+            snapshot.controller_snapshot(&[]).windows[0].visible_fragments,
             vec![normalize(document, display)],
         );
         assert_eq!(
@@ -968,6 +1255,86 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2081, 2082],
         );
+    }
+
+    #[test]
+    fn revealing_one_window_preserves_panels_and_underlying_occlusion() {
+        let mut snapshot = snapshot_from_windows(
+            vec![
+                Window {
+                    id: 1,
+                    frame: frame(100.0, 100.0, 300.0, 200.0),
+                    bundle_id: Some("protected".into()),
+                },
+                Window {
+                    id: 2,
+                    frame: frame(0.0, 0.0, 700.0, 600.0),
+                    bundle_id: Some("protected".into()),
+                },
+            ],
+            frame(0.0, 0.0, 1000.0, 800.0),
+            &["protected".into()],
+        );
+        assert_eq!(snapshot.windows.len(), 2);
+        assert_eq!(snapshot.panels.len(), 2);
+        let hidden = snapshot.controller_snapshot(&[]);
+        let revealed = snapshot.controller_snapshot(&[1]);
+        assert_eq!(revealed.windows, vec![hidden.windows[1].clone()]);
+        assert!(revealed.windows[0].visible_fragments.len() > 1);
+        assert!(snapshot.controller_snapshot(&[1, 2]).windows.is_empty());
+        assert_eq!(snapshot.controller_snapshot(&[]), hidden);
+        assert_eq!(snapshot.changed_controller_snapshot(vec![]), Some(hidden.clone()));
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_none());
+        assert_eq!(snapshot.changed_controller_snapshot(vec![1]), Some(revealed));
+        assert!(snapshot.changed_controller_snapshot(vec![1]).is_none());
+        assert_eq!(snapshot.changed_controller_snapshot(vec![]), Some(hidden));
+        assert_eq!(
+            snapshot.changed_controller_snapshot(vec![1, 2]),
+            Some(AppVeilSnapshot::default()),
+        );
+        assert!(snapshot.changed_controller_snapshot(vec![1, 2]).is_none());
+    }
+
+    #[test]
+    fn disabling_one_app_preserves_other_apps_panels_and_veils() {
+        let mut snapshot = snapshot_from_windows(
+            vec![
+                Window {
+                    id: 1,
+                    frame: frame(0.0, 0.0, 300.0, 300.0),
+                    bundle_id: Some("first".into()),
+                },
+                Window {
+                    id: 2,
+                    frame: frame(400.0, 0.0, 300.0, 300.0),
+                    bundle_id: Some("second".into()),
+                },
+            ],
+            frame(0.0, 0.0, 1000.0, 800.0),
+            &["first".into(), "second".into()],
+        );
+        let remaining_veil = snapshot.controller_snapshot(&[]).windows[1].clone();
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_some());
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_none());
+        snapshot.retain_bundle_ids(&["second".into()]);
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_some());
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_none());
+        assert_eq!(snapshot.windows[0].id, 2);
+        assert_eq!(snapshot.controller_snapshot(&[]).windows, vec![remaining_veil]);
+        assert_eq!(snapshot.panels.len(), 1);
+        assert_eq!(snapshot.panels[0].window_id, 2);
+        snapshot.retain_bundle_ids(&[]);
+        assert!(snapshot.windows.is_empty());
+        assert!(snapshot.panels.is_empty());
+        assert_eq!(snapshot.changed_controller_snapshot(vec![]), Some(AppVeilSnapshot::default()));
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_none());
+    }
+
+    #[test]
+    fn empty_controller_snapshot_is_published_once() {
+        let mut snapshot = HostSnapshot::default();
+        assert_eq!(snapshot.changed_controller_snapshot(vec![]), Some(AppVeilSnapshot::default()));
+        assert!(snapshot.changed_controller_snapshot(vec![]).is_none());
     }
 
     #[test]
@@ -1029,7 +1396,7 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.controller.windows,
+            snapshot.controller_snapshot(&[]).windows,
             vec![AppVeilWindow {
                 frame: NormalizedRect {
                     x: 0.0,
@@ -1075,7 +1442,7 @@ mod tests {
             &["protected".into()],
         );
 
-        assert!(snapshot.controller.windows.is_empty());
+        assert!(snapshot.windows.is_empty());
     }
 
     #[test]
@@ -1098,7 +1465,7 @@ mod tests {
             &["protected".into(), HOPP_BUNDLE_ID.into()],
         );
 
-        assert!(snapshot.controller.windows.is_empty());
+        assert!(snapshot.windows.is_empty());
     }
 
     #[test]
@@ -1121,7 +1488,7 @@ mod tests {
 
         assert!(
             snapshot_from_windows(windows(), display, &["protected".into()])
-                .controller
+                .controller_snapshot(&[])
                 .windows
                 .is_empty()
         );
@@ -1131,7 +1498,7 @@ mod tests {
                 display,
                 &["protected".into(), NOTIFICATION_CENTER_BUNDLE_ID.into()],
             )
-            .controller
+            .controller_snapshot(&[])
             .windows
             .len(),
             1
@@ -1155,12 +1522,12 @@ mod tests {
         };
 
         assert!(snapshot_at(frame(200.0, 100.0, 400.0, 400.0))
-            .controller
+            .controller_snapshot(&[])
             .windows
             .is_empty());
         assert_eq!(
             snapshot_at(frame(1340.0, 100.0, 200.0, 400.0))
-                .controller
+                .controller_snapshot(&[])
                 .windows,
             vec![AppVeilWindow {
                 frame: NormalizedRect {
@@ -1179,7 +1546,7 @@ mod tests {
         );
         assert_eq!(
             snapshot_at(frame(1940.0, 100.0, 200.0, 400.0))
-                .controller
+                .controller_snapshot(&[])
                 .windows,
             vec![AppVeilWindow {
                 frame: NormalizedRect {
@@ -1241,7 +1608,7 @@ mod tests {
         );
         let before = wait_until(|| {
             snapshot(display_id, &bundle_ids)
-                .filter(|snapshot| !snapshot.controller.windows.is_empty())
+                .filter(|snapshot| !snapshot.windows.is_empty())
         })
         .expect("Calculator window did not appear in the App Veil snapshot");
 
@@ -1249,7 +1616,7 @@ mod tests {
         run_system_events(process_id, "set size of first window to {380, 440}");
         wait_until(|| {
             let current = snapshot(display_id, &bundle_ids)?;
-            (current.controller != before.controller).then_some(())
+            (current.controller_snapshot(&[]) != before.controller_snapshot(&[])).then_some(())
         })
         .expect("move/resize did not update App Veil geometry");
 
@@ -1268,7 +1635,7 @@ mod tests {
             );
             wait_until(|| {
                 snapshot(display_id, &bundle_ids)?
-                    .controller
+                    .controller_snapshot(&[])
                     .windows
                     .is_empty()
                     .then_some(())
@@ -1285,7 +1652,7 @@ mod tests {
             );
             let returned = wait_until(|| {
                 snapshot(display_id, &bundle_ids)?
-                    .controller
+                    .controller_snapshot(&[])
                     .windows
                     .into_iter()
                     .next()
@@ -1302,7 +1669,7 @@ mod tests {
             );
             wait_until(|| {
                 let moved = snapshot(display_id, &bundle_ids)?
-                    .controller
+                    .controller_snapshot(&[])
                     .windows
                     .into_iter()
                     .next()?;
@@ -1317,7 +1684,7 @@ mod tests {
         );
         wait_until(|| {
             let current = snapshot(display_id, &bundle_ids)?;
-            (current.controller.windows.len() < before.controller.windows.len()).then_some(())
+            (current.windows.len() < before.windows.len()).then_some(())
         })
         .expect("minimize did not remove the Calculator veil");
 
@@ -1327,14 +1694,14 @@ mod tests {
         );
         wait_until(|| {
             let current = snapshot(display_id, &bundle_ids)?;
-            (current.controller.windows.len() >= before.controller.windows.len()).then_some(())
+            (current.windows.len() >= before.windows.len()).then_some(())
         })
         .expect("restore did not return the Calculator veil");
 
         drop(guard);
         wait_until(|| {
             let current = snapshot(display_id, &bundle_ids)?;
-            (current.controller.windows.len() < before.controller.windows.len()).then_some(())
+            (current.windows.len() < before.windows.len()).then_some(())
         })
         .expect("close did not remove the Calculator veil");
     }
@@ -1375,7 +1742,7 @@ mod tests {
             ),
         );
         let initial_veil_count = wait_until(|| {
-            let count = snapshot(display_id, &bundle_ids)?.controller.windows.len();
+            let count = snapshot(display_id, &bundle_ids)?.windows.len();
             (count > 0).then_some(count)
         })
         .expect("TextEdit window did not appear in the App Veil snapshot");
@@ -1394,14 +1761,14 @@ mod tests {
             ),
         );
         let windows_with_new = wait_until(|| {
-            let count = snapshot(display_id, &bundle_ids)?.controller.windows.len();
+            let count = snapshot(display_id, &bundle_ids)?.windows.len();
             (count > initial_veil_count).then_some(count)
         })
         .expect("new TextEdit window did not add an App Veil rectangle");
 
         run_system_events(process_id, "keystroke \"w\" using command down");
         wait_until(|| {
-            let count = snapshot(display_id, &bundle_ids)?.controller.windows.len();
+            let count = snapshot(display_id, &bundle_ids)?.windows.len();
             (count < windows_with_new).then_some(())
         })
         .expect("closing the new TextEdit window did not remove its veil");
