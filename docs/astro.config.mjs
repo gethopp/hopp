@@ -48,10 +48,11 @@ export default defineConfig({
             { label: "Camera", slug: "features/camera" },
             { label: "Keyboard navigation", slug: "features/keyboard-navigation" },
             { label: "Screen Sharing", slug: "features/screen-sharing" },
+            { label: "App Veil", slug: "features/app-veil" },
             { label: "Rooms", slug: "features/rooms" },
             { label: "Remote Control", slug: "features/remote-control" },
             { label: "Clipboard", slug: "features/clipboard" },
-            { label: "Drawing (beta)", slug: "features/drawing" },
+            { label: "Drawing", slug: "features/drawing" },
           ],
         },
         {

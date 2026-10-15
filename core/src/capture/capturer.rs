@@ -4,6 +4,7 @@ use socket_lib::Content;
 use winit::{dpi::PhysicalPosition, event_loop::EventLoopProxy, monitor::MonitorHandle};
 
 use crate::{
+    app_veil_state::AppVeilState,
     utils::geometry::{Extent, Frame},
     UserEvent, STREAM_FAILURE_EXIT_CODE,
 };
@@ -29,12 +30,6 @@ use std::sync::{mpsc, Arc, Mutex};
 #[cfg_attr(not(target_os = "macos"), path = "stream.rs")]
 mod stream;
 use stream::{Stream, StreamRuntimeMessage};
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AppVeilCaptureFilter {
-    pub excluded_bundle_ids: Vec<String>,
-    pub revealed_window_ids: Vec<u32>,
-}
 
 // Constants for magic numbers
 const MAX_STREAM_FAILURES_BEFORE_EXIT: u64 = 10;
@@ -148,7 +143,7 @@ pub struct Capturer {
     /// system controls. This ensures proper cleanup of tracks and room connections.
     event_loop_proxy: EventLoopProxy<UserEvent>,
 
-    app_veil_filter: AppVeilCaptureFilter,
+    app_veil_state: AppVeilState,
 }
 
 impl Capturer {
@@ -170,7 +165,7 @@ impl Capturer {
             tx,
             active_stream: None,
             event_loop_proxy,
-            app_veil_filter: AppVeilCaptureFilter::default(),
+            app_veil_state: AppVeilState::default(),
         }
     }
 
@@ -210,13 +205,14 @@ impl Capturer {
             self.active_stream = None;
         }
 
+        self.clear_app_veil_window_ids();
         let mut stream = Stream::new(
             content,
             stream_resolution,
             scale,
             self.tx.clone(),
             buffer_source,
-            self.app_veil_filter.clone(),
+            self.app_veil_state.clone(),
         )?;
 
         stream.start_capture()?;
@@ -229,6 +225,7 @@ impl Capturer {
     /// Safe to call when no stream is active (no-op).
     pub fn stop_capture(&mut self) {
         log::info!("stop_capture");
+        self.clear_app_veil_window_ids();
         if self.active_stream.is_none() {
             log::warn!("stop_capture: no active stream");
             return;
@@ -347,24 +344,31 @@ impl Capturer {
         self.active_stream.is_some()
     }
 
-    pub fn set_app_veil_bundle_ids(&mut self, excluded_bundle_ids: Vec<String>) {
-        self.app_veil_filter.excluded_bundle_ids = excluded_bundle_ids;
-        self.refresh_app_veil_filter();
-    }
-
     pub fn app_veil_enabled(&self) -> bool {
-        !self.app_veil_filter.excluded_bundle_ids.is_empty()
+        !self.app_veil_state.applications.is_empty()
     }
 
-    pub fn app_veil_bundle_ids(&self) -> &[String] {
-        &self.app_veil_filter.excluded_bundle_ids
+    pub fn app_veil_state(&self) -> &AppVeilState {
+        &self.app_veil_state
     }
 
-    pub fn refresh_app_veil_filter(&mut self) {
+    fn clear_app_veil_window_ids(&mut self) {
+        for application in &mut self.app_veil_state.applications {
+            application.windows.clear();
+        }
+        self.app_veil_state.control_panels_ids.clear();
+    }
+
+    pub fn refresh_app_veil_filter(&mut self, state: AppVeilState, force: bool) {
+        let refresh = force || !self.app_veil_state.capture_policy_eq(&state);
+        self.app_veil_state = state;
+        if !refresh {
+            return;
+        }
         let Some(stream) = self.active_stream.as_mut() else {
             return;
         };
-        if let Err(error) = stream.update_app_veil_filter(self.app_veil_filter.clone()) {
+        if let Err(error) = stream.update_app_veil_filter(self.app_veil_state.clone()) {
             log::error!("refresh_app_veil_filter: failed to update capture filter: {error:?}");
             sentry_utils::upload_logs_event("App Veil capture filter update failed".to_string());
         }

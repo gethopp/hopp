@@ -1,0 +1,54 @@
+---
+title: App Veil
+description: Hide selected apps from your screen share while you keep using them, and reveal individual windows when needed.
+---
+
+import { Image } from "astro:assets";
+import settings from "../../../assets/app-veil/settings.png";
+import sharerView from "../../../assets/app-veil/sharer-view.png";
+import teammateView from "../../../assets/app-veil/teammate-view.png";
+
+App Veil hides selected apps from your teammates while you share your screen. You can still see and use those apps normally, so you can check a message or open a personal note without showing it to everyone in the call.
+
+App Veil is available on macOS. It works when you share an entire display. It doesn't apply when you share a single window.
+
+## Choose which apps to hide
+
+1. Open **Settings > App Veil** in the Hopp desktop app.
+2. Click **Add application** and search for an installed app.
+3. Select the app to add it. Its switch turns on automatically.
+4. [Share your screen](/features/screen-sharing) in a call or room.
+
+<Image
+  src={settings}
+  class="rounded-md mx-auto mt-6"
+  alt="App Veil settings with Bear switched on and Notification Center and Telegram switched off"
+/>
+
+An app is hidden when its switch is on. In the example above, Bear is hidden, while Telegram and Notification Center remain visible.
+
+**Notification Center** is already in the list, but starts switched off. Turn it on if you want to hide macOS notification banners and Notification Center from your screen share.
+
+## What you and your teammates see
+
+On your screen, you can still see and use the app. Here's a Bear note with the **Hopp App Veil** panel in the bottom-right corner:
+
+<Image
+  src={sharerView}
+  class="rounded-md mx-auto mt-6"
+  alt="A Bear note titled Test with the Hopp App Veil panel showing Hidden and a crossed-out eye button in the bottom-right corner"
+/>
+
+The panel tells you whether teammates can see that window. In this screenshot, **Hidden** means the note is hidden from them, even though you can read and edit it. Only you see the panel; it doesn't appear in your screen share.
+
+Click the **eye button** to switch this window between hidden and visible. This applies to that window only. Other windows from the same app stay hidden, and new windows start hidden too. When you stop and start sharing again, all windows from your enabled apps start hidden.
+
+Your teammates see a dark area labeled **Hidden with App Veil** where the window is. The rest of your shared screen stays visible.
+
+<Image
+  src={teammateView}
+  class="rounded-md mx-auto mt-6"
+  alt="A teammate's view of the shared desktop, with the Bear window covered by a dark area labeled Hidden with App Veil"
+/>
+
+App Veil doesn't turn off remote control. If you want to stop teammates from interacting with your computer, turn off remote control in the call controls.

@@ -16,15 +16,37 @@ use std::sync::{
     mpsc, Arc, Mutex,
 };
 
-use super::{AppVeilCaptureFilter, CapturerError};
+use super::CapturerError;
+use crate::app_veil_state::{AppVeilState, TrackedApplication};
 
 const HOPP_BUNDLE_ID: &str = "com.hopp.app";
 
-fn should_exclude_application(bundle_id: &str, excluded_bundle_ids: &[String]) -> bool {
+fn should_exclude_application(bundle_id: &str, applications: &[TrackedApplication]) -> bool {
     bundle_id != HOPP_BUNDLE_ID
-        && excluded_bundle_ids
+        && applications
             .iter()
-            .any(|excluded| excluded == bundle_id)
+            .any(|application| application.bundle_id == bundle_id)
+}
+
+fn is_window_exception(
+    window_id: u32,
+    owner_pid: i32,
+    bundle_id: &str,
+    state: &AppVeilState,
+) -> bool {
+    if should_exclude_application(bundle_id, &state.applications) {
+        !state.control_panels_ids.contains(&window_id)
+            && state.applications.iter().any(|application| {
+                application.bundle_id == bundle_id
+                    && application.windows.iter().any(|window| {
+                        window.window_id == window_id
+                            && window.owner_pid == owner_pid
+                            && window.visible
+                    })
+            })
+    } else {
+        state.control_panels_ids.contains(&window_id)
+    }
 }
 
 #[allow(dead_code)]
@@ -139,7 +161,7 @@ pub struct Stream {
     output_extent: Arc<Mutex<Extent>>,
     scale: f64,
     target_process_id: Option<i32>,
-    app_veil_filter: AppVeilCaptureFilter,
+    app_veil_state: AppVeilState,
 }
 
 impl Stream {
@@ -149,7 +171,7 @@ impl Stream {
         scale: f64,
         tx: mpsc::Sender<StreamRuntimeMessage>,
         buffer_source: NativeVideoSource,
-        app_veil_filter: AppVeilCaptureFilter,
+        app_veil_state: AppVeilState,
     ) -> Result<Self, CapturerError> {
         Ok(Stream {
             sc_stream: None,
@@ -166,7 +188,7 @@ impl Stream {
             })),
             scale,
             target_process_id: None,
-            app_veil_filter,
+            app_veil_state,
         })
     }
 
@@ -185,14 +207,36 @@ impl Stream {
             .filter(|application| {
                 should_exclude_application(
                     &application.bundle_identifier(),
-                    &self.app_veil_filter.excluded_bundle_ids,
+                    &self.app_veil_state.applications,
                 )
             })
             .collect::<Vec<_>>();
         let application_refs = applications.iter().collect::<Vec<_>>();
+        let exception_windows = shareable_content
+            .windows()
+            .into_iter()
+            .filter(|window| {
+                let owner = window.owning_application();
+                let bundle_id = owner
+                    .as_ref()
+                    .map(|owner| owner.bundle_identifier())
+                    .unwrap_or_default();
+                let owner_pid = owner
+                    .as_ref()
+                    .map(|owner| owner.process_id())
+                    .unwrap_or_default();
+                is_window_exception(
+                    window.window_id(),
+                    owner_pid,
+                    &bundle_id,
+                    &self.app_veil_state,
+                )
+            })
+            .collect::<Vec<_>>();
+        let exception_window_refs = exception_windows.iter().collect::<Vec<_>>();
         Ok(SCContentFilter::create()
             .with_display(&display)
-            .with_excluding_applications(&application_refs, &[])
+            .with_excluding_applications(&application_refs, &exception_window_refs)
             .build())
     }
 
@@ -501,11 +545,8 @@ impl Stream {
         }
     }
 
-    pub fn update_app_veil_filter(
-        &mut self,
-        app_veil_filter: AppVeilCaptureFilter,
-    ) -> Result<(), CapturerError> {
-        self.app_veil_filter = app_veil_filter;
+    pub fn update_app_veil_filter(&mut self, state: AppVeilState) -> Result<(), CapturerError> {
+        self.app_veil_state = state;
         if !matches!(self.source.content_type, ContentType::Display) {
             return Ok(());
         }
@@ -550,7 +591,7 @@ impl Stream {
             output_extent: self.output_extent.clone(),
             scale: self.scale,
             target_process_id: self.target_process_id,
-            app_veil_filter: self.app_veil_filter.clone(),
+            app_veil_state: self.app_veil_state.clone(),
         })
     }
 
@@ -580,14 +621,32 @@ mod app_veil_tests {
     use super::*;
 
     #[test]
-    fn bundle_matching_is_exact_and_never_excludes_hopp() {
-        let excluded = vec!["com.example.Mail".to_string(), HOPP_BUNDLE_ID.to_string()];
+    fn visible_windows_require_matching_owners_and_overlays_stay_hidden() {
+        use crate::app_veil_state::TrackedWindow;
 
-        assert!(should_exclude_application("com.example.Mail", &excluded));
+        let mut state = AppVeilState::new(vec!["protected".into(), HOPP_BUNDLE_ID.into()]);
+        let window = |window_id, visible| TrackedWindow {
+            window_id,
+            owner_pid: 42,
+            visible,
+        };
+        state.applications[0].windows = vec![window(1, true), window(2, false), window(3, true)];
+        state.control_panels_ids = vec![3, 4];
+        assert!(is_window_exception(1, 42, "protected", &state));
+        assert!(!is_window_exception(1, 43, "protected", &state));
+        assert!(!is_window_exception(1, 42, "another", &state));
+        assert!(!is_window_exception(2, 42, "protected", &state));
+        assert!(!is_window_exception(3, 42, "protected", &state));
+        assert!(is_window_exception(4, 42, HOPP_BUNDLE_ID, &state));
+        assert!(!is_window_exception(5, 42, "protected", &state));
         assert!(!should_exclude_application(
-            "com.example.Mail.helper",
-            &excluded
+            HOPP_BUNDLE_ID,
+            &state.applications
         ));
-        assert!(!should_exclude_application(HOPP_BUNDLE_ID, &excluded));
+        assert!(!should_exclude_application(
+            "protected.helper",
+            &state.applications
+        ));
+        assert!(should_exclude_application("protected", &state.applications));
     }
 }

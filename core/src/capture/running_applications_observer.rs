@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use objc2::{rc::Retained, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
@@ -11,11 +8,11 @@ use objc2_app_kit::{
 use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol};
 use winit::event_loop::EventLoopProxy;
 
-use crate::UserEvent;
+use crate::{app_veil_state::AppVeilState, UserEvent};
 
 struct RunningApplicationsObserverIvars {
     event_loop_proxy: EventLoopProxy<UserEvent>,
-    bundle_ids: Arc<Mutex<HashSet<String>>>,
+    state: Arc<Mutex<AppVeilState>>,
 }
 
 objc2::define_class!(
@@ -41,7 +38,12 @@ objc2::define_class!(
                 return;
             };
             let bundle_id = bundle_id.to_string();
-            if !self.ivars().bundle_ids.lock().unwrap().contains(&bundle_id) {
+            let state = self.ivars().state.lock().unwrap();
+            if !state
+                .applications
+                .iter()
+                .any(|application| application.bundle_id == bundle_id)
+            {
                 log::info!("RunningApplicationsObserver: ignoring unprotected app: {bundle_id}");
                 return;
             }
@@ -49,7 +51,7 @@ objc2::define_class!(
             let _ = self
                 .ivars()
                 .event_loop_proxy
-                .send_event(UserEvent::RefreshAppVeilFilter);
+                .send_event(UserEvent::RefreshAppVeilFilter(state.clone()));
         }
     }
 );
@@ -62,7 +64,7 @@ pub struct RunningApplicationsObserver {
 impl RunningApplicationsObserver {
     pub fn new(
         event_loop_proxy: EventLoopProxy<UserEvent>,
-        bundle_ids: Arc<Mutex<HashSet<String>>>,
+        state: Arc<Mutex<AppVeilState>>,
     ) -> Option<Self> {
         let Some(main_thread_marker) = objc2::MainThreadMarker::new() else {
             log::error!(
@@ -73,7 +75,7 @@ impl RunningApplicationsObserver {
         let target = RunningApplicationsObserverTarget::alloc(main_thread_marker).set_ivars(
             RunningApplicationsObserverIvars {
                 event_loop_proxy,
-                bundle_ids,
+                state,
             },
         );
         let target: Retained<RunningApplicationsObserverTarget> =

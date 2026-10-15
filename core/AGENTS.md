@@ -10,18 +10,20 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 
 ## Building
 - Verify your changes by running `task build_dev`
-- Never call anything else than `task build_dev`
+- Use `task build_dev` for builds; formatting and library tests are also required below.
 
 ## Formatting & Linting
 
 - `cargo fmt` is required (pre-commit formats staged Rust files).
+- Run the `cargo_fmt` pre-commit hook before committing/pushing Rust changes; do not skip it.
 - CI runs `cargo fmt --all -- --check` and `cargo clippy -D warnings`.
 - Rust edition: 2021.
 
 ## Testing
 
-- Do not run core tests as an agent.
-- For validation, only use build commands (see `Taskfile.yml`).
+- Run core library tests as an agent: `cargo test --lib` (use `--target <host-triple>` when needed, e.g. `cargo test --target aarch64-apple-darwin --lib`).
+- Verify code changes with `task build_dev`, formatting, and library tests before pushing.
+- Desktop/integration tests and ignored tests remain manual unless explicitly requested.
 - Full testing details live in `tests/README.md`.
 
 ## Conventions & Structure
@@ -57,7 +59,7 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 ## Related Docs
 
 - `README.md` for architecture and diagrams.
-- `tests/README.md` for test setup and commands (manual only).
+- `tests/README.md` for test setup and manual integration commands.
 
 ## Plan Mode
 
@@ -69,7 +71,6 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 - When creating new folders don't add a `mod.rs` file.
 
 ## Avoid at all costs
-- Running cargo fmt
 - Running cargo clippy
 
 ## Workflow Orchestration
