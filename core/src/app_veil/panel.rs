@@ -6,8 +6,9 @@ use core_foundation::{
 };
 use objc2::{rc::Retained, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBox, NSBoxType,
-    NSButton, NSButtonType, NSColor, NSFont, NSImage, NSImageScaling, NSTextField, NSTitlePosition,
+    NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBox,
+    NSBoxType, NSButton, NSButtonType, NSColor, NSFont, NSImage, NSImageScaling, NSTextField,
+    NSTitlePosition,
 };
 use objc2_foundation::{NSData, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
@@ -71,11 +72,13 @@ impl AppVeilEyeButton {
     }
 
     pub(super) fn update_appearance(&self, visible: bool) {
-        self.ivars().status.setStringValue(&NSString::from_str(if visible {
-            "Visible"
-        } else {
-            "Hidden"
-        }));
+        self.ivars()
+            .status
+            .setStringValue(&NSString::from_str(if visible {
+                "Visible"
+            } else {
+                "Hidden"
+            }));
         self.ivars().status.setTextColor(Some(&color(if visible {
             ColorToken::Orange400
         } else {
@@ -124,18 +127,25 @@ pub(super) fn content(
         .unwrap_or_else(|| NSFont::systemFontOfSize(12.0));
     label.setFont(Some(&font));
     label.setTextColor(Some(&color(ColorToken::Gray300)));
-    label.setFrame(NSRect::new(NSPoint::new(12.0, 10.0), NSSize::new(84.0, 16.0)));
+    label.setFrame(NSRect::new(
+        NSPoint::new(12.0, 10.0),
+        NSSize::new(84.0, 16.0),
+    ));
     let status = NSTextField::labelWithString(&NSString::from_str("Hidden"), mtm);
     status.setFont(Some(&font));
-    status.setFrame(NSRect::new(NSPoint::new(96.0, 10.0), NSSize::new(40.0, 16.0)));
+    status.setFrame(NSRect::new(
+        NSPoint::new(96.0, 10.0),
+        NSSize::new(40.0, 16.0),
+    ));
     let button = AppVeilEyeButton::new(mtm, status.clone(), toggle_visibility);
     if let Some(view) = background.contentView() {
         view.addSubview(&label);
         view.addSubview(&status);
         // Use an explicit fill so AppKit's inactive bezel styling cannot hide the button.
-        let button_background = NSBox::initWithFrame(NSBox::alloc(mtm), NSRect::new(
-            NSPoint::new(WIDTH - 34.0, 4.0), NSSize::new(28.0, 28.0),
-        ));
+        let button_background = NSBox::initWithFrame(
+            NSBox::alloc(mtm),
+            NSRect::new(NSPoint::new(WIDTH - 34.0, 4.0), NSSize::new(28.0, 28.0)),
+        );
         button_background.setBoxType(NSBoxType::Custom);
         button_background.setTitlePosition(NSTitlePosition::NoTitle);
         button_background.setCornerRadius(8.0);
@@ -160,7 +170,8 @@ fn color(token: ColorToken) -> Retained<NSColor> {
 
 fn eye_image(svg: &[u8]) -> Retained<NSImage> {
     let (rgba, width, height) = crate::window::drawing_helpers::rasterize_svg_to_rgba(svg, 40);
-    let png = image::RgbaImage::from_raw(width, height, rgba).expect("embedded eye icon dimensions");
+    let png =
+        image::RgbaImage::from_raw(width, height, rgba).expect("embedded eye icon dimensions");
     let mut bytes = std::io::Cursor::new(Vec::new());
     png.write_to(&mut bytes, image::ImageFormat::Png)
         .expect("embedded eye icon PNG");
@@ -210,17 +221,20 @@ mod tests {
         register_font();
         let font = NSFont::fontWithName_size(&NSString::from_str("Geist-Medium"), 12.0)
             .expect("embedded Geist font is registered with AppKit");
-        let attributes = NSDictionary::from_slices(
-            &[unsafe { NSFontAttributeName }],
-            &[&*font as &AnyObject],
+        let attributes =
+            NSDictionary::from_slices(&[unsafe { NSFontAttributeName }], &[&*font as &AnyObject]);
+        let label_size =
+            unsafe { NSString::from_str("Hopp App Veil").sizeWithAttributes(Some(&attributes)) };
+        assert!(
+            label_size.width <= 84.0,
+            "panel label must fit without truncation"
         );
-        let label_size = unsafe {
-            NSString::from_str("Hopp App Veil").sizeWithAttributes(Some(&attributes))
-        };
-        assert!(label_size.width <= 84.0, "panel label must fit without truncation");
         for state in ["Hidden", "Visible"] {
             let size = unsafe { NSString::from_str(state).sizeWithAttributes(Some(&attributes)) };
-            assert!(size.width <= 40.0, "status must fit without truncation: {state}");
+            assert!(
+                size.width <= 40.0,
+                "status must fit without truncation: {state}"
+            );
         }
         for svg in [
             include_bytes!("../../resources/icons/EyeOff.svg").as_slice(),

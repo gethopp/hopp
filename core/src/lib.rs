@@ -1772,11 +1772,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::RefreshAppVeilFilter(state) => {
                 #[cfg(target_os = "macos")]
-                let state = match self
-                    .app_veil_host
-                    .as_ref()
-                    .map(AppVeilHost::state)
-                {
+                let state = match self.app_veil_host.as_ref().map(AppVeilHost::state) {
                     Some(current) if current.capture_policy_eq(&state) => current,
                     _ => return,
                 };

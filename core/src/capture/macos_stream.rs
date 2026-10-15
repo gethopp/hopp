@@ -225,7 +225,12 @@ impl Stream {
                     .as_ref()
                     .map(|owner| owner.process_id())
                     .unwrap_or_default();
-                is_window_exception(window.window_id(), owner_pid, &bundle_id, &self.app_veil_state)
+                is_window_exception(
+                    window.window_id(),
+                    owner_pid,
+                    &bundle_id,
+                    &self.app_veil_state,
+                )
             })
             .collect::<Vec<_>>();
         let exception_window_refs = exception_windows.iter().collect::<Vec<_>>();
@@ -540,10 +545,7 @@ impl Stream {
         }
     }
 
-    pub fn update_app_veil_filter(
-        &mut self,
-        state: AppVeilState,
-    ) -> Result<(), CapturerError> {
+    pub fn update_app_veil_filter(&mut self, state: AppVeilState) -> Result<(), CapturerError> {
         self.app_veil_state = state;
         if !matches!(self.source.content_type, ContentType::Display) {
             return Ok(());
@@ -637,8 +639,14 @@ mod app_veil_tests {
         assert!(!is_window_exception(3, 42, "protected", &state));
         assert!(is_window_exception(4, 42, HOPP_BUNDLE_ID, &state));
         assert!(!is_window_exception(5, 42, "protected", &state));
-        assert!(!should_exclude_application(HOPP_BUNDLE_ID, &state.applications));
-        assert!(!should_exclude_application("protected.helper", &state.applications));
+        assert!(!should_exclude_application(
+            HOPP_BUNDLE_ID,
+            &state.applications
+        ));
+        assert!(!should_exclude_application(
+            "protected.helper",
+            &state.applications
+        ));
         assert!(should_exclude_application("protected", &state.applications));
     }
 }

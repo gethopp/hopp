@@ -29,7 +29,11 @@ impl AppVeilState {
                             .iter()
                             .filter(|window| window.visible)
                             .count()
-                            == candidate.windows.iter().filter(|window| window.visible).count()
+                            == candidate
+                                .windows
+                                .iter()
+                                .filter(|window| window.visible)
+                                .count()
                         && application
                             .windows
                             .iter()
@@ -116,8 +120,16 @@ mod tests {
             owner_pid,
             visible,
         };
-        state.applications[0].windows = vec![window(1, 10, true), window(2, 10, true), window(3, 10, true)];
-        let windows = vec![window(1, 10, false), window(2, 20, false), window(4, 10, true)];
+        state.applications[0].windows = vec![
+            window(1, 10, true),
+            window(2, 10, true),
+            window(3, 10, true),
+        ];
+        let windows = vec![
+            window(1, 10, false),
+            window(2, 20, false),
+            window(4, 10, true),
+        ];
         let inventory_allocation = windows.as_ptr();
         state.update_windows(vec![TrackedApplication {
             bundle_id: "protected".into(),
