@@ -266,9 +266,7 @@ struct HostPanel {
 }
 
 fn panel_is_settled(last_moved_at: Option<Instant>, now: Instant) -> bool {
-    last_moved_at.map_or(true, |last_moved| {
-        now.duration_since(last_moved) >= PANEL_SETTLE_DELAY
-    })
+    last_moved_at.is_none_or(|last_moved| now.duration_since(last_moved) >= PANEL_SETTLE_DELAY)
 }
 
 impl Drop for HostPanel {
@@ -727,7 +725,7 @@ fn frame_from_ax_attributes(values: &CFArray) -> Option<Frame> {
     }
     unsafe {
         let subrole = CFType::wrap_under_get_rule(*values.get(0)?).downcast_into::<CFString>()?;
-        if subrole.to_string() != "AXStandardWindow" {
+        if subrole != "AXStandardWindow" {
             return None;
         }
         let position_value = *values.get(1)?;
