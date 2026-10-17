@@ -128,14 +128,14 @@ pub(super) fn content(
     label.setFont(Some(&font));
     label.setTextColor(Some(&color(ColorToken::Gray300)));
     label.setFrame(NSRect::new(
-        NSPoint::new(12.0, 10.0),
-        NSSize::new(84.0, 16.0),
+        NSPoint::new(12.0, 7.0),
+        NSSize::new(84.0, 18.0),
     ));
     let status = NSTextField::labelWithString(&NSString::from_str("Hidden"), mtm);
     status.setFont(Some(&font));
     status.setFrame(NSRect::new(
-        NSPoint::new(96.0, 10.0),
-        NSSize::new(40.0, 16.0),
+        NSPoint::new(96.0, 7.0),
+        NSSize::new(40.0, 18.0),
     ));
     let button = AppVeilEyeButton::new(mtm, status.clone(), toggle_visibility);
     if let Some(view) = background.contentView() {
