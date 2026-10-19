@@ -1,6 +1,8 @@
 use crate::application_catalog::NOTIFICATION_CENTER_BUNDLE_ID;
 use serde::{Deserialize, Serialize};
-pub use socket_lib::{ScreenSharePickerMode, ScreenShareResolution, StoredMode};
+pub use socket_lib::{
+    CameraInputResolution, ScreenSharePickerMode, ScreenShareResolution, StoredMode,
+};
 use std::collections::HashSet;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub struct UserSettings {
     pub call_feedback_popup: bool,
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
+    #[serde(default)]
+    pub camera_input_resolution: CameraInputResolution,
     pub start_mic_on_call: bool,
     #[serde(default = "default_true")]
     pub remote_control_enabled: bool,
@@ -78,6 +82,7 @@ impl Default for UserSettings {
             call_feedback_popup: true,
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
+            camera_input_resolution: CameraInputResolution::default(),
             start_mic_on_call: true,
             remote_control_enabled: true,
             noise_cancellation_enabled: true,
@@ -600,6 +605,48 @@ impl AppState {
             Err(e) => log::error!("Failed to serialize app state: {e}"),
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod camera_settings_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_settings_default_camera_input_to_1080p() {
+        let mut legacy = serde_json::to_value(UserSettings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("camera_input_resolution");
+        let settings: UserSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            settings.camera_input_resolution,
+            CameraInputResolution::P1080
+        );
+    }
+
+    #[test]
+    fn camera_input_resolution_survives_app_state_reload() {
+        let directory = std::env::temp_dir().join(format!(
+            "hopp-camera-settings-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let mut state = AppState::new(&directory);
+        state.update_user_setting(|settings| {
+            settings.camera_input_resolution = CameraInputResolution::P4K
+        });
+        let restored = AppState::new(&directory);
+        assert_eq!(
+            restored.user_settings().camera_input_resolution,
+            CameraInputResolution::P4K
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 }
 

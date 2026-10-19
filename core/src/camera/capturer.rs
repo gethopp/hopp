@@ -1,5 +1,5 @@
 use livekit::webrtc::video_source::native::NativeVideoSource;
-use socket_lib::{CameraDevice, Message, SocketSender};
+use socket_lib::{CameraDevice, CameraInputResolution, Message, SocketSender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -52,6 +52,7 @@ impl CameraCapturer {
         buffer_source: NativeVideoSource,
     ) -> Result<(), String> {
         self.stop_capture();
+        self.stream_config.next_capture_generation();
         self.socket = Some(socket);
         let name = device_name.unwrap_or("");
         log::info!("CameraCapturer::start_capture: device='{name}'");
@@ -69,6 +70,7 @@ impl CameraCapturer {
     }
 
     pub fn stop_capture(&mut self) {
+        self.stream_config.next_capture_generation();
         if let Some(mut stream) = self.stream.take() {
             log::info!("CameraCapturer::stop_capture");
             stream.stop_capture();
@@ -85,6 +87,7 @@ impl CameraCapturer {
         self.stream = match self.stream.take() {
             Some(mut stream) => {
                 stream.stop_capture();
+                self.stream_config.next_capture_generation();
 
                 let failures = stream.get_failures_count();
                 if failures > MAX_CAMERA_FAILURES_BEFORE_STOP {
@@ -129,6 +132,17 @@ impl CameraCapturer {
         };
         log::info!("CameraCapturer::set_screensharing_active: active={active}, target={target}");
     }
+
+    pub fn set_input_resolution(&mut self, resolution: CameraInputResolution) {
+        if self.stream_config.input_resolution() == resolution {
+            return;
+        }
+        self.stream_config.set_input_resolution(resolution);
+        log::info!("CameraCapturer::set_input_resolution: {resolution:?}");
+        if self.stream.is_some() {
+            self.restart_stream();
+        }
+    }
 }
 
 impl Drop for CameraCapturer {
@@ -148,9 +162,15 @@ pub fn poll_camera_stream(capturer: Arc<Mutex<CameraCapturer>>) {
         }
         let rx_lock = rx_lock.unwrap();
         match rx_lock.recv_timeout(Duration::from_secs(POLL_CAMERA_TIMEOUT_SECS)) {
-            Ok(CameraStreamMessage::Failed(reason)) => {
+            Ok(CameraStreamMessage::Failed { reason, generation }) => {
                 log::info!("poll_camera_stream: camera failed: {reason}");
-                // TODO: properly forward this error.
+                let capturer = capturer.lock().unwrap();
+                if generation != capturer.stream_config.capture_generation() {
+                    continue;
+                }
+                if let Some(socket) = &capturer.socket {
+                    let _ = socket.send(Message::CameraFailed(reason));
+                }
             }
             Ok(CameraStreamMessage::Stop) => {
                 log::info!("poll_camera_stream: stop message");

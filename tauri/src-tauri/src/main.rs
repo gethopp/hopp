@@ -4,8 +4,8 @@
 use hopp::sounds::{self, SoundConfig};
 use log::LevelFilter;
 use socket_lib::{
-    AudioCaptureMessage, AudioDevice, CameraDevice, DrawingEnabled, Message, ScreenSharePickerMode,
-    ScreenShareResolution, SentryMetadata,
+    AudioCaptureMessage, AudioDevice, CameraDevice, CameraInputResolution, DrawingEnabled, Message,
+    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata,
 };
 use std::sync::mpsc as std_mpsc;
 use tauri::Manager;
@@ -897,6 +897,21 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
 }
 
 #[tauri::command(async)]
+fn set_camera_input_resolution(app: tauri::AppHandle, resolution: CameraInputResolution) {
+    log::info!("set_camera_input_resolution: {resolution:?}");
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state
+        .update_user_setting(|settings| settings.camera_input_resolution = resolution);
+    if let Err(error) = data
+        .sender
+        .send(Message::SetCameraInputResolution(resolution))
+    {
+        log::error!("set_camera_input_resolution: failed to send: {error:?}");
+    }
+}
+
+#[tauri::command(async)]
 fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareResolution) {
     log::info!("set_screen_share_resolution: {resolution:?}");
     let data = app.state::<Mutex<AppData>>();
@@ -1390,6 +1405,10 @@ fn main() {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");
             }
             let screen_share_resolution = app_state.user_settings().screen_share_resolution;
+            let camera_input_resolution = app_state.user_settings().camera_input_resolution;
+            if let Err(error) = sender.send(Message::SetCameraInputResolution(camera_input_resolution)) {
+                log::error!("Failed to send initial camera_input_resolution: {error:?}");
+            }
             if let Err(e) = sender.send(Message::SetScreenShareResolution(screen_share_resolution)) {
                 log::error!("Failed to send initial screen_share_resolution: {e:?}");
             }
@@ -1732,6 +1751,7 @@ fn main() {
             unmute_mic,
             toggle_mic,
             set_noise_cancellation,
+            set_camera_input_resolution,
             set_screen_share_resolution,
             set_screen_share_picker_mode,
             list_microphones,

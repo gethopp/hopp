@@ -85,6 +85,7 @@ export interface CoreParticipantState {
 }
 
 export type ScreenShareResolution = "P1080" | "P1440" | "P4K";
+export type CameraInputResolution = "P1080" | "P1440" | "P4K";
 export type ScreenSharePickerMode = "Screen" | "Window";
 
 export interface AppVeilApplication {
@@ -102,6 +103,7 @@ export interface UserSettings {
   call_feedback_popup: boolean;
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
+  camera_input_resolution: CameraInputResolution;
   start_mic_on_call: boolean;
   remote_control_enabled: boolean;
   noise_cancellation_enabled: boolean;
@@ -231,6 +233,7 @@ export interface CommandMap {
   select_microphone: { args: { deviceName: string }; return: void };
 
   // Core socket messages — camera
+  set_camera_input_resolution: { args: { resolution: CameraInputResolution }; return: void };
   list_webcams: { args: void; return: CameraDevice[] };
   start_camera: { args: { deviceName?: string }; return: void };
   stop_camera: { args: void; return: void };

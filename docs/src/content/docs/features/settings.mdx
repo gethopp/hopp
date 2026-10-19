@@ -20,6 +20,10 @@ The Hopp desktop app provides a Settings panel to customize your call, camera, a
 
 **Start camera on call start** — Automatically open the camera when a call starts. Default: off.
 
+**Camera input resolution** (`camera_input_resolution`) — Request 1080p (1920×1080), 1440p (2560×1440), or 4K (3840×2160) from your camera. Default: 1080p. Hopp saves your choice and reopens an active camera when you change it.
+
+The requested resolution is best effort: the camera or its driver may supply the closest supported format, including a different aspect ratio. For example, a camera without a 2560×1440 mode may supply 1920×1440 instead. This setting controls camera capture; it does not change Hopp's outgoing video resolution or frame rate. When using a virtual camera, its source-camera settings are also controlled by the virtual-camera application.
+
 ## Audio
 
 **Start microphone on call start** (`start_mic_on_call`) — Automatically unmute the microphone when a call starts. Default: on.

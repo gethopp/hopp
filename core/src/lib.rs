@@ -81,8 +81,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
+    CallStartMessage, CameraInputResolution, CameraStartMessage, Content, ContentType, Message,
+    ScreenShareMessage, ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -2183,6 +2183,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: SetScreenShareResolution({resolution:?})");
                 self.screen_share_resolution = resolution;
             }
+            UserEvent::SetCameraInputResolution(resolution) => {
+                log::info!("user_event: SetCameraInputResolution({resolution:?})");
+                self.camera_capturer
+                    .lock()
+                    .unwrap()
+                    .set_input_resolution(resolution);
+            }
             UserEvent::SetScreenSharePickerMode(mode) => {
                 log::info!("user_event: SetScreenSharePickerMode({mode:?})");
                 self.screen_share_picker_mode = mode;
@@ -3257,6 +3264,7 @@ pub enum UserEvent {
     AudioCaptureError,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
+    SetCameraInputResolution(CameraInputResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
@@ -3407,6 +3415,9 @@ impl RenderEventLoop {
                     }
                     Message::SetScreenShareResolution(resolution) => {
                         UserEvent::SetScreenShareResolution(resolution)
+                    }
+                    Message::SetCameraInputResolution(resolution) => {
+                        UserEvent::SetCameraInputResolution(resolution)
                     }
                     Message::SetScreenSharePickerMode(mode) => {
                         UserEvent::SetScreenSharePickerMode(mode)

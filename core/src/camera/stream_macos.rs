@@ -23,7 +23,7 @@ use objc2_av_foundation::{
     AVCaptureDeviceTypeExternal, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
     AVCaptureVideoDataOutputSampleBufferDelegate, AVFrameRateRange, AVMediaTypeVideo,
 };
-use objc2_core_media::{CMSampleBuffer, CMTime};
+use objc2_core_media::{CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetDimensions};
 use objc2_core_video::{
     kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -146,10 +146,68 @@ fn frame_duration_for_target_fps(
     }
 }
 
+/// Keep the device's selected format in place until the session has started.
+/// In particular, macOS can otherwise reconfigure it during `startRunning`.
+struct DeviceConfigurationLock<'a>(&'a AVCaptureDevice);
+
+impl<'a> DeviceConfigurationLock<'a> {
+    unsafe fn acquire(device: &'a AVCaptureDevice) -> Result<Self, String> {
+        device
+            .lockForConfiguration()
+            .map_err(|error| format!("Cannot configure camera input: {error:?}"))?;
+        Ok(Self(device))
+    }
+}
+
+impl Drop for DeviceConfigurationLock<'_> {
+    fn drop(&mut self) {
+        // Do not let a cleanup exception replace a setup error or panic.
+        if let Err(error) = exception::catch(AssertUnwindSafe(|| unsafe {
+            self.0.unlockForConfiguration();
+        })) {
+            log::error!("Failed to unlock camera configuration: {error:?}");
+        }
+    }
+}
+
+struct SessionConfiguration<'a> {
+    session: &'a AVCaptureSession,
+    committed: bool,
+}
+
+impl<'a> SessionConfiguration<'a> {
+    unsafe fn begin(session: &'a AVCaptureSession) -> Self {
+        session.beginConfiguration();
+        Self {
+            session,
+            committed: false,
+        }
+    }
+
+    unsafe fn commit(mut self) {
+        // A throwing commit must not be retried while unwinding.
+        self.committed = true;
+        self.session.commitConfiguration();
+    }
+}
+
+impl Drop for SessionConfiguration<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            if let Err(error) = exception::catch(AssertUnwindSafe(|| unsafe {
+                self.session.commitConfiguration();
+            })) {
+                log::error!("Failed to finish camera session configuration: {error:?}");
+            }
+        }
+    }
+}
+
 struct CameraDelegateState {
     buffer_source: NativeVideoSource,
     video_buffer_manager: Arc<VideoBufferManager>,
     config: Arc<CameraStreamConfig>,
+    generation: u64,
     capture_start: Instant,
     last_frame_time: Instant,
     i420: Option<I420Buffer>,
@@ -159,6 +217,9 @@ struct CameraDelegateState {
     failures_count: Arc<Mutex<u32>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     frame_counter: u64,
+    requested_dimensions: (u32, u32),
+    selected_dimensions: (u32, u32),
+    delivered_dimensions: Option<(u32, u32)>,
 }
 
 define_class!(
@@ -202,6 +263,21 @@ define_class!(
                     let format = CVPixelBufferGetPixelFormatType(&pixel_buffer);
                     let width = CVPixelBufferGetWidth(&pixel_buffer) as u32;
                     let height = CVPixelBufferGetHeight(&pixel_buffer) as u32;
+
+                    if state.delivered_dimensions != Some((width, height)) {
+                        let (requested_width, requested_height) = state.requested_dimensions;
+                        let (selected_width, selected_height) = state.selected_dimensions;
+                        log::info!(
+                            "Camera delivered {width}x{height} {} (requested {requested_width}x{requested_height}, selected {selected_width}x{selected_height})",
+                            four_cc(format)
+                        );
+                        if (width, height) != state.selected_dimensions {
+                            log::warn!(
+                                "Delivered camera dimensions differ from the selected input format"
+                            );
+                        }
+                        state.delivered_dimensions = Some((width, height));
+                    }
 
                     let mut i420 = match state.i420.take() {
                         Some(buf) if buf.width() == width && buf.height() == height => buf,
@@ -284,9 +360,10 @@ define_class!(
                     } else {
                         log::warn!("Unsupported pixel format: {}", format);
                          *state.failures_count.lock().unwrap() += 1;
-                            let _ = state.error_tx.send(CameraStreamMessage::Failed(
-                                "Format conversion failed".to_string(),
-                            ));
+                            let _ = state.error_tx.send(CameraStreamMessage::Failed {
+                                reason: "Format conversion failed".to_string(),
+                                generation: state.generation,
+                            });
                         false
                     };
 
@@ -469,29 +546,73 @@ impl CameraStream {
 
         let output = AVCaptureVideoDataOutput::new();
         output.setAlwaysDiscardsLateVideoFrames(true);
-        // TODO: we should choose the active format based on the resolution.
 
         if !session.canAddOutput(&output) {
             return Err("Cannot add camera output to session".to_string());
         }
         session.addOutput(&output);
 
-        // Set hardware frame rate to avoid excess callbacks from the camera.
+        // Select from the device's supported formats rather than assuming the
+        // requested input size or frame rate is available.
         let target_fps = CAMERA_STREAM_FPS_HIGH as f64;
-        let active_format = device.activeFormat();
-        let frame_rate_ranges = active_format.videoSupportedFrameRateRanges();
-        if let Some((frame_duration, actual_fps)) =
-            frame_duration_for_target_fps(&frame_rate_ranges, target_fps)
-        {
-            if let Ok(()) = device.lockForConfiguration() {
-                device.setActiveVideoMinFrameDuration(frame_duration);
-                device.setActiveVideoMaxFrameDuration(frame_duration);
-                device.unlockForConfiguration();
-                log::info!(
-                    "Camera frame duration set (≈{actual_fps:.2} fps, requested {target_fps})",
+        let requested = config.input_resolution().extent();
+        let formats = device.formats();
+        let mut selected = None;
+        let mut best_score = (u64::MAX, u64::MAX);
+        for index in 0..formats.count() {
+            let format = formats.objectAtIndex(index);
+            let dimensions = CMVideoFormatDescriptionGetDimensions(&format.formatDescription());
+            if dimensions.width <= 0 || dimensions.height <= 0 {
+                continue;
+            }
+            let Some((duration, actual_fps)) =
+                frame_duration_for_target_fps(&format.videoSupportedFrameRateRanges(), target_fps)
+            else {
+                continue;
+            };
+            let score = (
+                (dimensions.width as u64).abs_diff(requested.width as u64)
+                    + (dimensions.height as u64).abs_diff(requested.height as u64),
+                ((actual_fps - target_fps).abs() * 1000.0) as u64,
+            );
+            if score < best_score {
+                best_score = score;
+                selected = Some((format, dimensions, duration, actual_fps));
+            }
+        }
+        let Some((format, dimensions, frame_duration, actual_fps)) = selected else {
+            return Err("Camera has no supported input format".to_string());
+        };
+        let device_lock = DeviceConfigurationLock::acquire(&device)?;
+        // Apply format and frame durations atomically, as required by
+        // AVCaptureDevice.activeFormat. Retain the device lock through startup
+        // so macOS cannot replace the format when starting the session.
+        let session_configuration = SessionConfiguration::begin(&session);
+        let configuration = exception::catch(AssertUnwindSafe(|| {
+            device.setActiveFormat(&format);
+            device.setActiveVideoMinFrameDuration(frame_duration);
+            device.setActiveVideoMaxFrameDuration(frame_duration);
+        }));
+        match configuration {
+            Ok(()) => {}
+            Err(Some(error)) => {
+                return Err(format!(
+                    "Objective-C exception configuring camera input: {error}"
+                ));
+            }
+            Err(None) => {
+                return Err(
+                    "Objective-C exception configuring camera input (nil exception)".to_string(),
                 );
             }
         }
+        log::info!(
+            "Camera input selected {}x{} at {actual_fps:.2}fps (requested {}x{})",
+            dimensions.width,
+            dimensions.height,
+            requested.width,
+            requested.height
+        );
 
         // Request first supported pixel format from device's available list.
         let available_formats = output.availableVideoCVPixelFormatTypes();
@@ -515,6 +636,7 @@ impl CameraStream {
             buffer_source: buffer_source.clone(),
             video_buffer_manager: video_buffer_manager.clone(),
             config: config.clone(),
+            generation: config.capture_generation(),
             capture_start: Instant::now(),
             last_frame_time: Instant::now(),
             i420: None,
@@ -524,6 +646,9 @@ impl CameraStream {
             failures_count: failures_count.clone(),
             error_tx: error_tx.clone(),
             frame_counter: 0,
+            requested_dimensions: (requested.width as u32, requested.height as u32),
+            selected_dimensions: (dimensions.width as u32, dimensions.height as u32),
+            delivered_dimensions: None,
         };
 
         let delegate = CameraDelegate::alloc().set_ivars(std::sync::Mutex::new(Some(state)));
@@ -536,7 +661,24 @@ impl CameraStream {
             ProtocolObject::from_ref(&*delegate);
         output.setSampleBufferDelegate_queue(Some(protocol_obj), Some(&queue_retained));
 
-        session.startRunning();
+        // Starting a session while its configuration transaction is open is
+        // invalid; commit first, while the device remains locked.
+        session_configuration.commit();
+        let startup = exception::catch(AssertUnwindSafe(|| session.startRunning()));
+        drop(device_lock);
+        match startup {
+            Ok(()) => {}
+            Err(Some(error)) => {
+                return Err(format!(
+                    "Objective-C exception starting camera session: {error}"
+                ));
+            }
+            Err(None) => {
+                return Err(
+                    "Objective-C exception starting camera session (nil exception)".to_string(),
+                );
+            }
+        }
 
         Ok(Self {
             session,
