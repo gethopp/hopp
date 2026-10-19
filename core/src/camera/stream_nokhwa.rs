@@ -22,6 +22,61 @@ const MAX_CONSECUTIVE_DECODE_FAILURES: u32 = 30;
 
 use super::{CameraStreamConfig, CameraStreamMessage};
 
+#[cfg(target_os = "linux")]
+type NegotiatedCamera = Camera;
+#[cfg(target_os = "windows")]
+type NegotiatedCamera = msmf_capture::CaptureRequest;
+
+/// A live candidate plus plain metadata retained if a later format is preferred.
+struct CameraCandidate<T> {
+    camera: T,
+    format: CameraFormat,
+    frame_rate: f64,
+}
+
+/// Prefer a target-rate input over a slower, earlier pixel-format preference.
+///
+/// Slow cameras are closed before the next probe. Only their format metadata is
+/// retained, so exclusive drivers can open the next format and the best slow
+/// candidate can be reopened if none reaches the target. A 0.1% tolerance admits
+/// nominal 30fps formats such as 30000/1001 without accepting substantially slower modes.
+fn select_camera<T>(
+    resolution: Resolution,
+    mut open: impl FnMut(RequestedFormatType) -> Result<CameraCandidate<T>, String>,
+) -> Result<T, String> {
+    let mut fallback: Option<(CameraFormat, f64)> = None;
+    for format in [FrameFormat::YUYV, FrameFormat::MJPEG, FrameFormat::NV12] {
+        let request =
+            RequestedFormatType::Closest(CameraFormat::new(resolution, format, CAMERA_CAPTURE_FPS));
+        let candidate = match open(request) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                log::debug!("Camera format probe failed: {error}");
+                continue;
+            }
+        };
+        if candidate.frame_rate >= CAMERA_CAPTURE_FPS as f64 * 0.999 {
+            return Ok(candidate.camera);
+        }
+        if fallback
+            .as_ref()
+            .is_none_or(|(_, frame_rate)| candidate.frame_rate > *frame_rate)
+        {
+            fallback = Some((candidate.format, candidate.frame_rate));
+        }
+        drop(candidate);
+    }
+    if let Some((format, frame_rate)) = fallback {
+        log::info!(
+            "Camera cannot reach {CAMERA_CAPTURE_FPS}fps; using {format:?} ({frame_rate:.2}fps)"
+        );
+        if let Ok(candidate) = open(RequestedFormatType::Exact(format)) {
+            return Ok(candidate.camera);
+        }
+    }
+    open(RequestedFormatType::AbsoluteHighestFrameRate).map(|candidate| candidate.camera)
+}
+
 pub struct CameraStream {
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
     worker: Option<JoinHandle<()>>,
@@ -123,17 +178,7 @@ impl CameraStream {
         let device_name = camera_info.human_name();
         let index = camera_info.index().clone();
 
-        // Try YUYV first, then MJPEG, then accept any
-        let camera = Self::try_open_camera(&index, FrameFormat::YUYV, &config)
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG, &config))
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12, &config))
-            .or_else(|_| {
-                let format = RequestedFormat::new::<RgbFormat>(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                );
-                Camera::new(index, format)
-                    .map_err(|e| format!("Failed to open camera with any format: {e}"))
-            })?;
+        let camera = Self::open_camera(&index, &config)?;
 
         let resolution = camera.resolution();
         let width = resolution.width_x;
@@ -162,27 +207,45 @@ impl CameraStream {
         Ok(stream)
     }
 
-    /// Negotiates the nearest input preset for a single preferred pixel format.
-    fn try_open_camera(
+    /// Shares frame-rate-aware format negotiation between initial capture and restart.
+    fn open_camera(
         index: &CameraIndex,
-        frame_format: FrameFormat,
         config: &CameraStreamConfig,
-    ) -> Result<Camera, String> {
+    ) -> Result<NegotiatedCamera, String> {
         let input_extent = config.input_resolution().extent();
-        let format =
-            RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
-                Resolution::new(input_extent.width as u32, input_extent.height as u32),
-                frame_format,
-                CAMERA_CAPTURE_FPS,
-            )));
-        Camera::new(index.clone(), format)
-            .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
+        select_camera(
+            Resolution::new(input_extent.width as u32, input_extent.height as u32),
+            |request| {
+                let camera = Camera::new(index.clone(), RequestedFormat::new::<RgbFormat>(request))
+                    .map_err(|error| format!("Failed to open camera with {request:?}: {error}"))?;
+                let format = camera.camera_format();
+                #[cfg(target_os = "linux")]
+                let frame_rate = camera.frame_rate() as f64;
+                // The pinned MF backend caches the rate denominator as FPS. Probe
+                // the native selection after releasing Nokhwa on this thread.
+                #[cfg(target_os = "windows")]
+                let (camera, frame_rate) =
+                    msmf_capture::CaptureRequest::from_camera(camera, CAMERA_CAPTURE_FPS)?
+                        .probe()?;
+                #[cfg(target_os = "windows")]
+                let format = CameraFormat::new(
+                    format.resolution(),
+                    format.format(),
+                    frame_rate.round() as u32,
+                );
+                Ok(CameraCandidate {
+                    camera,
+                    format,
+                    frame_rate,
+                })
+            },
+        )
     }
 
     /// Starts the worker that reads, converts, and publishes negotiated camera frames.
     fn start_capture_with_camera(
         &mut self,
-        camera: Camera,
+        camera: NegotiatedCamera,
         config: Arc<CameraStreamConfig>,
     ) -> Result<(), String> {
         // A reopened device may negotiate different dimensions than its previous
@@ -196,10 +259,10 @@ impl CameraStream {
         // with a bounded V4L reader so shutdown can safely join the worker.
         #[cfg(target_os = "linux")]
         let mut camera = linux_capture::BoundedCamera::new(camera)?;
-        // Drop Nokhwa's native reader on its creating thread; only plain
-        // negotiation metadata crosses into the async reader's COM apartment.
+        // Negotiation already released Nokhwa on its creating thread; only
+        // plain metadata crosses into the async reader's COM apartment.
         #[cfg(target_os = "windows")]
-        let request = msmf_capture::CaptureRequest::from_camera(camera, CAMERA_CAPTURE_FPS)?;
+        let request = camera;
         #[cfg(target_os = "windows")]
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
 
@@ -427,17 +490,7 @@ impl CameraStream {
 
         let index = camera_info.index().clone();
 
-        // Try YUYV first, then MJPEG, then NV12, then accept any
-        let camera = Self::try_open_camera(&index, FrameFormat::YUYV, &self.config)
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG, &self.config))
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12, &self.config))
-            .or_else(|_| {
-                let format = RequestedFormat::new::<RgbFormat>(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                );
-                Camera::new(index, format)
-                    .map_err(|e| format!("Failed to open camera with any format: {e}"))
-            })?;
+        let camera = Self::open_camera(&index, &self.config)?;
 
         let mut new_stream = Self {
             tx: None,
@@ -641,6 +694,182 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Model an exclusive device so the next open fails if a probe was retained.
+    struct ExclusiveCamera {
+        open_count: Rc<Cell<usize>>,
+        format: FrameFormat,
+    }
+
+    impl Drop for ExclusiveCamera {
+        /// Release the modeled device exactly when the selection drops its handle.
+        fn drop(&mut self) {
+            self.open_count.set(self.open_count.get() - 1);
+        }
+    }
+
+    /// A slow raw mode must be closed before a later full-rate MJPEG probe opens.
+    #[test]
+    fn camera_selection_releases_slow_yuyv_before_choosing_fast_mjpeg() {
+        let open_count = Rc::new(Cell::new(0));
+        let mut probes = Vec::new();
+        let selected = select_camera(Resolution::new(3840, 2160), |request| {
+            assert_eq!(open_count.get(), 0, "previous camera was not released");
+            let RequestedFormatType::Closest(format) = request else {
+                panic!("unexpected fallback: {request:?}");
+            };
+            probes.push(format.format());
+            let frame_rate = match format.format() {
+                FrameFormat::YUYV => 5.0,
+                FrameFormat::MJPEG => 30.0,
+                _ => panic!("probing must stop when the target rate is found"),
+            };
+            open_count.set(1);
+            Ok(CameraCandidate {
+                camera: ExclusiveCamera {
+                    open_count: open_count.clone(),
+                    format: format.format(),
+                },
+                format,
+                frame_rate,
+            })
+        })
+        .unwrap();
+        assert_eq!(probes, [FrameFormat::YUYV, FrameFormat::MJPEG]);
+        assert_eq!(selected.format, FrameFormat::MJPEG);
+        assert_eq!(open_count.get(), 1);
+        drop(selected);
+        assert_eq!(open_count.get(), 0);
+    }
+
+    /// If every preferred mode is slow, reopen the fastest metadata-only fallback.
+    #[test]
+    fn camera_selection_reopens_best_slow_mode_after_releasing_all_probes() {
+        let open_count = Rc::new(Cell::new(0));
+        let mut reopened = false;
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            assert_eq!(open_count.get(), 0, "slow fallback retained a camera");
+            let (format, frame_rate) = match request {
+                RequestedFormatType::Closest(mut format) => {
+                    let rate = match format.format() {
+                        FrameFormat::YUYV => 5,
+                        FrameFormat::MJPEG => 15,
+                        FrameFormat::NV12 => 10,
+                        _ => unreachable!(),
+                    };
+                    format.set_frame_rate(rate);
+                    (format, rate as f64)
+                }
+                RequestedFormatType::Exact(format) => {
+                    assert_eq!(format.format(), FrameFormat::MJPEG);
+                    assert_eq!(format.frame_rate(), 15);
+                    reopened = true;
+                    (format, 15.0)
+                }
+                _ => panic!("unexpected fallback: {request:?}"),
+            };
+            open_count.set(1);
+            Ok(CameraCandidate {
+                camera: ExclusiveCamera {
+                    open_count: open_count.clone(),
+                    format: format.format(),
+                },
+                format,
+                frame_rate,
+            })
+        })
+        .unwrap();
+        assert!(reopened);
+        assert_eq!(selected.format, FrameFormat::MJPEG);
+        drop(selected);
+        assert_eq!(open_count.get(), 0);
+    }
+
+    /// Preserve the unrestricted highest-rate fallback when preferred probes fail.
+    #[test]
+    fn camera_selection_preserves_unrestricted_fallback_and_its_errors() {
+        for fallback_succeeds in [false, true] {
+            let mut probes = 0;
+            let result = select_camera(Resolution::new(1920, 1080), |request| {
+                probes += 1;
+                match request {
+                    RequestedFormatType::Closest(_) => Err("unsupported format".to_string()),
+                    RequestedFormatType::AbsoluteHighestFrameRate if fallback_succeeds => {
+                        Ok(CameraCandidate {
+                            camera: (),
+                            format: CameraFormat::new(
+                                Resolution::new(640, 480),
+                                FrameFormat::RAWBGR,
+                                30,
+                            ),
+                            frame_rate: 30.0,
+                        })
+                    }
+                    RequestedFormatType::AbsoluteHighestFrameRate => {
+                        Err("no camera modes available".to_string())
+                    }
+                    _ => panic!("unexpected request: {request:?}"),
+                }
+            });
+            assert_eq!(probes, 4);
+            assert_eq!(result.is_ok(), fallback_succeeds);
+            if !fallback_succeeds {
+                assert_eq!(result.unwrap_err(), "no camera modes available");
+            }
+        }
+    }
+
+    /// A disappearing slow mode must not suppress the original unrestricted fallback.
+    #[test]
+    fn camera_selection_uses_unrestricted_fallback_if_slow_mode_reopen_fails() {
+        let mut probes = Vec::new();
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            probes.push(request);
+            let format = match request {
+                RequestedFormatType::Closest(mut format) => {
+                    format.set_frame_rate(15);
+                    format
+                }
+                RequestedFormatType::Exact(_) => return Err("mode disappeared".to_string()),
+                RequestedFormatType::AbsoluteHighestFrameRate => {
+                    CameraFormat::new(Resolution::new(640, 480), FrameFormat::RAWBGR, 30)
+                }
+                _ => panic!("unexpected request: {request:?}"),
+            };
+            Ok(CameraCandidate {
+                camera: format.format(),
+                format,
+                frame_rate: format.frame_rate() as f64,
+            })
+        })
+        .unwrap();
+        assert_eq!(selected, FrameFormat::RAWBGR);
+        assert_eq!(probes.len(), 5);
+        assert!(matches!(probes[3], RequestedFormatType::Exact(_)));
+        assert_eq!(probes[4], RequestedFormatType::AbsoluteHighestFrameRate);
+    }
+
+    /// Nominal 30fps fractional rates keep format preference without extra probes.
+    #[test]
+    fn camera_selection_accepts_nominal_thirty_fps() {
+        let mut probes = 0;
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            probes += 1;
+            let RequestedFormatType::Closest(format) = request else {
+                panic!("unexpected fallback");
+            };
+            Ok(CameraCandidate {
+                camera: format.format(),
+                format,
+                frame_rate: 30_000.0 / 1001.0,
+            })
+        })
+        .unwrap();
+        assert_eq!(selected, FrameFormat::YUYV);
+        assert_eq!(probes, 1);
+    }
 
     /// Builds a valid color JPEG frame without requiring a camera device.
     fn jpeg_frame(width: u32, height: u32) -> nokhwa::Buffer {

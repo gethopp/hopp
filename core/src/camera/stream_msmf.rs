@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError
 use std::time::{Duration, Instant};
 use std::{marker::PhantomData, rc::Rc};
 
-use nokhwa::utils::{CameraFormat, FrameFormat};
+use nokhwa::utils::{CameraFormat, FrameFormat, Resolution};
 use windows::core::{implement, GUID, HRESULT, PCWSTR};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
@@ -91,12 +91,36 @@ impl Drop for MediaSource {
 }
 
 /// Owned negotiation metadata that can cross threads without COM interfaces.
+#[derive(Clone)]
 pub(super) struct CaptureRequest {
     symbolic_link: String,
     format: CameraFormat,
 }
 
 impl CaptureRequest {
+    /// Return the dimensions shared by native negotiation and frame conversion.
+    pub(super) fn resolution(&self) -> Resolution {
+        self.format.resolution()
+    }
+
+    /// Return the native pixel format used by the shared conversion path.
+    pub(super) fn frame_format(&self) -> FrameFormat {
+        self.format.format()
+    }
+
+    /// Inspect the actual selected native rate without starting frame capture.
+    ///
+    /// The caller may own an STA apartment, so the temporary reader is created
+    /// and released on its own MTA thread. Only metadata crosses that boundary.
+    pub(super) fn probe(self) -> Result<(Self, f64), String> {
+        let request = self.clone();
+        let frame_rate =
+            std::thread::spawn(move || AsyncCamera::new(request).map(|camera| camera.frame_rate))
+                .join()
+                .map_err(|_| "Camera format probe panicked".to_string())??;
+        Ok((self, frame_rate))
+    }
+
     /// Release Nokhwa on its creating thread before opening the async reader.
     pub(super) fn from_camera(camera: nokhwa::Camera, requested_fps: u32) -> Result<Self, String> {
         let symbolic_link = camera.info().misc().to_string();
@@ -122,6 +146,7 @@ pub(super) struct AsyncCamera {
     source: Option<MediaSource>,
     events: Receiver<ReadResult>,
     format: CameraFormat,
+    frame_rate: f64,
     // Declared last so MF stays initialized while all COM interfaces are dropped.
     _mf: MediaFoundation,
 }
@@ -144,12 +169,14 @@ impl AsyncCamera {
             .map_err(|error| error.to_string())?;
         let reader = unsafe { MFCreateSourceReaderFromMediaSource(&source.0, &attributes) }
             .map_err(|error| error.to_string())?;
-        unsafe { select_format(&reader, format) }.map_err(|error| error.to_string())?;
+        let frame_rate =
+            unsafe { select_format(&reader, format) }.map_err(|error| error.to_string())?;
         Ok(Self {
             reader: Some(reader),
             source: Some(source),
             events,
             format,
+            frame_rate,
             _mf: mf,
         })
     }
@@ -300,7 +327,7 @@ fn open_source(symbolic_link: &str) -> Result<MediaSource, String> {
 unsafe fn select_format(
     reader: &IMFSourceReader,
     format: CameraFormat,
-) -> windows::core::Result<()> {
+) -> windows::core::Result<f64> {
     let subtype = match format.format() {
         FrameFormat::YUYV => MFVideoFormat_YUY2,
         FrameFormat::NV12 => MFVideoFormat_NV12,
@@ -332,7 +359,17 @@ unsafe fn select_format(
     }
     let (_, media_type) =
         best.ok_or_else(|| windows::core::Error::from_hresult(MF_E_INVALIDMEDIATYPE))?;
-    reader.SetCurrentMediaType(stream, None, &media_type)
+    reader.SetCurrentMediaType(stream, None, &media_type)?;
+    native_frame_rate(&reader.GetCurrentMediaType(stream)?)?
+        .ok_or_else(|| windows::core::Error::from_hresult(MF_E_INVALIDMEDIATYPE))
+}
+
+/// Decode MF's full rational rate, rejecting undefined zero components.
+unsafe fn native_frame_rate(media_type: &IMFMediaType) -> windows::core::Result<Option<f64>> {
+    let rate = media_type.GetUINT64(&MF_MT_FRAME_RATE)?;
+    let denominator = rate as u32;
+    let numerator = rate >> 32;
+    Ok((denominator != 0 && numerator != 0).then(|| numerator as f64 / denominator as f64))
 }
 
 /// Reject mismatched sizes/subtypes and score the native rational frame rate.
@@ -348,14 +385,7 @@ unsafe fn native_rate_distance(
     {
         return Ok(None);
     }
-    let rate = media_type.GetUINT64(&MF_MT_FRAME_RATE)?;
-    let denominator = rate as u32;
-    if denominator == 0 || rate >> 32 == 0 {
-        return Ok(None);
-    }
-    Ok(Some(
-        ((rate >> 32) as f64 / denominator as f64 - format.frame_rate() as f64).abs(),
-    ))
+    Ok(native_frame_rate(media_type)?.map(|rate| (rate - format.frame_rate() as f64).abs()))
 }
 
 /// Copy a delivered sample while balancing every successful media-buffer lock.
@@ -518,6 +548,39 @@ mod tests {
                     .unwrap()
                     < 0.04
             );
+            // Reading the low u32 alone would misreport both of these modes as
+            // 1fps and could hide that MJPEG reaches the requested capture rate.
+            media_type
+                .SetUINT64(&MF_MT_FRAME_RATE, (5 << 32) | 1)
+                .unwrap();
+            assert_eq!(native_frame_rate(&media_type).unwrap(), Some(5.0));
+            assert_eq!(
+                native_rate_distance(&media_type, format, MFVideoFormat_YUY2).unwrap(),
+                Some(25.0)
+            );
+            media_type
+                .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_MJPG)
+                .unwrap();
+            media_type
+                .SetUINT64(&MF_MT_FRAME_RATE, (30 << 32) | 1)
+                .unwrap();
+            let mjpeg = CameraFormat::new(format.resolution(), FrameFormat::MJPEG, 30);
+            assert_eq!(native_frame_rate(&media_type).unwrap(), Some(30.0));
+            assert_eq!(
+                native_rate_distance(&media_type, mjpeg, MFVideoFormat_MJPG).unwrap(),
+                Some(0.0)
+            );
+            media_type.SetUINT64(&MF_MT_FRAME_RATE, 30 << 32).unwrap();
+            assert_eq!(native_frame_rate(&media_type).unwrap(), None);
+            assert_eq!(
+                native_rate_distance(&media_type, mjpeg, MFVideoFormat_MJPG).unwrap(),
+                None
+            );
+            media_type.SetUINT64(&MF_MT_FRAME_RATE, 1).unwrap();
+            assert_eq!(native_frame_rate(&media_type).unwrap(), None);
+            media_type
+                .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_YUY2)
+                .unwrap();
             media_type
                 .SetUINT64(&MF_MT_FRAME_SIZE, (1280 << 32) | 720)
                 .unwrap();

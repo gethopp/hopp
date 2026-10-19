@@ -183,7 +183,9 @@ struct CallbackLifetime {
 impl CallbackLifetime {
     /// Serializes side effects with cancellation and rejects retired callbacks.
     fn enter(&self) -> Option<MutexGuard<'_, ()>> {
-        let guard = self.gate.lock().ok()?;
+        // The gate protects ordering, not mutable state. Recover after a callback
+        // panic so fail() can still report that panic through the same gate.
+        let guard = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         (!self.cancelled.load(Ordering::Acquire)).then_some(guard)
     }
 
@@ -699,6 +701,120 @@ impl Drop for DirectShowStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Creates a real callback context without opening a native camera graph.
+    fn callback_context(
+        startup: StartupHandshake,
+    ) -> (CallbackContext, mpsc::Receiver<CameraStreamMessage>) {
+        use livekit::webrtc::video_source::VideoResolution;
+
+        let config = Arc::new(CameraStreamConfig::new_high_quality());
+        let (error_tx, error_rx) = mpsc::channel();
+        (
+            CallbackContext {
+                device_name: "Test camera".into(),
+                generation: config.capture_generation(),
+                state: Mutex::new(FrameState {
+                    last_frame: Instant::now(),
+                    pacer: FramePacer::default(),
+                    telemetry: FrameTelemetry::default(),
+                    frame_id: 0,
+                    buffer: None,
+                }),
+                startup: Mutex::new(startup),
+                failed: AtomicBool::new(false),
+                failures: Arc::new(AtomicU32::new(0)),
+                error_tx,
+                buffers: Arc::new(VideoBufferManager::default()),
+                source: NativeVideoSource::new(
+                    VideoResolution {
+                        width: 2,
+                        height: 2,
+                    },
+                    false,
+                ),
+                config,
+                lifetime: Arc::new(CallbackLifetime::default()),
+            },
+            error_rx,
+        )
+    }
+
+    /// Models the unwind caught at the native callback boundary while in its gate.
+    fn poison_callback_gate(context: &CallbackContext) {
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            let _guard = context.enter().unwrap();
+            panic!("Simulated frame callback panic");
+        }))
+        .is_err());
+        assert!(context.lifetime.gate.is_poisoned());
+    }
+
+    /// Startup still delivers a callback panic once native graph creation returns.
+    #[tokio::test]
+    async fn poisoned_callback_gate_preserves_startup_failure_reporting() {
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let (context, error_rx) = callback_context(StartupHandshake::new(startup_tx));
+        poison_callback_gate(&context);
+
+        context.fail("DirectShow frame callback panicked".into());
+        assert!(matches!(
+            startup_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        context.native_start_returned();
+        assert_eq!(
+            startup_rx.try_recv().unwrap(),
+            Err("DirectShow frame callback panicked".into())
+        );
+        assert_eq!(context.failures.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            error_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    /// A running graph reports a panic exactly once despite its poisoned gate.
+    #[tokio::test]
+    async fn poisoned_callback_gate_preserves_running_failure_reporting() {
+        let (context, error_rx) = callback_context(StartupHandshake::default());
+        poison_callback_gate(&context);
+
+        context.fail("DirectShow frame callback panicked".into());
+        context.fail("Repeated callback failure".into());
+        match error_rx.try_recv().unwrap() {
+            CameraStreamMessage::Failed { reason, generation } => {
+                assert_eq!(reason, "DirectShow frame callback panicked");
+                assert_eq!(generation, context.generation);
+            }
+            _ => panic!("Expected a camera failure message"),
+        }
+        assert_eq!(context.failures.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            error_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    /// Recovering a poisoned gate cannot revive a cancelled graph's side effects.
+    #[tokio::test]
+    async fn poisoned_callback_gate_still_rejects_cancelled_context() {
+        let (context, error_rx) = callback_context(StartupHandshake::default());
+        poison_callback_gate(&context);
+        context.lifetime.cancel();
+        context.buffers.set_inactive(false);
+
+        context.fail("Late callback failure".into());
+        context.deactivate();
+        assert!(context.enter().is_none());
+        assert!(!context.failed.load(Ordering::Acquire));
+        assert_eq!(context.failures.load(Ordering::Relaxed), 0);
+        assert!(!context.buffers.is_inactive());
+        assert!(matches!(
+            error_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
 
     /// Early frame callbacks cannot acknowledge a native start still in progress.
     #[test]
