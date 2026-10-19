@@ -896,6 +896,7 @@ fn set_noise_cancellation(app: tauri::AppHandle, enabled: bool) {
     }
 }
 
+/// Saves the requested capture preset and applies it to the local core process.
 #[tauri::command(async)]
 fn set_camera_input_resolution(app: tauri::AppHandle, resolution: CameraInputResolution) {
     log::info!("set_camera_input_resolution: {resolution:?}");
@@ -911,6 +912,7 @@ fn set_camera_input_resolution(app: tauri::AppHandle, resolution: CameraInputRes
     }
 }
 
+/// Saves the screen-share preset and forwards the selection to the local core.
 #[tauri::command(async)]
 fn set_screen_share_resolution(app: tauri::AppHandle, resolution: ScreenShareResolution) {
     log::info!("set_screen_share_resolution: {resolution:?}");
@@ -1284,6 +1286,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
     log::info!("forward_core_events: event forwarding thread exiting");
 }
 
+/// Bootstraps Tauri, restores persisted core preferences, and registers desktop commands.
 fn main() {
     let _guard = sentry_utils::init_sentry("Tauri backend".to_string(), Some(get_sentry_dsn()));
 

@@ -37,6 +37,7 @@ pub enum CameraInputResolution {
 }
 
 impl CameraInputResolution {
+    /// Returns the requested sensor dimensions; capture backends may choose a nearby mode.
     pub fn extent(self) -> Extent {
         let (width, height) = match self {
             Self::P1080 => (1920.0, 1080.0),
@@ -51,6 +52,7 @@ impl CameraInputResolution {
 mod camera_resolution_tests {
     use super::*;
 
+    /// Verifies legacy defaults, UHD dimensions, and round-trip local IPC serialization.
     #[test]
     fn camera_input_presets_roundtrip_with_uhd_dimensions_and_a_1080_default() {
         #[derive(Deserialize)]
@@ -616,6 +618,7 @@ mod tests {
     use std::time::Duration;
 
     #[cfg(windows)]
+    /// Connects two framed IPC endpoints over an ephemeral Windows loopback port.
     fn test_pair() -> ((SocketSender, EventSocket), (SocketSender, EventSocket)) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -628,6 +631,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// Connects framed IPC endpoints using a temporary Unix socket.
     fn test_pair() -> ((SocketSender, EventSocket), (SocketSender, EventSocket)) {
         let dir = tempfile::tempdir().unwrap();
         let socket_path = dir.path().join("test.sock");
@@ -841,6 +845,7 @@ mod tests {
         }
     }
 
+    /// Sends a client request and checks that its reply reaches the response channel.
     #[test]
     fn test_request_response_pattern() {
         let ((server_sender, server_events), (client_sender, client_events)) = test_pair();

@@ -19,12 +19,14 @@ pub struct CameraCapturer {
 }
 
 impl Default for CameraCapturer {
+    /// Creates an idle capturer with the standard input and output defaults.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl CameraCapturer {
+    /// Creates the shared stream configuration and failure-monitor channel.
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
@@ -36,14 +38,17 @@ impl CameraCapturer {
         }
     }
 
+    /// Enumerates selectable cameras through the current platform's backend.
     pub fn list_devices() -> Vec<CameraDevice> {
         super::stream::list_devices()
     }
 
+    /// Returns the actual selected camera, including any missing-device fallback.
     pub fn active_device_name(&self) -> Option<&str> {
         self.stream.as_ref().map(|s| s.device_name())
     }
 
+    /// Replaces existing capture and associates failures with a fresh generation.
     pub fn start_capture(
         &mut self,
         device_name: Option<&str>,
@@ -69,6 +74,7 @@ impl CameraCapturer {
         Ok(())
     }
 
+    /// Invalidates old failure events before releasing the active capture stream.
     pub fn stop_capture(&mut self) {
         self.stream_config.next_capture_generation();
         if let Some(mut stream) = self.stream.take() {
@@ -77,10 +83,13 @@ impl CameraCapturer {
         }
     }
 
+    /// Wakes the failure-monitor loop so it can exit during capturer shutdown.
     pub fn stop_monitor(&self) {
         let _ = self.tx.send(CameraStreamMessage::Stop);
     }
 
+    /// Stops the old device before reopening it under a fresh capture generation.
+    /// Exhausted retries leave capture stopped and report the failure to the UI.
     pub fn restart_stream(&mut self) {
         std::thread::sleep(Duration::from_millis(200));
 
@@ -122,6 +131,7 @@ impl CameraCapturer {
         };
     }
 
+    /// Adjusts only the outgoing video budget while retaining the input request.
     pub fn set_screensharing_active(&self, active: bool) {
         let target = if active {
             self.stream_config.set_low_quality();
@@ -133,6 +143,7 @@ impl CameraCapturer {
         log::info!("CameraCapturer::set_screensharing_active: active={active}, target={target}");
     }
 
+    /// Saves the input preset and immediately reopens an active camera if changed.
     pub fn set_input_resolution(&mut self, resolution: CameraInputResolution) {
         if self.stream_config.input_resolution() == resolution {
             return;
@@ -146,12 +157,14 @@ impl CameraCapturer {
 }
 
 impl Drop for CameraCapturer {
+    /// Stops device capture before terminating asynchronous failure monitoring.
     fn drop(&mut self) {
         self.stop_capture();
         self.stop_monitor();
     }
 }
 
+/// Forwards current-session failures to the UI and discards retired generations.
 pub fn poll_camera_stream(capturer: Arc<Mutex<CameraCapturer>>) {
     let rx = { capturer.lock().unwrap().rx.clone() };
     loop {

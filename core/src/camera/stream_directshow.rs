@@ -8,7 +8,7 @@ use livekit::webrtc::{
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -35,12 +35,14 @@ type FrameCallback = unsafe extern "C" fn(
 );
 
 extern "C" {
+    /// Enumerates borrowed UTF-8 device strings through a synchronous native callback.
     fn hopp_windows_camera_list(
         callback: unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void),
         userdata: *mut c_void,
         error: *mut c_char,
         error_len: usize,
     ) -> i32;
+    /// Opens a native graph owned by the calling MTA worker until explicit stop.
     fn hopp_windows_camera_start(
         device_id: *const c_char,
         width: i32,
@@ -51,9 +53,11 @@ extern "C" {
         error: *mut c_char,
         error_len: usize,
     ) -> *mut c_void;
+    /// Stops the owned native graph and drains callbacks before releasing its handle.
     fn hopp_windows_camera_stop(camera: *mut c_void);
 }
 
+/// Copies the native enumerator's borrowed device strings into the Rust list.
 unsafe extern "C" fn collect_device(name: *const c_char, id: *const c_char, userdata: *mut c_void) {
     // The native enumerator lends valid strings and exclusively borrows the Vec.
     let devices = &mut *userdata.cast::<Vec<socket_lib::CameraDevice>>();
@@ -64,6 +68,7 @@ unsafe extern "C" fn collect_device(name: *const c_char, id: *const c_char, user
     });
 }
 
+/// Enumerates DirectShow devices on an MTA thread, independently of winit's STA.
 pub fn list_devices() -> Result<Vec<socket_lib::CameraDevice>, String> {
     // winit's UI thread may already be in an STA; DirectShow uses its own MTA.
     std::thread::spawn(|| {
@@ -90,6 +95,7 @@ pub fn list_devices() -> Result<Vec<socket_lib::CameraDevice>, String> {
     .map_err(|_| "DirectShow enumeration thread panicked".to_string())?
 }
 
+/// Converts the shim's null-terminated error buffer into an owned message.
 fn native_error(error: &[c_char]) -> String {
     // The native shim always null-terminates this non-empty buffer.
     unsafe { CStr::from_ptr(error.as_ptr()) }
@@ -113,6 +119,7 @@ struct FrameTelemetry {
 }
 
 impl FrameTelemetry {
+    /// Reports received and published rates in fixed windows after first delivery.
     fn record(&mut self, now: Instant, published: bool) -> Option<(f64, f64)> {
         let Some(started) = self.started else {
             // Begin after the first successful frame, excluding native startup.
@@ -145,6 +152,7 @@ struct FramePacer {
 }
 
 impl FramePacer {
+    /// Preserves cadence across callback jitter while resetting for rate changes.
     fn should_publish(&mut self, now: Instant, fps: u32) -> bool {
         let fps = fps.max(1);
         if self.fps != fps {
@@ -165,28 +173,157 @@ impl FramePacer {
     }
 }
 
+/// Revokes an individual native graph, including graphs sharing a capture generation.
+#[derive(Default)]
+struct CallbackLifetime {
+    cancelled: AtomicBool,
+    gate: Mutex<()>,
+}
+
+impl CallbackLifetime {
+    /// Serializes side effects with cancellation and rejects retired callbacks.
+    fn enter(&self) -> Option<MutexGuard<'_, ()>> {
+        let guard = self.gate.lock().ok()?;
+        (!self.cancelled.load(Ordering::Acquire)).then_some(guard)
+    }
+
+    /// Rejects future callbacks and waits for any callback already publishing.
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        // Once this lock is drained, fallback can safely reuse the shared buffers.
+        drop(self.gate.lock());
+    }
+}
+
+/// Owns cancellation separately from a native worker that may block during startup.
+struct CaptureWorker {
+    stop_tx: Option<mpsc::Sender<()>>,
+    worker: Option<JoinHandle<()>>,
+    lifetime: Arc<CallbackLifetime>,
+}
+
+impl CaptureWorker {
+    /// Bounds startup even when native graph creation never returns.
+    fn wait_for_startup(
+        &mut self,
+        startup_rx: mpsc::Receiver<Result<(), String>>,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        match startup_rx.recv_timeout(timeout) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(reason)) => {
+                self.stop(true);
+                Err(reason)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.stop(true);
+                Err("DirectShow capture worker exited before its first frame".to_string())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A native start call cannot safely be interrupted or joined.
+                // Its closure retains the callback context until native stop
+                // drains callbacks if the driver eventually returns.
+                self.stop(false);
+                Err("Timed out waiting for the first camera frame".to_string())
+            }
+        }
+    }
+
+    /// Revokes callbacks, requests native stop, and optionally waits for cleanup.
+    fn stop(&mut self, join: bool) {
+        self.lifetime.cancel();
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            if join && worker.join().is_err() {
+                log::error!("DirectShow capture worker panicked");
+            }
+        }
+    }
+}
+
+/// Defers callback outcomes until native graph creation has actually returned.
+#[derive(Default)]
+struct StartupHandshake {
+    sender: Option<mpsc::Sender<Result<(), String>>>,
+    native_returned: bool,
+    outcome: Option<Result<(), String>>,
+}
+
+impl StartupHandshake {
+    /// Creates a pending startup acknowledgement for a newly spawned graph.
+    fn new(sender: mpsc::Sender<Result<(), String>>) -> Self {
+        Self {
+            sender: Some(sender),
+            ..Self::default()
+        }
+    }
+
+    /// Records first delivery or failure without acknowledging a still-blocked start.
+    /// Returns whether the outcome belongs to startup rather than a running stream.
+    fn record(&mut self, outcome: Result<(), String>) -> bool {
+        if self.sender.is_none() {
+            return false;
+        }
+        // A failure after an early frame must supersede its pending success.
+        if self.outcome.is_none() || outcome.is_err() {
+            self.outcome = Some(outcome);
+        }
+        self.deliver();
+        true
+    }
+
+    /// Permits acknowledgement only once the native start call can no longer wedge.
+    fn native_start_returned(&mut self) {
+        self.native_returned = true;
+        self.deliver();
+    }
+
+    /// Sends the startup result once both native completion and an outcome exist.
+    fn deliver(&mut self) {
+        if self.native_returned {
+            if let Some(outcome) = self.outcome.take() {
+                if let Some(sender) = self.sender.take() {
+                    let _ = sender.send(outcome);
+                }
+            }
+        }
+    }
+}
+
 struct CallbackContext {
     device_name: String,
     generation: u64,
     state: Mutex<FrameState>,
-    startup: Mutex<Option<mpsc::Sender<Result<(), String>>>>,
+    startup: Mutex<StartupHandshake>,
     failed: AtomicBool,
     failures: Arc<AtomicU32>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffers: Arc<VideoBufferManager>,
     source: NativeVideoSource,
     config: Arc<CameraStreamConfig>,
+    lifetime: Arc<CallbackLifetime>,
 }
 
 impl CallbackContext {
+    /// Claims a live graph's side effects; fallback can share the same generation.
+    fn enter(&self) -> Option<MutexGuard<'_, ()>> {
+        let guard = self.lifetime.enter()?;
+        (self.config.capture_generation() == self.generation).then_some(guard)
+    }
+
+    /// Reports a graph failure once, unless the graph has already been retired.
     fn fail(&self, reason: String) {
+        let Some(_guard) = self.enter() else {
+            return;
+        };
         if !self.failed.swap(true, Ordering::AcqRel) {
             self.failures.fetch_add(1, Ordering::Relaxed);
             if let Ok(mut startup) = self.startup.lock() {
-                if let Some(startup) = startup.take() {
+                if startup.record(Err(reason.clone())) {
                     // Let the constructor's caller try another backend before
                     // reporting a failed camera to the UI.
-                    let _ = startup.send(Err(reason));
                     return;
                 }
             }
@@ -197,6 +334,17 @@ impl CallbackContext {
         }
     }
 
+    /// Releases pending startup outcomes after the native start call has returned.
+    fn native_start_returned(&self) {
+        let Some(_guard) = self.enter() else {
+            return;
+        };
+        if let Ok(mut startup) = self.startup.lock() {
+            startup.native_start_returned();
+        }
+    }
+
+    /// Logs native delivery and outgoing publication cadence independently.
     fn record_frame_rate(&self, telemetry: &mut FrameTelemetry, now: Instant, published: bool) {
         if let Some((received_fps, published_fps)) = telemetry.record(now, published) {
             log::info!(
@@ -209,6 +357,9 @@ impl CallbackContext {
         }
     }
 
+    /// Copies borrowed I420 planes while excluding cancellation and stale graphs.
+    ///
+    /// Plane pointers must remain readable for their validated extents until return.
     unsafe fn publish(
         &self,
         width: i32,
@@ -217,6 +368,9 @@ impl CallbackContext {
         strides: [i32; 3],
         timestamp_us: i64,
     ) -> Result<(), String> {
+        let Some(_guard) = self.enter() else {
+            return Ok(());
+        };
         if self.failed.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -309,18 +463,22 @@ impl CallbackContext {
         }
         state.frame_id = state.frame_id.wrapping_add(1);
         self.record_frame_rate(&mut state.telemetry, now, true);
-        if let Some(startup) = self
-            .startup
+        self.startup
             .lock()
             .map_err(|_| "Camera startup state poisoned")?
-            .take()
-        {
-            let _ = startup.send(Ok(()));
-        }
+            .record(Ok(()));
         Ok(())
+    }
+
+    /// Marks buffers inactive only while this graph still owns their publication.
+    fn deactivate(&self) {
+        if let Some(_guard) = self.enter() {
+            self.buffers.set_inactive(true);
+        }
     }
 }
 
+/// Contains all unwinding and errors at the native callback boundary.
 unsafe extern "C" fn receive_frame(
     userdata: *mut c_void,
     width: i32,
@@ -349,6 +507,7 @@ unsafe extern "C" fn receive_frame(
     }
 }
 
+/// Validates an I420 plane extent without requiring final-row padding.
 fn plane_length(stride: usize, columns: usize, rows: usize) -> Result<usize, String> {
     if rows == 0 || columns == 0 || stride < columns {
         return Err("Invalid I420 plane shape".to_string());
@@ -360,6 +519,7 @@ fn plane_length(stride: usize, columns: usize, rows: usize) -> Result<usize, Str
         .ok_or_else(|| "I420 plane size overflow".to_string())
 }
 
+/// Copies image columns while preserving padding in the destination plane.
 fn copy_plane(
     source: &[u8],
     source_stride: usize,
@@ -383,8 +543,7 @@ fn copy_plane(
 }
 
 pub struct DirectShowStream {
-    stop_tx: Option<mpsc::Sender<()>>,
-    worker: Option<JoinHandle<()>>,
+    worker: CaptureWorker,
     device_name: String,
     device_id: String,
     failures: Arc<AtomicU32>,
@@ -395,6 +554,7 @@ pub struct DirectShowStream {
 }
 
 impl DirectShowStream {
+    /// Starts a native camera and requires a first frame within a bounded interval.
     pub fn new(
         device_name: &str,
         device_id: &str,
@@ -408,6 +568,7 @@ impl DirectShowStream {
         let (stop_tx, stop_rx) = mpsc::channel();
         let (startup_tx, startup_rx) = mpsc::channel();
         let failures = Arc::new(AtomicU32::new(0));
+        let lifetime = Arc::new(CallbackLifetime::default());
         let context = Box::new(CallbackContext {
             device_name: device_name.to_string(),
             generation: config.capture_generation(),
@@ -418,13 +579,14 @@ impl DirectShowStream {
                 frame_id: 0,
                 buffer: None,
             }),
-            startup: Mutex::new(Some(startup_tx)),
+            startup: Mutex::new(StartupHandshake::new(startup_tx)),
             failed: AtomicBool::new(false),
             failures: failures.clone(),
             error_tx: error_tx.clone(),
             buffers: video_buffer_manager.clone(),
             source: buffer_source.clone(),
             config: config.clone(),
+            lifetime: lifetime.clone(),
         });
         let worker = std::thread::spawn(move || {
             let mut error = [0 as c_char; 512];
@@ -443,8 +605,10 @@ impl DirectShowStream {
             };
             if camera.is_null() {
                 context.fail(native_error(&error));
+                context.native_start_returned();
                 return;
             }
+            context.native_start_returned();
             // Native graph creation can take time. Start the no-frame deadline
             // once it has returned, unless delivery has already begun.
             if let Ok(mut state) = context.state.lock() {
@@ -473,11 +637,16 @@ impl DirectShowStream {
             // Native stop deregisters and drains callbacks before freeing the
             // handle. The callback context must remain alive until it returns.
             unsafe { hopp_windows_camera_stop(camera) };
-            context.buffers.set_inactive(true);
+            context.deactivate();
         });
-        let mut stream = Self {
+        let mut worker = CaptureWorker {
             stop_tx: Some(stop_tx),
             worker: Some(worker),
+            lifetime,
+        };
+        worker.wait_for_startup(startup_rx, START_TIMEOUT)?;
+        Ok(Self {
+            worker,
             device_name: device_name.to_string(),
             device_id: device_id.to_string(),
             failures,
@@ -485,39 +654,29 @@ impl DirectShowStream {
             buffers: video_buffer_manager,
             source: buffer_source,
             config,
-        };
-        match startup_rx.recv_timeout(START_TIMEOUT) {
-            Ok(Ok(())) => Ok(stream),
-            result => {
-                stream.stop_capture();
-                Err(match result {
-                    Ok(Err(reason)) => reason,
-                    Err(_) => "Timed out waiting for the first camera frame".to_string(),
-                    Ok(Ok(())) => unreachable!(),
-                })
-            }
-        }
+        })
     }
 
+    /// Stops delivery before joining the owning native COM thread.
     pub fn stop_capture(&mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(());
-        }
-        if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                log::error!("DirectShow capture worker panicked");
-            }
+        let was_running = self.worker.worker.is_some();
+        self.worker.stop(true);
+        if was_running {
+            self.buffers.set_inactive(true);
         }
     }
 
+    /// Returns the number of distinct failures reported by this graph.
     pub fn get_failures_count(&self) -> u32 {
         self.failures.load(Ordering::Relaxed)
     }
 
+    /// Returns the user-visible name retained for camera selection.
     pub fn device_name(&self) -> &str {
         &self.device_name
     }
 
+    /// Reopens the selected camera using the latest shared input configuration.
     pub fn copy(&self) -> Result<Self, String> {
         Self::new(
             &self.device_name,
@@ -531,6 +690,7 @@ impl DirectShowStream {
 }
 
 impl Drop for DirectShowStream {
+    /// Releases the native graph through the same ordered shutdown as explicit stop.
     fn drop(&mut self) {
         self.stop_capture();
     }
@@ -540,6 +700,201 @@ impl Drop for DirectShowStream {
 mod tests {
     use super::*;
 
+    /// Early frame callbacks cannot acknowledge a native start still in progress.
+    #[test]
+    fn startup_callbacks_wait_for_native_start_to_return() {
+        for outcome in [Ok(()), Err("Early callback failure".to_string())] {
+            let (startup_tx, startup_rx) = mpsc::channel();
+            let mut startup = StartupHandshake::new(startup_tx);
+            assert!(startup.record(outcome.clone()));
+            assert!(matches!(
+                startup_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            startup.native_start_returned();
+            assert_eq!(startup_rx.recv().unwrap(), outcome);
+            assert!(!startup.record(Ok(())));
+        }
+    }
+
+    /// A returned native start still requires an actual frame or capture error.
+    #[test]
+    fn native_start_completion_waits_for_first_callback_outcome() {
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let mut startup = StartupHandshake::new(startup_tx);
+        startup.native_start_returned();
+        assert!(matches!(
+            startup_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert!(startup.record(Ok(())));
+        assert_eq!(startup_rx.recv().unwrap(), Ok(()));
+    }
+
+    /// Failure during graph creation must supersede a previously delivered frame.
+    #[test]
+    fn startup_failure_supersedes_pending_success() {
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let mut startup = StartupHandshake::new(startup_tx);
+        assert!(startup.record(Ok(())));
+        assert!(startup.record(Err("Native graph failed".into())));
+        startup.native_start_returned();
+        assert_eq!(
+            startup_rx.recv().unwrap(),
+            Err("Native graph failed".into())
+        );
+    }
+
+    /// A wedged native start must not turn the constructor's timeout into a join.
+    #[test]
+    fn blocked_startup_times_out_without_joining_native_worker() {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let lifetime = Arc::new(CallbackLifetime::default());
+        let worker_lifetime = lifetime.clone();
+        let worker = std::thread::spawn(move || {
+            // Model a driver blocked inside hopp_windows_camera_start.
+            let mut startup = StartupHandshake::new(startup_tx);
+            // Some drivers deliver a frame before their blocking start returns.
+            assert!(startup.record(Ok(())));
+            // A regression that accidentally joins must fail rather than leave
+            // the entire test process permanently blocked.
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            assert_eq!(stop_rx.try_recv(), Ok(()));
+            if let Some(_guard) = worker_lifetime.enter() {
+                startup.native_start_returned();
+            }
+            finished_tx.send(()).unwrap();
+        });
+        let mut capture = CaptureWorker {
+            stop_tx: Some(stop_tx),
+            worker: Some(worker),
+            lifetime: lifetime.clone(),
+        };
+        let started = Instant::now();
+        assert!(capture
+            .wait_for_startup(startup_rx, Duration::from_millis(20))
+            .unwrap_err()
+            .contains("Timed out"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(capture.worker.is_none());
+        assert!(lifetime.enter().is_none());
+        release_tx.send(()).unwrap();
+        finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+
+    /// Explicit startup failures retain ordered cleanup before trying fallback.
+    #[test]
+    fn explicit_startup_failure_joins_worker_cleanup() {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let worker_cleaned_up = cleaned_up.clone();
+        let worker = std::thread::spawn(move || {
+            startup_tx
+                .send(Err("Driver rejected format".into()))
+                .unwrap();
+            stop_rx.recv().unwrap();
+            worker_cleaned_up.store(true, Ordering::Release);
+        });
+        let mut capture = CaptureWorker {
+            stop_tx: Some(stop_tx),
+            worker: Some(worker),
+            lifetime: Arc::new(CallbackLifetime::default()),
+        };
+        assert_eq!(
+            capture.wait_for_startup(startup_rx, Duration::from_secs(1)),
+            Err("Driver rejected format".into())
+        );
+        assert!(cleaned_up.load(Ordering::Acquire));
+    }
+
+    /// A detached graph cannot publish, report failure, or deactivate fallback.
+    #[tokio::test]
+    async fn retired_context_rejects_delayed_callbacks_and_cleanup_in_same_generation() {
+        use livekit::webrtc::video_source::VideoResolution;
+
+        let config = Arc::new(CameraStreamConfig::new_high_quality());
+        let buffers = Arc::new(VideoBufferManager::default());
+        let (error_tx, error_rx) = mpsc::channel();
+        let lifetime = Arc::new(CallbackLifetime::default());
+        let context = CallbackContext {
+            device_name: "Retired camera".into(),
+            generation: config.capture_generation(),
+            state: Mutex::new(FrameState {
+                last_frame: Instant::now(),
+                pacer: FramePacer::default(),
+                telemetry: FrameTelemetry::default(),
+                frame_id: 0,
+                buffer: None,
+            }),
+            startup: Mutex::new(StartupHandshake::default()),
+            failed: AtomicBool::new(false),
+            failures: Arc::new(AtomicU32::new(0)),
+            error_tx,
+            buffers: buffers.clone(),
+            source: NativeVideoSource::new(
+                VideoResolution {
+                    width: 2,
+                    height: 2,
+                },
+                false,
+            ),
+            config,
+            lifetime: lifetime.clone(),
+        };
+        lifetime.cancel();
+        // Fallback deliberately shares the generation, as stream_windows does.
+        buffers.set_inactive(false);
+        buffers.set_frame_id(123);
+        let y = [16; 4];
+        let chroma = [128];
+        unsafe {
+            context
+                .publish(
+                    2,
+                    2,
+                    [y.as_ptr(), chroma.as_ptr(), chroma.as_ptr()],
+                    [2, 1, 1],
+                    0,
+                )
+                .unwrap();
+        }
+        context.fail("Delayed old graph failure".into());
+        context.deactivate();
+        assert!(!buffers.is_inactive());
+        assert_eq!(buffers.current_frame_id(), 123);
+        assert_eq!(buffers.latest_frame().lock().unwrap().width, 0);
+        assert_eq!(context.failures.load(Ordering::Relaxed), 0);
+        assert!(matches!(
+            error_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    /// Cancellation drains a callback already inside the publication gate.
+    #[test]
+    fn cancellation_waits_for_in_flight_callback_before_returning() {
+        let lifetime = Arc::new(CallbackLifetime::default());
+        let in_flight = lifetime.enter().unwrap();
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
+        let worker_lifetime = lifetime.clone();
+        let worker = std::thread::spawn(move || {
+            worker_lifetime.cancel();
+            cancelled_tx.send(()).unwrap();
+        });
+        assert!(cancelled_rx
+            .recv_timeout(Duration::from_millis(20))
+            .is_err());
+        drop(in_flight);
+        cancelled_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+        assert!(lifetime.enter().is_none());
+    }
+
+    /// Image copies preserve padding outside visible columns.
     #[test]
     fn padded_plane_copy_preserves_destination_padding() {
         let source = [1, 2, 99, 99, 3, 4];
@@ -548,6 +903,7 @@ mod tests {
         assert_eq!(destination, [1, 2, 0, 0, 0, 3, 4]);
     }
 
+    /// Invalid plane extents fail before any destination mutation.
     #[test]
     fn truncated_plane_is_rejected_before_copying() {
         let mut destination = [0; 4];
@@ -557,6 +913,7 @@ mod tests {
         assert!(plane_length(usize::MAX, 1, 2).is_err());
     }
 
+    /// Publication tracks the requested cadence despite camera callback jitter.
     #[test]
     fn callback_jitter_preserves_thirty_fps_and_decimates_to_fifteen() {
         let start = Instant::now();
@@ -574,6 +931,7 @@ mod tests {
         assert_eq!(published_half, 60);
     }
 
+    /// Rate changes and stalls do not carry an obsolete publication deadline.
     #[test]
     fn quality_changes_and_stalls_reset_the_publication_deadline() {
         let start = Instant::now();
@@ -587,6 +945,7 @@ mod tests {
         assert!(pacer.should_publish(after_stall + Duration::from_millis(67), 15));
     }
 
+    /// Received and published rates use independent counts in each report window.
     #[test]
     fn telemetry_counts_received_and_published_frames_in_separate_windows() {
         let start = Instant::now();

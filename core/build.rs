@@ -1,5 +1,6 @@
 use std::env;
 
+/// Builds Windows capture support and names the sidecar for Tauri's target bundle.
 fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         build_windows_camera();
@@ -40,6 +41,7 @@ fn main() {
     }
 }
 
+/// Compiles the DirectShow bridge against LiveKit's matching WebRTC headers and ABI defines.
 fn build_windows_camera() {
     println!("cargo:rerun-if-changed=src/camera/windows_capture.cpp");
     println!("cargo:rerun-if-changed=src/camera/windows_capture.h");

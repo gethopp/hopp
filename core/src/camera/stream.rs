@@ -18,6 +18,7 @@ pub struct CameraStreamConfig {
 }
 
 impl CameraStreamConfig {
+    /// Starts with 1080p input requested and the normal 720p/30fps output policy.
     pub fn new_high_quality() -> Self {
         Self {
             input_resolution: AtomicU32::new(0),
@@ -28,6 +29,7 @@ impl CameraStreamConfig {
         }
     }
 
+    /// Records the next capture size without changing outgoing video targets.
     pub fn set_input_resolution(&self, resolution: CameraInputResolution) {
         self.input_resolution.store(
             match resolution {
@@ -39,6 +41,7 @@ impl CameraStreamConfig {
         );
     }
 
+    /// Returns the requested device preset; unsupported values default to 1080p.
     pub fn input_resolution(&self) -> CameraInputResolution {
         match self.input_resolution.load(Ordering::Relaxed) {
             1 => CameraInputResolution::P1440,
@@ -47,14 +50,17 @@ impl CameraStreamConfig {
         }
     }
 
+    /// Identifies the capture session whose asynchronous events are still current.
     pub(crate) fn capture_generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// Invalidates asynchronous errors belonging to earlier capture sessions.
     pub(crate) fn next_capture_generation(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
+    /// Restores normal outgoing dimensions and cadence without reopening input.
     pub fn set_high_quality(&self) {
         self.target_width
             .store(CAMERA_STREAM_WIDTH_HIGH, Ordering::Relaxed);
@@ -64,6 +70,7 @@ impl CameraStreamConfig {
             .store(CAMERA_STREAM_FPS_HIGH, Ordering::Relaxed);
     }
 
+    /// Reduces outgoing camera cost during screen sharing, preserving input size.
     pub fn set_low_quality(&self) {
         self.target_width
             .store(CAMERA_STREAM_WIDTH_LOW, Ordering::Relaxed);
@@ -73,12 +80,15 @@ impl CameraStreamConfig {
             .store(CAMERA_STREAM_FPS_LOW, Ordering::Relaxed);
     }
 
+    /// Returns the outgoing width bound used when scaling captured frames.
     pub fn target_width(&self) -> u32 {
         self.target_width.load(Ordering::Relaxed)
     }
+    /// Returns the outgoing height bound used when scaling captured frames.
     pub fn target_height(&self) -> u32 {
         self.target_height.load(Ordering::Relaxed)
     }
+    /// Returns the publication cadence, independent of the negotiated camera FPS.
     pub fn target_fps(&self) -> u32 {
         self.target_fps.load(Ordering::Relaxed)
     }
@@ -101,6 +111,7 @@ pub use platform::{list_devices, CameraStream};
 mod tests {
     use super::*;
 
+    /// Input requests and the screen-sharing output policy must remain independent.
     #[test]
     fn camera_input_and_output_quality_are_independent() {
         let config = CameraStreamConfig::new_high_quality();
@@ -130,6 +141,7 @@ mod tests {
         );
     }
 
+    /// Shared configuration exposes new presets and invalidates old session events.
     #[test]
     fn shared_camera_config_observes_input_changes_and_capture_generations() {
         let config = std::sync::Arc::new(CameraStreamConfig::new_high_quality());

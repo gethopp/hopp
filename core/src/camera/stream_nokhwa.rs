@@ -18,6 +18,7 @@ use crate::livekit::video::VideoBufferManager;
 use crate::utils::geometry::aspect_fit;
 
 const CAMERA_CAPTURE_FPS: u32 = 30;
+const MAX_CONSECUTIVE_DECODE_FAILURES: u32 = 30;
 
 use super::{CameraStreamConfig, CameraStreamMessage};
 
@@ -34,7 +35,64 @@ pub struct CameraStream {
     config: Arc<CameraStreamConfig>,
 }
 
+/// Drops transient corrupt frames and reports only a sustained decode failure.
+#[derive(Default)]
+struct FrameDecoder {
+    consecutive_failures: u32,
+}
+
+impl FrameDecoder {
+    /// Converts a complete frame to I420, resetting the failure streak on success.
+    ///
+    /// `Ok(false)` skips a damaged frame. An error ends capture after thirty
+    /// consecutive failures, preserving recovery from isolated USB/startup noise.
+    fn decode(
+        &mut self,
+        frame: &nokhwa::Buffer,
+        width: u32,
+        height: u32,
+        rgb: &mut [u8],
+        i420: &mut I420Buffer,
+    ) -> Result<bool, String> {
+        let converted = match frame.source_frame_format() {
+            FrameFormat::YUYV | FrameFormat::NV12 => {
+                validate_raw_frame(frame, width, height).map(|()| {
+                    if frame.source_frame_format() == FrameFormat::YUYV {
+                        yuyv_write_i420(frame.buffer(), width, height, i420);
+                    } else {
+                        nv12_write_i420(frame.buffer(), width, height, i420);
+                    }
+                })
+            }
+            _ => decode_rgb_frame(frame, width, height, rgb)
+                .map(|()| rgb_write_i420(rgb, width, height, i420)),
+        };
+        match converted {
+            Ok(()) => {
+                self.consecutive_failures = 0;
+                Ok(true)
+            }
+            Err(error) => {
+                self.consecutive_failures += 1;
+                log::warn!(
+                    "CameraStream: dropping undecodable frame ({}/{}): {error}",
+                    self.consecutive_failures,
+                    MAX_CONSECUTIVE_DECODE_FAILURES
+                );
+                if self.consecutive_failures >= MAX_CONSECUTIVE_DECODE_FAILURES {
+                    Err(format!(
+                        "Failed to decode {MAX_CONSECUTIVE_DECODE_FAILURES} consecutive camera frames: {error}"
+                    ))
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+}
+
 impl CameraStream {
+    /// Opens the requested camera, falling back to the first available device.
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -104,6 +162,7 @@ impl CameraStream {
         Ok(stream)
     }
 
+    /// Negotiates the nearest input preset for a single preferred pixel format.
     fn try_open_camera(
         index: &CameraIndex,
         frame_format: FrameFormat,
@@ -120,6 +179,7 @@ impl CameraStream {
             .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
     }
 
+    /// Starts the worker that reads, converts, and publishes negotiated camera frames.
     fn start_capture_with_camera(
         &mut self,
         camera: Camera,
@@ -130,19 +190,18 @@ impl CameraStream {
         let resolution = camera.resolution();
         self.width = resolution.width_x;
         self.height = resolution.height_y;
+        let frame_format = camera.frame_format();
+        log::info!("CameraStream: camera frame format: {frame_format:?}");
         // Nokhwa does not expose V4L's read timeout. Use the negotiated format
         // with a bounded V4L reader so shutdown can safely join the worker.
         #[cfg(target_os = "linux")]
         let mut camera = linux_capture::BoundedCamera::new(camera)?;
-        #[cfg(not(target_os = "linux"))]
-        let mut camera = camera;
-        #[cfg(not(target_os = "linux"))]
-        camera
-            .open_stream()
-            .map_err(|e| format!("Failed to open camera stream: {e}"))?;
-
-        let frame_format = camera.frame_format();
-        log::info!("CameraStream: camera frame format: {frame_format:?}");
+        // Drop Nokhwa's native reader on its creating thread; only plain
+        // negotiation metadata crosses into the async reader's COM apartment.
+        #[cfg(target_os = "windows")]
+        let request = msmf_capture::CaptureRequest::from_camera(camera, CAMERA_CAPTURE_FPS)?;
+        #[cfg(target_os = "windows")]
+        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
 
         let (tx, rx) = mpsc::channel();
         self.tx = Some(tx);
@@ -156,6 +215,18 @@ impl CameraStream {
         let generation = config.capture_generation();
 
         self.worker = Some(std::thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            let mut camera = match msmf_capture::AsyncCamera::new(request) {
+                Ok(camera) => {
+                    let _ = startup_tx.send(Ok(()));
+                    camera
+                }
+                Err(error) => {
+                    let _ = startup_tx.send(Err(error));
+                    return;
+                }
+            };
+            let frame_format = camera.frame_format();
             let mut prev_stream_w: u32 = 0;
             let mut prev_stream_h: u32 = 0;
             let mut stream_frame = VideoFrame {
@@ -178,6 +249,7 @@ impl CameraStream {
 
             let capture_start = Instant::now();
             let mut frame_counter: u64 = 0;
+            let mut decoder = FrameDecoder::default();
 
             loop {
                 let frame_start = Instant::now();
@@ -210,10 +282,7 @@ impl CameraStream {
                     );
                 }
 
-                #[cfg(target_os = "linux")]
                 let captured = camera.frame(&rx);
-                #[cfg(not(target_os = "linux"))]
-                let captured = camera.frame().map(Some).map_err(|error| error.to_string());
                 match captured {
                     Ok(None) => {
                         video_buffer_manager.set_inactive(true);
@@ -226,31 +295,21 @@ impl CameraStream {
                         }
 
                         {
-                            let converted = match frame_format {
-                                FrameFormat::YUYV => {
-                                    yuyv_write_i420(buf.buffer(), width, height, &mut i420);
-                                    true
+                            let converted = match decoder.decode(
+                                &buf,
+                                width,
+                                height,
+                                &mut rgb_buf,
+                                &mut i420,
+                            ) {
+                                Ok(converted) => converted,
+                                Err(reason) => {
+                                    log::error!("CameraStream: {reason}");
+                                    *failures_count.lock().unwrap() += 1;
+                                    let _ = error_tx
+                                        .send(CameraStreamMessage::Failed { reason, generation });
+                                    break;
                                 }
-                                FrameFormat::NV12 => {
-                                    nv12_write_i420(buf.buffer(), width, height, &mut i420);
-                                    true
-                                }
-                                _ => match decode_rgb_frame(&buf, width, height, &mut rgb_buf) {
-                                    Ok(()) => {
-                                        rgb_write_i420(&rgb_buf, width, height, &mut i420);
-                                        true
-                                    }
-                                    Err(e) => {
-                                        let reason = format!("Failed to decode camera frame: {e}");
-                                        log::error!("CameraStream: {reason}");
-                                        *failures_count.lock().unwrap() += 1;
-                                        let _ = error_tx.send(CameraStreamMessage::Failed {
-                                            reason,
-                                            generation,
-                                        });
-                                        break;
-                                    }
-                                },
                             };
 
                             if converted {
@@ -317,9 +376,24 @@ impl CameraStream {
             log::info!("CameraStream: capture thread exiting");
         }));
 
+        #[cfg(target_os = "windows")]
+        match startup_rx.recv() {
+            Ok(Ok(())) => {}
+            result => {
+                self.stop_capture();
+                return Err(match result {
+                    Ok(Err(error)) => error,
+                    Err(error) => {
+                        format!("Media Foundation capture worker failed to start: {error}")
+                    }
+                    Ok(Ok(())) => unreachable!(),
+                });
+            }
+        }
         Ok(())
     }
 
+    /// Requests cancellation and joins the worker before the device is reopened.
     pub fn stop_capture(&mut self) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CameraStreamMessage::StopCapture);
@@ -331,14 +405,17 @@ impl CameraStream {
         }
     }
 
+    /// Returns terminal failures used by the capturer's restart budget.
     pub fn get_failures_count(&self) -> u32 {
         *self.failures_count.lock().unwrap()
     }
 
+    /// Returns the selected camera's stable display name for restarts.
     pub fn device_name(&self) -> &str {
         &self.device_name
     }
 
+    /// Reopens this device using the current shared input-resolution preset.
     pub fn copy(&self) -> Result<Self, String> {
         let cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -381,6 +458,7 @@ impl CameraStream {
 }
 
 impl Drop for CameraStream {
+    /// Joins capture while its source, buffers, and error channel remain alive.
     fn drop(&mut self) {
         self.stop_capture();
     }
@@ -390,6 +468,39 @@ impl Drop for CameraStream {
 #[path = "stream_v4l.rs"]
 mod linux_capture;
 
+#[cfg(target_os = "windows")]
+#[path = "stream_msmf.rs"]
+mod msmf_capture;
+
+/// Rejects incomplete packed YUV frames before passing their pointers to libyuv.
+fn validate_raw_frame(frame: &nokhwa::Buffer, width: u32, height: u32) -> Result<(), String> {
+    if width == 0
+        || height == 0
+        || width % 2 != 0
+        || (frame.source_frame_format() == FrameFormat::NV12 && height % 2 != 0)
+    {
+        return Err("Packed camera frame dimensions do not match YUV subsampling".to_string());
+    }
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or("Camera frame size overflow")?;
+    let expected = match frame.source_frame_format() {
+        FrameFormat::YUYV => pixels.checked_mul(2),
+        FrameFormat::NV12 => pixels.checked_add(pixels / 2),
+        _ => return Err("Expected a packed YUV camera frame".to_string()),
+    }
+    .ok_or("Camera frame size overflow")?;
+    if frame.buffer().len() < expected {
+        return Err(format!(
+            "Camera frame has {} bytes; at least {expected} required",
+            frame.buffer().len()
+        ));
+    }
+    Ok(())
+}
+
+/// Decodes JPEG through the existing image crate and validates RGB dimensions.
+/// Other supported formats use Nokhwa's conversion without linking mozjpeg.
 fn decode_rgb_frame(
     frame: &nokhwa::Buffer,
     width: u32,
@@ -430,6 +541,7 @@ fn decode_rgb_frame(
     }
 }
 
+/// Copies a packed NV12 frame into the reusable I420 planes, respecting output strides.
 fn nv12_write_i420(nv12: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -455,6 +567,7 @@ fn nv12_write_i420(nv12: &[u8], width: u32, height: u32, i420: &mut I420Buffer) 
     }
 }
 
+/// Converts a packed YUYV frame into the reusable I420 planes through libyuv.
 fn yuyv_write_i420(yuyv: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -476,6 +589,7 @@ fn yuyv_write_i420(yuyv: &[u8], width: u32, height: u32, i420: &mut I420Buffer) 
     }
 }
 
+/// Converts packed RGB pixels into stride-aware I420 output planes.
 fn rgb_write_i420(rgb: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -528,6 +642,52 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
 mod tests {
     use super::*;
 
+    /// Builds a valid color JPEG frame without requiring a camera device.
+    fn jpeg_frame(width: u32, height: u32) -> nokhwa::Buffer {
+        let pixels = [40, 100, 160].repeat((width * height) as usize);
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&pixels, width, height, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        nokhwa::Buffer::new(Resolution::new(width, height), &jpeg, FrameFormat::MJPEG)
+    }
+
+    /// A good JPEG clears prior corrupt/dimension-mismatch failures before the next streak.
+    #[test]
+    fn isolated_bad_jpegs_recover_and_only_consecutive_failures_stop_decode() {
+        let valid = jpeg_frame(8, 8);
+        let wrong_size = jpeg_frame(4, 4);
+        let corrupt = nokhwa::Buffer::new(Resolution::new(8, 8), b"bad JPEG", FrameFormat::MJPEG);
+        let mut rgb = vec![0; 8 * 8 * 3];
+        let mut i420 = I420Buffer::new(8, 8);
+        let mut decoder = FrameDecoder::default();
+
+        assert!(!decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).unwrap());
+        assert!(!decoder
+            .decode(&wrong_size, 8, 8, &mut rgb, &mut i420)
+            .unwrap());
+        assert!(decoder.decode(&valid, 8, 8, &mut rgb, &mut i420).unwrap());
+        for _ in 1..MAX_CONSECUTIVE_DECODE_FAILURES {
+            assert!(!decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).unwrap());
+        }
+        assert!(decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).is_err());
+    }
+
+    /// Short raw frames are skipped before native reads; a complete frame recovers.
+    #[test]
+    fn truncated_raw_camera_frames_do_not_reach_native_conversion() {
+        let mut decoder = FrameDecoder::default();
+        let mut rgb = [];
+        let mut i420 = I420Buffer::new(8, 8);
+        for (format, size) in [(FrameFormat::YUYV, 128), (FrameFormat::NV12, 96)] {
+            let short = nokhwa::Buffer::new(Resolution::new(8, 8), &[0; 1], format);
+            assert!(!decoder.decode(&short, 8, 8, &mut rgb, &mut i420).unwrap());
+            let valid = nokhwa::Buffer::new(Resolution::new(8, 8), &vec![128; size], format);
+            assert!(decoder.decode(&valid, 8, 8, &mut rgb, &mut i420).unwrap());
+        }
+    }
+
+    /// Valid color MJPEG is decoded with the expected RGB channel order.
     #[test]
     fn mjpeg_camera_frames_decode_to_rgb() {
         let resolution = Resolution::new(8, 8);
@@ -546,6 +706,7 @@ mod tests {
         }
     }
 
+    /// Grayscale JPEGs expand to RGB while corrupt input and size mismatches are rejected.
     #[test]
     fn grayscale_mjpeg_camera_frames_decode_to_rgb() {
         let mut jpeg = Vec::new();

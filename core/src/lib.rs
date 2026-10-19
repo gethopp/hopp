@@ -1368,6 +1368,7 @@ pub struct ScrollDelta {
 }
 
 impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
+    /// Applies queued capture, room, and window changes on the core event-loop thread.
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::CursorPosition(x, y, sid) => {
@@ -3309,6 +3310,7 @@ impl RenderEventLoop {
         Self { event_loop }
     }
 
+    /// Runs the native event loop and forwards socket commands into user events.
     pub fn run(self, socket_path: String) -> Result<(), RenderLoopError> {
         log::info!("Starting RenderEventLoop");
 

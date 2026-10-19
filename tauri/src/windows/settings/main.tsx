@@ -73,6 +73,7 @@ function CheckboxRow({
   );
 }
 
+/** Renders a named preset group shared by camera input and screen-share settings. */
 function ResolutionRow<T extends string>({
   title,
   description,
@@ -427,6 +428,7 @@ const SECTIONS: { id: SectionId; title: string; macOnly?: boolean }[] = [
   { id: "misc", title: "Miscellaneous" },
 ];
 
+/** Loads saved preferences and applies changes through the typed desktop commands. */
 function SettingsWindow() {
   useDisableNativeContextMenu();
 

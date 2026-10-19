@@ -44,6 +44,7 @@ const SUPPORTED_PIXEL_FORMATS: &[u32] = &[
     kCVPixelFormatType_422YpCbCr8,
 ];
 
+/// Discovers built-in and external video devices using AVFoundation's device list.
 fn discover_video_devices() -> Retained<NSArray<AVCaptureDevice>> {
     unsafe {
         let device_types = NSArray::<NSString>::from_slice(&[
@@ -60,6 +61,7 @@ fn discover_video_devices() -> Retained<NSArray<AVCaptureDevice>> {
     }
 }
 
+/// Returns named camera choices in stable order with the first as the default.
 pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     unsafe {
         let devices = discover_video_devices();
@@ -81,6 +83,7 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
     }
 }
 
+/// Formats pixel-format identifiers as readable FourCCs or hexadecimal values.
 fn four_cc(pixel_type: u32) -> String {
     let bytes = pixel_type.to_be_bytes();
     if bytes.iter().all(|&b| (0x20..0x7f).contains(&b)) {
@@ -151,6 +154,7 @@ fn frame_duration_for_target_fps(
 struct DeviceConfigurationLock<'a>(&'a AVCaptureDevice);
 
 impl<'a> DeviceConfigurationLock<'a> {
+    /// Holds exclusive device configuration until startup has preserved its format.
     unsafe fn acquire(device: &'a AVCaptureDevice) -> Result<Self, String> {
         device
             .lockForConfiguration()
@@ -160,6 +164,7 @@ impl<'a> DeviceConfigurationLock<'a> {
 }
 
 impl Drop for DeviceConfigurationLock<'_> {
+    /// Unlocks the device without replacing an existing error with an exception.
     fn drop(&mut self) {
         // Do not let a cleanup exception replace a setup error or panic.
         if let Err(error) = exception::catch(AssertUnwindSafe(|| unsafe {
@@ -176,6 +181,7 @@ struct SessionConfiguration<'a> {
 }
 
 impl<'a> SessionConfiguration<'a> {
+    /// Begins a configuration transaction that must finish before session startup.
     unsafe fn begin(session: &'a AVCaptureSession) -> Self {
         session.beginConfiguration();
         Self {
@@ -184,6 +190,7 @@ impl<'a> SessionConfiguration<'a> {
         }
     }
 
+    /// Commits once and prevents a throwing commit from being retried by Drop.
     unsafe fn commit(mut self) {
         // A throwing commit must not be retried while unwinding.
         self.committed = true;
@@ -192,6 +199,7 @@ impl<'a> SessionConfiguration<'a> {
 }
 
 impl Drop for SessionConfiguration<'_> {
+    /// Finishes uncommitted configuration while preserving any original setup error.
     fn drop(&mut self) {
         if !self.committed {
             if let Err(error) = exception::catch(AssertUnwindSafe(|| unsafe {
@@ -229,6 +237,7 @@ define_class!(
     struct CameraDelegate;
 
     unsafe impl AVCaptureVideoDataOutputSampleBufferDelegate for CameraDelegate {
+        /// Converts supported pixel buffers and publishes frames at the output cadence.
         #[unsafe(method(captureOutput:didOutputSampleBuffer:fromConnection:))]
         fn capture_output_did_output_sample_buffer(
             &self,
@@ -428,6 +437,7 @@ define_class!(
             }
         }
 
+        /// Accepts AVFoundation's dropped-frame notification without retaining data.
         #[unsafe(method(captureOutput:didDropSampleBuffer:fromConnection:))]
         fn capture_output_did_drop_sample_buffer(
             &self,
@@ -460,6 +470,7 @@ unsafe impl Send for CameraStream {}
 unsafe impl Sync for CameraStream {}
 
 impl CameraStream {
+    /// Starts capture while converting Objective-C setup exceptions into Rust errors.
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -486,6 +497,8 @@ impl CameraStream {
         }
     }
 
+    /// Negotiates the input format and holds the device lock through session startup.
+    /// Actual delivered dimensions are checked by the delegate on frame delivery.
     unsafe fn new_inner(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -695,6 +708,7 @@ impl CameraStream {
         })
     }
 
+    /// Retires delegate state before detaching outputs and stopping the session.
     pub fn stop_capture(&mut self) {
         unsafe {
             if let Ok(mut state) = self.delegate.ivars().lock() {
@@ -710,14 +724,17 @@ impl CameraStream {
         log::info!("CameraStream::stop_capture complete");
     }
 
+    /// Returns the shared conversion-failure count used by capture retry policy.
     pub fn get_failures_count(&self) -> u32 {
         *self.failures_count.lock().unwrap()
     }
 
+    /// Returns the actual selected device, including startup fallback choices.
     pub fn device_name(&self) -> &str {
         &self.device_name
     }
 
+    /// Reopens the same device with the current input preset and shared output source.
     pub fn copy(&self) -> Result<Self, String> {
         Self::new(
             &self.device_name,

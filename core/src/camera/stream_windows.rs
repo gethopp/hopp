@@ -20,6 +20,7 @@ pub struct CameraStream {
 }
 
 impl CameraStream {
+    /// Opens the selected device, preferring DirectShow with same-device MF fallback.
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -78,6 +79,7 @@ impl CameraStream {
         Ok(Self { backend })
     }
 
+    /// Releases the device through the backend that successfully opened it.
     pub fn stop_capture(&mut self) {
         match &mut self.backend {
             CameraBackend::MediaFoundation(stream) => stream.stop_capture(),
@@ -85,6 +87,7 @@ impl CameraStream {
         }
     }
 
+    /// Returns the active backend's failure count for capture retry decisions.
     pub fn get_failures_count(&self) -> u32 {
         match &self.backend {
             CameraBackend::MediaFoundation(stream) => stream.get_failures_count(),
@@ -92,6 +95,7 @@ impl CameraStream {
         }
     }
 
+    /// Returns the opened device's name rather than a stale saved preference.
     pub fn device_name(&self) -> &str {
         match &self.backend {
             CameraBackend::MediaFoundation(stream) => stream.device_name(),
@@ -99,6 +103,7 @@ impl CameraStream {
         }
     }
 
+    /// Reopens the same backend and device using the latest shared configuration.
     pub fn copy(&self) -> Result<Self, String> {
         let backend = match &self.backend {
             CameraBackend::MediaFoundation(stream) => {
@@ -110,6 +115,7 @@ impl CameraStream {
     }
 }
 
+/// Uses the saved name when available, otherwise the first enumerated camera.
 fn select_device<'a>(devices: &'a [CameraDevice], device_name: &str) -> Option<&'a CameraDevice> {
     if device_name.is_empty() {
         return devices.first();
@@ -123,8 +129,8 @@ fn select_device<'a>(devices: &'a [CameraDevice], device_name: &str) -> Option<&
         })
 }
 
-// Prefer WebRTC's native capture and I420 conversion for physical and virtual
-// cameras alike. Keep Media Foundation-only devices available as well.
+/// Prefers DirectShow for duplicate names while retaining Media Foundation-only
+/// devices, sorting the result, and identifying exactly one default camera.
 fn merge_devices(
     mut native: Vec<CameraDevice>,
     directshow: Vec<CameraDevice>,
@@ -146,6 +152,7 @@ fn merge_devices(
     native
 }
 
+/// Combines physical and virtual cameras exposed by either Windows backend.
 pub fn list_devices() -> Vec<CameraDevice> {
     let directshow = directshow::list_devices().unwrap_or_else(|error| {
         log::warn!("Failed to query DirectShow cameras: {error}");
@@ -167,6 +174,7 @@ pub fn list_devices() -> Vec<CameraDevice> {
 mod tests {
     use super::*;
 
+    /// Builds an enumerated-device fixture with a backend-specific identifier.
     fn device(name: &str, id: &str) -> CameraDevice {
         CameraDevice {
             name: name.to_string(),
@@ -175,6 +183,7 @@ mod tests {
         }
     }
 
+    /// Unplugging a saved camera must preserve startup through another device.
     #[test]
     fn missing_saved_camera_falls_back_to_first_available_device() {
         let cameras = vec![
@@ -191,6 +200,7 @@ mod tests {
         assert!(select_device(&[], "Unplugged USB Camera").is_none());
     }
 
+    /// Duplicate physical-camera names prefer DirectShow without hiding virtuals.
     #[test]
     fn physical_and_virtual_cameras_use_native_directshow_capture() {
         let cameras = merge_devices(
@@ -208,6 +218,7 @@ mod tests {
         assert_eq!(cameras.iter().filter(|camera| camera.default).count(), 1);
     }
 
+    /// Devices exposed only by Media Foundation remain selectable after merging.
     #[test]
     fn media_foundation_only_devices_are_retained() {
         let cameras = merge_devices(

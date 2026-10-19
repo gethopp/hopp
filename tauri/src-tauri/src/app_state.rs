@@ -77,6 +77,7 @@ pub struct UserSettings {
 }
 
 impl Default for UserSettings {
+    /// Seeds user preferences, including opt-in camera startup and 1080p camera input.
     fn default() -> Self {
         UserSettings {
             call_feedback_popup: true,
@@ -612,6 +613,7 @@ impl AppState {
 mod camera_settings_tests {
     use super::*;
 
+    /// Loads older settings files without requiring the new camera input field.
     #[test]
     fn legacy_settings_default_camera_input_to_1080p() {
         let mut legacy = serde_json::to_value(UserSettings::default()).unwrap();
@@ -626,6 +628,7 @@ mod camera_settings_tests {
         );
     }
 
+    /// Confirms an updated camera input preset survives an actual state-file reload.
     #[test]
     fn camera_input_resolution_survives_app_state_reload() {
         let directory = std::env::temp_dir().join(format!(
