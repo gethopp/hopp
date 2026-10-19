@@ -81,8 +81,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
+    CallStartMessage, CameraInputResolution, CameraStartMessage, Content, ContentType, Message,
+    ScreenShareMessage, ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1368,6 +1368,7 @@ pub struct ScrollDelta {
 }
 
 impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
+    /// Applies queued capture, room, and window changes on the core event-loop thread.
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::CursorPosition(x, y, sid) => {
@@ -2182,6 +2183,13 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::SetScreenShareResolution(resolution) => {
                 log::info!("user_event: SetScreenShareResolution({resolution:?})");
                 self.screen_share_resolution = resolution;
+            }
+            UserEvent::SetCameraInputResolution(resolution) => {
+                log::info!("user_event: SetCameraInputResolution({resolution:?})");
+                self.camera_capturer
+                    .lock()
+                    .unwrap()
+                    .set_input_resolution(resolution);
             }
             UserEvent::SetScreenSharePickerMode(mode) => {
                 log::info!("user_event: SetScreenSharePickerMode({mode:?})");
@@ -3257,6 +3265,7 @@ pub enum UserEvent {
     AudioCaptureError,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
+    SetCameraInputResolution(CameraInputResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
     CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
@@ -3301,6 +3310,7 @@ impl RenderEventLoop {
         Self { event_loop }
     }
 
+    /// Runs the native event loop and forwards socket commands into user events.
     pub fn run(self, socket_path: String) -> Result<(), RenderLoopError> {
         log::info!("Starting RenderEventLoop");
 
@@ -3407,6 +3417,9 @@ impl RenderEventLoop {
                     }
                     Message::SetScreenShareResolution(resolution) => {
                         UserEvent::SetScreenShareResolution(resolution)
+                    }
+                    Message::SetCameraInputResolution(resolution) => {
+                        UserEvent::SetCameraInputResolution(resolution)
                     }
                     Message::SetScreenSharePickerMode(mode) => {
                         UserEvent::SetScreenSharePickerMode(mode)

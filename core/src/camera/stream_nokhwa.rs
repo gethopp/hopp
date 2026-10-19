@@ -1,3 +1,4 @@
+use image::ImageDecoder;
 use livekit::webrtc::{
     video_frame::{I420Buffer, VideoFrame, VideoRotation},
     video_source::native::NativeVideoSource,
@@ -8,20 +9,77 @@ use nokhwa::utils::{
     Resolution,
 };
 use nokhwa::Camera;
+use std::io::Cursor;
 use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::livekit::video::VideoBufferManager;
 use crate::utils::geometry::aspect_fit;
 
 const CAMERA_CAPTURE_FPS: u32 = 30;
-const CAMERA_CAPTURE_WIDTH: u32 = 1920;
-const CAMERA_CAPTURE_HEIGHT: u32 = 1080;
+const MAX_CONSECUTIVE_DECODE_FAILURES: u32 = 30;
 
 use super::{CameraStreamConfig, CameraStreamMessage};
 
+#[cfg(target_os = "linux")]
+type NegotiatedCamera = Camera;
+#[cfg(target_os = "windows")]
+type NegotiatedCamera = msmf_capture::CaptureRequest;
+
+/// A live candidate plus plain metadata retained if a later format is preferred.
+struct CameraCandidate<T> {
+    camera: T,
+    format: CameraFormat,
+    frame_rate: f64,
+}
+
+/// Prefer a target-rate input over a slower, earlier pixel-format preference.
+///
+/// Slow cameras are closed before the next probe. Only their format metadata is
+/// retained, so exclusive drivers can open the next format and the best slow
+/// candidate can be reopened if none reaches the target. A 0.1% tolerance admits
+/// nominal 30fps formats such as 30000/1001 without accepting substantially slower modes.
+fn select_camera<T>(
+    resolution: Resolution,
+    mut open: impl FnMut(RequestedFormatType) -> Result<CameraCandidate<T>, String>,
+) -> Result<T, String> {
+    let mut fallback: Option<(CameraFormat, f64)> = None;
+    for format in [FrameFormat::YUYV, FrameFormat::MJPEG, FrameFormat::NV12] {
+        let request =
+            RequestedFormatType::Closest(CameraFormat::new(resolution, format, CAMERA_CAPTURE_FPS));
+        let candidate = match open(request) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                log::debug!("Camera format probe failed: {error}");
+                continue;
+            }
+        };
+        if candidate.frame_rate >= CAMERA_CAPTURE_FPS as f64 * 0.999 {
+            return Ok(candidate.camera);
+        }
+        if fallback
+            .as_ref()
+            .is_none_or(|(_, frame_rate)| candidate.frame_rate > *frame_rate)
+        {
+            fallback = Some((candidate.format, candidate.frame_rate));
+        }
+        drop(candidate);
+    }
+    if let Some((format, frame_rate)) = fallback {
+        log::info!(
+            "Camera cannot reach {CAMERA_CAPTURE_FPS}fps; using {format:?} ({frame_rate:.2}fps)"
+        );
+        if let Ok(candidate) = open(RequestedFormatType::Exact(format)) {
+            return Ok(candidate.camera);
+        }
+    }
+    open(RequestedFormatType::AbsoluteHighestFrameRate).map(|candidate| candidate.camera)
+}
+
 pub struct CameraStream {
     tx: Option<mpsc::Sender<CameraStreamMessage>>,
+    worker: Option<JoinHandle<()>>,
     error_tx: mpsc::Sender<CameraStreamMessage>,
     buffer_source: NativeVideoSource,
     video_buffer_manager: Arc<VideoBufferManager>,
@@ -32,7 +90,64 @@ pub struct CameraStream {
     config: Arc<CameraStreamConfig>,
 }
 
+/// Drops transient corrupt frames and reports only a sustained decode failure.
+#[derive(Default)]
+struct FrameDecoder {
+    consecutive_failures: u32,
+}
+
+impl FrameDecoder {
+    /// Converts a complete frame to I420, resetting the failure streak on success.
+    ///
+    /// `Ok(false)` skips a damaged frame. An error ends capture after thirty
+    /// consecutive failures, preserving recovery from isolated USB/startup noise.
+    fn decode(
+        &mut self,
+        frame: &nokhwa::Buffer,
+        width: u32,
+        height: u32,
+        rgb: &mut [u8],
+        i420: &mut I420Buffer,
+    ) -> Result<bool, String> {
+        let converted = match frame.source_frame_format() {
+            FrameFormat::YUYV | FrameFormat::NV12 => {
+                validate_raw_frame(frame, width, height).map(|()| {
+                    if frame.source_frame_format() == FrameFormat::YUYV {
+                        yuyv_write_i420(frame.buffer(), width, height, i420);
+                    } else {
+                        nv12_write_i420(frame.buffer(), width, height, i420);
+                    }
+                })
+            }
+            _ => decode_rgb_frame(frame, width, height, rgb)
+                .map(|()| rgb_write_i420(rgb, width, height, i420)),
+        };
+        match converted {
+            Ok(()) => {
+                self.consecutive_failures = 0;
+                Ok(true)
+            }
+            Err(error) => {
+                self.consecutive_failures += 1;
+                log::warn!(
+                    "CameraStream: dropping undecodable frame ({}/{}): {error}",
+                    self.consecutive_failures,
+                    MAX_CONSECUTIVE_DECODE_FAILURES
+                );
+                if self.consecutive_failures >= MAX_CONSECUTIVE_DECODE_FAILURES {
+                    Err(format!(
+                        "Failed to decode {MAX_CONSECUTIVE_DECODE_FAILURES} consecutive camera frames: {error}"
+                    ))
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+}
+
 impl CameraStream {
+    /// Opens the requested camera, falling back to the first available device.
     pub fn new(
         device_name: &str,
         error_tx: mpsc::Sender<CameraStreamMessage>,
@@ -63,17 +178,7 @@ impl CameraStream {
         let device_name = camera_info.human_name();
         let index = camera_info.index().clone();
 
-        // Try YUYV first, then MJPEG, then accept any
-        let camera = Self::try_open_camera(&index, FrameFormat::YUYV)
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG))
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12))
-            .or_else(|_| {
-                let format = RequestedFormat::new::<RgbFormat>(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                );
-                Camera::new(index, format)
-                    .map_err(|e| format!("Failed to open camera with any format: {e}"))
-            })?;
+        let camera = Self::open_camera(&index, &config)?;
 
         let resolution = camera.resolution();
         let width = resolution.width_x;
@@ -87,6 +192,7 @@ impl CameraStream {
 
         let mut stream = Self {
             tx: None,
+            worker: None,
             error_tx,
             buffer_source: buffer_source.clone(),
             video_buffer_manager,
@@ -101,28 +207,64 @@ impl CameraStream {
         Ok(stream)
     }
 
-    fn try_open_camera(index: &CameraIndex, frame_format: FrameFormat) -> Result<Camera, String> {
-        let format =
-            RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(CameraFormat::new(
-                Resolution::new(CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT),
-                frame_format,
-                CAMERA_CAPTURE_FPS,
-            )));
-        Camera::new(index.clone(), format)
-            .map_err(|e| format!("Failed to open camera with {frame_format:?}: {e}"))
+    /// Shares frame-rate-aware format negotiation between initial capture and restart.
+    fn open_camera(
+        index: &CameraIndex,
+        config: &CameraStreamConfig,
+    ) -> Result<NegotiatedCamera, String> {
+        let input_extent = config.input_resolution().extent();
+        select_camera(
+            Resolution::new(input_extent.width as u32, input_extent.height as u32),
+            |request| {
+                let camera = Camera::new(index.clone(), RequestedFormat::new::<RgbFormat>(request))
+                    .map_err(|error| format!("Failed to open camera with {request:?}: {error}"))?;
+                let format = camera.camera_format();
+                #[cfg(target_os = "linux")]
+                let frame_rate = camera.frame_rate() as f64;
+                // The pinned MF backend caches the rate denominator as FPS. Probe
+                // the native selection after releasing Nokhwa on this thread.
+                #[cfg(target_os = "windows")]
+                let (camera, frame_rate) =
+                    msmf_capture::CaptureRequest::from_camera(camera, CAMERA_CAPTURE_FPS)?
+                        .probe()?;
+                #[cfg(target_os = "windows")]
+                let format = CameraFormat::new(
+                    format.resolution(),
+                    format.format(),
+                    frame_rate.round() as u32,
+                );
+                Ok(CameraCandidate {
+                    camera,
+                    format,
+                    frame_rate,
+                })
+            },
+        )
     }
 
+    /// Starts the worker that reads, converts, and publishes negotiated camera frames.
     fn start_capture_with_camera(
         &mut self,
-        mut camera: Camera,
+        camera: NegotiatedCamera,
         config: Arc<CameraStreamConfig>,
     ) -> Result<(), String> {
-        camera
-            .open_stream()
-            .map_err(|e| format!("Failed to open camera stream: {e}"))?;
-
+        // A reopened device may negotiate different dimensions than its previous
+        // stream, especially when the input resolution setting has changed.
+        let resolution = camera.resolution();
+        self.width = resolution.width_x;
+        self.height = resolution.height_y;
         let frame_format = camera.frame_format();
         log::info!("CameraStream: camera frame format: {frame_format:?}");
+        // Nokhwa does not expose V4L's read timeout. Use the negotiated format
+        // with a bounded V4L reader so shutdown can safely join the worker.
+        #[cfg(target_os = "linux")]
+        let mut camera = linux_capture::BoundedCamera::new(camera)?;
+        // Negotiation already released Nokhwa on its creating thread; only
+        // plain metadata crosses into the async reader's COM apartment.
+        #[cfg(target_os = "windows")]
+        let request = camera;
+        #[cfg(target_os = "windows")]
+        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
 
         let (tx, rx) = mpsc::channel();
         self.tx = Some(tx);
@@ -133,8 +275,21 @@ impl CameraStream {
         let width = self.width;
         let height = self.height;
         let buffer_source = self.buffer_source.clone();
+        let generation = config.capture_generation();
 
-        std::thread::spawn(move || {
+        self.worker = Some(std::thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            let mut camera = match msmf_capture::AsyncCamera::new(request) {
+                Ok(camera) => {
+                    let _ = startup_tx.send(Ok(()));
+                    camera
+                }
+                Err(error) => {
+                    let _ = startup_tx.send(Err(error));
+                    return;
+                }
+            };
+            let frame_format = camera.frame_format();
             let mut prev_stream_w: u32 = 0;
             let mut prev_stream_h: u32 = 0;
             let mut stream_frame = VideoFrame {
@@ -157,6 +312,7 @@ impl CameraStream {
 
             let capture_start = Instant::now();
             let mut frame_counter: u64 = 0;
+            let mut decoder = FrameDecoder::default();
 
             loop {
                 let frame_start = Instant::now();
@@ -189,33 +345,34 @@ impl CameraStream {
                     );
                 }
 
-                match camera.frame() {
-                    Ok(buf) => {
+                let captured = camera.frame(&rx);
+                match captured {
+                    Ok(None) => {
+                        video_buffer_manager.set_inactive(true);
+                        break;
+                    }
+                    Ok(Some(buf)) => {
                         {
                             let mut fc = failures_count.lock().unwrap();
                             *fc = 0;
                         }
 
                         {
-                            let converted = match frame_format {
-                                FrameFormat::YUYV => {
-                                    yuyv_write_i420(buf.buffer(), width, height, &mut i420);
-                                    true
+                            let converted = match decoder.decode(
+                                &buf,
+                                width,
+                                height,
+                                &mut rgb_buf,
+                                &mut i420,
+                            ) {
+                                Ok(converted) => converted,
+                                Err(reason) => {
+                                    log::error!("CameraStream: {reason}");
+                                    *failures_count.lock().unwrap() += 1;
+                                    let _ = error_tx
+                                        .send(CameraStreamMessage::Failed { reason, generation });
+                                    break;
                                 }
-                                FrameFormat::NV12 => {
-                                    nv12_write_i420(buf.buffer(), width, height, &mut i420);
-                                    true
-                                }
-                                _ => match buf.decode_image_to_buffer::<RgbFormat>(&mut rgb_buf) {
-                                    Ok(()) => {
-                                        rgb_write_i420(&rgb_buf, width, height, &mut i420);
-                                        true
-                                    }
-                                    Err(e) => {
-                                        log::warn!("CameraStream: failed to decode frame: {e}");
-                                        false
-                                    }
-                                },
                             };
 
                             if converted {
@@ -254,6 +411,9 @@ impl CameraStream {
                                     frame_counter += 1;
                                     i420 = frame.buffer; // recover for reuse
                                 }
+                                if frame_counter == 1 {
+                                    log::info!("CameraStream: first frame decoded and published ({frame_format:?}, {width}x{height})");
+                                }
                             }
                         }
                     }
@@ -261,7 +421,10 @@ impl CameraStream {
                         let mut fc = failures_count.lock().unwrap();
                         *fc += 1;
                         log::error!("CameraStream: capture error: {e}");
-                        let _ = error_tx.send(CameraStreamMessage::Failed(e.to_string()));
+                        let _ = error_tx.send(CameraStreamMessage::Failed {
+                            reason: e.to_string(),
+                            generation,
+                        });
                         break;
                     }
                 }
@@ -274,25 +437,48 @@ impl CameraStream {
 
             let _ = camera.stop_stream();
             log::info!("CameraStream: capture thread exiting");
-        });
+        }));
 
+        #[cfg(target_os = "windows")]
+        match startup_rx.recv() {
+            Ok(Ok(())) => {}
+            result => {
+                self.stop_capture();
+                return Err(match result {
+                    Ok(Err(error)) => error,
+                    Err(error) => {
+                        format!("Media Foundation capture worker failed to start: {error}")
+                    }
+                    Ok(Ok(())) => unreachable!(),
+                });
+            }
+        }
         Ok(())
     }
 
+    /// Requests cancellation and joins the worker before the device is reopened.
     pub fn stop_capture(&mut self) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CameraStreamMessage::StopCapture);
         }
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                log::error!("Camera capture worker panicked during shutdown");
+            }
+        }
     }
 
+    /// Returns terminal failures used by the capturer's restart budget.
     pub fn get_failures_count(&self) -> u32 {
         *self.failures_count.lock().unwrap()
     }
 
+    /// Returns the selected camera's stable display name for restarts.
     pub fn device_name(&self) -> &str {
         &self.device_name
     }
 
+    /// Reopens this device using the current shared input-resolution preset.
     pub fn copy(&self) -> Result<Self, String> {
         let cameras =
             nokhwa::query(ApiBackend::Auto).map_err(|e| format!("Failed to query cameras: {e}"))?;
@@ -304,25 +490,16 @@ impl CameraStream {
 
         let index = camera_info.index().clone();
 
-        // Try YUYV first, then MJPEG, then NV12, then accept any
-        let camera = Self::try_open_camera(&index, FrameFormat::YUYV)
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::MJPEG))
-            .or_else(|_| Self::try_open_camera(&index, FrameFormat::NV12))
-            .or_else(|_| {
-                let format = RequestedFormat::new::<RgbFormat>(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                );
-                Camera::new(index, format)
-                    .map_err(|e| format!("Failed to open camera with any format: {e}"))
-            })?;
+        let camera = Self::open_camera(&index, &self.config)?;
 
         let mut new_stream = Self {
             tx: None,
+            worker: None,
             error_tx: self.error_tx.clone(),
             buffer_source: self.buffer_source.clone(),
             video_buffer_manager: self.video_buffer_manager.clone(),
-            width: self.width,
-            height: self.height,
+            width: camera.resolution().width_x,
+            height: camera.resolution().height_y,
             device_name: self.device_name.clone(),
             failures_count: self.failures_count.clone(),
             config: self.config.clone(),
@@ -333,6 +510,91 @@ impl CameraStream {
     }
 }
 
+impl Drop for CameraStream {
+    /// Joins capture while its source, buffers, and error channel remain alive.
+    fn drop(&mut self) {
+        self.stop_capture();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[path = "stream_v4l.rs"]
+mod linux_capture;
+
+#[cfg(target_os = "windows")]
+#[path = "stream_msmf.rs"]
+mod msmf_capture;
+
+/// Rejects incomplete packed YUV frames before passing their pointers to libyuv.
+fn validate_raw_frame(frame: &nokhwa::Buffer, width: u32, height: u32) -> Result<(), String> {
+    if width == 0
+        || height == 0
+        || width % 2 != 0
+        || (frame.source_frame_format() == FrameFormat::NV12 && height % 2 != 0)
+    {
+        return Err("Packed camera frame dimensions do not match YUV subsampling".to_string());
+    }
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or("Camera frame size overflow")?;
+    let expected = match frame.source_frame_format() {
+        FrameFormat::YUYV => pixels.checked_mul(2),
+        FrameFormat::NV12 => pixels.checked_add(pixels / 2),
+        _ => return Err("Expected a packed YUV camera frame".to_string()),
+    }
+    .ok_or("Camera frame size overflow")?;
+    if frame.buffer().len() < expected {
+        return Err(format!(
+            "Camera frame has {} bytes; at least {expected} required",
+            frame.buffer().len()
+        ));
+    }
+    Ok(())
+}
+
+/// Decodes JPEG through the existing image crate and validates RGB dimensions.
+/// Other supported formats use Nokhwa's conversion without linking mozjpeg.
+fn decode_rgb_frame(
+    frame: &nokhwa::Buffer,
+    width: u32,
+    height: u32,
+    rgb: &mut [u8],
+) -> Result<(), String> {
+    if frame.source_frame_format() != FrameFormat::MJPEG {
+        return frame
+            .decode_image_to_buffer::<RgbFormat>(rgb)
+            .map_err(|error| error.to_string());
+    }
+
+    // nokhwa's optional MJPEG decoder links another native JPEG library, which
+    // collides with WebRTC's JPEG symbols. Reuse our existing Rust JPEG decoder.
+    let decoder = image::codecs::jpeg::JpegDecoder::new(Cursor::new(frame.buffer()))
+        .map_err(|error| error.to_string())?;
+    if decoder.dimensions() != (width, height) {
+        return Err(format!(
+            "Camera JPEG dimensions {:?} differ from {width}x{height}",
+            decoder.dimensions()
+        ));
+    }
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or("Camera RGB buffer size overflow")?;
+    if rgb.len() != expected {
+        return Err("Camera RGB buffer has the wrong length".to_string());
+    }
+    if decoder.color_type() == image::ColorType::Rgb8 {
+        decoder.read_image(rgb).map_err(|error| error.to_string())
+    } else {
+        let decoded = image::DynamicImage::from_decoder(decoder)
+            .map_err(|error| error.to_string())?
+            .to_rgb8();
+        rgb.copy_from_slice(decoded.as_raw());
+        Ok(())
+    }
+}
+
+/// Copies a packed NV12 frame into the reusable I420 planes, respecting output strides.
 fn nv12_write_i420(nv12: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -358,6 +620,7 @@ fn nv12_write_i420(nv12: &[u8], width: u32, height: u32, i420: &mut I420Buffer) 
     }
 }
 
+/// Converts a packed YUYV frame into the reusable I420 planes through libyuv.
 fn yuyv_write_i420(yuyv: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -379,6 +642,7 @@ fn yuyv_write_i420(yuyv: &[u8], width: u32, height: u32, i420: &mut I420Buffer) 
     }
 }
 
+/// Converts packed RGB pixels into stride-aware I420 output planes.
 fn rgb_write_i420(rgb: &[u8], width: u32, height: u32, i420: &mut I420Buffer) {
     let (stride_y, stride_u, stride_v) = i420.strides();
     let (data_y, data_u, data_v) = i420.data_mut();
@@ -424,5 +688,267 @@ pub fn list_devices() -> Vec<socket_lib::CameraDevice> {
             log::error!("Failed to query cameras: {e}");
             vec![]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Model an exclusive device so the next open fails if a probe was retained.
+    struct ExclusiveCamera {
+        open_count: Rc<Cell<usize>>,
+        format: FrameFormat,
+    }
+
+    impl Drop for ExclusiveCamera {
+        /// Release the modeled device exactly when the selection drops its handle.
+        fn drop(&mut self) {
+            self.open_count.set(self.open_count.get() - 1);
+        }
+    }
+
+    /// A slow raw mode must be closed before a later full-rate MJPEG probe opens.
+    #[test]
+    fn camera_selection_releases_slow_yuyv_before_choosing_fast_mjpeg() {
+        let open_count = Rc::new(Cell::new(0));
+        let mut probes = Vec::new();
+        let selected = select_camera(Resolution::new(3840, 2160), |request| {
+            assert_eq!(open_count.get(), 0, "previous camera was not released");
+            let RequestedFormatType::Closest(format) = request else {
+                panic!("unexpected fallback: {request:?}");
+            };
+            probes.push(format.format());
+            let frame_rate = match format.format() {
+                FrameFormat::YUYV => 5.0,
+                FrameFormat::MJPEG => 30.0,
+                _ => panic!("probing must stop when the target rate is found"),
+            };
+            open_count.set(1);
+            Ok(CameraCandidate {
+                camera: ExclusiveCamera {
+                    open_count: open_count.clone(),
+                    format: format.format(),
+                },
+                format,
+                frame_rate,
+            })
+        })
+        .unwrap();
+        assert_eq!(probes, [FrameFormat::YUYV, FrameFormat::MJPEG]);
+        assert_eq!(selected.format, FrameFormat::MJPEG);
+        assert_eq!(open_count.get(), 1);
+        drop(selected);
+        assert_eq!(open_count.get(), 0);
+    }
+
+    /// If every preferred mode is slow, reopen the fastest metadata-only fallback.
+    #[test]
+    fn camera_selection_reopens_best_slow_mode_after_releasing_all_probes() {
+        let open_count = Rc::new(Cell::new(0));
+        let mut reopened = false;
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            assert_eq!(open_count.get(), 0, "slow fallback retained a camera");
+            let (format, frame_rate) = match request {
+                RequestedFormatType::Closest(mut format) => {
+                    let rate = match format.format() {
+                        FrameFormat::YUYV => 5,
+                        FrameFormat::MJPEG => 15,
+                        FrameFormat::NV12 => 10,
+                        _ => unreachable!(),
+                    };
+                    format.set_frame_rate(rate);
+                    (format, rate as f64)
+                }
+                RequestedFormatType::Exact(format) => {
+                    assert_eq!(format.format(), FrameFormat::MJPEG);
+                    assert_eq!(format.frame_rate(), 15);
+                    reopened = true;
+                    (format, 15.0)
+                }
+                _ => panic!("unexpected fallback: {request:?}"),
+            };
+            open_count.set(1);
+            Ok(CameraCandidate {
+                camera: ExclusiveCamera {
+                    open_count: open_count.clone(),
+                    format: format.format(),
+                },
+                format,
+                frame_rate,
+            })
+        })
+        .unwrap();
+        assert!(reopened);
+        assert_eq!(selected.format, FrameFormat::MJPEG);
+        drop(selected);
+        assert_eq!(open_count.get(), 0);
+    }
+
+    /// Preserve the unrestricted highest-rate fallback when preferred probes fail.
+    #[test]
+    fn camera_selection_preserves_unrestricted_fallback_and_its_errors() {
+        for fallback_succeeds in [false, true] {
+            let mut probes = 0;
+            let result = select_camera(Resolution::new(1920, 1080), |request| {
+                probes += 1;
+                match request {
+                    RequestedFormatType::Closest(_) => Err("unsupported format".to_string()),
+                    RequestedFormatType::AbsoluteHighestFrameRate if fallback_succeeds => {
+                        Ok(CameraCandidate {
+                            camera: (),
+                            format: CameraFormat::new(
+                                Resolution::new(640, 480),
+                                FrameFormat::RAWBGR,
+                                30,
+                            ),
+                            frame_rate: 30.0,
+                        })
+                    }
+                    RequestedFormatType::AbsoluteHighestFrameRate => {
+                        Err("no camera modes available".to_string())
+                    }
+                    _ => panic!("unexpected request: {request:?}"),
+                }
+            });
+            assert_eq!(probes, 4);
+            assert_eq!(result.is_ok(), fallback_succeeds);
+            if !fallback_succeeds {
+                assert_eq!(result.unwrap_err(), "no camera modes available");
+            }
+        }
+    }
+
+    /// A disappearing slow mode must not suppress the original unrestricted fallback.
+    #[test]
+    fn camera_selection_uses_unrestricted_fallback_if_slow_mode_reopen_fails() {
+        let mut probes = Vec::new();
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            probes.push(request);
+            let format = match request {
+                RequestedFormatType::Closest(mut format) => {
+                    format.set_frame_rate(15);
+                    format
+                }
+                RequestedFormatType::Exact(_) => return Err("mode disappeared".to_string()),
+                RequestedFormatType::AbsoluteHighestFrameRate => {
+                    CameraFormat::new(Resolution::new(640, 480), FrameFormat::RAWBGR, 30)
+                }
+                _ => panic!("unexpected request: {request:?}"),
+            };
+            Ok(CameraCandidate {
+                camera: format.format(),
+                format,
+                frame_rate: format.frame_rate() as f64,
+            })
+        })
+        .unwrap();
+        assert_eq!(selected, FrameFormat::RAWBGR);
+        assert_eq!(probes.len(), 5);
+        assert!(matches!(probes[3], RequestedFormatType::Exact(_)));
+        assert_eq!(probes[4], RequestedFormatType::AbsoluteHighestFrameRate);
+    }
+
+    /// Nominal 30fps fractional rates keep format preference without extra probes.
+    #[test]
+    fn camera_selection_accepts_nominal_thirty_fps() {
+        let mut probes = 0;
+        let selected = select_camera(Resolution::new(1920, 1080), |request| {
+            probes += 1;
+            let RequestedFormatType::Closest(format) = request else {
+                panic!("unexpected fallback");
+            };
+            Ok(CameraCandidate {
+                camera: format.format(),
+                format,
+                frame_rate: 30_000.0 / 1001.0,
+            })
+        })
+        .unwrap();
+        assert_eq!(selected, FrameFormat::YUYV);
+        assert_eq!(probes, 1);
+    }
+
+    /// Builds a valid color JPEG frame without requiring a camera device.
+    fn jpeg_frame(width: u32, height: u32) -> nokhwa::Buffer {
+        let pixels = [40, 100, 160].repeat((width * height) as usize);
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&pixels, width, height, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        nokhwa::Buffer::new(Resolution::new(width, height), &jpeg, FrameFormat::MJPEG)
+    }
+
+    /// A good JPEG clears prior corrupt/dimension-mismatch failures before the next streak.
+    #[test]
+    fn isolated_bad_jpegs_recover_and_only_consecutive_failures_stop_decode() {
+        let valid = jpeg_frame(8, 8);
+        let wrong_size = jpeg_frame(4, 4);
+        let corrupt = nokhwa::Buffer::new(Resolution::new(8, 8), b"bad JPEG", FrameFormat::MJPEG);
+        let mut rgb = vec![0; 8 * 8 * 3];
+        let mut i420 = I420Buffer::new(8, 8);
+        let mut decoder = FrameDecoder::default();
+
+        assert!(!decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).unwrap());
+        assert!(!decoder
+            .decode(&wrong_size, 8, 8, &mut rgb, &mut i420)
+            .unwrap());
+        assert!(decoder.decode(&valid, 8, 8, &mut rgb, &mut i420).unwrap());
+        for _ in 1..MAX_CONSECUTIVE_DECODE_FAILURES {
+            assert!(!decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).unwrap());
+        }
+        assert!(decoder.decode(&corrupt, 8, 8, &mut rgb, &mut i420).is_err());
+    }
+
+    /// Short raw frames are skipped before native reads; a complete frame recovers.
+    #[test]
+    fn truncated_raw_camera_frames_do_not_reach_native_conversion() {
+        let mut decoder = FrameDecoder::default();
+        let mut rgb = [];
+        let mut i420 = I420Buffer::new(8, 8);
+        for (format, size) in [(FrameFormat::YUYV, 128), (FrameFormat::NV12, 96)] {
+            let short = nokhwa::Buffer::new(Resolution::new(8, 8), &[0; 1], format);
+            assert!(!decoder.decode(&short, 8, 8, &mut rgb, &mut i420).unwrap());
+            let valid = nokhwa::Buffer::new(Resolution::new(8, 8), &vec![128; size], format);
+            assert!(decoder.decode(&valid, 8, 8, &mut rgb, &mut i420).unwrap());
+        }
+    }
+
+    /// Valid color MJPEG is decoded with the expected RGB channel order.
+    #[test]
+    fn mjpeg_camera_frames_decode_to_rgb() {
+        let resolution = Resolution::new(8, 8);
+        let rgb = [40, 100, 160].repeat(64);
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&rgb, 8, 8, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let frame = nokhwa::Buffer::new(resolution, &jpeg, FrameFormat::MJPEG);
+        let mut decoded = vec![0; rgb.len()];
+
+        decode_rgb_frame(&frame, 8, 8, &mut decoded).unwrap();
+
+        for (actual, expected) in decoded.iter().zip(rgb.iter()) {
+            assert!(actual.abs_diff(*expected) <= 5);
+        }
+    }
+
+    /// Grayscale JPEGs expand to RGB while corrupt input and size mismatches are rejected.
+    #[test]
+    fn grayscale_mjpeg_camera_frames_decode_to_rgb() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode(&[90; 64], 8, 8, image::ExtendedColorType::L8)
+            .unwrap();
+        let frame = nokhwa::Buffer::new(Resolution::new(8, 8), &jpeg, FrameFormat::MJPEG);
+        let mut decoded = vec![0; 8 * 8 * 3];
+        decode_rgb_frame(&frame, 8, 8, &mut decoded).unwrap();
+        assert!(decoded.iter().all(|value| value.abs_diff(90) <= 2));
+        assert!(decode_rgb_frame(&frame, 16, 8, &mut decoded).is_err());
+        assert!(decode_rgb_frame(&frame, 8, 8, &mut decoded[..10]).is_err());
+        let corrupt = nokhwa::Buffer::new(Resolution::new(8, 8), b"not a JPEG", FrameFormat::MJPEG);
+        assert!(decode_rgb_frame(&corrupt, 8, 8, &mut decoded).is_err());
     }
 }

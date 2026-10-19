@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   typedInvoke,
   type AppVeilApplication,
+  type CameraInputResolution,
   type InstalledApplication,
   type ScreenSharePickerMode,
   type ScreenShareResolution,
@@ -26,6 +27,12 @@ const screenShareResolutionItems = [
   { id: "P1440", title: "1440p", description: "Balance latency and resolution" },
   { id: "P4K", title: "4K", description: "Maximum resolution" },
 ] satisfies Array<{ id: ScreenShareResolution; title: string; description: string }>;
+
+const cameraInputResolutionItems = [
+  { id: "P1080", title: "1080p", description: "Lower camera processing load" },
+  { id: "P1440", title: "1440p", description: "Balance processing load and detail" },
+  { id: "P4K", title: "4K", description: "Maximum camera detail" },
+] satisfies Array<{ id: CameraInputResolution; title: string; description: string }>;
 
 const screenSharePickerModeItems = [
   { id: "Screen", title: "Screen", description: "Choose an entire display" },
@@ -66,25 +73,34 @@ function CheckboxRow({
   );
 }
 
-function ResolutionRow({
+/** Renders a named preset group shared by camera input and screen-share settings. */
+function ResolutionRow<T extends string>({
+  title,
+  description,
+  name,
+  items,
   value,
   onValueChange,
 }: {
-  value: ScreenShareResolution;
-  onValueChange: (value: ScreenShareResolution) => void;
+  title: string;
+  description: string;
+  name: string;
+  items: Array<{ id: T; title: string; description: string }>;
+  value: T;
+  onValueChange: (value: T) => void;
 }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Screen share resolution</span>
-        <span className="text-sm text-gray-500 dark:text-gray-400">Choose stream quality for screen sharing</span>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">{description}</span>
       </div>
       <div className="flex flex-col gap-2">
-        {screenShareResolutionItems.map((item) => (
+        {items.map((item) => (
           <label key={item.id} className="flex items-start gap-2 cursor-pointer">
             <input
               type="radio"
-              name="screen-share-resolution"
+              name={name}
               className="mt-0.5 size-4 cursor-pointer accent-slate-700 dark:accent-slate-300"
               checked={value === item.id}
               onChange={(event) => {
@@ -412,6 +428,7 @@ const SECTIONS: { id: SectionId; title: string; macOnly?: boolean }[] = [
   { id: "misc", title: "Miscellaneous" },
 ];
 
+/** Loads saved preferences and applies changes through the typed desktop commands. */
 function SettingsWindow() {
   useDisableNativeContextMenu();
 
@@ -527,6 +544,16 @@ function SettingsWindow() {
                       typedInvoke("set_start_camera_on_call", { enabled: v }).then(() => refetchSettings());
                     }}
                   />
+                  <ResolutionRow
+                    title="Camera input resolution"
+                    description="Request a camera capture size. The closest supported resolution may be used."
+                    name="camera-input-resolution"
+                    items={cameraInputResolutionItems}
+                    value={settings.camera_input_resolution}
+                    onValueChange={(resolution) => {
+                      typedInvoke("set_camera_input_resolution", { resolution }).then(() => refetchSettings());
+                    }}
+                  />
                 </div>
 
                 <hr className="h-px w-full border-none bg-gray-300 dark:bg-gray-600" />
@@ -564,6 +591,10 @@ function SettingsWindow() {
                     }}
                   />
                   <ResolutionRow
+                    title="Screen share resolution"
+                    description="Choose stream quality for screen sharing"
+                    name="screen-share-resolution"
+                    items={screenShareResolutionItems}
                     value={settings.screen_share_resolution}
                     onValueChange={(resolution) => {
                       typedInvoke("set_screen_share_resolution", { resolution }).then(() => refetchSettings());

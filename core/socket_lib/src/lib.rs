@@ -29,6 +29,61 @@ pub enum ScreenShareResolution {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum CameraInputResolution {
+    #[default]
+    P1080,
+    P1440,
+    P4K,
+}
+
+impl CameraInputResolution {
+    /// Returns the requested sensor dimensions; capture backends may choose a nearby mode.
+    pub fn extent(self) -> Extent {
+        let (width, height) = match self {
+            Self::P1080 => (1920.0, 1080.0),
+            Self::P1440 => (2560.0, 1440.0),
+            Self::P4K => (3840.0, 2160.0),
+        };
+        Extent { width, height }
+    }
+}
+
+#[cfg(test)]
+mod camera_resolution_tests {
+    use super::*;
+
+    /// Verifies legacy defaults, UHD dimensions, and round-trip local IPC serialization.
+    #[test]
+    fn camera_input_presets_roundtrip_with_uhd_dimensions_and_a_1080_default() {
+        #[derive(Deserialize)]
+        struct Settings {
+            #[serde(default)]
+            resolution: CameraInputResolution,
+        }
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.resolution, CameraInputResolution::P1080);
+        for (preset, width, height, serialized) in [
+            (CameraInputResolution::P1080, 1920.0, 1080.0, "\"P1080\""),
+            (CameraInputResolution::P1440, 2560.0, 1440.0, "\"P1440\""),
+            (CameraInputResolution::P4K, 3840.0, 2160.0, "\"P4K\""),
+        ] {
+            let extent = preset.extent();
+            assert_eq!((extent.width, extent.height), (width, height));
+            assert_eq!(serde_json::to_string(&preset).unwrap(), serialized);
+            assert_eq!(
+                serde_json::from_str::<CameraInputResolution>(serialized).unwrap(),
+                preset
+            );
+            let message = Message::SetCameraInputResolution(preset);
+            assert!(!message.is_response());
+            let decoded: Message =
+                serde_json::from_str(&serde_json::to_string(&message).unwrap()).unwrap();
+            assert!(matches!(decoded, Message::SetCameraInputResolution(value) if value == preset));
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenSharePickerMode {
     #[default]
     Screen,
@@ -259,6 +314,7 @@ pub enum Message {
     ExitRequested,
     SetNoiseCancellation(bool),
     SetScreenShareResolution(ScreenShareResolution),
+    SetCameraInputResolution(CameraInputResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetAppVeilBundleIds(Vec<String>),
     SetTelemetryEnabled(bool),
@@ -561,7 +617,21 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[cfg(windows)]
+    /// Connects two framed IPC endpoints over an ephemeral Windows loopback port.
+    fn test_pair() -> ((SocketSender, EventSocket), (SocketSender, EventSocket)) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            build_pair(stream).unwrap()
+        });
+        let client = build_pair(TcpStream::connect(address).unwrap()).unwrap();
+        (server.join().unwrap(), client)
+    }
+
     #[cfg(unix)]
+    /// Connects framed IPC endpoints using a temporary Unix socket.
     fn test_pair() -> ((SocketSender, EventSocket), (SocketSender, EventSocket)) {
         let dir = tempfile::tempdir().unwrap();
         let socket_path = dir.path().join("test.sock");
@@ -775,12 +845,13 @@ mod tests {
         }
     }
 
+    /// Sends a client request and checks that its reply reaches the response channel.
     #[test]
     fn test_request_response_pattern() {
-        let ((server_sender, server_events), (_client_sender, _client_events)) = test_pair();
+        let ((server_sender, server_events), (client_sender, client_events)) = test_pair();
 
         // Client sends request
-        server_sender.send(Message::Ping).unwrap();
+        client_sender.send(Message::Ping).unwrap();
 
         // Server receives event
         let msg = server_events
@@ -788,5 +859,14 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg, Message::Ping));
+
+        server_sender
+            .send(Message::CallStartResult(Ok(())))
+            .unwrap();
+        let response = client_events
+            .responses
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(response, Message::CallStartResult(Ok(()))));
     }
 }

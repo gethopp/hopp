@@ -20,6 +20,10 @@ codegen-units = 1
 [workspace]
 exclude = [ "tests", "dev" ]
 
+[build-dependencies]
+cc = "1"
+webrtc-sys-build = { git = "https://github.com/gethopp/rust-sdks", branch = "hopp" }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-msmf"] }
 windows-core = "0.58.0"
@@ -34,6 +38,7 @@ windows = { version = "0.58.0", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
+    "Win32_Media_MediaFoundation",
     "Win32_System_Com",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
@@ -58,6 +63,9 @@ objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.21.1"
+v4l = "0.14"
+libc = "0.2"
+memmap2 = "0.9"
 nokhwa = { git = "https://github.com/gethopp/nokhwa", branch = "hopp", default-features = false, features = ["output-threaded", "input-v4l"] }
 
 [dependencies]
