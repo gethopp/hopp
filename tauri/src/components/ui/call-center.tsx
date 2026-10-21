@@ -585,17 +585,16 @@ function MicrophoneIcon({ shortcut }: { shortcut?: string }) {
   useEffect(() => {
     if (!microphoneDevices.length) return;
     if (activeMicId) return;
-    const resolve = async () => {
-      const lastUsedMic = await tauriUtils.getLastUsedMic();
-      if (lastUsedMic && microphoneDevices.find((d) => d.name === lastUsedMic)) {
-        setActiveMicId(lastUsedMic);
-        return;
-      }
-      const defaultDevice = microphoneDevices.find((d) => d.default) ?? microphoneDevices[0];
-      if (defaultDevice) setActiveMicId(defaultDevice.name);
+    let cancelled = false;
+    typedInvoke("get_preferred_microphone")
+      .then((name) => {
+        if (!cancelled) setActiveMicId((current) => current || name);
+      })
+      .catch((error) => console.error("Failed to resolve microphone:", error));
+    return () => {
+      cancelled = true;
     };
-    resolve();
-  }, [microphoneDevices]);
+  }, [microphoneDevices, activeMicId]);
 
   useEffect(() => {
     const unlisten = listen<string>("core_active_mic_changed", (event) => {

@@ -103,6 +103,7 @@ export interface UserSettings {
   show_dock_icon_in_call: boolean;
   start_camera_on_call: boolean;
   start_mic_on_call: boolean;
+  default_mic: string | null;
   remote_control_enabled: boolean;
   noise_cancellation_enabled: boolean;
   screen_share_resolution: ScreenShareResolution;
@@ -204,6 +205,8 @@ export interface CommandMap {
 
   // User settings (Settings window)
   get_user_settings: { args: void; return: UserSettings };
+  set_default_mic: { args: { deviceName: string | null }; return: void };
+  get_preferred_microphone: { args: void; return: string };
   list_installed_applications: { args: void; return: InstalledApplication[] };
   set_app_veil_applications: { args: { applications: AppVeilApplication[] }; return: void };
   set_call_feedback_popup: { args: { enabled: boolean }; return: void };
