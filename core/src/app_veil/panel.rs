@@ -127,20 +127,19 @@ pub(super) fn content(
         .unwrap_or_else(|| NSFont::systemFontOfSize(12.0));
     label.setFont(Some(&font));
     label.setTextColor(Some(&color(ColorToken::Gray300)));
-    label.setFrame(NSRect::new(
-        NSPoint::new(12.0, 7.0),
-        NSSize::new(84.0, 18.0),
-    ));
     let status = NSTextField::labelWithString(&NSString::from_str("Hidden"), mtm);
     status.setFont(Some(&font));
-    status.setFrame(NSRect::new(
-        NSPoint::new(96.0, 7.0),
-        NSSize::new(40.0, 18.0),
-    ));
     let button = AppVeilEyeButton::new(mtm, status.clone(), toggle_visibility);
     if let Some(view) = background.contentView() {
-        view.addSubview(&label);
-        view.addSubview(&status);
+        let bounds = view.bounds();
+        for (field, x, width) in [(&label, 12.0, 84.0), (&status, 96.0, 40.0)] {
+            let height = field.intrinsicContentSize().height;
+            field.setFrame(NSRect::new(
+                NSPoint::new(x, bounds.origin.y + (bounds.size.height - height) / 2.0),
+                NSSize::new(width, height),
+            ));
+            view.addSubview(field);
+        }
         // Use an explicit fill so AppKit's inactive bezel styling cannot hide the button.
         let button_background = NSBox::initWithFrame(
             NSBox::alloc(mtm),
