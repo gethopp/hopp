@@ -19,7 +19,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Target, TargetKind};
 
 use hopp::{
-    app_state::{AppState, AppVeilApplication, UserSettings},
+    app_state::{resolve_microphone, AppState, AppVeilApplication, UserSettings},
     application_catalog::InstalledApplication,
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
     recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
@@ -509,7 +509,7 @@ fn call_started(
             data.activation_policy_regular = true;
         }
     }
-    // Resolve the audio device name: last used → default → first → ""
+    // Resolve preferred → last used → system default → first → "".
     let audio_device_name = {
         let last_used = data.app_state.last_used_mic();
         let devices: Vec<AudioDevice> = if let Err(e) = data.sender.send(Message::ListAudioDevices)
@@ -528,25 +528,11 @@ fn call_started(
                 }
             }
         };
-        if let Some(last) = last_used {
-            if devices.iter().any(|d| d.name == last) {
-                last
-            } else {
-                devices
-                    .iter()
-                    .find(|d| d.default)
-                    .or_else(|| devices.first())
-                    .map(|d| d.name.clone())
-                    .unwrap_or_default()
-            }
-        } else {
-            devices
-                .iter()
-                .find(|d| d.default)
-                .or_else(|| devices.first())
-                .map(|d| d.name.clone())
-                .unwrap_or_default()
-        }
+        resolve_microphone(
+            &devices,
+            user_settings.default_mic.as_deref(),
+            last_used.as_deref(),
+        )
     };
     log::info!("call_started: resolved audio_device_name={audio_device_name:?}");
     if let Err(e) = data
@@ -1002,6 +988,25 @@ fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
             vec![]
         }
     }
+}
+
+#[tauri::command(async)]
+fn set_default_mic(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
+    let data = app.state::<Mutex<AppData>>();
+    let mut data = data.lock().unwrap();
+    data.app_state.set_default_mic(device_name)
+}
+
+#[tauri::command(async)]
+fn get_preferred_microphone(app: tauri::AppHandle) -> String {
+    let devices = list_microphones(app.clone());
+    let data = app.state::<Mutex<AppData>>();
+    let data = data.lock().unwrap();
+    resolve_microphone(
+        &devices,
+        data.app_state.user_settings().default_mic.as_deref(),
+        data.app_state.last_used_mic().as_deref(),
+    )
 }
 
 #[tauri::command(async)]
@@ -1713,6 +1718,8 @@ fn main() {
             create_feedback_window,
             create_settings_window,
             get_user_settings,
+            set_default_mic,
+            get_preferred_microphone,
             list_installed_applications,
             set_app_veil_applications,
             set_call_feedback_popup,

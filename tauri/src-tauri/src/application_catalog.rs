@@ -127,8 +127,8 @@ fn icon_png(workspace: &NSWorkspace, path: &NSString) -> Option<Vec<u8>> {
         NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
             NSBitmapImageRep::alloc(),
             std::ptr::null_mut(),
-            32,
-            32,
+            64,
+            64,
             8,
             4,
             true,
@@ -141,7 +141,7 @@ fn icon_png(workspace: &NSWorkspace, path: &NSString) -> Option<Vec<u8>> {
     let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bitmap)?;
     NSGraphicsContext::saveGraphicsState_class();
     NSGraphicsContext::setCurrentContext(Some(&context));
-    icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(32.0, 32.0)));
+    icon.drawInRect(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(64.0, 64.0)));
     NSGraphicsContext::restoreGraphicsState_class();
     unsafe {
         bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())

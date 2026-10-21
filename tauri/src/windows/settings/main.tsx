@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   typedInvoke,
   type AppVeilApplication,
@@ -417,6 +418,8 @@ function SettingsWindow() {
 
   const [serverUrl, setServerUrl] = useState("");
   const [section, setSection] = useState<SectionId>("call");
+  const [savingDefaultMic, setSavingDefaultMic] = useState(false);
+  const [defaultMicError, setDefaultMicError] = useState("");
 
   const { data: settings, refetch: refetchSettings } = useQuery({
     queryKey: ["user-settings"],
@@ -430,6 +433,13 @@ function SettingsWindow() {
     queryFn: () => typedInvoke("list_installed_applications"),
     enabled: OS === "macos",
     staleTime: Infinity,
+  });
+
+  const { data: microphones = [], refetch: refetchMicrophones } = useQuery({
+    queryKey: ["list_microphones"],
+    queryFn: () => typedInvoke("list_microphones"),
+    enabled: section === "call",
+    select: (devices) => devices.filter((device) => device.name !== "").sort((a, b) => a.name.localeCompare(b.name)),
   });
 
   useEffect(() => {
@@ -533,6 +543,61 @@ function SettingsWindow() {
 
                 <div className="flex flex-col gap-3">
                   <h3 className="text-base font-medium text-black dark:text-white">Audio settings</h3>
+                  <div className="flex flex-col gap-2">
+                    <label
+                      htmlFor="default-microphone"
+                      className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Default microphone
+                    </label>
+                    <p id="default-microphone-description" className="text-sm text-gray-500 dark:text-gray-400">
+                      Used at the start of each call when available. Changes apply to your next call.
+                    </p>
+                    <Select
+                      value={settings.default_mic == null ? "last-used" : `mic:${settings.default_mic}`}
+                      disabled={savingDefaultMic}
+                      onOpenChange={(open) => {
+                        if (open) refetchMicrophones();
+                      }}
+                      onValueChange={async (value) => {
+                        setSavingDefaultMic(true);
+                        setDefaultMicError("");
+                        try {
+                          await typedInvoke("set_default_mic", {
+                            deviceName: value === "last-used" ? null : value.slice(4),
+                          });
+                          await refetchSettings();
+                        } catch (error) {
+                          setDefaultMicError(String(error));
+                        } finally {
+                          setSavingDefaultMic(false);
+                        }
+                      }}
+                    >
+                      <SelectTrigger id="default-microphone" aria-describedby="default-microphone-description">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="last-used">Use last-used microphone</SelectItem>
+                        {settings.default_mic &&
+                          !microphones.some((device) => device.name === settings.default_mic) && (
+                            <SelectItem value={`mic:${settings.default_mic}`} disabled>
+                              {settings.default_mic} (Unavailable)
+                            </SelectItem>
+                          )}
+                        {microphones.map((device) => (
+                          <SelectItem key={device.name} value={`mic:${device.name}`}>
+                            {device.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {defaultMicError && (
+                      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+                        {defaultMicError}
+                      </p>
+                    )}
+                  </div>
                   <CheckboxRow
                     title="Start microphone on call start"
                     description="Unmute microphone when you start the call"

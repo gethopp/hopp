@@ -44,13 +44,15 @@ fn default_screen_share_resolution() -> ScreenShareResolution {
 }
 
 /// User-facing settings exposed in the Settings window.
-/// All fields are non-optional with sensible defaults.
+/// Fields have sensible defaults for existing installations.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserSettings {
     pub call_feedback_popup: bool,
     pub show_dock_icon_in_call: bool,
     pub start_camera_on_call: bool,
     pub start_mic_on_call: bool,
+    #[serde(default)]
+    pub default_mic: Option<String>,
     #[serde(default = "default_true")]
     pub remote_control_enabled: bool,
     #[serde(default = "default_noise_cancellation_enabled")]
@@ -79,6 +81,7 @@ impl Default for UserSettings {
             show_dock_icon_in_call: true,
             start_camera_on_call: false,
             start_mic_on_call: true,
+            default_mic: None,
             remote_control_enabled: true,
             noise_cancellation_enabled: true,
             screen_share_resolution: ScreenShareResolution::P4K,
@@ -97,6 +100,21 @@ impl Default for UserSettings {
 
 fn default_noise_cancellation_enabled() -> bool {
     true
+}
+
+pub fn resolve_microphone(
+    devices: &[socket_lib::AudioDevice],
+    preferred: Option<&str>,
+    last_used: Option<&str>,
+) -> String {
+    preferred
+        .into_iter()
+        .chain(last_used)
+        .find_map(|name| devices.iter().find(|device| device.name == name))
+        .or_else(|| devices.iter().find(|device| device.default))
+        .or_else(|| devices.first())
+        .map(|device| device.name.clone())
+        .unwrap_or_default()
 }
 
 #[cfg(target_os = "macos")]
@@ -541,6 +559,26 @@ impl AppState {
         }
     }
 
+    pub fn set_default_mic(&mut self, device_name: Option<String>) -> Result<(), String> {
+        if device_name
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err("Microphone name cannot be empty".to_string());
+        }
+        let _lock = self.lock.lock().unwrap();
+        let settings = self
+            .state
+            .user_settings
+            .get_or_insert_with(UserSettings::default);
+        let previous = std::mem::replace(&mut settings.default_mic, device_name);
+        if !self.save() {
+            self.state.user_settings.as_mut().unwrap().default_mic = previous;
+            return Err("Failed to save default microphone".to_string());
+        }
+        Ok(())
+    }
+
     pub fn set_app_veil_applications(
         &mut self,
         applications: Vec<AppVeilApplication>,
@@ -600,6 +638,85 @@ impl AppState {
             Err(e) => log::error!("Failed to serialize app state: {e}"),
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod microphone_tests {
+    use super::*;
+
+    #[test]
+    fn microphone_precedence_and_fallbacks() {
+        let devices = [
+            socket_lib::AudioDevice {
+                name: "First".into(),
+                default: false,
+            },
+            socket_lib::AudioDevice {
+                name: "System".into(),
+                default: true,
+            },
+            socket_lib::AudioDevice {
+                name: "Preferred".into(),
+                default: false,
+            },
+            socket_lib::AudioDevice {
+                name: "Last".into(),
+                default: false,
+            },
+        ];
+        for (preferred, last, expected) in [
+            (Some("Preferred"), Some("Last"), "Preferred"),
+            (None, Some("Last"), "Last"),
+            (Some("Disconnected"), Some("Last"), "Last"),
+            (Some("Disconnected"), Some("Missing"), "System"),
+            (None, None, "System"),
+        ] {
+            assert_eq!(resolve_microphone(&devices, preferred, last), expected);
+        }
+        assert_eq!(resolve_microphone(&devices[..1], None, None), "First");
+        assert_eq!(resolve_microphone(&[], Some("Preferred"), Some("Last")), "");
+    }
+
+    #[test]
+    fn default_microphone_migration_and_persistence() {
+        let mut legacy = serde_json::to_value(UserSettings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("default_mic");
+        let migrated: UserSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated.default_mic, None);
+
+        let directory = std::env::temp_dir().join(format!("hopp-mic-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut state = AppState::new(&directory);
+        state.set_default_mic(Some("Preferred".into())).unwrap();
+        state.set_last_used_mic("Temporary".into());
+        drop(state);
+        let mut state = AppState::new(&directory);
+        assert_eq!(
+            state.user_settings().default_mic.as_deref(),
+            Some("Preferred")
+        );
+        assert_eq!(state.last_used_mic().as_deref(), Some("Temporary"));
+        assert!(state.set_default_mic(Some(" ".into())).is_err());
+        assert_eq!(
+            state.user_settings().default_mic.as_deref(),
+            Some("Preferred")
+        );
+        state.set_default_mic(None).unwrap();
+        drop(state);
+        assert_eq!(AppState::new(&directory).user_settings().default_mic, None);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn default_microphone_save_failure_preserves_preference() {
+        let mut state = AppState {
+            state: AppStateInternal::default(),
+            root_folder: PathBuf::from("/dev/null"),
+            lock: Mutex::new(()),
+        };
+        assert!(state.set_default_mic(Some("Preferred".into())).is_err());
+        assert_eq!(state.user_settings().default_mic, None);
     }
 }
 
