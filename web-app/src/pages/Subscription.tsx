@@ -8,6 +8,7 @@ import { HiExclamationCircle } from "react-icons/hi2";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAPI } from "@/hooks/useQueryClients";
+import { Navigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { components } from "@/openapi";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -62,6 +63,8 @@ export function Subscription() {
       enabled: !!subscriptionStatus?.is_admin,
     },
   );
+
+  const { data: instanceConfig } = useQuery("get", "/api/config");
 
   // Update local state when billing settings are loaded
   useEffect(() => {
@@ -196,6 +199,12 @@ export function Subscription() {
 
     return "free";
   };
+
+  // Nothing to manage on instances without Stripe (the sidebar entry is hidden
+  // too, this covers direct navigation).
+  if (instanceConfig && !instanceConfig.billing_enabled) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   if (loading) {
     return (
