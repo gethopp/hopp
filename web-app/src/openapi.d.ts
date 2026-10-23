@@ -222,6 +222,15 @@ export interface paths {
             "application/json": components["schemas"]["Error"];
           };
         };
+        /** @description Sign-up requires a valid team invite (the instance owner enabled signup_requires_invite) */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
         /** @description User with this email already exists */
         409: {
           headers: {
@@ -797,6 +806,129 @@ export interface paths {
         };
       };
     };
+    trace?: never;
+  };
+  "/api/auth/instance-settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get instance-wide settings
+     * @description Returns server-wide settings and whether the caller is the instance owner (the earliest account on the instance), the only user who may change them.
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Instance settings */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["InstanceSettings"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    /**
+     * Update instance-wide settings
+     * @description Updates server-wide settings. Only the instance owner may call this; is_admin is scoped to a user's own team and does not grant access.
+     */
+    put: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          "application/json": {
+            /** @description When true, new accounts can only be created with a valid team invite. The first account on an empty instance is exempt. */
+            signup_requires_invite: boolean;
+          };
+        };
+      };
+      responses: {
+        /** @description Settings updated successfully */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["InstanceSettings"];
+          };
+        };
+        /** @description Invalid input */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Unauthorized */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Forbidden - caller is not the instance owner */
+        403: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+        /** @description Internal server error */
+        500: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["Error"];
+          };
+        };
+      };
+    };
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/auth/get-invite-uuid": {
@@ -2684,6 +2816,12 @@ export interface components {
        * @description When the trial period ends (null if not in trial or has active subscription)
        */
       trial_ends_at?: string | null;
+    };
+    InstanceSettings: {
+      /** @description True when the caller is the instance owner and may change these settings */
+      is_owner: boolean;
+      /** @description When true, new accounts can only be created with a valid team invite */
+      signup_requires_invite: boolean;
     };
     Team: {
       /** Format: uint */

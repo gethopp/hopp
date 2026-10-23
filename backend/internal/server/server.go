@@ -255,8 +255,13 @@ func (s *Server) runMigrations() {
 		&models.Subscription{},
 		&models.Feedback{},
 		&models.SlackInstallation{},
+		&models.InstanceSettings{},
 	)
 	if err != nil {
+		s.Echo.Logger.Fatal(err)
+	}
+	// Seed the settings row with its defaults so reads never have to write.
+	if _, err := models.GetInstanceSettings(s.DB); err != nil {
 		s.Echo.Logger.Fatal(err)
 	}
 }
@@ -421,6 +426,8 @@ func (s *Server) setupRoutes() {
 	protectedAPI.GET("/user", auth.User)
 	protectedAPI.PUT("/update-user-name", auth.UpdateName)
 	protectedAPI.PATCH("/team", auth.UpdateTeam)
+	protectedAPI.GET("/instance-settings", auth.GetInstanceSettings)
+	protectedAPI.PUT("/instance-settings", auth.UpdateInstanceSettings)
 	protectedAPI.GET("/teammates", auth.Teammates)
 	protectedAPI.DELETE("/teammates/:userId", auth.RemoveTeammate)
 
