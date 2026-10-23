@@ -316,6 +316,11 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	if err != nil {
 		var httpErr *echo.HTTPError
 		if errors.As(err, &httpErr) {
+			// This is a browser navigation from the provider, so send a refused
+			// sign-up back to the web app instead of rendering raw JSON.
+			if httpErr.Code == http.StatusForbidden {
+				return c.Redirect(http.StatusFound, "/login?error=invite_required")
+			}
 			return httpErr
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())

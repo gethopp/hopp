@@ -137,6 +137,12 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
       });
     }
 
+    // A social sign-up refused by an invite-only server comes back as ?error=invite_required.
+    // The id keeps the toast from stacking if this effect runs again.
+    if (searchParams.get("error") === "invite_required") {
+      toast.error("Sign-up is by invitation only. Ask a teammate for an invite link.", { id: "invite-required" });
+    }
+
     // This will be visible on a callback from social auth
     const token = searchParams.get("token");
     if (token) {

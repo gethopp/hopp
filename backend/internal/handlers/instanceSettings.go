@@ -18,8 +18,10 @@ func errInviteRequired() error {
 }
 
 // inviteRequiredForNewTeam reports whether creating an account that is not
-// joining an existing team must be refused. The first account on an empty
-// instance is always allowed so a fresh install can be bootstrapped.
+// joining an existing team must be refused. While the instance has no accounts
+// the first one is always allowed. The check is not atomic with the insert, so
+// concurrent sign-ups on an empty instance can all pass; that state only exists
+// before the first account or after a database reset.
 func inviteRequiredForNewTeam(db *gorm.DB) (bool, error) {
 	settings, err := models.GetInstanceSettings(db)
 	if err != nil {
@@ -84,7 +86,7 @@ func (h *AuthHandler) UpdateInstanceSettings(c echo.Context) error {
 	}
 
 	type UpdateInstanceSettingsRequest struct {
-		SignupRequiresInvite *bool `json:"signup_requires_invite" validate:"required"`
+		SignupRequiresInvite *bool `json:"signup_requires_invite"`
 	}
 	req := new(UpdateInstanceSettingsRequest)
 	if err := c.Bind(req); err != nil {

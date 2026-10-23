@@ -82,14 +82,39 @@ For the desktop app, you can set a custom backend URL at runtime via **Settings 
 
 ## Restricting sign-up
 
-By default anyone who can reach your server can create an account, and an account without a team invite gets a team of its own. If your server is reachable from the internet, you can require a team invite link to sign up.
+By default anyone who can reach your server can create an account, and an account created without a team invite gets a team of its own. If your server is reachable from the internet, you can require a team invite link to sign up.
 
-Sign in as the **instance owner** (the first account created on the server), open **Settings > Instance**, and turn on **Require an invite to sign up**. It is off by default, so existing installations are unaffected.
+In the **web app** (not the desktop app), sign in as the instance owner, open **Settings**, and turn on **Require an invite to sign up** under **Instance**. It is off by default, so existing installations are unaffected.
 
-- Anyone without a valid invite link is turned away at sign-up, with email/password and social login alike.
-- Existing accounts are not affected, and people can still join your team through its invite link.
-- Only the instance owner sees and can change this setting. Team admins cannot, since every account that signs up without an invite is an admin of its own team.
-- The first account on an empty server is always allowed, so a fresh install can be bootstrapped.
+- Anyone without a valid invite link is turned away at sign-up, for email/password and social login alike.
+- Existing accounts can still sign in. Joining your team through its invite link still works.
+- The setting is changed from the web interface only; there is no environment variable.
+
+### Who is the instance owner?
+
+Hopp has no instance-wide admin role: "admin" only means admin of your own team, and everyone who signs up without an invite is an admin of a team of their own. So only the **instance owner** can change this setting, defined as the **earliest account that still exists**. On a new server, **create your own account first, before sharing the URL**, so that you are the owner. Ownership cannot be transferred, and it passes to the next-earliest account if the owner's account is deleted.
+
+To see who the owner is:
+
+```bash
+docker compose exec db psql -U hopp hopp -c "select email, created_at from users order by created_at, id limit 1;"
+```
+
+If you lock yourself out, you can switch the setting off directly:
+
+```bash
+docker compose exec db psql -U hopp hopp -c "update instance_settings set signup_requires_invite = false;"
+```
+
+### What an invite link does and does not protect
+
+This setting is only as strong as team invite links:
+
+- Every team has one invite link, and **any member of that team** (not just admins) can see it.
+- Invite links **do not expire** and cannot be rotated or revoked. Someone who has been removed from a team keeps the link they already had.
+- A link from **any** team on the server lets someone sign up, not just yours. If your server was open for a while, review the existing accounts first (for example with `select email, team_id from users;`), because anyone who signed up earlier has a link of their own.
+
+If the first account on a server with no accounts at all (for example after a database reset) is created while this setting is on, it is allowed without an invite, otherwise no account could ever be created.
 
 ## Telemetry
 

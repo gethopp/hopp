@@ -372,6 +372,11 @@ paths:
       responses:
         "200":
           description: Successful authentication
+        "302":
+          description: >-
+            Redirect to the web app. `/login?token=...` on success, or
+            `/login?error=invite_required` when the account does not exist and the
+            instance requires a team invite to sign up (signup_requires_invite).
         "401":
           description: Authentication failed
 

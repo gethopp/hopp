@@ -174,18 +174,19 @@ export function Settings() {
       )}
 
       {instanceSettings?.is_owner && (
-        <div className="space-y-4 pt-6">
+        <div className="space-y-4 pt-4">
           <h3 className="h3-subsection">Instance</h3>
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
               <Label htmlFor="signupRequiresInvite">Require an invite to sign up</Label>
-              <p className="text-sm text-muted-foreground">
-                When on, new accounts can only be created with a team invite link. The sign-up page stays reachable, but
-                anyone without a valid invite is turned away. Off by default.
+              <p id="signupRequiresInviteHelp" className="text-sm text-muted-foreground">
+                When on, new accounts can only be created with a team invite link. Anyone without a valid invite is
+                turned away at sign-up. Existing accounts are not affected. Off by default.
               </p>
             </div>
             <Switch
               id="signupRequiresInvite"
+              aria-describedby="signupRequiresInviteHelp"
               checked={instanceSettings.signup_requires_invite}
               disabled={updateInstanceSettingsMutation.isPending}
               onCheckedChange={handleSignupRequiresInviteChange}

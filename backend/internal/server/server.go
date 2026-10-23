@@ -260,6 +260,10 @@ func (s *Server) runMigrations() {
 	if err != nil {
 		s.Echo.Logger.Fatal(err)
 	}
+	// Seed the settings row with its defaults so reads never have to write.
+	if _, err := models.GetInstanceSettings(s.DB); err != nil {
+		s.Echo.Logger.Fatal(err)
+	}
 }
 
 func (s *Server) setupMiddleware() {
