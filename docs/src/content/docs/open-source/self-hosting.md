@@ -80,6 +80,17 @@ The web app served by your backend works without a rebuild — it derives the AP
 
 For the desktop app, you can set a custom backend URL at runtime via **Settings > Custom Backend URL** (see [Settings docs](/features/settings)).
 
+## Restricting sign-up
+
+By default anyone who can reach your server can create an account, and an account without a team invite gets a team of its own. If your server is reachable from the internet, you can require a team invite link to sign up.
+
+Sign in as the **instance owner** (the first account created on the server), open **Settings > Instance**, and turn on **Require an invite to sign up**. It is off by default, so existing installations are unaffected.
+
+- Anyone without a valid invite link is turned away at sign-up, with email/password and social login alike.
+- Existing accounts are not affected, and people can still join your team through its invite link.
+- Only the instance owner sees and can change this setting. Team admins cannot, since every account that signs up without an invite is an admin of its own team.
+- The first account on an empty server is always allowed, so a fresh install can be bootstrapped.
+
 ## Telemetry
 
 **Web app**: telemetry (PostHog analytics) is disabled by default in selfhosted builds. No data is sent to external services.

@@ -138,6 +138,13 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 			var isAdmin = false
 			// If no team invitation, we need to create a new team
 			if assignedTeamID == nil {
+				required, err := inviteRequiredForNewTeam(tx)
+				if err != nil {
+					return fmt.Errorf("failed to read instance settings: %w", err)
+				}
+				if required {
+					return errInviteRequired()
+				}
 				isAdmin = true
 				// Provider-specific handling to get team name
 				switch providerName {
@@ -307,6 +314,10 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 	})
 
 	if err != nil {
+		var httpErr *echo.HTTPError
+		if errors.As(err, &httpErr) {
+			return httpErr
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
@@ -413,6 +424,19 @@ func (h *AuthHandler) ManualSignUp(c echo.Context) error {
 			// Set the user's team ID
 			teamID := uint(invitation.TeamID)
 			u.TeamID = &teamID
+		}
+	}
+
+	// An instance can require every sign-up to carry a valid team invite. An
+	// unknown invite UUID leaves TeamID nil above, so it is refused here too.
+	if u.TeamID == nil {
+		required, err := inviteRequiredForNewTeam(h.DB)
+		if err != nil {
+			c.Logger().Errorf("Failed to read instance settings: %v", err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create user")
+		}
+		if required {
+			return errInviteRequired()
 		}
 	}
 

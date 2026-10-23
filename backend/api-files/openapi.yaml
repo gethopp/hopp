@@ -80,6 +80,19 @@ components:
 
       type: object
 
+    InstanceSettings:
+      type: object
+      required:
+        - is_owner
+        - signup_requires_invite
+      properties:
+        is_owner:
+          type: boolean
+          description: True when the caller is the instance owner and may change these settings
+        signup_requires_invite:
+          type: boolean
+          description: When true, new accounts can only be created with a valid team invite
+
     Team:
       type: object
       required:
@@ -422,6 +435,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: Sign-up requires a valid team invite (the instance owner enabled signup_requires_invite)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: User with this email already exists
           content:
@@ -739,6 +758,86 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: Forbidden - user is not a team admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/instance-settings:
+    get:
+      summary: Get instance-wide settings
+      description: >-
+        Returns server-wide settings and whether the caller is the instance owner
+        (the earliest account on the instance), the only user who may change them.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Instance settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceSettings"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      summary: Update instance-wide settings
+      description: >-
+        Updates server-wide settings. Only the instance owner may call this;
+        is_admin is scoped to a user's own team and does not grant access.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - signup_requires_invite
+              properties:
+                signup_requires_invite:
+                  type: boolean
+                  description: >-
+                    When true, new accounts can only be created with a valid team
+                    invite. The first account on an empty instance is exempt.
+      responses:
+        "200":
+          description: Settings updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceSettings"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - caller is not the instance owner
           content:
             application/json:
               schema:
