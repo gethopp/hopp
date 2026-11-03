@@ -52,6 +52,10 @@ docker compose up -d   # for localhost see full guide in selfhost/README.md
 
 Includes Postgres, Redis, LiveKit, and Caddy auto-TLS. Full guide: [docs.gethopp.app/open-source/self-hosting](https://docs.gethopp.app/open-source/self-hosting/).
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Hopp/)
+
 ## Paid Cloud supports development
 
 Hopp is independent and funded by Cloud subscribers. The managed plan at [gethopp.app](https://gethopp.app) gives you Hopp without the ops, and every subscription pays for further development of the OSS app you're reading about.
