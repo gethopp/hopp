@@ -80,7 +80,8 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 			return err
 		}
 
-		// Use done channel to signal when the connection is closed
+		// Only the WebSocket reader closes done; Redis signals through cancellation
+		// so shutdown cannot race a send against close(done).
 		done := make(chan struct{})
 
 		// Send user online message to teammates on connection
@@ -116,7 +117,6 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 					} else {
 						c.Logger().Errorf("WebSocket read error: %v (user: %s)", err, user.ID)
 					}
-					done <- struct{}{}
 					return
 				}
 
@@ -211,14 +211,12 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 							return
 						default:
 							if err == redis.ErrClosed {
-								done <- struct{}{}
 								return
 							}
 							// Only log truly unexpected errors
 							if err.Error() != "use of closed network connection" {
 								c.Logger().Error("Unexpected Redis error: ", err)
 							}
-							done <- struct{}{}
 							return
 						}
 					}
@@ -258,8 +256,11 @@ func CreateWSHandler(server *common.ServerState) echo.HandlerFunc {
 			}
 		}()
 
-		// Wait for connection to close
-		<-done
+		// Wait for the WebSocket to close or the Redis loop to cancel the context.
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
 
 		return nil
 	}
