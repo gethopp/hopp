@@ -1,5 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { once } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import hotkeys from "hotkeys-js";
 import toast from "react-hot-toast";
@@ -82,81 +82,87 @@ export function useEndCall() {
   const posthog = usePostHog();
   const fetchClient = useFetchClient();
 
-  const endCall = useCallback(() => {
-    if (!callTokens) return;
+  const endCall = useCallback(
+    (callId = callTokens?.callId) => {
+      const currentCall = useStore.getState().callTokens;
+      if (!currentCall || currentCall.callId !== callId) return;
 
-    const { timeStarted, participant, room } = callTokens;
+      const { timeStarted, participant, room } = currentCall;
 
-    // Capture call info before clearing tokens for feedback
-    const teamId = user?.team_id?.toString() || "";
-    const roomId = room?.id || "";
-    const participantId = user?.id || "";
+      // Capture call info before clearing tokens for feedback
+      const teamId = user?.team_id?.toString() || "";
+      const roomId = room?.id || "";
+      const participantId = user?.id || "";
 
-    // Notify backend that user left the room (fire and forget)
-    // This is used for Slack rooms to remove the user from the Slack call
-    if (room?.id) {
-      fetchClient
-        .POST("/api/auth/room/{id}/leave", {
-          params: {
-            path: { id: room.id },
-          },
-        })
-        .catch((e) => {
-          console.error("leave room request failed:", e);
-        })
-        .finally(() => {
-          console.log("leave room request successful fired and forgotten:", room.id);
-        });
-    }
+      // Notify backend that user left the room (fire and forget)
+      // This is used for Slack rooms to remove the user from the Slack call
+      if (room?.id) {
+        fetchClient
+          .POST("/api/auth/room/{id}/leave", {
+            params: {
+              path: { id: room.id },
+            },
+          })
+          .catch((e) => {
+            console.error("leave room request failed:", e);
+          })
+          .finally(() => {
+            console.log("leave room request successful fired and forgotten:", room.id);
+          });
+      }
 
-    // Send websocket message to end call
-    socketService.send({
-      type: "call_end",
-      payload: {
-        participant_id: participant,
-      },
-    });
+      // Send websocket message to end call
+      socketService.send({
+        type: "call_end",
+        payload: {
+          participant_id: participant,
+        },
+      });
 
-    // Play end call sound
-    sounds.callAccepted.play();
+      // Play end call sound
+      sounds.callAccepted.play();
 
-    // Clear call tokens
-    if (callTokens.role === ParticipantRole.SHARER) {
-      tauriUtils.stopSharing();
-    }
-    tauriUtils.endCallCleanup();
+      // Clear call tokens
+      tauriUtils.endCallCleanup(currentCall.callId);
 
-    setCallTokens(null);
+      setCallTokens(null);
 
-    // Show feedback window for the person ending the call
-    if (participantId && teamId) {
-      tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
-    }
+      // Show feedback window for the person ending the call
+      if (participantId && teamId) {
+        tauriUtils.showFeedbackWindowIfEnabled(teamId, roomId, participantId);
+      }
 
-    // Send posthog event on how much
-    // time in seconds the call lasted.
-    // Time is serialized as a string in store
-    // so its not saved as a Date object
-    console.log(`Duration of the call: ${(Date.now() - new Date(timeStarted).getTime()) / 1000}seconds`);
-    posthog.capture("call_ended", {
-      duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
-      participant,
-    });
-  }, [callTokens, setCallTokens, user, posthog, fetchClient]);
+      // Send posthog event on how much
+      // time in seconds the call lasted.
+      // Time is serialized as a string in store
+      // so its not saved as a Date object
+      console.log(`Duration of the call: ${(Date.now() - new Date(timeStarted).getTime()) / 1000}seconds`);
+      posthog.capture("call_ended", {
+        duration_in_seconds: Date.now() - new Date(timeStarted).getTime() / 1000,
+        participant,
+      });
+    },
+    [callTokens, setCallTokens, user, posthog, fetchClient],
+  );
 
   return endCall;
 }
 
-export async function endCallAndWait(endCall: () => void) {
+export async function endCallAndWait(endCall: (callId?: string) => void) {
+  const callId = useStore.getState().callTokens?.callId;
+  if (!callId) return;
   let resolveCallEnded = () => {};
   const callEnded = new Promise<void>((resolve) => {
     resolveCallEnded = () => resolve();
   });
-  const unlisten = await once("core_call_ended", resolveCallEnded);
+  const unlisten = await listen<string>("core_call_ended", (event) => {
+    if (event.payload === callId) resolveCallEnded();
+  });
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    endCall();
+    if (useStore.getState().callTokens?.callId !== callId) return;
+    endCall(callId);
     await Promise.race([
       callEnded,
       new Promise<never>((_, reject) => {
@@ -201,8 +207,10 @@ export function useJoinCall() {
 
         sounds.callAccepted.play();
         const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+        const callId = crypto.randomUUID();
         setCallTokens({
           ...tokens,
+          callId,
           timeStarted: new Date(),
           hasAudioEnabled: startMic,
           hasCameraEnabled: startCamera,
@@ -215,10 +223,11 @@ export function useJoinCall() {
         });
 
         try {
-          await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+          await tauriUtils.callStarted(callId, tokens.audioToken, tokens.videoToken);
         } catch {
+          tauriUtils.endCallCleanup(callId);
+          if (useStore.getState().callTokens?.callId !== callId) return false;
           socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
-          tauriUtils.endCallCleanup();
           setCallTokens(null);
           toast.error("Failed to start call");
           return false;

@@ -113,6 +113,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
     const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
     setCallTokens({
       ...data,
+      callId: crypto.randomUUID(),
       timeStarted: new Date(),
       hasAudioEnabled: startMic,
       hasCameraEnabled: startCamera,

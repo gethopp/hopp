@@ -578,6 +578,7 @@ impl ScreensharingParticipants {
 }
 
 pub struct ScreensharingWindowConfig {
+    pub call_id: Option<socket_lib::CallId>,
     pub screen_share_buffer: Arc<crate::livekit::video::VideoBufferManager>,
     pub participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
     pub sharer_identity: Option<String>,
@@ -661,6 +662,7 @@ impl ScreensharingWindow {
         log::info!("ScreensharingWindow::new");
 
         let ScreensharingWindowConfig {
+            call_id,
             screen_share_buffer,
             participants,
             sharer_identity,
@@ -808,8 +810,12 @@ impl ScreensharingWindow {
         } = ScreensharingParticipants::from_shared(participants, sharer_identity.as_deref());
         let (initial_state, participants_manager) =
             build_initial_state(&remote, draw_persist, &last_mode);
-        let call_controls =
-            CallControlsState::new(camera_active, selected_camera_name, selected_mic_name);
+        let call_controls = CallControlsState::new(
+            call_id,
+            camera_active,
+            selected_camera_name,
+            selected_mic_name,
+        );
         let redraw_in_progress = Arc::new(AtomicBool::new(false));
         let redraw_thread = spawn_redraw_thread(
             redraw_rx,
@@ -971,6 +977,11 @@ impl ScreensharingWindow {
 
     pub fn set_remote_control_allowed(&mut self, allowed: bool) {
         self.state.remote_control_allowed = allowed;
+    }
+
+    pub fn set_call_id(&mut self, call_id: Option<socket_lib::CallId>) {
+        self.call_controls.set_call_id(call_id);
+        self.window.request_redraw();
     }
 
     pub fn set_camera_active(&mut self, active: bool, device_name: Option<String>) {

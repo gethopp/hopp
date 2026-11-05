@@ -44,7 +44,12 @@ export interface KeystrokeMessage {
 }
 
 export interface CallStartMessage {
-  token: string;
+  call_id: string;
+  audio_token: string;
+  video_token: string;
+  audio_device_name: string;
+  start_mic_on_call: boolean | null;
+  start_camera_on_call: boolean | null;
 }
 
 export interface SentryMetadata {
@@ -72,7 +77,8 @@ export interface CameraDevice {
 }
 
 export interface CameraStartMessage {
-  device_name: string;
+  call_id: string;
+  device_name: string | null;
 }
 
 export interface CoreParticipantState {
@@ -144,7 +150,7 @@ export interface CommandMap {
   stop_sound: { args: { soundName: string }; return: void };
 
   // Core process
-  reset_core_process: { args: void; return: void };
+  reset_core_process: { args: { callId: string }; return: void };
 
   // Logs
   get_logs: { args: void; return: string };
@@ -195,8 +201,8 @@ export interface CommandMap {
   set_sentry_metadata: { args: { userId: string; appVersion: string }; return: void };
 
   // Call
-  call_started: { args: { audioToken: string; videoToken: string }; return: void };
-  end_call: { args: void; return: void };
+  call_started: { args: { callId: string; audioToken: string; videoToken: string }; return: void };
+  end_call: { args: { callId: string }; return: void };
   toggle_call_sleep_prevention: { args: { enabled: boolean }; return: void };
 
   // Server
@@ -235,8 +241,8 @@ export interface CommandMap {
 
   // Core socket messages — camera
   list_webcams: { args: void; return: CameraDevice[] };
-  start_camera: { args: { deviceName?: string }; return: void };
-  stop_camera: { args: void; return: void };
+  start_camera: { args: { callId: string; deviceName?: string }; return: void };
+  stop_camera: { args: { callId: string }; return: void };
   open_camera_preview: { args: void; return: void };
 
   // Core socket messages — screenshare viewer

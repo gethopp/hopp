@@ -139,7 +139,34 @@ fn should_publish_app_veil_snapshot(
     force || published != Some(current)
 }
 
+#[derive(Debug, Default)]
+struct ConnectGate {
+    generation: u64,
+    cancel: Vec<oneshot::Sender<()>>,
+}
+
+impl ConnectGate {
+    fn advance(&mut self) -> u64 {
+        self.generation += 1;
+        self.cancel.clear();
+        self.generation
+    }
+
+    fn register(&mut self, generation: u64, cancel: Vec<oneshot::Sender<()>>) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.cancel = cancel;
+        true
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+}
+
 pub struct CreateRoomParams {
+    pub call_id: socket_lib::CallId,
     pub token: String,
     pub video_token: String,
     pub event_loop_proxy: EventLoopProxy<UserEvent>,
@@ -153,7 +180,10 @@ pub struct CreateRoomParams {
 }
 
 enum RoomServiceCommand {
-    CreateRoom(CreateRoomParams),
+    CreateRoom {
+        params: CreateRoomParams,
+        generation: u64,
+    },
     PublishCursorPosition(f64, f64, bool),
     PublishControllerCursorEnabled(bool),
     DestroyRoom,
@@ -179,7 +209,9 @@ enum RoomServiceCommand {
     PublishPasteFromClipboard(PasteFromClipboardData),
     PublishClipboardData(ClipboardDataPayload),
     PublishClickAnimation(ClientPoint),
-    PublishAppVeilSnapshot { force: bool },
+    PublishAppVeilSnapshot {
+        force: bool,
+    },
 }
 
 impl std::fmt::Debug for RoomServiceCommand {
@@ -254,7 +286,7 @@ pub(crate) struct RoomServiceInner {
     pub(crate) stats: std::sync::RwLock<crate::livekit::stats::RoomStats>,
     pub(crate) video_health_summary: std::sync::Mutex<crate::livekit::stats::VideoHealthSummary>,
     connection_quality: Arc<std::sync::Mutex<Option<ConnectionQuality>>>,
-    cancel_connect: std::sync::Mutex<Vec<oneshot::Sender<()>>>,
+    connect_gate: std::sync::Mutex<ConnectGate>,
     snapshot_sender: SnapshotSender,
     app_veil_snapshot: std::sync::Mutex<Option<AppVeilSnapshot>>,
     published_app_veil_snapshot: std::sync::Mutex<Option<AppVeilSnapshot>>,
@@ -419,7 +451,7 @@ impl RoomService {
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             video_health_summary: std::sync::Mutex::new(Default::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
-            cancel_connect: std::sync::Mutex::new(Vec::new()),
+            connect_gate: std::sync::Mutex::new(ConnectGate::default()),
             snapshot_sender,
             app_veil_snapshot: std::sync::Mutex::new(None),
             published_app_veil_snapshot: std::sync::Mutex::new(None),
@@ -475,8 +507,9 @@ impl RoomService {
     /// * `Err(())` - The room was not created successfully
     pub fn create_room(&self, params: CreateRoomParams) -> Result<(), RoomServiceError> {
         log::info!("create_room");
+        let generation = self.inner.connect_gate.lock().unwrap().advance();
         self.service_command_tx
-            .send(RoomServiceCommand::CreateRoom(params))
+            .send(RoomServiceCommand::CreateRoom { params, generation })
             .map_err(|e| RoomServiceError::CreateRoom(format!("Failed to send command: {e:?}")))?;
         log::info!("create_room: command dispatched (non-blocking)");
         Ok(())
@@ -491,10 +524,7 @@ impl RoomService {
 
         // Cancel any in-flight connection of CreateRoom attempt immediately.
         // Dropping all senders causes each corresponding cancel_rx to resolve.
-        {
-            let mut guard = self.inner.cancel_connect.lock().unwrap();
-            guard.clear();
-        }
+        self.inner.connect_gate.lock().unwrap().advance();
 
         let res = self
             .service_command_tx
@@ -953,18 +983,23 @@ async fn room_service_commands(
     while let Some(command) = service_rx.recv().await {
         log::debug!("room_service_commands: Received command {command:?}");
         match command {
-            RoomServiceCommand::CreateRoom(CreateRoomParams {
-                token,
-                video_token,
-                event_loop_proxy,
-                mixer,
-                sample_rate,
-                sample_rx,
-                audio_processor,
-                noise_cancellation_enabled,
-                start_mic_on_call,
-                start_camera_on_call,
-            }) => {
+            RoomServiceCommand::CreateRoom {
+                params:
+                    CreateRoomParams {
+                        call_id,
+                        token,
+                        video_token,
+                        event_loop_proxy,
+                        mixer,
+                        sample_rate,
+                        sample_rx,
+                        audio_processor,
+                        noise_cancellation_enabled,
+                        start_mic_on_call,
+                        start_camera_on_call,
+                    },
+                generation,
+            } => {
                 log::info!("room_service_commands: CreateRoom");
                 let total_connect_start = Instant::now();
 
@@ -972,9 +1007,13 @@ async fn room_service_commands(
                 // in-flight connects simultaneously by dropping all senders.
                 let (cancel_tx_1, cancel_rx_1) = oneshot::channel::<()>();
                 let (cancel_tx_2, cancel_rx_2) = oneshot::channel::<()>();
+                if !inner
+                    .connect_gate
+                    .lock()
+                    .unwrap()
+                    .register(generation, vec![cancel_tx_1, cancel_tx_2])
                 {
-                    let mut guard = inner.cancel_connect.lock().unwrap();
-                    *guard = vec![cancel_tx_1, cancel_tx_2];
+                    continue;
                 }
 
                 inner.clear().await;
@@ -1131,7 +1170,7 @@ async fn room_service_commands(
 
                 // Run both connects concurrently. Each branch is independently
                 // cancellable: dropping the corresponding sender in
-                // cancel_connect resolves cancel_rx, causing that branch to
+                // dropping the registered sender resolves cancel_rx, causing that branch to
                 // return None.
                 let (regular_outcome, video_outcome) = tokio::join!(
                     async {
@@ -1164,7 +1203,10 @@ async fn room_service_commands(
                 // manage to connect before the cancellation was observed.
                 // This will only happen when CallEnd is called during waiting for the rooms to connect
                 // on timeouts we get Ok(Err) not None.
-                if regular_outcome.is_none() || video_outcome.is_none() {
+                if regular_outcome.is_none()
+                    || video_outcome.is_none()
+                    || !inner.connect_gate.lock().unwrap().is_current(generation)
+                {
                     if let Some(Ok(Ok((room, _, _)))) = regular_outcome {
                         let _ = room.close().await;
                     }
@@ -1199,9 +1241,10 @@ async fn room_service_commands(
                         if let Ok(Ok((video_room, _))) = video_result {
                             let _ = video_room.close().await;
                         }
-                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Err(
-                            "Failed to connect to room".into(),
-                        )));
+                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(
+                            call_id.clone(),
+                            Err("Failed to connect to room".into()),
+                        ));
                         continue;
                     }
                     Err(_) => {
@@ -1212,9 +1255,10 @@ async fn room_service_commands(
                         if let Ok(Ok((video_room, _))) = video_result {
                             let _ = video_room.close().await;
                         }
-                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Err(
-                            "Room connection timed out".into(),
-                        )));
+                        let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(
+                            call_id.clone(),
+                            Err("Room connection timed out".into()),
+                        ));
                         continue;
                     }
                 };
@@ -1302,7 +1346,8 @@ async fn room_service_commands(
                 }
                 update_camera_quality(&inner).await;
                 let snapshot = inner.snapshot_sender.build_snapshot();
-                let _ = event_loop_proxy.send_event(UserEvent::CreateRoomResult(Ok(snapshot)));
+                let _ =
+                    event_loop_proxy.send_event(UserEvent::CreateRoomResult(call_id, Ok(snapshot)));
                 tokio::spawn(handle_room_events(RoomEventContext {
                     receiver: rx,
                     event_loop_proxy,
@@ -3167,5 +3212,27 @@ mod app_veil_tests {
             Some(&current),
             &current
         ));
+    }
+}
+
+#[cfg(test)]
+mod call_generation_tests {
+    use super::*;
+
+    #[test]
+    fn newer_call_cancels_old_connect_and_rejects_its_queued_work() {
+        let mut gate = ConnectGate::default();
+        let old = gate.advance();
+        let (cancel, mut receiver) = oneshot::channel();
+        assert!(gate.register(old, vec![cancel]));
+        let new = gate.advance();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        ));
+        assert!(!gate.register(old, vec![]));
+        assert!(!gate.is_current(old));
+        assert!(gate.register(new, vec![]));
+        assert!(gate.is_current(new));
     }
 }

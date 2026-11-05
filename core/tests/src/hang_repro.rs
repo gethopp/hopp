@@ -26,6 +26,7 @@ pub async fn test_screenshare_reconnect_hang() -> io::Result<()> {
     let audio_token = livekit_utils::generate_token("Viewer Audio");
     let video_token = livekit_utils::generate_token("Viewer Video");
     sender.send(Message::CallStart(CallStartMessage {
+        call_id: format!("test-{}", rand::random::<u64>()),
         audio_token,
         video_token,
         audio_device_name: String::new(),
@@ -189,7 +190,7 @@ pub async fn test_screenshare_reconnect_hang() -> io::Result<()> {
     drop(video_room);
     drop(event_socket);
 
-    sender.send(Message::CallEnd)?;
+    sender.send(Message::CallEnd(None))?;
     println!("Cleanup complete.");
 
     Ok(())

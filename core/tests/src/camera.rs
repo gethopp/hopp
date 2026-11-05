@@ -6,7 +6,11 @@ use std::env;
 use std::io;
 use std::time::Duration;
 
-fn setup_camera(sender: &SocketSender, event_socket: &EventSocket, name: &str) -> io::Result<()> {
+fn setup_camera(
+    sender: &SocketSender,
+    event_socket: &EventSocket,
+    name: &str,
+) -> io::Result<socket_lib::CallId> {
     let livekit_server_url =
         env::var("LIVEKIT_URL").expect("LIVEKIT_URL environment variable not set");
     sender.send(Message::LivekitServerUrl(livekit_server_url))?;
@@ -41,7 +45,7 @@ pub fn test_list_cameras() -> io::Result<()> {
 
 pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     let (sender, event_socket) = connect_socket()?;
-    setup_camera(&sender, &event_socket, "Test Camera")?;
+    let call_id = setup_camera(&sender, &event_socket, "Test Camera")?;
 
     let device_name = if let Some(name) = camera_name {
         println!("Using explicitly provided camera: {}", name);
@@ -69,6 +73,7 @@ pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     };
 
     sender.send(Message::StartCamera(CameraStartMessage {
+        call_id: call_id.clone(),
         device_name: Some(device_name.clone()),
     }))?;
 
@@ -93,7 +98,7 @@ pub fn test_camera_30s(camera_name: Option<&str>) -> io::Result<()> {
     std::thread::sleep(Duration::from_secs(30));
 
     println!("Stopping camera...");
-    sender.send(Message::StopCamera)?;
+    sender.send(Message::StopCamera(call_id.clone()))?;
     std::thread::sleep(Duration::from_secs(1));
 
     println!("Camera 30s test complete");
@@ -183,7 +188,7 @@ pub fn test_call(
     println!("\n=== TEST: Call with Camera + Mic ===");
 
     let (sender, event_socket) = connect_socket()?;
-    setup_camera(&sender, &event_socket, name)?;
+    let call_id = setup_camera(&sender, &event_socket, name)?;
 
     // CallStartResult is sent before the room finishes connecting (non-blocking dispatch),
     // so we need to wait for the room to be ready before sending StartCamera.
@@ -252,6 +257,7 @@ pub fn test_call(
 
     if let Some(device_name) = device_name {
         sender.send(Message::StartCamera(CameraStartMessage {
+            call_id: call_id.clone(),
             device_name: Some(device_name),
         }))?;
 
@@ -350,7 +356,7 @@ pub fn test_call(
         sender.send(Message::StopScreenshare)?;
     }
     if camera_started {
-        sender.send(Message::StopCamera)?;
+        sender.send(Message::StopCamera(call_id.clone()))?;
     }
     sender.send(Message::StopAudioCapture)?;
     std::thread::sleep(Duration::from_secs(1));

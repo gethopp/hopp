@@ -251,7 +251,7 @@ function App() {
         if (callTokens.participant === incomingCallerId) {
           console.log("Received call from current participant - closing current call and accepting new one");
           setCallTokens(null);
-          tauriUtils.endCallCleanup();
+          tauriUtils.endCallCleanup(callTokens.callId);
           // Continue to show the call banner below
         } else {
           // Different participant - reject as usual
@@ -300,7 +300,7 @@ function App() {
 
         setCallTokens(null);
         // Close screen share window
-        tauriUtils.endCallCleanup();
+        if (currentCallTokens) tauriUtils.endCallCleanup(currentCallTokens.callId);
 
         // Show feedback window if not disabled
         if (participantId && teamId) {

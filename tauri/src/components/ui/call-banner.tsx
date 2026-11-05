@@ -72,8 +72,10 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
               tokensReceived = true;
               sounds.callAccepted.play();
               const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+              const callId = crypto.randomUUID();
               setCallTokens({
                 ...data.payload,
+                callId,
                 timeStarted: new Date(),
                 hasAudioEnabled: startMic,
                 hasCameraEnabled: startCamera,
@@ -84,8 +86,10 @@ export const CallBanner = ({ callerId, toastId }: { callerId: string; toastId: s
                 micLevel: 0,
               });
               try {
-                await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+                await tauriUtils.callStarted(callId, data.payload.audioToken, data.payload.videoToken);
               } catch {
+                tauriUtils.endCallCleanup(callId);
+                if (useStore.getState().callTokens?.callId !== callId) return;
                 setCallTokens(null);
               }
 

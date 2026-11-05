@@ -88,8 +88,10 @@ export const Debug = () => {
             placeholder="Call Token"
             value={JSON.stringify(callTokens, null, 2) || ""}
             onChange={(e) => {
+              const tokens = JSON.parse(e.target.value);
               setCallTokens({
-                ...JSON.parse(e.target.value),
+                ...tokens,
+                callId: tokens.callId ?? crypto.randomUUID(),
                 timeStarted: new Date(),
                 hasAudioEnabled: false,
                 hasCameraEnabled: false,

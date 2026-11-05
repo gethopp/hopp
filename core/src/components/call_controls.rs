@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use iced::widget::row;
 use iced::{Element, Theme};
-use socket_lib::{AudioCaptureMessage, CameraStartMessage};
+use socket_lib::{AudioCaptureMessage, CallId, CameraStartMessage};
 use winit::event_loop::EventLoopProxy;
 
 use crate::audio::capturer::list_audio_inputs;
@@ -70,17 +70,18 @@ pub enum CallControlsMessage {
     MicDropdownToggle,
     MicDropdownDismiss,
     SelectMic(String),
-    VideoToggle,
+    VideoToggle(Option<CallId>),
     CameraDropdownToggle,
     CameraDropdownDismiss,
-    SelectCamera(String),
+    SelectCamera(Option<CallId>, String),
     ScreenShare,
     OpenScreenSharePicker,
-    EndCall,
+    EndCall(Option<CallId>),
 }
 
 #[derive(Default)]
 pub struct CallControlsState {
+    call_id: Option<CallId>,
     camera_active: bool,
     camera_dropdown_open: bool,
     available_cameras: Vec<socket_lib::CameraDevice>,
@@ -92,16 +93,31 @@ pub struct CallControlsState {
 
 impl CallControlsState {
     pub fn new(
+        call_id: Option<CallId>,
         camera_active: bool,
         selected_camera_name: Option<String>,
         selected_mic_name: Option<String>,
     ) -> Self {
         Self {
+            call_id,
             camera_active,
             selected_camera_name,
             selected_mic_name,
             ..Self::default()
         }
+    }
+
+    // Preserve the rendered call's identity if delivery happens after the controls change.
+    fn end_call_message(&self) -> CallControlsMessage {
+        CallControlsMessage::EndCall(self.call_id.clone())
+    }
+
+    fn camera_toggle_message(&self) -> CallControlsMessage {
+        CallControlsMessage::VideoToggle(self.call_id.clone())
+    }
+
+    pub fn set_call_id(&mut self, call_id: Option<CallId>) {
+        self.call_id = call_id;
     }
 
     pub fn set_camera_active(&mut self, active: bool, device_name: Option<String>) {
@@ -163,7 +179,7 @@ impl CallControlsState {
             } else {
                 ColorToken::Gray400.to_color()
             },
-            CallControlsMessage::VideoToggle,
+            self.camera_toggle_message(),
             Some(CallControlsMessage::CameraDropdownToggle),
             self.camera_dropdown_open,
             size,
@@ -183,7 +199,7 @@ impl CallControlsState {
         let end_call = split_button_sized(
             ICON_PHONE_OFF,
             ColorToken::Red500.to_color(),
-            CallControlsMessage::EndCall,
+            self.end_call_message(),
             None,
             false,
             size,
@@ -218,12 +234,14 @@ impl CallControlsState {
                         .map_or(camera.default, |selected| selected == &camera.name),
                 })
                 .collect();
+            let call_id = self.call_id.clone();
             split_button_dropdown_wrap(
                 base,
                 &items,
                 map(CallControlsMessage::CameraDropdownDismiss),
                 move |index| {
                     map(CallControlsMessage::SelectCamera(
+                        call_id.clone(),
                         self.available_cameras[index].name.clone(),
                     ))
                 },
@@ -300,11 +318,14 @@ impl CallControlsState {
                     request_id: None,
                 });
             }
-            CallControlsMessage::VideoToggle => send(if self.camera_active {
-                UserEvent::StopCamera
+            CallControlsMessage::VideoToggle(Some(call_id)) => send(if self.camera_active {
+                UserEvent::StopCamera(call_id)
             } else {
                 UserEvent::StartCamera {
-                    msg: CameraStartMessage { device_name: None },
+                    msg: CameraStartMessage {
+                        call_id,
+                        device_name: None,
+                    },
                     from_socket: false,
                     request_id: None,
                 }
@@ -317,15 +338,18 @@ impl CallControlsState {
                 self.camera_dropdown_open = !self.camera_dropdown_open;
             }
             CallControlsMessage::CameraDropdownDismiss => self.camera_dropdown_open = false,
-            CallControlsMessage::SelectCamera(name) => {
+            CallControlsMessage::SelectCamera(Some(call_id), name) => {
                 self.camera_dropdown_open = false;
                 send(UserEvent::StartCamera {
                     msg: CameraStartMessage {
+                        call_id,
                         device_name: Some(name),
                     },
                     from_socket: false,
                     request_id: None,
                 });
+            }
+            CallControlsMessage::VideoToggle(None) | CallControlsMessage::SelectCamera(None, _) => {
             }
             CallControlsMessage::ScreenShare => {
                 let active = participants
@@ -344,7 +368,81 @@ impl CallControlsState {
                 });
             }
             CallControlsMessage::OpenScreenSharePicker => send(UserEvent::GetAvailableContent),
-            CallControlsMessage::EndCall => send(UserEvent::CallEnd),
+            CallControlsMessage::EndCall(call_id) => {
+                if let Some(call_id) = call_id {
+                    send(UserEvent::CallEnd(Some(call_id)));
+                }
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use socket_lib::call::{resolve_call_end, CallEndAction};
+
+    #[test]
+    fn retained_viewer_rebinds_controls_before_reuse_for_a_new_call() {
+        for replace_stream in [false, true] {
+            let mut controls = CallControlsState::new(Some("A".into()), false, None, None);
+            let queued_hang_up = controls.end_call_message();
+            let queued_camera = controls.camera_toggle_message();
+
+            crate::reuse_screensharing_window(
+                &mut controls,
+                Some("B".into()),
+                CallControlsState::set_call_id,
+                |controls| {
+                    if replace_stream {
+                        controls.dismiss_dropdowns();
+                    }
+                    assert!(matches!(
+                        controls.end_call_message(),
+                        CallControlsMessage::EndCall(Some(id)) if id == "B"
+                    ));
+                    assert!(matches!(
+                        controls.camera_toggle_message(),
+                        CallControlsMessage::VideoToggle(Some(id)) if id == "B"
+                    ));
+                },
+            );
+            assert!(matches!(queued_hang_up, CallControlsMessage::EndCall(Some(id)) if id == "A"));
+            assert!(
+                matches!(queued_camera, CallControlsMessage::VideoToggle(Some(id)) if id == "A")
+            );
+        }
+    }
+
+    #[test]
+    fn queued_hang_up_keeps_the_call_shown_by_its_button() {
+        let mut controls = CallControlsState::new(Some("A".into()), false, None, None);
+        let queued = controls.end_call_message();
+        let camera_toggle = controls.camera_toggle_message();
+        controls.set_call_id(Some("B".into()));
+
+        let CallControlsMessage::EndCall(Some(origin)) = queued else {
+            panic!("hang-up must name its originating call");
+        };
+        assert_eq!(origin, "A");
+        assert!(matches!(camera_toggle, CallControlsMessage::VideoToggle(Some(id)) if id == "A"));
+        assert!(
+            matches!(controls.camera_toggle_message(), CallControlsMessage::VideoToggle(Some(id)) if id == "B")
+        );
+        assert!(matches!(
+            CallControlsState::default().camera_toggle_message(),
+            CallControlsMessage::VideoToggle(None)
+        ));
+        assert_eq!(
+            resolve_call_end(Some(&origin), controls.call_id.as_deref()),
+            CallEndAction::Acknowledge("A".into())
+        );
+        assert!(
+            matches!(controls.end_call_message(), CallControlsMessage::EndCall(Some(id)) if id == "B")
+        );
+        assert!(matches!(
+            CallControlsState::default().end_call_message(),
+            CallControlsMessage::EndCall(None)
+        ));
     }
 }

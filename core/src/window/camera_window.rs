@@ -246,6 +246,7 @@ impl CameraWindow {
         participants: Arc<RwLock<HashMap<String, ParticipantInfo>>>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         active_mic_name: Option<String>,
+        call_id: Option<socket_lib::CallId>,
     ) -> Result<Self, CameraWindowError> {
         log::info!("CameraWindow::new");
 
@@ -306,7 +307,7 @@ impl CameraWindow {
             viewport_size: IcedSize::new(logical.width, logical.height),
             ..Default::default()
         };
-        let call_controls = CallControlsState::new(camera_active, None, active_mic_name);
+        let call_controls = CallControlsState::new(call_id, camera_active, None, active_mic_name);
 
         let (redraw_tx, redraw_rx) = mpsc::channel();
         let redraw_thread = Some(spawn_redraw_thread(redraw_rx, window.clone()));
@@ -385,7 +386,12 @@ impl CameraWindow {
     }
 
     /// Re-reveal after a hide(). Resets transient state to match a fresh window.
-    pub fn show(&mut self, active_mic_name: Option<String>, screensharing_active: bool) {
+    pub fn show(
+        &mut self,
+        active_mic_name: Option<String>,
+        screensharing_active: bool,
+        call_id: Option<socket_lib::CallId>,
+    ) {
         let logical = self.viewport.logical_size();
         let camera_active = self
             .participants
@@ -397,7 +403,7 @@ impl CameraWindow {
             viewport_size: IcedSize::new(logical.width, logical.height),
             ..Default::default()
         };
-        self.call_controls = CallControlsState::new(camera_active, None, active_mic_name);
+        self.call_controls = CallControlsState::new(call_id, camera_active, None, active_mic_name);
         self.last_rendered_frame_ids.clear();
         self.screensharing_active = false;
         self.resize_timer = None;
@@ -445,6 +451,11 @@ impl CameraWindow {
                 log::error!("CameraWindow::set_screensharing_active: failed: {e:?}");
             }
         }
+    }
+
+    pub fn set_call_id(&mut self, call_id: Option<socket_lib::CallId>) {
+        self.call_controls.set_call_id(call_id);
+        self.request_redraw();
     }
 
     /// Update the local camera active state. Call from StartCamera/StopCamera handlers.

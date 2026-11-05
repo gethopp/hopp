@@ -295,8 +295,10 @@ export const Rooms = () => {
 
         sounds.callAccepted.play();
         const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+        const callId = crypto.randomUUID();
         setCallTokens({
           ...tokens,
+          callId,
           isRoomCall: true,
           timeStarted: new Date(),
           hasAudioEnabled: startMic,
@@ -310,8 +312,10 @@ export const Rooms = () => {
         });
 
         try {
-          await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+          await tauriUtils.callStarted(callId, tokens.audioToken, tokens.videoToken);
         } catch {
+          tauriUtils.endCallCleanup(callId);
+          if (useStore.getState().callTokens?.callId !== callId) return;
           setCallTokens(null);
           toast.error("Failed to start call");
           return;

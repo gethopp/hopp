@@ -81,8 +81,8 @@ use log::{debug, error};
 use overlay_window::OverlayWindow;
 use room_service::RoomService;
 use socket_lib::{
-    CallStartMessage, CameraStartMessage, Content, ContentType, Message, ScreenShareMessage,
-    ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
+    CallId, CallStartMessage, CameraStartMessage, Content, ContentType, Message,
+    ScreenShareMessage, ScreenSharePickerMode, ScreenShareResolution, SentryMetadata, SocketSender,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -416,6 +416,7 @@ pub struct Application<'a> {
     stats_window: Option<StatsWindow>,
     hang_protection_counter: Arc<AtomicU64>,
     start_camera_on_call: bool,
+    current_call_id: Option<CallId>,
     screen_share_resolution: ScreenShareResolution,
     screen_share_picker_mode: ScreenSharePickerMode,
     remote_control_enabled: bool,
@@ -430,6 +431,17 @@ pub struct Application<'a> {
 pub enum ApplicationError {
     #[error("Failed to create room service: {0}")]
     RoomServiceError(#[from] std::io::Error),
+}
+
+// Stream replacement is optional; identity must change even on focus-only reuse.
+fn reuse_screensharing_window<T>(
+    window: &mut T,
+    call_id: Option<CallId>,
+    set_call_id: impl FnOnce(&mut T, Option<CallId>),
+    reuse: impl FnOnce(&mut T),
+) {
+    set_call_id(window, call_id);
+    reuse(window);
 }
 
 impl<'a> Application<'a> {
@@ -504,6 +516,7 @@ impl<'a> Application<'a> {
             stats_window: None,
             hang_protection_counter,
             start_camera_on_call: false,
+            current_call_id: None,
             screen_share_resolution: ScreenShareResolution::P4K,
             screen_share_picker_mode: ScreenSharePickerMode::Screen,
             remote_control_enabled: true,
@@ -889,6 +902,7 @@ impl<'a> Application<'a> {
             self.context_manager.as_ref().unwrap(),
             event_loop,
             ScreensharingWindowConfig {
+                call_id: self.current_call_id.clone(),
                 screen_share_buffer: buffer,
                 participants,
                 sharer_identity,
@@ -950,8 +964,9 @@ impl<'a> Application<'a> {
         let screensharing_active = self.screensharing_active;
 
         if let Some(cam) = &mut self.camera_window {
+            cam.set_call_id(self.current_call_id.clone());
             if !cam.is_visible() {
-                cam.show(mic, screensharing_active);
+                cam.show(mic, screensharing_active, self.current_call_id.clone());
             }
             return;
         }
@@ -966,6 +981,7 @@ impl<'a> Application<'a> {
             participants,
             self.event_loop_proxy.clone(),
             mic,
+            self.current_call_id.clone(),
         ) {
             Ok(mut cam) => {
                 cam.set_screensharing_active(screensharing_active);
@@ -1450,6 +1466,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             }
             UserEvent::CallStart(call_start, request_id) => {
                 log::info!("user_event: CallStart");
+                self.current_call_id = Some(call_start.call_id.clone());
                 let start_camera_on_call = call_start.start_camera_on_call.unwrap_or(false);
                 if let Err(e) = self.audio_player.start() {
                     log::error!("Failed to start audio player: {e}");
@@ -1491,6 +1508,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 if let Some(room_service) = self.room_service.as_ref() {
                     let start_mic_on_call = call_start.start_mic_on_call.unwrap_or(true);
                     match room_service.create_room(room_service::CreateRoomParams {
+                        call_id: call_start.call_id.clone(),
                         token: call_start.audio_token,
                         video_token: call_start.video_token,
                         event_loop_proxy: self.event_loop_proxy.clone(),
@@ -1541,7 +1559,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
-            UserEvent::CreateRoomResult(result) => {
+            UserEvent::CreateRoomResult(call_id, result) => {
+                if self.current_call_id.as_ref() != Some(&call_id) {
+                    return;
+                }
                 match &result {
                     Ok(snapshot) => {
                         let summary = snapshot
@@ -1564,7 +1585,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         if self.start_camera_on_call {
                             self.start_camera_on_call = false;
                             let res = self.event_loop_proxy.send_event(UserEvent::StartCamera {
-                                msg: CameraStartMessage { device_name: None },
+                                msg: CameraStartMessage {
+                                    call_id: call_id.clone(),
+                                    device_name: None,
+                                },
                                 from_socket: false,
                                 request_id: None,
                             });
@@ -1578,16 +1602,30 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         self.stop_mic();
                         self.audio_player.stop();
                         self.close_camera_window();
-                        if let Err(e) = self
-                            .socket
-                            .send(Message::RoomConnectionFailed(reason.clone()))
-                        {
+                        if let Err(e) = self.socket.send(Message::RoomConnectionFailed {
+                            call_id: call_id.clone(),
+                            reason: reason.clone(),
+                        }) {
                             error!("user_event: Error sending RoomConnectionFailed: {e:?}");
                         }
                     }
                 }
             }
-            UserEvent::CallEnd => {
+            UserEvent::CallEnd(requested) => {
+                use socket_lib::call::{resolve_call_end, CallEndAction};
+                let ended =
+                    match resolve_call_end(requested.as_deref(), self.current_call_id.as_deref()) {
+                        CallEndAction::TearDown(ended) => ended,
+                        CallEndAction::Acknowledge(ended) => {
+                            if let Err(error) = self.socket.send(Message::CallEnded(ended)) {
+                                log::error!("Error acknowledging stale call end: {error:?}");
+                            }
+                            return;
+                        }
+                        CallEndAction::Ignore => return,
+                    };
+                self.current_call_id = None;
+                self.start_camera_on_call = false;
                 log::info!("user_event: CallEnd");
                 self.stop_mic();
                 self.audio_player.stop();
@@ -1637,7 +1675,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 self.close_drawing_window();
                 self.stats_window = None;
 
-                if let Err(e) = self.socket.send(Message::CallEnded) {
+                if let Err(e) = self.socket.send(Message::CallEnded(ended)) {
                     log::error!("user_event: Error sending CallEnded: {e:?}");
                 }
 
@@ -2234,6 +2272,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 from_socket,
                 request_id,
             } => {
+                if !socket_lib::call::is_current_call(&msg.call_id, self.current_call_id.as_deref())
+                {
+                    if from_socket {
+                        if let Err(error) = self.socket.reply(
+                            request_id,
+                            Message::StartCameraResult(Err("Call is no longer active".into())),
+                        ) {
+                            log::error!("Error rejecting stale camera start: {error:?}");
+                        }
+                    }
+                    return;
+                }
                 let device_name = self
                     .camera_capturer
                     .lock()
@@ -2337,7 +2387,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 room_service.send_participants_snapshot();
                 self.set_call_controls_camera(true, actual_name);
             }
-            UserEvent::StopCamera => {
+            UserEvent::StopCamera(call_id) => {
+                if !socket_lib::call::is_current_call(&call_id, self.current_call_id.as_deref()) {
+                    return;
+                }
                 log::info!("user_event: StopCamera");
                 self.stop_camera();
                 self.set_call_controls_camera(false, None);
@@ -2392,18 +2445,27 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     room_service.send_participants_snapshot();
                 }
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
-                    if let (Some((rx, tx)), Some(buffer)) = (redraw_rx.zip(redraw_tx), buffer) {
-                        screensharing_window.update_window_with_new_sharer(
-                            buffer,
-                            participants,
-                            sharer_identity.clone(),
-                            draw_persist,
-                            last_mode,
-                            (rx, tx),
-                        );
-                    }
-                    screensharing_window.focus_window();
+                    reuse_screensharing_window(
+                        screensharing_window,
+                        self.current_call_id.clone(),
+                        ScreensharingWindow::set_call_id,
+                        |screensharing_window| {
+                            let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
+                            if let (Some((rx, tx)), Some(buffer)) =
+                                (redraw_rx.zip(redraw_tx), buffer)
+                            {
+                                screensharing_window.update_window_with_new_sharer(
+                                    buffer,
+                                    participants,
+                                    sharer_identity.clone(),
+                                    draw_persist,
+                                    last_mode,
+                                    (rx, tx),
+                                );
+                            }
+                            screensharing_window.focus_window();
+                        },
+                    );
                 } else if let Some(room_service) = self.room_service.as_ref() {
                     if let Some(screen_share_buffer) = room_service.screen_share_buffer() {
                         let redraw_rx = redraw_rx.and_then(|arc| arc.lock().ok()?.take());
@@ -3199,7 +3261,7 @@ pub enum UserEvent {
     Terminate,
     HangProtection,
     CallStart(CallStartMessage, Option<socket_lib::RequestId>),
-    CallEnd,
+    CallEnd(Option<CallId>),
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
     RequestRedraw,
@@ -3249,7 +3311,7 @@ pub enum UserEvent {
         from_socket: bool,
         request_id: Option<socket_lib::RequestId>,
     },
-    StopCamera,
+    StopCamera(CallId),
     OpenCamera,
     OpenScreensharing,
     OpenScreenShareWindow {
@@ -3280,7 +3342,10 @@ pub enum UserEvent {
     SetScreenShareResolution(ScreenShareResolution),
     SetScreenSharePickerMode(ScreenSharePickerMode),
     SetTelemetryEnabled(bool),
-    CreateRoomResult(Result<Vec<socket_lib::CoreParticipantState>, String>),
+    CreateRoomResult(
+        CallId,
+        Result<Vec<socket_lib::CoreParticipantState>, String>,
+    ),
     ExitRequested,
 }
 
@@ -3385,7 +3450,7 @@ impl RenderEventLoop {
                     Message::CallStart(call_start_message) => {
                         UserEvent::CallStart(call_start_message, request_id)
                     }
-                    Message::CallEnd => UserEvent::CallEnd,
+                    Message::CallEnd(call_id) => UserEvent::CallEnd(call_id),
                     Message::StartScreenShare(screen_share_message) => {
                         UserEvent::ScreenShare(screen_share_message)
                     }
@@ -3418,7 +3483,7 @@ impl RenderEventLoop {
                         from_socket: true,
                         request_id,
                     },
-                    Message::StopCamera => UserEvent::StopCamera,
+                    Message::StopCamera(call_id) => UserEvent::StopCamera(call_id),
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {

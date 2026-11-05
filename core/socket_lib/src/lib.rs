@@ -16,6 +16,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::net::{TcpListener, TcpStream};
 
 pub type RequestId = u64;
+pub type CallId = String;
+pub mod call;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize)]
@@ -125,6 +127,7 @@ pub struct ScreenShareMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CallStartMessage {
+    pub call_id: CallId,
     pub audio_token: String,
     pub video_token: String,
     pub audio_device_name: String,
@@ -167,6 +170,7 @@ pub struct CameraDevice {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CameraStartMessage {
+    pub call_id: CallId,
     pub device_name: Option<String>,
 }
 
@@ -221,7 +225,7 @@ pub enum Message {
     GetAvailableContent,
     CallStart(CallStartMessage),
     CallStartResult(Result<(), String>),
-    CallEnd,
+    CallEnd(Option<CallId>),
     StartScreenShare(ScreenShareMessage),
     StartScreenShareResult(Result<(), String>),
     StopScreenshare,
@@ -241,7 +245,7 @@ pub enum Message {
     CameraList(Vec<CameraDevice>),
     StartCamera(CameraStartMessage),
     StartCameraResult(Result<(), String>),
-    StopCamera,
+    StopCamera(CallId),
     CameraFailed(String),
     OpenCamera,
     OpenScreensharing,
@@ -255,8 +259,11 @@ pub enum Message {
     // Core → Tauri event forwarding
     ParticipantsSnapshot(Vec<CoreParticipantState>),
     RoleChange(CoreRoleEvent),
-    CallEnded, // When call ends from a participant's side in Camera or Screen sharing window.
-    RoomConnectionFailed(String),
+    CallEnded(CallId), // When call ends from a participant's side in Camera or Screen sharing window.
+    RoomConnectionFailed {
+        call_id: CallId,
+        reason: String,
+    },
     /// App Veil could not be initialized; protected apps may be visible while sharing.
     AppVeilFailed(String),
     ControllerDrawPersistChanged(bool),
@@ -748,6 +755,7 @@ mod tests {
                 .unwrap();
             client_sender
                 .send(Message::StartCamera(CameraStartMessage {
+                    call_id: "camera-test".into(),
                     device_name: None,
                 }))
                 .unwrap();
@@ -760,9 +768,39 @@ mod tests {
                 .events
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap();
-            assert!(matches!(start, Message::StartCamera(_)));
+            assert!(
+                matches!(start, Message::StartCamera(message) if message.call_id == "camera-test")
+            );
+            client_sender
+                .send(Message::StopCamera("camera-test".into()))
+                .unwrap();
+            assert!(
+                matches!(server_events.events.recv_timeout(Duration::from_secs(5)).unwrap(), Message::StopCamera(call_id) if call_id == "camera-test")
+            );
         }
         assert!(server_events.responses.try_recv().is_err());
+    }
+
+    #[test]
+    fn lifecycle_events_preserve_call_identity() {
+        let ((server, server_socket), (client, client_socket)) = test_pair();
+        client.send(Message::CallEnd(Some("A".into()))).unwrap();
+        assert!(
+            matches!(server_socket.events.recv_timeout(Duration::from_secs(5)).unwrap(), Message::CallEnd(Some(id)) if id == "A")
+        );
+        server.send(Message::CallEnded("A".into())).unwrap();
+        server
+            .send(Message::RoomConnectionFailed {
+                call_id: "B".into(),
+                reason: "failed".into(),
+            })
+            .unwrap();
+        assert!(
+            matches!(client_socket.events.recv_timeout(Duration::from_secs(5)).unwrap(), Message::CallEnded(id) if id == "A")
+        );
+        assert!(
+            matches!(client_socket.events.recv_timeout(Duration::from_secs(5)).unwrap(), Message::RoomConnectionFailed { call_id, reason } if call_id == "B" && reason == "failed")
+        );
     }
 
     #[test]
@@ -777,6 +815,7 @@ mod tests {
             .unwrap();
         client_sender
             .send(Message::CallStart(CallStartMessage {
+                call_id: "socket-test-call".into(),
                 audio_token: "test-audio-token".to_string(),
                 video_token: "test-video-token".to_string(),
                 audio_device_name: String::new(),
@@ -784,7 +823,7 @@ mod tests {
                 start_camera_on_call: None,
             }))
             .unwrap();
-        client_sender.send(Message::CallEnd).unwrap();
+        client_sender.send(Message::CallEnd(None)).unwrap();
         client_sender
             .send(Message::CallStartResult(Ok(())))
             .unwrap();
@@ -814,7 +853,7 @@ mod tests {
             .events
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        assert!(matches!(msg6, Message::CallEnd));
+        assert!(matches!(msg6, Message::CallEnd(None)));
 
         // Responses: CallStartResult
         let msg7 = server_events

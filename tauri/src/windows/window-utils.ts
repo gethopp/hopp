@@ -1,6 +1,7 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import useStore from "@/store/store";
 const isTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
 export let appVersion: null | string = null;
@@ -70,14 +71,20 @@ const closeScreenShareWindow = async () => {
   }
 };
 
-const resetCoreProcess = async () => {
-  await invoke("reset_core_process");
+const resetCoreProcess = async (callId: string) => {
+  await invoke("reset_core_process", { callId });
 };
 
-const endCallCleanup = async () => {
-  await resetCoreProcess();
-  await closeScreenShareWindow();
-  await closeCameraWindow();
+const endCallCleanup = async (callId: string) => {
+  await resetCoreProcess(callId);
+  for (const label of ["screenshare", "camera"]) {
+    const current = useStore.getState().callTokens;
+    if (current && current.callId !== callId) return;
+    const window = await WebviewWindow.getByLabel(label);
+    const latest = useStore.getState().callTokens;
+    if (latest && latest.callId !== callId) return;
+    if (window) await window.close();
+  }
 };
 
 const getTokenParam = (param: string) => {
@@ -186,8 +193,14 @@ const setSentryMetadata = async (userId: string) => {
   return await invoke("set_sentry_metadata", { userId, appVersion });
 };
 
-const callStarted = async (audioToken: string, videoToken: string) => {
-  return await invoke("call_started", { audioToken, videoToken });
+const callStarted = async (callId: string, audioToken: string, videoToken: string) => {
+  if (useStore.getState().callTokens?.callId !== callId) {
+    throw new Error("Call ended before startup");
+  }
+  await invoke("call_started", { callId, audioToken, videoToken });
+  if (useStore.getState().callTokens?.callId !== callId) {
+    throw new Error("Call ended during startup");
+  }
 };
 
 /**

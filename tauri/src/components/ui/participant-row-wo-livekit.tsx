@@ -119,8 +119,10 @@ export const ParticipantRow = (props: {
 
       sounds.callAccepted.play();
       const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+      const callId = crypto.randomUUID();
       setCallTokens({
         ...tokens,
+        callId,
         isRoomCall: true,
         timeStarted: new Date(),
         hasAudioEnabled: startMic,
@@ -134,8 +136,10 @@ export const ParticipantRow = (props: {
       });
 
       try {
-        await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
+        await tauriUtils.callStarted(callId, tokens.audioToken, tokens.videoToken);
       } catch {
+        tauriUtils.endCallCleanup(callId);
+        if (useStore.getState().callTokens?.callId !== callId) return;
         setCallTokens(null);
         toast.error("Failed to start call");
         return;
@@ -289,8 +293,10 @@ export const ParticipantRow = (props: {
           sounds.callAccepted.play();
           tauriUtils.showWindow("main");
           const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+          const callId = crypto.randomUUID();
           setCallTokens({
             ...data.payload,
+            callId,
             timeStarted: new Date(),
             hasAudioEnabled: startMic,
             hasCameraEnabled: startCamera,
@@ -301,8 +307,10 @@ export const ParticipantRow = (props: {
             micLevel: 0,
           });
           try {
-            await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
+            await tauriUtils.callStarted(callId, data.payload.audioToken, data.payload.videoToken);
           } catch {
+            tauriUtils.endCallCleanup(callId);
+            if (useStore.getState().callTokens?.callId !== callId) return;
             setCallTokens(null);
           }
           break;

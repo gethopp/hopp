@@ -5,6 +5,7 @@ use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct CallShortcuts {
+    call_id: socket_lib::CallId,
     mic: String,
     camera: String,
     screenshare: String,
@@ -22,16 +23,21 @@ pub fn refresh_call_shortcuts(app: &tauri::AppHandle, data: MutexGuard<'_, AppDa
         app.run_on_main_thread(move || {
             let state = app_on_main.state::<Mutex<AppData>>();
             let data = state.lock().unwrap();
-            let shortcuts = data.call_active.then(|| {
-                let mut settings = data.app_state.user_settings();
-                settings.resolve_shortcuts();
-                CallShortcuts {
-                    mic: settings.shortcut_toggle_mic.unwrap_or_default(),
-                    camera: settings.shortcut_toggle_camera.unwrap_or_default(),
-                    screenshare: settings.shortcut_toggle_screenshare.unwrap_or_default(),
-                    end_call: settings.shortcut_end_call.unwrap_or_default(),
-                }
-            });
+            let shortcuts = data
+                .current_call_id
+                .as_ref()
+                .filter(|_| data.call_active)
+                .map(|call_id| {
+                    let mut settings = data.app_state.user_settings();
+                    settings.resolve_shortcuts();
+                    CallShortcuts {
+                        call_id: call_id.clone(),
+                        mic: settings.shortcut_toggle_mic.unwrap_or_default(),
+                        camera: settings.shortcut_toggle_camera.unwrap_or_default(),
+                        screenshare: settings.shortcut_toggle_screenshare.unwrap_or_default(),
+                        end_call: settings.shortcut_end_call.unwrap_or_default(),
+                    }
+                });
             // Shortcut callbacks acquire AppData while holding the plugin's own lock.
             after_unlock(data, || {
                 unregister_call_shortcuts(&app_on_main);
@@ -104,13 +110,14 @@ fn register_call_shortcuts(app: &tauri::AppHandle, shortcuts: CallShortcuts) {
         );
     }
 
+    let camera_call_id = shortcuts.call_id.clone();
     if let Err(e) =
         app.global_shortcut()
-            .on_shortcut(shortcuts.camera.as_str(), |app, _sc, event| {
+            .on_shortcut(shortcuts.camera.as_str(), move |app, _sc, event| {
                 if event.state() != ShortcutState::Pressed {
                     return;
                 }
-                handle_camera(app);
+                handle_camera(app, &camera_call_id);
             })
     {
         log::error!(
@@ -135,15 +142,15 @@ fn register_call_shortcuts(app: &tauri::AppHandle, shortcuts: CallShortcuts) {
     }
 
     if !shortcuts.end_call.is_empty() {
-        if let Err(e) =
-            app.global_shortcut()
-                .on_shortcut(shortcuts.end_call.as_str(), |app, _sc, event| {
-                    if event.state() != ShortcutState::Pressed {
-                        return;
-                    }
-                    handle_end_call(app);
-                })
-        {
+        if let Err(e) = app.global_shortcut().on_shortcut(
+            shortcuts.end_call.as_str(),
+            move |app, _sc, event| {
+                if event.state() != ShortcutState::Pressed {
+                    return;
+                }
+                handle_end_call(app, &shortcuts.call_id);
+            },
+        ) {
             log::error!(
                 "register_call_shortcuts: failed to register end_call shortcut '{}': {e}",
                 shortcuts.end_call
@@ -166,28 +173,37 @@ fn handle_mic(app: &tauri::AppHandle) {
     }
 }
 
-fn handle_camera(app: &tauri::AppHandle) {
+fn handle_camera(app: &tauri::AppHandle, call_id: &str) {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
+    if data.current_call_id.as_deref() != Some(call_id) {
+        return;
+    }
     if data.is_camera_on {
-        if let Err(e) = data.sender.send(Message::StopCamera) {
+        if let Err(e) = data.sender.send(Message::StopCamera(call_id.to_string())) {
             log::error!("handle_camera shortcut (stop): {e}");
         }
     } else {
         let device_name = data.app_state.last_used_camera();
-        if let Err(e) = data
-            .sender
-            .send(Message::StartCamera(CameraStartMessage { device_name }))
-        {
+        if let Err(e) = data.sender.send(Message::StartCamera(CameraStartMessage {
+            call_id: call_id.to_string(),
+            device_name,
+        })) {
             log::error!("handle_camera shortcut (start): {e}");
         }
     }
 }
 
-fn handle_end_call(app: &tauri::AppHandle) {
+fn handle_end_call(app: &tauri::AppHandle, call_id: &str) {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd) {
+    if data.current_call_id.as_deref() != Some(call_id) {
+        return;
+    }
+    if let Err(e) = data
+        .sender
+        .send(Message::CallEnd(Some(call_id.to_string())))
+    {
         log::error!("handle_end_call shortcut: {e}");
     }
 }

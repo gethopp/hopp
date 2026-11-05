@@ -89,6 +89,9 @@ pub struct AppData {
     /// Whether a call is currently active.
     pub call_active: bool,
 
+    /// Identifies pending and active calls so stale lifecycle events cannot clear a new call.
+    pub current_call_id: Option<socket_lib::CallId>,
+
     /// Whether the local camera is currently on (pushed from frontend snapshots).
     pub is_camera_on: bool,
 
@@ -131,6 +134,7 @@ impl AppData {
             suppress_hide_on_call_end,
             drawing_enabled: false,
             call_active: false,
+            current_call_id: None,
             is_camera_on: false,
             is_screensharing: false,
             #[cfg(target_os = "macos")]

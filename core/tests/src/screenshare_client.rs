@@ -27,17 +27,19 @@ fn screen_id() -> u32 {
 
 /// Sends a CallStart message with a token and waits for the result.
 pub fn call_start(sender: &SocketSender, event_socket: &EventSocket) -> io::Result<()> {
-    call_start_with_name(sender, event_socket, "Test Screenshare")
+    call_start_with_name(sender, event_socket, "Test Screenshare").map(|_| ())
 }
 
 pub fn call_start_with_name(
     sender: &SocketSender,
     event_socket: &EventSocket,
     name: &str,
-) -> io::Result<()> {
+) -> io::Result<socket_lib::CallId> {
     let audio_token = livekit_utils::generate_token(&format!("{name}:audio"));
     let video_token = livekit_utils::generate_token(&format!("{name}:video"));
+    let call_id = format!("test-{}", rand::random::<u64>());
     sender.send(Message::CallStart(CallStartMessage {
+        call_id: call_id.clone(),
         audio_token,
         video_token,
         audio_device_name: String::new(),
@@ -45,7 +47,7 @@ pub fn call_start_with_name(
         start_camera_on_call: None,
     }))?;
     match event_socket.responses.recv_timeout(Duration::from_secs(10)) {
-        Ok(Message::CallStartResult(Ok(()))) => Ok(()),
+        Ok(Message::CallStartResult(Ok(()))) => Ok(call_id),
         Ok(Message::CallStartResult(Err(e))) => {
             Err(io::Error::other(format!("CallStart failed: {e}")))
         }
@@ -60,7 +62,7 @@ pub fn call_start_with_name(
 
 /// Sends a CallEnd message.
 pub fn call_end(sender: &SocketSender) -> io::Result<()> {
-    sender.send(Message::CallEnd)
+    sender.send(Message::CallEnd(None))
 }
 
 /// Sends a request to start screen sharing.

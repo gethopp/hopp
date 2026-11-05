@@ -26,6 +26,7 @@ import toast from "react-hot-toast";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Constants } from "@/constants";
 import { useEndCall } from "@/lib/hooks";
+import { listenForCoreCallEnd, listenForCoreConnectionFailure } from "@/lib/core-call-events";
 import { typedInvoke } from "@/core_payloads";
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -78,23 +79,15 @@ export function CallCenter() {
   }, [callTokens?.role, userSettings]);
 
   useEffect(() => {
-    const unlisten = listen("core_call_ended", () => {
-      console.log("core_call_ended event received");
-      const { callTokens } = useStore.getState();
-      if (!callTokens) return;
-      handleEndCallRef.current();
-    });
+    const unlisten = listenForCoreCallEnd((callId) => handleEndCallRef.current(callId));
     return () => {
       unlisten.then((fn) => fn());
     };
   }, []);
 
   useEffect(() => {
-    const unlisten = listen("core_room_connection_failed", () => {
-      console.log("core_call_ended event received");
-      const { callTokens } = useStore.getState();
-      if (!callTokens) return;
-      handleEndCallRef.current();
+    const unlisten = listenForCoreConnectionFailure((callId) => {
+      handleEndCallRef.current(callId);
       toast.error("Failed to establish connection");
     });
     return () => {
@@ -271,7 +264,7 @@ export function CallCenter() {
                   <Button
                     className="w-full border-red-500 text-red-600 flex flex-row gap-2"
                     variant="gradient-white"
-                    onClick={handleEndCall}
+                    onClick={() => handleEndCall()}
                   >
                     <HiOutlinePhoneXMark className="size-4" />
                     End call
@@ -776,6 +769,7 @@ function ScreenShareIcon({ callTokens, shortcut }: { callTokens: CallState | nul
 function CameraIcon({ shortcut }: { shortcut?: string }) {
   const { updateCallTokens, callTokens } = useStore();
   const cameraEnabled = callTokens?.hasCameraEnabled || false;
+  const callId = callTokens?.callId;
 
   const { data: cameraDevices = [], refetch: refetchCameras } = useQuery({
     queryKey: ["list_webcams"],
@@ -826,13 +820,15 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
   }, []);
 
   const handleCameraToggle = useCallback(async () => {
+    if (!callId || useStore.getState().callTokens?.callId !== callId) return;
     const newEnabled = !cameraEnabled;
     updateCallTokens({ hasCameraEnabled: newEnabled });
 
     if (newEnabled) {
       try {
-        await typedInvoke("start_camera", { deviceName: activeCamera || undefined });
+        await typedInvoke("start_camera", { callId, deviceName: activeCamera || undefined });
       } catch (error) {
+        if (useStore.getState().callTokens?.callId !== callId) return;
         console.error("Failed to start camera:", error);
         toast.error("Failed to initialize camera", { duration: 2500 });
         updateCallTokens({ hasCameraEnabled: false });
@@ -840,23 +836,25 @@ function CameraIcon({ shortcut }: { shortcut?: string }) {
     } else {
       // TODO(@konsalex): This is an optimistic update, not sure how I feel about this.
       // We may need to make this sync somehow.
-      typedInvoke("stop_camera");
+      typedInvoke("stop_camera", { callId });
     }
-  }, [cameraEnabled, updateCallTokens, activeCamera]);
+  }, [callId, cameraEnabled, updateCallTokens, activeCamera]);
 
   const handleCameraChange = useCallback(
     async (deviceName: string) => {
+      if (!callId || useStore.getState().callTokens?.callId !== callId) return;
       setActiveCamera(deviceName);
       tauriUtils.setLastUsedCamera(deviceName);
       if (cameraEnabled) {
         try {
-          await typedInvoke("start_camera", { deviceName });
+          await typedInvoke("start_camera", { callId, deviceName });
         } catch (error) {
+          if (useStore.getState().callTokens?.callId !== callId) return;
           console.error("Failed to switch camera:", error);
         }
       }
     },
-    [cameraEnabled],
+    [callId, cameraEnabled],
   );
 
   const handleDropdownOpenChange = useCallback(

@@ -166,10 +166,10 @@ fn stop_sound(app: tauri::AppHandle, sound_name: String) {
 }
 
 #[tauri::command(async)]
-fn reset_core_process(app: tauri::AppHandle) {
+fn reset_core_process(app: tauri::AppHandle, call_id: socket_lib::CallId) {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd) {
+    if let Err(e) = data.sender.send(Message::CallEnd(Some(call_id))) {
         log::error!("reset_core_process: failed to send message: {e:?}");
     }
 }
@@ -440,7 +440,7 @@ fn quit_app(app: tauri::AppHandle) {
     log::info!("quit_app");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd) {
+    if let Err(e) = data.sender.send(Message::CallEnd(None)) {
         log::error!("quit_app: failed to send CallEnd: {e:?}");
     }
     drop(data);
@@ -497,13 +497,19 @@ fn set_sentry_metadata(app: tauri::AppHandle, user_id: String, app_version: Stri
 #[tauri::command(async)]
 fn call_started(
     app: tauri::AppHandle,
+    call_id: socket_lib::CallId,
     audio_token: String,
     video_token: String,
 ) -> Result<(), String> {
-    log::info!("call_started");
+    log::info!("call_started: {call_id}");
+    if call_id.is_empty() {
+        return Err("Call ID must not be empty".to_string());
+    }
     let data = app.state::<Mutex<AppData>>();
     #[allow(unused_mut)]
     let mut data = data.lock().unwrap();
+    data.current_call_id = Some(call_id.clone());
+    data.call_active = false;
     let user_settings = data.app_state.user_settings();
     #[cfg(target_os = "macos")]
     {
@@ -544,6 +550,7 @@ fn call_started(
         match data
             .sender
             .send_request(Message::CallStart(socket_lib::CallStartMessage {
+                call_id,
                 audio_token: audio_token.clone(),
                 video_token: video_token.clone(),
                 audio_device_name,
@@ -903,13 +910,21 @@ fn set_screen_share_picker_mode(app: tauri::AppHandle, mode: ScreenSharePickerMo
 }
 
 #[tauri::command(async)]
-fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
+fn start_camera(
+    app: tauri::AppHandle,
+    call_id: socket_lib::CallId,
+    device_name: Option<String>,
+) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
+    if data.current_call_id.as_ref() != Some(&call_id) {
+        return Err("Call is no longer active".to_string());
+    }
     let request_id =
         match data
             .sender
             .send_request(Message::StartCamera(socket_lib::CameraStartMessage {
+                call_id,
                 device_name,
             })) {
             Ok(request_id) => request_id,
@@ -931,10 +946,13 @@ fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<()
 }
 
 #[tauri::command(async)]
-fn stop_camera(app: tauri::AppHandle) {
+fn stop_camera(app: tauri::AppHandle, call_id: socket_lib::CallId) {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::StopCamera) {
+    if data.current_call_id.as_ref() != Some(&call_id) {
+        return;
+    }
+    if let Err(e) = data.sender.send(Message::StopCamera(call_id)) {
         log::error!("stop_camera: failed to send: {e:?}");
     }
 }
@@ -1082,13 +1100,17 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command(async)]
-fn end_call(app: tauri::AppHandle) {
+fn end_call(app: tauri::AppHandle, call_id: socket_lib::CallId) {
     let state = app.state::<Mutex<AppData>>();
     #[allow(unused_mut)]
     let mut data = state.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd) {
+    if data.current_call_id.as_ref() != Some(&call_id) {
+        return;
+    }
+    if let Err(e) = data.sender.send(Message::CallEnd(Some(call_id))) {
         log::error!("end_call: failed to send: {e:?}");
     }
+    data.current_call_id = None;
     data.call_active = false;
     data.is_camera_on = false;
     data.is_screensharing = false;
@@ -1150,27 +1172,33 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to emit camera failed: {e:?}");
                 }
             }
-            Message::CallEnded => {
-                log::info!("forward_core_events: call ended");
+            Message::CallEnded(call_id) => {
+                log::info!("forward_core_events: call ended: {call_id}");
                 let data = app.state::<Mutex<AppData>>();
                 let mut data = data.lock().unwrap();
-                data.call_active = false;
-                data.is_camera_on = false;
-                data.is_screensharing = false;
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    data.sleep_prevention.disable();
-                    data.activation_policy_regular = false;
-                    let suppress = data.suppress_hide_on_call_end.clone();
-                    suppress.store(true, Ordering::Relaxed);
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        suppress.store(false, Ordering::Relaxed);
-                    });
+                if data.current_call_id.as_ref() == Some(&call_id) {
+                    data.current_call_id = None;
+                    data.call_active = false;
+                    data.is_camera_on = false;
+                    data.is_screensharing = false;
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                        data.sleep_prevention.disable();
+                        data.activation_policy_regular = false;
+                        let suppress = data.suppress_hide_on_call_end.clone();
+                        suppress.store(true, Ordering::Relaxed);
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            suppress.store(false, Ordering::Relaxed);
+                        });
+                    }
+                    shortcuts::refresh_call_shortcuts(&app, data);
+                } else {
+                    drop(data);
                 }
-                shortcuts::refresh_call_shortcuts(&app, data);
-                if let Err(e) = app.emit("core_call_ended", &()) {
+                // Matching cleanup waiters still need acknowledgements for older calls.
+                if let Err(e) = app.emit("core_call_ended", &call_id) {
                     log::error!("forward_core_events: failed to emit call ended: {e:?}");
                 }
             }
@@ -1186,9 +1214,19 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 let mut data = data.lock().unwrap();
                 data.app_state.set_last_mode(mode);
             }
-            Message::RoomConnectionFailed(reason) => {
-                log::error!("forward_core_events: room connection failed: {reason}");
-                if let Err(e) = app.emit("core_room_connection_failed", &reason) {
+            Message::RoomConnectionFailed { call_id, reason } => {
+                let data = app.state::<Mutex<AppData>>();
+                if data.lock().unwrap().current_call_id.as_ref() != Some(&call_id) {
+                    continue;
+                }
+                log::error!("forward_core_events: room connection failed for {call_id}: {reason}");
+                if let Err(e) = app.emit(
+                    "core_room_connection_failed",
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "reason": reason,
+                    }),
+                ) {
                     log::error!(
                         "forward_core_events: failed to emit room connection failed: {e:?}"
                     );
@@ -1256,7 +1294,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 log::info!("forward_core_events: exit requested from core");
                 let data = app.state::<Mutex<AppData>>();
                 let data = data.lock().unwrap();
-                if let Err(e) = data.sender.send(Message::CallEnd) {
+                if let Err(e) = data.sender.send(Message::CallEnd(None)) {
                     log::error!("forward_core_events: failed to send CallEnd: {e:?}");
                 }
                 drop(data);
