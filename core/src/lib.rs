@@ -1448,7 +1448,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::debug!("user_event: GetAvailableContent -> screen selection");
                 self.start_screen_selection(event_loop);
             }
-            UserEvent::CallStart(call_start) => {
+            UserEvent::CallStart(call_start, request_id) => {
                 log::info!("user_event: CallStart");
                 let start_camera_on_call = call_start.start_camera_on_call.unwrap_or(false);
                 if let Err(e) = self.audio_player.start() {
@@ -1456,7 +1456,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     sentry_utils::upload_logs_event(format!("Failed to start audio player: {e}"));
                     if let Err(e) = self
                         .socket
-                        .send(Message::CallStartResult(Err(e.to_string())))
+                        .reply(request_id, Message::CallStartResult(Err(e.to_string())))
                     {
                         error!("user_event: Error sending CallStartResult: {e:?}");
                     }
@@ -1479,7 +1479,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     Err(e) => {
                         log::error!("user_event: CallStart audio capture failed: {e}");
                         self.audio_player.stop();
-                        if let Err(send_err) = self.socket.send(Message::CallStartResult(Err(e))) {
+                        if let Err(send_err) = self
+                            .socket
+                            .reply(request_id, Message::CallStartResult(Err(e)))
+                        {
                             error!("user_event: Error sending CallStartResult: {send_err:?}");
                         }
                         return;
@@ -1500,7 +1503,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         start_camera_on_call,
                     }) {
                         Ok(_) => {
-                            if let Err(e) = self.socket.send(Message::CallStartResult(Ok(()))) {
+                            if let Err(e) = self
+                                .socket
+                                .reply(request_id, Message::CallStartResult(Ok(())))
+                            {
                                 error!("user_event: Error sending CallStartResult ack: {e:?}");
                             }
                             self.start_camera_on_call = start_camera_on_call;
@@ -1517,7 +1523,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             self.audio_player.stop();
                             if let Err(e) = self
                                 .socket
-                                .send(Message::CallStartResult(Err(e.to_string())))
+                                .reply(request_id, Message::CallStartResult(Err(e.to_string())))
                             {
                                 error!("user_event: Error sending CallStartResult: {e:?}");
                             }
@@ -1527,9 +1533,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     log::error!("user_event: Room service not found for CallStart");
                     self.stop_mic();
                     self.audio_player.stop();
-                    if let Err(e) = self.socket.send(Message::CallStartResult(Err(
-                        ServerError::RoomServiceNotFound.to_string(),
-                    ))) {
+                    if let Err(e) = self.socket.reply(
+                        request_id,
+                        Message::CallStartResult(Err(ServerError::RoomServiceNotFound.to_string())),
+                    ) {
                         error!("user_event: Error sending CallStartResult: {e:?}");
                     }
                 }
@@ -1559,6 +1566,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                             let res = self.event_loop_proxy.send_event(UserEvent::StartCamera {
                                 msg: CameraStartMessage { device_name: None },
                                 from_socket: false,
+                                request_id: None,
                             });
                             if res.is_err() {
                                 log::error!("user_event: CreateRoomResult failed to queue StartCamera: {res:?}");
@@ -2110,14 +2118,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
-            UserEvent::ListAudioDevices => {
+            UserEvent::ListAudioDevices(request_id) => {
                 log::debug!("user_event: ListAudioDevices");
                 let devices = self.audio_capturer.list_sources();
-                if let Err(e) = self.socket.send(Message::AudioDeviceList(devices)) {
+                if let Err(e) = self
+                    .socket
+                    .reply(request_id, Message::AudioDeviceList(devices))
+                {
                     error!("user_event: Error sending audio device list: {e:?}");
                 }
             }
-            UserEvent::StartAudioCapture { msg, from_socket } => {
+            UserEvent::StartAudioCapture {
+                msg,
+                from_socket,
+                request_id,
+            } => {
                 log::info!(
                     "user_event: StartAudioCapture device_name={}",
                     msg.device_name
@@ -2148,7 +2163,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
 
                 if from_socket {
-                    if let Err(e) = self.socket.send(Message::StartAudioCaptureResult(result)) {
+                    if let Err(e) = self
+                        .socket
+                        .reply(request_id, Message::StartAudioCaptureResult(result))
+                    {
                         error!("user_event: Error sending StartAudioCaptureResult: {e:?}");
                     }
                 }
@@ -2204,14 +2222,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     .unwrap()
                     .set_preferred_device_name(name);
             }
-            UserEvent::ListCameras => {
+            UserEvent::ListCameras(request_id) => {
                 log::debug!("user_event: ListCameras");
                 let devices = CameraCapturer::list_devices();
-                if let Err(e) = self.socket.send(Message::CameraList(devices)) {
+                if let Err(e) = self.socket.reply(request_id, Message::CameraList(devices)) {
                     error!("user_event: Error sending camera list: {e:?}");
                 }
             }
-            UserEvent::StartCamera { msg, from_socket } => {
+            UserEvent::StartCamera {
+                msg,
+                from_socket,
+                request_id,
+            } => {
                 let device_name = self
                     .camera_capturer
                     .lock()
@@ -2224,9 +2246,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     Some(rs) => rs,
                     None => {
                         if from_socket {
-                            let _ = self.socket.send(Message::StartCameraResult(Err(
-                                "Room service not found".to_string(),
-                            )));
+                            let _ = self.socket.reply(
+                                request_id,
+                                Message::StartCameraResult(Err(
+                                    "Room service not found".to_string()
+                                )),
+                            );
                         }
                         return;
                     }
@@ -2237,9 +2262,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     None => {
                         log::error!("user_event: StartCamera: no camera buffer source available");
                         if from_socket {
-                            let _ = self.socket.send(Message::StartCameraResult(Err(
-                                "Camera not ready".to_string(),
-                            )));
+                            let _ = self.socket.reply(
+                                request_id,
+                                Message::StartCameraResult(Err("Camera not ready".to_string())),
+                            );
                         }
                         return;
                     }
@@ -2270,7 +2296,9 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         cam.show_error_toast("Failed to start camera");
                     }
                     if from_socket {
-                        if let Err(e) = self.socket.send(Message::StartCameraResult(Err(e.clone())))
+                        if let Err(e) = self
+                            .socket
+                            .reply(request_id, Message::StartCameraResult(Err(e.clone())))
                         {
                             error!("user_event: Error sending StartCameraResult: {e:?}");
                         }
@@ -2281,7 +2309,10 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
 
                 // Send success result via socket
                 if from_socket {
-                    if let Err(e) = self.socket.send(Message::StartCameraResult(Ok(()))) {
+                    if let Err(e) = self
+                        .socket
+                        .reply(request_id, Message::StartCameraResult(Ok(())))
+                    {
                         error!("user_event: Error sending StartCameraResult: {e:?}");
                     }
                 }
@@ -2421,7 +2452,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 log::info!("user_event: CloseCameraWindow");
                 self.close_camera_window();
             }
-            UserEvent::BringWindowsToFront => {
+            UserEvent::BringWindowsToFront(request_id) => {
                 log::info!("user_event: BringWindowsToFront");
                 let mut focused = false;
                 if let Some(screen_sharing_window) = &mut self.screensharing_window {
@@ -2438,7 +2469,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 if let Err(e) = self
                     .socket
-                    .send(Message::BringWindowsToFrontResult(focused))
+                    .reply(request_id, Message::BringWindowsToFrontResult(focused))
                 {
                     log::error!("user_event: Error sending BringWindowsToFrontResult: {e:?}");
                 }
@@ -3167,7 +3198,7 @@ pub enum UserEvent {
     GetAvailableContent,
     Terminate,
     HangProtection,
-    CallStart(CallStartMessage),
+    CallStart(CallStartMessage, Option<socket_lib::RequestId>),
     CallEnd,
     ScreenShare(ScreenShareMessage),
     StopScreenShare,
@@ -3201,20 +3232,22 @@ pub enum UserEvent {
     SharerDrawPersistChanged(bool),
     ControllerDrawPersistChanged(bool),
     LastModeChanged(socket_lib::StoredMode),
-    ListAudioDevices,
+    ListAudioDevices(Option<socket_lib::RequestId>),
     StartAudioCapture {
         msg: socket_lib::AudioCaptureMessage,
         from_socket: bool,
+        request_id: Option<socket_lib::RequestId>,
     },
     StopAudioCapture,
     MuteAudio,
     UnmuteAudio,
     ToggleMic,
-    ListCameras,
+    ListCameras(Option<socket_lib::RequestId>),
     SetPreferredCamera(Option<String>),
     StartCamera {
         msg: CameraStartMessage,
         from_socket: bool,
+        request_id: Option<socket_lib::RequestId>,
     },
     StopCamera,
     OpenCamera,
@@ -3238,7 +3271,7 @@ pub enum UserEvent {
     CloseScreenShareWindow,
     CloseCameraWindow,
     OpenStatsWindow,
-    BringWindowsToFront,
+    BringWindowsToFront(Option<socket_lib::RequestId>),
     SharerControlEnabled(bool),
     DefaultOutputDeviceChanged,
     DefaultInputDeviceChanged,
@@ -3340,10 +3373,17 @@ impl RenderEventLoop {
                             std::process::exit(PROCESS_EXIT_CODE_ERROR);
                         }
                     };
+                let (request_id, message) = match message {
+                    Message::Request {
+                        request_id,
+                        message,
+                    } => (Some(request_id), *message),
+                    message => (None, message),
+                };
                 let user_event = match message {
                     Message::GetAvailableContent => UserEvent::GetAvailableContent,
                     Message::CallStart(call_start_message) => {
-                        UserEvent::CallStart(call_start_message)
+                        UserEvent::CallStart(call_start_message, request_id)
                     }
                     Message::CallEnd => UserEvent::CallEnd,
                     Message::StartScreenShare(screen_share_message) => {
@@ -3361,20 +3401,22 @@ impl RenderEventLoop {
                         UserEvent::ControllerDrawPersistChanged(persist)
                     }
                     Message::LastModeChanged(mode) => UserEvent::LastModeChanged(mode),
-                    Message::ListAudioDevices => UserEvent::ListAudioDevices,
+                    Message::ListAudioDevices => UserEvent::ListAudioDevices(request_id),
                     Message::StartAudioCapture(msg) => UserEvent::StartAudioCapture {
                         msg,
                         from_socket: true,
+                        request_id,
                     },
                     Message::StopAudioCapture => UserEvent::StopAudioCapture,
                     Message::MuteAudio => UserEvent::MuteAudio,
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     Message::ToggleMic => UserEvent::ToggleMic,
-                    Message::ListCameras => UserEvent::ListCameras,
+                    Message::ListCameras => UserEvent::ListCameras(request_id),
                     Message::SetPreferredCamera(name) => UserEvent::SetPreferredCamera(name),
                     Message::StartCamera(msg) => UserEvent::StartCamera {
                         msg,
                         from_socket: true,
+                        request_id,
                     },
                     Message::StopCamera => UserEvent::StopCamera,
                     Message::OpenCamera => UserEvent::OpenCamera,
@@ -3389,7 +3431,7 @@ impl RenderEventLoop {
                     },
                     Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
                     Message::OpenStatsWindow => UserEvent::OpenStatsWindow,
-                    Message::BringWindowsToFront => UserEvent::BringWindowsToFront,
+                    Message::BringWindowsToFront => UserEvent::BringWindowsToFront(request_id),
                     Message::SetNoiseCancellation(enabled) => {
                         UserEvent::SetNoiseCancellation(enabled)
                     }

@@ -77,25 +77,27 @@ impl AppActivationObserver {
                         bringing_to_front.store(true, Ordering::Relaxed);
                         let data = app_handle.state::<Mutex<AppData>>();
                         let data = data.lock().unwrap();
-                        if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
-                            log::error!(
+                        match data.sender.send_request(Message::BringWindowsToFront) {
+                            Err(e) => log::error!(
                                 "app_activation: failed to send BringWindowsToFront: {e:?}"
-                            );
-                        } else {
-                            let focused = crate::recv_expected_response(
-                                &data.event_socket,
-                                |msg| match msg {
-                                    Message::BringWindowsToFrontResult(f) => Ok(f),
-                                    other => Err(other),
-                                },
-                            )
-                            .unwrap_or(false);
+                            ),
+                            Ok(request_id) => {
+                                let focused = crate::recv_expected_response(
+                                    &data.event_socket,
+                                    request_id,
+                                    |msg| match msg {
+                                        Message::BringWindowsToFrontResult(f) => Ok(f),
+                                        other => Err(other),
+                                    },
+                                )
+                                .unwrap_or(false);
 
-                            if !focused {
-                                log::info!("app_activation: BringWindowsToFront returned false, showing main window");
-                                if let Some(window) = app_handle.get_webview_window("main") {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
+                                if !focused {
+                                    log::info!("app_activation: BringWindowsToFront returned false, showing main window");
+                                    if let Some(window) = app_handle.get_webview_window("main") {
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
                                 }
                             }
                         }

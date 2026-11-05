@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,6 +14,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 #[cfg(windows)]
 use std::net::{TcpListener, TcpStream};
+
+pub type RequestId = u64;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable, Serialize, Deserialize)]
@@ -207,6 +210,14 @@ pub enum StoredMode {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
+    Request {
+        request_id: RequestId,
+        message: Box<Message>,
+    },
+    Response {
+        request_id: RequestId,
+        message: Box<Message>,
+    },
     GetAvailableContent,
     CallStart(CallStartMessage),
     CallStartResult(Result<(), String>),
@@ -268,7 +279,8 @@ impl Message {
     pub fn is_response(&self) -> bool {
         matches!(
             self,
-            Message::CallStartResult(_)
+            Message::Response { .. }
+                | Message::CallStartResult(_)
                 | Message::AudioDeviceList(_)
                 | Message::StartAudioCaptureResult(_)
                 | Message::CameraList(_)
@@ -288,9 +300,33 @@ type Stream = TcpStream;
 #[derive(Clone)]
 pub struct SocketSender {
     stream: Arc<Mutex<Stream>>,
+    next_request_id: Arc<AtomicU64>,
 }
 
 impl SocketSender {
+    pub fn send_request(&self, message: Message) -> Result<RequestId, std::io::Error> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        self.send(Message::Request {
+            request_id,
+            message: Box::new(message),
+        })?;
+        Ok(request_id)
+    }
+
+    pub fn reply(
+        &self,
+        request_id: Option<RequestId>,
+        message: Message,
+    ) -> Result<(), std::io::Error> {
+        self.send(match request_id {
+            Some(request_id) => Message::Response {
+                request_id,
+                message: Box::new(message),
+            },
+            None => message,
+        })
+    }
+
     pub fn send(&self, message: Message) -> Result<(), std::io::Error> {
         let serialized_message = serde_json::to_string(&message)?;
         let serialized_message = serialized_message.as_bytes();
@@ -396,6 +432,7 @@ fn build_pair(stream: Stream) -> std::io::Result<(SocketSender, EventSocket)> {
 
     let sender = SocketSender {
         stream: Arc::new(Mutex::new(write_stream)),
+        next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
     let event_socket = EventSocket::new(read_stream, shutdown_stream);
@@ -589,6 +626,66 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
         assert!(matches!(msg, Message::GetAvailableContent));
+    }
+
+    #[test]
+    fn requests_from_clones_have_unique_ids_and_replies_preserve_them() {
+        let ((server_sender, server_events), (client_sender, client_events)) = test_pair();
+        let clone = client_sender.clone();
+        let audio_id = client_sender
+            .send_request(Message::ListAudioDevices)
+            .unwrap();
+        let camera_id = clone.send_request(Message::ListCameras).unwrap();
+        assert_ne!(audio_id, camera_id);
+
+        for expected_id in [audio_id, camera_id] {
+            let request = server_events
+                .events
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            match request {
+                Message::Request {
+                    request_id,
+                    message,
+                } => {
+                    assert_eq!(request_id, expected_id);
+                    assert!(matches!(
+                        *message,
+                        Message::ListAudioDevices | Message::ListCameras
+                    ));
+                }
+                other => panic!("expected request, got {other:?}"),
+            }
+        }
+
+        // Replies can arrive in a different order from their requests.
+        for id in [camera_id, audio_id] {
+            server_sender
+                .reply(Some(id), Message::AudioDeviceList(vec![]))
+                .unwrap();
+        }
+        for expected_id in [camera_id, audio_id] {
+            let response = client_events
+                .responses
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            assert!(matches!(
+                response,
+                Message::Response { request_id, message }
+                    if request_id == expected_id && matches!(*message, Message::AudioDeviceList(_))
+            ));
+        }
+
+        server_sender
+            .reply(None, Message::StartCameraResult(Ok(())))
+            .unwrap();
+        assert!(matches!(
+            client_events
+                .responses
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            Message::StartCameraResult(Ok(()))
+        ));
     }
 
     #[test]

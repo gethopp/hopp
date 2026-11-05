@@ -297,6 +297,7 @@ impl CallControlsState {
                 send(UserEvent::StartAudioCapture {
                     msg: AudioCaptureMessage { device_name: name },
                     from_socket: false,
+                    request_id: None,
                 });
             }
             CallControlsMessage::VideoToggle => send(if self.camera_active {
@@ -305,6 +306,7 @@ impl CallControlsState {
                 UserEvent::StartCamera {
                     msg: CameraStartMessage { device_name: None },
                     from_socket: false,
+                    request_id: None,
                 }
             }),
             CallControlsMessage::CameraDropdownToggle => {
@@ -322,6 +324,7 @@ impl CallControlsState {
                         device_name: Some(name),
                     },
                     from_socket: false,
+                    request_id: None,
                 });
             }
             CallControlsMessage::ScreenShare => {

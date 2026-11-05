@@ -139,11 +139,11 @@ impl AppData {
     }
 }
 
-/// Receive a response from core, retrying if a stale response from a
-/// previous timed-out request arrives first. The `extract` closure returns
-/// `Ok(T)` for the expected variant or `Err(Message)` for unexpected ones.
+/// Receive the reply to this request, discarding unrelated or untagged responses.
+/// Callers must serialize waits on this receiver. `extract` validates the reply variant.
 pub fn recv_expected_response<T>(
     event_socket: &EventSocket,
+    request_id: socket_lib::RequestId,
     extract: impl Fn(Message) -> Result<T, Message>,
 ) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
     // TODO: 10 seconds is too much. We should make our calls to be as fast as possible
@@ -154,7 +154,7 @@ pub fn recv_expected_response<T>(
             return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
         }
         match event_socket.responses.recv_timeout(remaining) {
-            Ok(msg) => match extract(msg) {
+            Ok(Message::Response { request_id: id, message }) if id == request_id => match extract(*message) {
                 Ok(val) => return Ok(val),
                 Err(other) => {
                     let t = std::any::type_name::<T>();
@@ -166,8 +166,90 @@ pub fn recv_expected_response<T>(
                     ));
                 }
             },
+            Ok(_) => log::debug!("Ignoring unrelated or untagged core response while waiting for request {request_id}"),
             Err(e) => return Err(e),
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod response_tests {
+    use super::*;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn late_response_does_not_complete_next_request_of_same_type() {
+        let path = std::env::temp_dir().join(format!("hopp-replies-{}.sock", std::process::id()));
+        let socket_path = path.to_str().unwrap().to_string();
+        let core_path = socket_path.clone();
+        let core = std::thread::spawn(move || {
+            let (sender, socket) = socket_lib::listen(&core_path).unwrap();
+            // Hold A's reply until A times out and B has been sent.
+            let mut request_ids = Vec::new();
+            for _ in 0..2 {
+                match socket.events.recv_timeout(Duration::from_secs(30)).unwrap() {
+                    Message::Request {
+                        request_id,
+                        message,
+                    } => {
+                        assert!(matches!(*message, Message::ListAudioDevices));
+                        request_ids.push(request_id);
+                    }
+                    other => panic!("expected a tagged device-list request, got {other:?}"),
+                }
+            }
+            assert_ne!(request_ids[0], request_ids[1]);
+            sender
+                .send(Message::AudioDeviceList(vec![socket_lib::AudioDevice {
+                    name: "unrelated untagged response".into(),
+                    default: true,
+                }]))
+                .unwrap();
+            for (request_id, name) in request_ids
+                .into_iter()
+                .zip(["timed-out request A", "current request B"])
+            {
+                sender
+                    .reply(
+                        Some(request_id),
+                        Message::AudioDeviceList(vec![socket_lib::AudioDevice {
+                            name: name.to_string(),
+                            default: true,
+                        }]),
+                    )
+                    .unwrap();
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (sender, socket) = loop {
+            match socket_lib::connect(&socket_path) {
+                Ok(connection) => break connection,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("could not connect to simulated core: {error}"),
+            }
+        };
+        let extract = |message| match message {
+            Message::AudioDeviceList(devices) => Ok(devices),
+            other => Err(other),
+        };
+
+        let request_a = sender.send_request(Message::ListAudioDevices).unwrap();
+        assert!(matches!(
+            recv_expected_response(&socket, request_a, extract),
+            Err(RecvTimeoutError::Timeout)
+        ));
+
+        let request_b = sender.send_request(Message::ListAudioDevices).unwrap();
+        let devices = recv_expected_response(&socket, request_b, extract).unwrap();
+        core.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            devices[0].name, "current request B",
+            "a late reply to timed-out request A must not satisfy request B"
+        );
     }
 }
 

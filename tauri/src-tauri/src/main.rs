@@ -515,19 +515,21 @@ fn call_started(
     // Resolve preferred → last used → system default → first → "".
     let audio_device_name = {
         let last_used = data.app_state.last_used_mic();
-        let devices: Vec<AudioDevice> = if let Err(e) = data.sender.send(Message::ListAudioDevices)
-        {
-            log::error!("call_started: failed to list audio devices: {e:?}");
-            vec![]
-        } else {
-            match recv_expected_response(&data.event_socket, |msg| match msg {
-                Message::AudioDeviceList(d) => Ok(d),
-                other => Err(other),
-            }) {
-                Ok(d) => d,
-                Err(e) => {
-                    log::error!("call_started: failed to receive audio device list: {e:?}");
-                    vec![]
+        let devices: Vec<AudioDevice> = match data.sender.send_request(Message::ListAudioDevices) {
+            Err(e) => {
+                log::error!("call_started: failed to list audio devices: {e:?}");
+                vec![]
+            }
+            Ok(request_id) => {
+                match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
+                    Message::AudioDeviceList(d) => Ok(d),
+                    other => Err(other),
+                }) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        log::error!("call_started: failed to receive audio device list: {e:?}");
+                        vec![]
+                    }
                 }
             }
         };
@@ -538,20 +540,23 @@ fn call_started(
         )
     };
     log::info!("call_started: resolved audio_device_name={audio_device_name:?}");
-    if let Err(e) = data
-        .sender
-        .send(Message::CallStart(socket_lib::CallStartMessage {
-            audio_token: audio_token.clone(),
-            video_token: video_token.clone(),
-            audio_device_name,
-            start_mic_on_call: Some(user_settings.start_mic_on_call),
-            start_camera_on_call: Some(user_settings.start_camera_on_call),
-        }))
-    {
-        log::error!("call_started: failed to send: {e:?}");
-        return Err("Failed to send message to hopp_core".to_string());
-    }
-    let result = match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id =
+        match data
+            .sender
+            .send_request(Message::CallStart(socket_lib::CallStartMessage {
+                audio_token: audio_token.clone(),
+                video_token: video_token.clone(),
+                audio_device_name,
+                start_mic_on_call: Some(user_settings.start_mic_on_call),
+                start_camera_on_call: Some(user_settings.start_camera_on_call),
+            })) {
+            Ok(request_id) => request_id,
+            Err(e) => {
+                log::error!("call_started: failed to send: {e:?}");
+                return Err("Failed to send message to hopp_core".to_string());
+            }
+        };
+    let result = match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::CallStartResult(r) => Ok(r),
         other => Err(other),
     }) {
@@ -901,16 +906,19 @@ fn set_screen_share_picker_mode(app: tauri::AppHandle, mode: ScreenSharePickerMo
 fn start_camera(app: tauri::AppHandle, device_name: Option<String>) -> Result<(), String> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data
-        .sender
-        .send(Message::StartCamera(socket_lib::CameraStartMessage {
-            device_name,
-        }))
-    {
-        log::error!("start_camera: failed to send: {e:?}");
-        return Err("Failed to send message to hopp_core".to_string());
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id =
+        match data
+            .sender
+            .send_request(Message::StartCamera(socket_lib::CameraStartMessage {
+                device_name,
+            })) {
+            Ok(request_id) => request_id,
+            Err(e) => {
+                log::error!("start_camera: failed to send: {e:?}");
+                return Err("Failed to send message to hopp_core".to_string());
+            }
+        };
+    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::StartCameraResult(r) => Ok(r),
         other => Err(other),
     }) {
@@ -962,11 +970,14 @@ fn close_screenshare_viewer(app: tauri::AppHandle) {
 fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::ListAudioDevices) {
-        log::error!("list_microphones: failed to send: {e:?}");
-        return vec![];
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id = match data.sender.send_request(Message::ListAudioDevices) {
+        Ok(request_id) => request_id,
+        Err(e) => {
+            log::error!("list_microphones: failed to send: {e:?}");
+            return vec![];
+        }
+    };
+    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::AudioDeviceList(d) => Ok(d),
         other => Err(other),
     }) {
@@ -1001,16 +1012,19 @@ fn get_preferred_microphone(app: tauri::AppHandle) -> String {
 fn select_microphone(app: tauri::AppHandle, device_name: String) {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data
-        .sender
-        .send(Message::StartAudioCapture(AudioCaptureMessage {
-            device_name,
-        }))
-    {
-        log::error!("select_microphone: failed to send: {e:?}");
-        return;
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id =
+        match data
+            .sender
+            .send_request(Message::StartAudioCapture(AudioCaptureMessage {
+                device_name,
+            })) {
+            Ok(request_id) => request_id,
+            Err(e) => {
+                log::error!("select_microphone: failed to send: {e:?}");
+                return;
+            }
+        };
+    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::StartAudioCaptureResult(r) => Ok(r),
         other => Err(other),
     }) {
@@ -1024,11 +1038,14 @@ fn select_microphone(app: tauri::AppHandle, device_name: String) {
 fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::ListCameras) {
-        log::error!("list_webcams: failed to send: {e:?}");
-        return vec![];
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id = match data.sender.send_request(Message::ListCameras) {
+        Ok(request_id) => request_id,
+        Err(e) => {
+            log::error!("list_webcams: failed to send: {e:?}");
+            return vec![];
+        }
+    };
+    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::CameraList(d) => Ok(d),
         other => Err(other),
     }) {
@@ -1045,11 +1062,14 @@ fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
     log::info!("bring_windows_to_front");
     let data = app.state::<Mutex<AppData>>();
     let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::BringWindowsToFront) {
-        log::error!("bring_windows_to_front: failed to send: {e:?}");
-        return false;
-    }
-    match recv_expected_response(&data.event_socket, |msg| match msg {
+    let request_id = match data.sender.send_request(Message::BringWindowsToFront) {
+        Ok(request_id) => request_id,
+        Err(e) => {
+            log::error!("bring_windows_to_front: failed to send: {e:?}");
+            return false;
+        }
+    };
+    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
         Message::BringWindowsToFrontResult(f) => Ok(f),
         other => Err(other),
     }) {
