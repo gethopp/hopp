@@ -1,17 +1,94 @@
 use hopp::AppData;
 use socket_lib::{CameraStartMessage, Message};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-pub struct CallShortcuts {
-    pub mic: String,
-    pub camera: String,
-    pub screenshare: String,
-    pub end_call: String,
+struct CallShortcuts {
+    mic: String,
+    camera: String,
+    screenshare: String,
+    end_call: String,
 }
 
-pub fn register_call_shortcuts(app: &tauri::AppHandle, shortcuts: CallShortcuts) {
+fn after_unlock<T, R>(data: MutexGuard<'_, T>, action: impl FnOnce() -> R) -> R {
+    drop(data);
+    action()
+}
+
+pub fn refresh_call_shortcuts(app: &tauri::AppHandle, data: MutexGuard<'_, AppData>) {
+    let app_on_main = app.clone();
+    if let Err(e) = after_unlock(data, || {
+        app.run_on_main_thread(move || {
+            let state = app_on_main.state::<Mutex<AppData>>();
+            let data = state.lock().unwrap();
+            let shortcuts = data.call_active.then(|| {
+                let mut settings = data.app_state.user_settings();
+                settings.resolve_shortcuts();
+                CallShortcuts {
+                    mic: settings.shortcut_toggle_mic.unwrap_or_default(),
+                    camera: settings.shortcut_toggle_camera.unwrap_or_default(),
+                    screenshare: settings.shortcut_toggle_screenshare.unwrap_or_default(),
+                    end_call: settings.shortcut_end_call.unwrap_or_default(),
+                }
+            });
+            // Shortcut callbacks acquire AppData while holding the plugin's own lock.
+            after_unlock(data, || {
+                unregister_call_shortcuts(&app_on_main);
+                if let Some(shortcuts) = shortcuts {
+                    register_call_shortcuts(&app_on_main, shortcuts);
+                }
+            });
+        })
+    }) {
+        log::error!("refresh_call_shortcuts: failed to schedule main-thread update: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_unlock;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn shortcut_dispatch_releases_application_lock_before_main_thread_work() {
+        let state = Mutex::new(());
+        let main_thread_can_lock = after_unlock(state.lock().unwrap(), || state.try_lock().is_ok());
+        assert!(
+            main_thread_can_lock,
+            "shortcut dispatch holds AppData while waiting for main-thread work that needs it"
+        );
+    }
+
+    #[test]
+    fn queued_refresh_reads_state_after_call_end_or_settings_change() {
+        for final_state in [None, Some("new shortcut")] {
+            let state = Arc::new(Mutex::new(Some("old shortcut")));
+            let observed = Arc::new(Mutex::new(None));
+            let mut queued = None;
+            let state_on_main = state.clone();
+            let observed_on_main = observed.clone();
+            after_unlock(state.lock().unwrap(), || {
+                queued = Some(move || {
+                    let data = state_on_main.lock().unwrap();
+                    let shortcuts = *data;
+                    after_unlock(data, || {
+                        assert!(
+                            state_on_main.try_lock().is_ok(),
+                            "plugin update holds AppData while shortcut callbacks need it"
+                        );
+                        *observed_on_main.lock().unwrap() = Some(shortcuts);
+                    });
+                });
+            });
+            *state.lock().unwrap() = final_state;
+            queued.unwrap()();
+            assert_eq!(*observed.lock().unwrap(), Some(final_state));
+        }
+    }
+}
+
+fn register_call_shortcuts(app: &tauri::AppHandle, shortcuts: CallShortcuts) {
     if let Err(e) = app
         .global_shortcut()
         .on_shortcut(shortcuts.mic.as_str(), |app, _sc, event| {
@@ -75,7 +152,7 @@ pub fn register_call_shortcuts(app: &tauri::AppHandle, shortcuts: CallShortcuts)
     }
 }
 
-pub fn unregister_call_shortcuts(app: &tauri::AppHandle) {
+fn unregister_call_shortcuts(app: &tauri::AppHandle) {
     if let Err(e) = app.global_shortcut().unregister_all() {
         log::error!("unregister_call_shortcuts: {e}");
     }
