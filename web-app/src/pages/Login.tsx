@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { FaGoogle } from "react-icons/fa";
 import { GrGithub } from "react-icons/gr";
+import { HiOutlineKey } from "react-icons/hi2";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -111,6 +112,18 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
       select: (data) => data,
     },
   );
+
+  // Tells us whether this instance offers login through an OpenID Connect provider.
+  const { data: instanceConfig } = useQuery("get", "/api/config");
+  const oidc = instanceConfig?.oidc;
+
+  useEffect(() => {
+    if (searchParams.get("error") === "email_not_verified") {
+      toast.error("Your identity provider has not verified your email address, so we can't sign you in.", {
+        id: "email-not-verified",
+      });
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (invitationError) {
@@ -247,6 +260,15 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
     window.location.href = url.toString();
   };
 
+  const handleOIDCLogin = () => {
+    setCookie("lastUsedLogin", "oidc", { expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }); // 7 days
+    const url = new URL(`${BACKEND_URLS.BASE}/api/auth/social/oidc`);
+    if (formData.teamInviteUUID) {
+      url.searchParams.set("invite_uuid", formData.teamInviteUUID);
+    }
+    window.location.href = url.toString();
+  };
+
   const LastUsedPill = () => (
     <div className="absolute z-20 translate-x-10 w-max mx-auto px-3 py-1 border border-gray-200 right-[30px] top-[-15px] font-medium text-center whitespace-nowrap bg-white shadow-md text-slate-700 text-xs rounded-md">
       Last Used
@@ -275,22 +297,29 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                 <CardTitle className="text-xl">
                   {isInvitation && invitationDetails ?
                     `Join ${invitationDetails.name} team on Hopp`
-                    : isSignUp ?
-                      "Create an account"
-                      : "Welcome back"}
+                  : isSignUp ?
+                    "Create an account"
+                  : "Welcome back"}
                 </CardTitle>
                 <CardDescription>
                   {isInvitation && invitationDetails ?
                     "Sign up to join your team"
-                    : isSignUp ?
-                      "Sign up for a new account"
-                      : "Login with your email or social account"}
+                  : isSignUp ?
+                    "Sign up for a new account"
+                  : "Login with your email or social account"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleEmailAuth}>
                   <div className="grid gap-6 relative">
                     <div className="flex flex-col gap-4 relative z-0">
+                      {oidc?.enabled && (
+                        <Button type="button" variant="outline" className="w-full relative" onClick={handleOIDCLogin}>
+                          <HiOutlineKey className="size-5 mr-2" />
+                          {isSignUp ? `Sign up with ${oidc.display_name}` : `Login with ${oidc.display_name}`}
+                          {cookies.lastUsedLogin === "oidc" && <LastUsedPill />}
+                        </Button>
+                      )}
                       <Button type="button" variant="outline" className="w-full relative" onClick={handleGoogleLogin}>
                         <FaGoogle className="size-5 mr-2" />
                         {isSignUp ? "Sign up with Google" : "Login with Google"}
@@ -366,9 +395,9 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                       <Button type="submit" className="w-full" disabled={isLoading}>
                         {isLoading ?
                           "Loading..."
-                          : isSignUp ?
-                            "Sign Up"
-                            : "Sign In"}
+                        : isSignUp ?
+                          "Sign Up"
+                        : "Sign In"}
                       </Button>
                     </div>
                     {!isInvitation && (
@@ -384,7 +413,7 @@ export function LoginForm({ className, isInvitation = false, ...props }: LoginFo
                               Sign in
                             </button>
                           </>
-                          : <>
+                        : <>
                             Don&apos;t have an account?{" "}
                             <button
                               type="button"

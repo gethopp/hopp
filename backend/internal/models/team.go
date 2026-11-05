@@ -11,6 +11,9 @@ type Team struct {
 	Name            string  `gorm:"not null" json:"name" validate:"required"`
 	IsManualUpgrade bool    `gorm:"default:false" json:"is_manual_upgrade"`
 	BillingEmail    *string `gorm:"default:null" json:"billing_email" validate:"omitempty,email"`
+	// IsOIDCTeam marks the team that OIDC users join in single-team mode
+	// (OIDC_SINGLE_TEAM). It is set when the first such user creates the team.
+	IsOIDCTeam bool `gorm:"column:is_oidc_team;default:false" json:"-"`
 }
 
 func GetTeamByID(db *gorm.DB, id string) (*Team, error) {
