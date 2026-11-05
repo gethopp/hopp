@@ -346,7 +346,10 @@ fn set_last_used_camera(app: tauri::AppHandle, camera: String) {
     log::info!("set_last_used_camera: {camera}");
     let data = app.state::<Mutex<AppData>>();
     let mut data = data.lock().unwrap();
-    data.app_state.set_last_used_camera(camera);
+    data.app_state.set_last_used_camera(camera.clone());
+    if let Err(e) = data.sender.send(Message::SetPreferredCamera(Some(camera))) {
+        log::error!("set_last_used_camera: failed to send preference: {e:?}");
+    }
 }
 
 #[tauri::command(async)]
@@ -1195,15 +1198,6 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     log::error!("forward_core_events: failed to emit app veil failed: {e:?}");
                 }
             }
-            Message::QueryPreferredCamera => {
-                log::info!("forward_core_events: query preferred camera");
-                let data = app.state::<Mutex<AppData>>();
-                let data = data.lock().unwrap();
-                let preferred = data.app_state.last_used_camera();
-                if let Err(e) = data.sender.send(Message::PreferredCamera(preferred)) {
-                    log::error!("forward_core_events: failed to send preferred camera: {e:?}");
-                }
-            }
             Message::ActiveMicChanged(device_name) => {
                 log::info!("forward_core_events: active mic changed to: {device_name}");
                 let data = app.state::<Mutex<AppData>>();
@@ -1390,6 +1384,9 @@ fn main() {
             let core_events_rx = event_socket.take_events();
 
             let app_state = AppState::new(&app_data_dir);
+            if let Err(e) = sender.send(Message::SetPreferredCamera(app_state.last_used_camera())) {
+                log::error!("Failed to send initial preferred camera: {e:?}");
+            }
             let noise_cancellation_enabled = app_state.user_settings().noise_cancellation_enabled;
             if let Err(e) = sender.send(Message::SetNoiseCancellation(noise_cancellation_enabled)) {
                 log::error!("Failed to send initial noise_cancellation_enabled: {e:?}");

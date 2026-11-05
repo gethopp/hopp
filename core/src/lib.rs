@@ -399,7 +399,6 @@ pub struct Application<'a> {
     //screen_capturer: Arc<Mutex<ScreenCapturer>>,
     screen_capturer: Arc<Mutex<Capturer>>,
     socket: SocketSender,
-    socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
     room_service: Option<RoomService>,
     event_loop_proxy: EventLoopProxy<UserEvent>,
     controller_draw_persist: bool,
@@ -459,7 +458,6 @@ impl<'a> Application<'a> {
     /// - Event loop proxy is invalid
     pub fn new(
         socket: SocketSender,
-        socket_responses: std::sync::mpsc::Receiver<socket_lib::Message>,
         event_loop_proxy: EventLoopProxy<UserEvent>,
         hang_protection_counter: Arc<AtomicU64>,
     ) -> Result<Self, ApplicationError> {
@@ -489,7 +487,6 @@ impl<'a> Application<'a> {
             remote_control: None,
             screen_capturer: screencapturer,
             socket,
-            socket_responses,
             room_service: None,
             event_loop_proxy,
             controller_draw_persist: false,
@@ -2201,6 +2198,12 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     }
                 }
             }
+            UserEvent::SetPreferredCamera(name) => {
+                self.camera_capturer
+                    .lock()
+                    .unwrap()
+                    .set_preferred_device_name(name);
+            }
             UserEvent::ListCameras => {
                 log::debug!("user_event: ListCameras");
                 let devices = CameraCapturer::list_devices();
@@ -2209,27 +2212,11 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
             }
             UserEvent::StartCamera { msg, from_socket } => {
-                let device_name = if msg.device_name.is_some() {
-                    msg.device_name
-                } else if let Err(e) = self.socket.send(Message::QueryPreferredCamera) {
-                    log::error!("user_event: StartCamera: failed to query preferred camera: {e:?}");
-                    None
-                } else {
-                    match self
-                        .socket_responses
-                        .recv_timeout(std::time::Duration::from_millis(500))
-                    {
-                        Ok(Message::PreferredCamera(name)) => name,
-                        Ok(other) => {
-                            log::warn!("user_event: StartCamera: unexpected response to QueryPreferredCamera: {other:?}");
-                            None
-                        }
-                        Err(_) => {
-                            log::warn!("user_event: StartCamera: timeout waiting for preferred camera, using default");
-                            None
-                        }
-                    }
-                };
+                let device_name = self
+                    .camera_capturer
+                    .lock()
+                    .unwrap()
+                    .resolve_device_name(msg.device_name);
 
                 log::info!("user_event: StartCamera device='{device_name:?}'");
 
@@ -3224,6 +3211,7 @@ pub enum UserEvent {
     UnmuteAudio,
     ToggleMic,
     ListCameras,
+    SetPreferredCamera(Option<String>),
     StartCamera {
         msg: CameraStartMessage,
         from_socket: bool,
@@ -3305,11 +3293,10 @@ impl RenderEventLoop {
         log::info!("Starting RenderEventLoop");
 
         log::info!("Creating socket at path: {socket_path}");
-        let (sender, mut event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
+        let (sender, event_socket) = socket_lib::listen(&socket_path).map_err(|e| {
             log::error!("Error creating socket: {e:?}");
             RenderLoopError::SocketError(e)
         })?;
-        let socket_responses = event_socket.take_responses();
 
         let event_loop_proxy = self.event_loop.create_proxy();
         /*
@@ -3384,6 +3371,7 @@ impl RenderEventLoop {
                     Message::UnmuteAudio => UserEvent::UnmuteAudio,
                     Message::ToggleMic => UserEvent::ToggleMic,
                     Message::ListCameras => UserEvent::ListCameras,
+                    Message::SetPreferredCamera(name) => UserEvent::SetPreferredCamera(name),
                     Message::StartCamera(msg) => UserEvent::StartCamera {
                         msg,
                         from_socket: true,
@@ -3468,8 +3456,7 @@ impl RenderEventLoop {
         });
 
         let proxy = self.event_loop.create_proxy();
-        let mut application =
-            Application::new(sender, socket_responses, proxy, hang_protection_counter)?;
+        let mut application = Application::new(sender, proxy, hang_protection_counter)?;
         self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)

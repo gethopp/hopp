@@ -240,9 +240,7 @@ pub enum Message {
     OpenStatsWindow,
     BringWindowsToFront,
     BringWindowsToFrontResult(bool),
-    // Core → Tauri query, Tauri → Core response
-    QueryPreferredCamera,
-    PreferredCamera(Option<String>),
+    SetPreferredCamera(Option<String>),
     // Core → Tauri event forwarding
     ParticipantsSnapshot(Vec<CoreParticipantState>),
     RoleChange(CoreRoleEvent),
@@ -276,7 +274,6 @@ impl Message {
                 | Message::CameraList(_)
                 | Message::StartCameraResult(_)
                 | Message::BringWindowsToFrontResult(_)
-                | Message::PreferredCamera(_)
         )
     }
 }
@@ -646,6 +643,32 @@ mod tests {
     }
 
     #[test]
+    fn preferred_camera_is_delivered_before_camera_start() {
+        let ((_server_sender, server_events), (client_sender, _client_events)) = test_pair();
+        for preferred in [Some("Saved camera".to_string()), None] {
+            client_sender
+                .send(Message::SetPreferredCamera(preferred.clone()))
+                .unwrap();
+            client_sender
+                .send(Message::StartCamera(CameraStartMessage {
+                    device_name: None,
+                }))
+                .unwrap();
+            let setting = server_events
+                .events
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            assert!(matches!(setting, Message::SetPreferredCamera(name) if name == preferred));
+            let start = server_events
+                .events
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            assert!(matches!(start, Message::StartCamera(_)));
+        }
+        assert!(server_events.responses.try_recv().is_err());
+    }
+
+    #[test]
     fn test_routing_mixed() {
         let ((_server_sender, server_events), (client_sender, _client_events)) = test_pair();
 
@@ -777,10 +800,10 @@ mod tests {
 
     #[test]
     fn test_request_response_pattern() {
-        let ((server_sender, server_events), (_client_sender, _client_events)) = test_pair();
+        let ((_server_sender, server_events), (client_sender, _client_events)) = test_pair();
 
         // Client sends request
-        server_sender.send(Message::Ping).unwrap();
+        client_sender.send(Message::Ping).unwrap();
 
         // Server receives event
         let msg = server_events

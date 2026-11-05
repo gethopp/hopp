@@ -12,6 +12,7 @@ const POLL_CAMERA_TIMEOUT_SECS: u64 = 100;
 
 pub struct CameraCapturer {
     stream: Option<CameraStream>,
+    preferred_device_name: Option<String>,
     rx: Arc<Mutex<mpsc::Receiver<CameraStreamMessage>>>,
     tx: mpsc::Sender<CameraStreamMessage>,
     socket: Option<SocketSender>,
@@ -29,6 +30,7 @@ impl CameraCapturer {
         let (tx, rx) = mpsc::channel();
         Self {
             stream: None,
+            preferred_device_name: None,
             rx: Arc::new(Mutex::new(rx)),
             tx,
             socket: None,
@@ -42,6 +44,15 @@ impl CameraCapturer {
 
     pub fn active_device_name(&self) -> Option<&str> {
         self.stream.as_ref().map(|s| s.device_name())
+    }
+
+    pub fn set_preferred_device_name(&mut self, name: Option<String>) {
+        self.preferred_device_name = name;
+    }
+
+    // Tauri may hold AppData while waiting for camera startup; resolve without a round trip.
+    pub fn resolve_device_name(&self, requested: Option<String>) -> Option<String> {
+        requested.or_else(|| self.preferred_device_name.clone())
     }
 
     pub fn start_capture(
@@ -64,6 +75,7 @@ impl CameraCapturer {
             #[cfg(target_os = "macos")]
             Arc::new(Mutex::new(0u32)),
         )?;
+        self.preferred_device_name = Some(stream.device_name().to_string());
         self.stream = Some(stream);
         Ok(())
     }
@@ -165,4 +177,41 @@ pub fn poll_camera_stream(capturer: Arc<Mutex<CameraCapturer>>) {
         }
     }
     log::info!("poll_camera_stream: exiting");
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+
+    #[test]
+    fn camera_preference_is_available_while_tauri_waits_for_start() {
+        let app_data = Mutex::new(Some("Saved camera".to_string()));
+        let mut capturer = CameraCapturer::new();
+        capturer.set_preferred_device_name(app_data.lock().unwrap().clone());
+        let _waiting_command = app_data.lock().unwrap();
+        assert_eq!(
+            capturer.resolve_device_name(None).as_deref(),
+            Some("Saved camera")
+        );
+    }
+
+    #[test]
+    fn camera_selection_respects_explicit_device_and_preference_changes() {
+        let mut capturer = CameraCapturer::new();
+        assert_eq!(capturer.resolve_device_name(None), None);
+        capturer.set_preferred_device_name(Some("Saved camera".into()));
+        assert_eq!(
+            capturer
+                .resolve_device_name(Some("Explicit camera".into()))
+                .as_deref(),
+            Some("Explicit camera")
+        );
+        capturer.set_preferred_device_name(Some("New camera".into()));
+        assert_eq!(
+            capturer.resolve_device_name(None).as_deref(),
+            Some("New camera")
+        );
+        capturer.set_preferred_device_name(None);
+        assert_eq!(capturer.resolve_device_name(None), None);
+    }
 }

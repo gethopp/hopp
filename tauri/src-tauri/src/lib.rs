@@ -209,6 +209,11 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                             "show_stdout: Failed to send livekit server url: {e:?}"
                                         );
                                     }
+                                    if let Err(e) = sender.send(Message::SetPreferredCamera(
+                                        data.app_state.last_used_camera(),
+                                    )) {
+                                        log::error!("show_stdout: failed to restore preferred camera: {e:?}");
+                                    }
                                     data.sender = sender;
                                     data.event_socket = event_socket;
                                 }
