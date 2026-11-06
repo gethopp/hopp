@@ -12,6 +12,18 @@ export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN_JS as string;
 export const POSTHOG_API_KEY = import.meta.env.VITE_POSTHOG_API_KEY as string;
 export const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST as string;
 
+const normalizeHost = (url: string): string => {
+  try {
+    return new URL(`https://${url.trim()}`).host;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+};
+
+/** True when a custom backend URL is set and it is not the Hopp cloud URL. */
+export const isSelfHostedUrl = (customUrl: string | null): boolean =>
+  !!customUrl && normalizeHost(customUrl) !== normalizeHost(URLS.API_BASE_URL);
+
 /**
  * Constants class providing access to URLs with custom server URL support.
  * Uses static getters to always return the current value from the store.
@@ -21,6 +33,16 @@ export class Constants {
   static get apiBaseUrl(): string {
     const customUrl = useStore.getState().customServerUrl;
     return customUrl || URLS.API_BASE_URL;
+  }
+
+  /** The backend host in a canonical form, so equivalent URL spellings hash identically. */
+  static get normalizedHost(): string {
+    return normalizeHost(this.apiBaseUrl);
+  }
+
+  /** True when a custom backend URL is set and it is not the Hopp cloud URL. */
+  static get isSelfHosted(): boolean {
+    return isSelfHostedUrl(useStore.getState().customServerUrl);
   }
 
   /** The full backend base URL with https:// protocol. */

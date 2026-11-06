@@ -33,6 +33,7 @@ import { useDisableNativeContextMenu } from "@/lib/hooks";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { pollUpdates } from "@/lib/auto-update";
+import { useSelfHostedAnalytics } from "@/lib/selfHostedAnalytics";
 
 function App() {
   const {
@@ -55,6 +56,7 @@ function App() {
 
   const coreProcessCrashedRef = useRef(false);
   useDisableNativeContextMenu();
+  useSelfHostedAnalytics();
 
   const { useQuery } = useAPI();
 
