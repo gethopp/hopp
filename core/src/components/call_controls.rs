@@ -116,6 +116,17 @@ impl CallControlsState {
         CallControlsMessage::VideoToggle(self.call_id.clone())
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn test_message(&self, control: socket_lib::TestCallControl) -> CallControlsMessage {
+        match control {
+            socket_lib::TestCallControl::ToggleMic => CallControlsMessage::MicToggle,
+            socket_lib::TestCallControl::ToggleCamera => self.camera_toggle_message(),
+            socket_lib::TestCallControl::ToggleScreenShare => CallControlsMessage::ScreenShare,
+            socket_lib::TestCallControl::OpenPicker => CallControlsMessage::OpenScreenSharePicker,
+            socket_lib::TestCallControl::EndCall => self.end_call_message(),
+        }
+    }
+
     pub fn set_call_id(&mut self, call_id: Option<CallId>) {
         self.call_id = call_id;
     }

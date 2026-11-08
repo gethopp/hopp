@@ -203,6 +203,8 @@ pub fn play_remote_audio_track(
         let mut last_log = start;
 
         while let Some(frame) = stream.next().await {
+            #[cfg(feature = "test-support")]
+            crate::test_support::record_audio_received(&frame.data);
             source_clone.push_samples(&frame.data);
             frame_count += 1;
             total_samples += frame.data.len() as u64;

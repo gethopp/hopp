@@ -12,6 +12,7 @@ pub struct ParticipantInfo {
     camera_buffers: Arc<VideoBufferManager>,
     audio_handle: Option<AudioTrackHandle>,
     camera_stop_tx: Option<mpsc::UnboundedSender<()>>,
+    camera_track_sid: Option<String>,
 }
 
 impl std::fmt::Debug for ParticipantInfo {
@@ -34,6 +35,7 @@ impl ParticipantInfo {
             camera_buffers: Arc::new(VideoBufferManager::default()),
             audio_handle: None,
             camera_stop_tx: None,
+            camera_track_sid: None,
         }
     }
 
@@ -94,8 +96,35 @@ impl ParticipantInfo {
         self.audio_handle = Some(handle);
     }
 
-    pub fn set_camera_stop_tx(&mut self, tx: mpsc::UnboundedSender<()>) {
+    pub fn start_camera_stream(
+        &mut self,
+        track_sid: String,
+        tx: mpsc::UnboundedSender<()>,
+    ) -> Option<Arc<VideoBufferManager>> {
+        if self.camera_track_sid.as_ref() == Some(&track_sid)
+            && self
+                .camera_stop_tx
+                .as_ref()
+                .is_some_and(|tx| !tx.is_closed())
+        {
+            return None;
+        }
+        self.stop_camera_stream();
+        // A stopped decoder still runs its final cleanup; it must not deactivate its replacement.
+        let next_frame = self.camera_buffers.current_frame_id().saturating_add(1);
+        self.camera_buffers = Arc::new(VideoBufferManager::default());
+        self.camera_buffers.set_frame_id(next_frame);
+        self.camera_track_sid = Some(track_sid);
         self.camera_stop_tx = Some(tx);
+        Some(self.camera_buffers())
+    }
+
+    pub fn stop_camera_track(&mut self, track_sid: &str) -> bool {
+        if self.camera_track_sid.as_deref() != Some(track_sid) {
+            return false;
+        }
+        self.stop_camera_stream();
+        true
     }
 
     pub fn stop_audio_stream(&mut self) {
@@ -104,9 +133,46 @@ impl ParticipantInfo {
     }
 
     pub fn stop_camera_stream(&mut self) {
+        self.camera_track_sid = None;
         self.camera_buffers.set_inactive(true);
         if let Some(tx) = self.camera_stop_tx.take() {
             let _ = tx.send(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replaced_camera_ignores_old_stop_and_old_decoder_cleanup() {
+        let mut participant = ParticipantInfo::new("viewer".into(), false, false);
+        let (old_tx, mut old_rx) = mpsc::unbounded_channel();
+        let old = participant.start_camera_stream("A".into(), old_tx).unwrap();
+        old.set_inactive(false);
+        old.set_frame_id(20);
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
+        let new = participant.start_camera_stream("B".into(), new_tx).unwrap();
+        assert_eq!(old_rx.try_recv(), Ok(()));
+        assert!(new.current_frame_id() > old.current_frame_id());
+        new.set_inactive(false);
+        old.set_inactive(true); // A decoder finishes after B has already received frames.
+        assert!(participant.camera_active());
+        assert!(!participant.stop_camera_track("A"));
+        assert!(matches!(
+            new_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(participant.camera_active());
+        let (duplicate_tx, _) = mpsc::unbounded_channel();
+        assert!(participant
+            .start_camera_stream("B".into(), duplicate_tx)
+            .is_none());
+        assert!(participant.camera_active());
+        assert!(participant.stop_camera_track("B"));
+        assert_eq!(new_rx.try_recv(), Ok(()));
+        assert!(!participant.camera_active());
+        assert!(!participant.stop_camera_track("B"));
     }
 }

@@ -15,6 +15,8 @@ pub mod livekit {
 
 pub mod room_service;
 mod snapshot_sender;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 #[path = "app_veil/state.rs"]
 pub mod app_veil_state;
@@ -1383,6 +1385,26 @@ pub struct ScrollDelta {
 impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            #[cfg(feature = "test-support")]
+            UserEvent::TestStatus(request_id) => {
+                let status = self.test_status();
+                if let Err(error) = self
+                    .socket
+                    .reply(request_id, Message::TestStatusResult(status))
+                {
+                    log::error!("test status reply failed: {error}");
+                }
+            }
+            #[cfg(feature = "test-support")]
+            UserEvent::TestAction(action, request_id) => {
+                let result = self.test_action(event_loop, action);
+                if let Err(error) = self
+                    .socket
+                    .reply(request_id, Message::TestActionResult(result))
+                {
+                    log::error!("test action reply failed: {error}");
+                }
+            }
             UserEvent::CursorPosition(x, y, sid) => {
                 log::debug!("user_event: cursor position: {x} {y} {sid}");
                 if let Some(remote_control) = &mut self.remote_control {
@@ -1626,6 +1648,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                     };
                 self.current_call_id = None;
                 self.start_camera_on_call = false;
+                self.cancel_screen_selection();
                 log::info!("user_event: CallEnd");
                 self.stop_mic();
                 self.audio_player.stop();
@@ -1940,9 +1963,7 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
             UserEvent::LocalParticipantInControl(in_control) => {
                 log::debug!("user_event: local participant in control: {in_control}");
                 if let Some(screensharing_window) = &mut self.screensharing_window {
-                    if screensharing_window.is_visible() {
-                        screensharing_window.set_local_participant_in_control(in_control);
-                    }
+                    screensharing_window.set_local_participant_in_control(in_control);
                 }
             }
             UserEvent::SentryMetadata(sentry_metadata) => {
@@ -2428,12 +2449,21 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 );
             }
             UserEvent::OpenScreenShareWindow {
+                stream_generation,
                 participants,
                 sharer_identity,
                 redraw_rx,
                 redraw_tx,
             } => {
                 log::info!("user_event: OpenScreenShareWindow");
+                if stream_generation.is_some_and(|generation| {
+                    !self
+                        .room_service
+                        .as_ref()
+                        .is_some_and(|room| room.is_current_screen_share_generation(generation))
+                }) {
+                    return;
+                }
                 let buffer = self
                     .room_service
                     .as_ref()
@@ -2496,14 +2526,29 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                 }
                 self.set_screensharing_active(true);
             }
-            UserEvent::CloseScreenShareWindow => {
+            UserEvent::HideScreenShareWindow => {
+                if let Some(window) = &self.screensharing_window {
+                    window.hide();
+                }
+                self.set_screensharing_active(false);
+            }
+            UserEvent::CloseScreenShareWindow(generation) => {
+                if !self
+                    .room_service
+                    .as_ref()
+                    .is_some_and(|room| room.is_current_screen_share_generation(generation))
+                {
+                    return;
+                }
                 log::info!("user_event: CloseScreenShareWindow");
                 self.close_screensharing_window();
                 self.set_screensharing_active(false);
             }
             UserEvent::OpenStatsWindow => {
                 log::debug!("user_event: OpenStatsWindow");
-                if self.stats_window.is_none() {
+                if let Some(window) = &self.stats_window {
+                    window.show();
+                } else {
                     match StatsWindow::new(event_loop) {
                         Ok(w) => self.stats_window = Some(w),
                         Err(e) => log::error!("Failed to open stats window: {e:?}"),
@@ -3252,6 +3297,10 @@ pub struct ParticipantData {
 
 #[derive(Debug, Clone)]
 pub enum UserEvent {
+    #[cfg(feature = "test-support")]
+    TestStatus(Option<socket_lib::RequestId>),
+    #[cfg(feature = "test-support")]
+    TestAction(socket_lib::TestAction, Option<socket_lib::RequestId>),
     CursorPosition(f32, f32, String),
     MouseClick(MouseClickData, String),
     ControllerCursorEnabled(bool),
@@ -3315,6 +3364,7 @@ pub enum UserEvent {
     OpenCamera,
     OpenScreensharing,
     OpenScreenShareWindow {
+        stream_generation: Option<u64>,
         participants: Arc<
             std::sync::RwLock<
                 std::collections::HashMap<String, crate::livekit::participant::ParticipantInfo>,
@@ -3330,7 +3380,8 @@ pub enum UserEvent {
         >,
         redraw_tx: Option<std::sync::mpsc::Sender<window::screensharing_window::RedrawCommand>>,
     },
-    CloseScreenShareWindow,
+    CloseScreenShareWindow(u64),
+    HideScreenShareWindow,
     CloseCameraWindow,
     OpenStatsWindow,
     BringWindowsToFront(Option<socket_lib::RequestId>),
@@ -3446,6 +3497,10 @@ impl RenderEventLoop {
                     message => (None, message),
                 };
                 let user_event = match message {
+                    #[cfg(feature = "test-support")]
+                    Message::TestStatus => UserEvent::TestStatus(request_id),
+                    #[cfg(feature = "test-support")]
+                    Message::TestAction(action) => UserEvent::TestAction(action, request_id),
                     Message::GetAvailableContent => UserEvent::GetAvailableContent,
                     Message::CallStart(call_start_message) => {
                         UserEvent::CallStart(call_start_message, request_id)
@@ -3487,6 +3542,7 @@ impl RenderEventLoop {
                     Message::OpenCamera => UserEvent::OpenCamera,
                     Message::OpenScreensharing => UserEvent::OpenScreensharing,
                     Message::OpenScreenShareWindow => UserEvent::OpenScreenShareWindow {
+                        stream_generation: None,
                         participants: Arc::new(std::sync::RwLock::new(
                             std::collections::HashMap::new(),
                         )),
@@ -3494,7 +3550,7 @@ impl RenderEventLoop {
                         redraw_rx: None,
                         redraw_tx: None,
                     },
-                    Message::CloseScreenShareWindow => UserEvent::CloseScreenShareWindow,
+                    Message::CloseScreenShareWindow => UserEvent::HideScreenShareWindow,
                     Message::OpenStatsWindow => UserEvent::OpenStatsWindow,
                     Message::BringWindowsToFront => UserEvent::BringWindowsToFront(request_id),
                     Message::SetNoiseCancellation(enabled) => {

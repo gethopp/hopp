@@ -212,8 +212,66 @@ pub enum StoredMode {
     },
 }
 
+#[cfg(feature = "test-support")]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TestStatus {
+    pub call_id: Option<CallId>,
+    pub camera_visible: bool,
+    pub camera_active: bool,
+    pub viewer_visible: bool,
+    pub drawing_visible: bool,
+    pub stats_visible: bool,
+    pub picker_open: bool,
+    pub mic_capturing: bool,
+    pub mic_muted: bool,
+    pub local_sharing: bool,
+    pub participant_in_control: Option<String>,
+    pub local_in_control: bool,
+    pub screen_frames_captured: u64,
+    pub screen_frames_received: u64,
+    pub camera_frames_received: u64,
+    pub screen_frames_presented: u64,
+    pub camera_frames_presented: u64,
+    pub audio_frames_received: u64,
+    pub audio_frames_mixed: u64,
+    pub audio_output_samples: u64,
+    pub audio_received_nonzero_samples: u64,
+    pub audio_mixed_nonzero_samples: u64,
+    pub audio_output_nonzero_samples: u64,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TestCallControl {
+    ToggleMic,
+    ToggleCamera,
+    ToggleScreenShare,
+    OpenPicker,
+    EndCall,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TestAction {
+    CloseCameraWindow,
+    CloseViewerWindow,
+    CloseStatsWindow,
+    CancelPicker,
+    RemoteControlEnabled(bool),
+    CameraControl(TestCallControl),
+    ViewerControl(TestCallControl),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
+    #[cfg(feature = "test-support")]
+    TestStatus,
+    #[cfg(feature = "test-support")]
+    TestStatusResult(TestStatus),
+    #[cfg(feature = "test-support")]
+    TestAction(TestAction),
+    #[cfg(feature = "test-support")]
+    TestActionResult(Result<(), String>),
     Request {
         request_id: RequestId,
         message: Box<Message>,
@@ -284,6 +342,13 @@ pub enum Message {
 
 impl Message {
     pub fn is_response(&self) -> bool {
+        #[cfg(feature = "test-support")]
+        if matches!(
+            self,
+            Message::TestStatusResult(_) | Message::TestActionResult(_)
+        ) {
+            return true;
+        }
         matches!(
             self,
             Message::Response { .. }

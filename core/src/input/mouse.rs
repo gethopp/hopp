@@ -573,6 +573,21 @@ pub struct CursorController {
 }
 
 impl CursorController {
+    #[cfg(feature = "test-support")]
+    pub(crate) fn test_participant_in_control(&self) -> Option<String> {
+        // Preserve the production sharer-before-controllers lock order.
+        let sharer = self.remote_control.sharer_cursor.lock().unwrap();
+        if sharer.has_control() {
+            return Some("local".to_string());
+        }
+        self.controllers_cursors
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|controller| controller.has_control())
+            .map(|controller| controller.identity.clone())
+    }
+
     /// Creates a new cursor controller with platform-specific mouse capture and simulation.
     ///
     /// This function initializes all necessary components for cursor management:

@@ -45,6 +45,11 @@ tasks:
     cmds:
       - cargo run -- {{.CLI_ARGS}}
 
+  smoke:
+    desc: Run automated lifecycle/media tests (e.g. task smoke -- call-lifecycle --cycles 3)
+    cmds:
+      - cargo run --manifest-path tests/Cargo.toml -- smoke {{.CLI_ARGS}}
+
   release:
     desc: Builds release core process, it takes two argument vars, OS (mac | win) and AARCH (arm64 | x64)
     vars:

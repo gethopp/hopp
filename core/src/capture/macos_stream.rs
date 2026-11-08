@@ -516,6 +516,8 @@ impl Stream {
 
             sb.video_frame.timestamp_us = capture_start.elapsed().as_micros() as i64;
             buffer_source.capture_frame(&sb.video_frame);
+            #[cfg(feature = "test-support")]
+            crate::test_support::SCREEN_CAPTURED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         };
 
         let mut sc_stream = SCStream::new_with_delegate(&filter, &config, delegate);

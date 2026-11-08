@@ -260,12 +260,75 @@ pub enum RoomServiceError {
     CreateRoom(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
+struct RemoteScreenStream {
+    track_sid: Option<String>,
+    generation: u64,
+}
+
+#[derive(Debug, Default, Clone)]
 struct RemoteScreenShare {
     buffer: Arc<std::sync::Mutex<Option<Arc<VideoBufferManager>>>>,
     stop_tx: Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<()>>>>,
     publisher_identity: Arc<std::sync::Mutex<Option<String>>>,
     app_veil_snapshot: Arc<std::sync::Mutex<Option<(String, AppVeilSnapshot)>>>,
+    stream: Arc<std::sync::Mutex<RemoteScreenStream>>,
+}
+
+impl RemoteScreenShare {
+    fn start(
+        &self,
+        identity: &str,
+        track_sid: &str,
+        stop_tx: mpsc::UnboundedSender<()>,
+    ) -> Option<(Arc<VideoBufferManager>, u64)> {
+        let mut stream = self.stream.lock().unwrap();
+        let mut stop = self.stop_tx.lock().unwrap();
+        if stream.track_sid.as_deref() == Some(track_sid)
+            && stop.as_ref().is_some_and(|tx| !tx.is_closed())
+        {
+            return None;
+        }
+        if let Some(previous) = stop.take() {
+            let _ = previous.send(());
+        }
+        let mut buffer = self.buffer.lock().unwrap();
+        let next_frame = buffer
+            .as_ref()
+            .map_or(0, |old| old.current_frame_id().saturating_add(1));
+        let manager = Arc::new(VideoBufferManager::default());
+        manager.set_frame_id(next_frame);
+        *buffer = Some(manager.clone());
+        *stop = Some(stop_tx);
+        *self.publisher_identity.lock().unwrap() = Some(identity.to_string());
+        stream.track_sid = Some(track_sid.to_string());
+        stream.generation += 1;
+        Some((manager, stream.generation))
+    }
+
+    fn stop(&self, identity: &str, track_sid: Option<&str>) -> Option<u64> {
+        let mut stream = self.stream.lock().unwrap();
+        let mut publisher = self.publisher_identity.lock().unwrap();
+        if !publisher
+            .as_deref()
+            .is_some_and(|publisher| participant_identities_match(publisher, identity))
+            || track_sid.is_some_and(|sid| stream.track_sid.as_deref() != Some(sid))
+        {
+            return None;
+        }
+        if let Some(stop) = self.stop_tx.lock().unwrap().take() {
+            let _ = stop.send(());
+        }
+        publisher.take();
+        self.app_veil_snapshot.lock().unwrap().take();
+        stream.track_sid = None;
+        stream.generation += 1;
+        Some(stream.generation)
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.stream.lock().unwrap().generation == generation
+    }
 }
 
 /*
@@ -332,6 +395,9 @@ impl RoomServiceInner {
             self.participants.write().unwrap().clear();
         }
         {
+            let mut stream = self.remote_screen_share.stream.lock().unwrap();
+            stream.track_sid = None;
+            stream.generation += 1;
             self.remote_screen_share.buffer.lock().unwrap().take();
             self.remote_screen_share
                 .publisher_identity
@@ -442,12 +508,7 @@ impl RoomService {
             camera_track: std::sync::Mutex::new(None),
             screen_share_track: std::sync::Mutex::new(None),
             participants,
-            remote_screen_share: RemoteScreenShare {
-                buffer: Arc::new(std::sync::Mutex::new(None)),
-                stop_tx: Arc::new(std::sync::Mutex::new(None)),
-                publisher_identity: Arc::new(std::sync::Mutex::new(None)),
-                app_veil_snapshot: Arc::new(std::sync::Mutex::new(None)),
-            },
+            remote_screen_share: RemoteScreenShare::default(),
             stats: std::sync::RwLock::new(crate::livekit::stats::RoomStats::default()),
             video_health_summary: std::sync::Mutex::new(Default::default()),
             connection_quality: Arc::new(std::sync::Mutex::new(None)),
@@ -896,6 +957,10 @@ impl RoomService {
             .get_mut("local")
             .expect("local participant info not found"); // This should never happen.
         info.camera_buffers()
+    }
+
+    pub(crate) fn is_current_screen_share_generation(&self, generation: u64) -> bool {
+        self.inner.remote_screen_share.is_current(generation)
     }
 
     /// Returns the remote screen share buffer if available.
@@ -1356,12 +1421,7 @@ async fn room_service_commands(
                     participants: inner.participants.clone(),
                     snapshot_sender: inner.snapshot_sender.clone(),
                     mixer,
-                    remote_screen_share: RemoteScreenShare {
-                        buffer: inner.remote_screen_share.buffer.clone(),
-                        stop_tx: inner.remote_screen_share.stop_tx.clone(),
-                        publisher_identity: inner.remote_screen_share.publisher_identity.clone(),
-                        app_veil_snapshot: inner.remote_screen_share.app_veil_snapshot.clone(),
-                    },
+                    remote_screen_share: inner.remote_screen_share.clone(),
                     connection_quality: inner.connection_quality.clone(),
                     audio_handle: audio_handle.clone(),
                     inner: inner.clone(),
@@ -2168,8 +2228,10 @@ fn start_remote_camera_stream(
     let manager = {
         let mut guard = participants.write().unwrap();
         let info = guard.get_mut(identity).expect("Participant should exist");
-        info.set_camera_stop_tx(stop_tx);
-        info.camera_buffers()
+        let Some(manager) = info.start_camera_stream(video_track.sid().to_string(), stop_tx) else {
+            return;
+        };
+        manager
     };
     tokio::spawn(process_video_stream(
         video_track,
@@ -2189,27 +2251,12 @@ fn start_remote_screen_share_stream(
     event_loop_proxy: &EventLoopProxy<UserEvent>,
     snapshot_sender: &SnapshotSender,
 ) {
-    {
-        let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
-        if let Some(tx) = stop_tx_guard.take() {
-            log::info!("handle_room_events: Stopping existing screen share task");
-            let _ = tx.send(());
-        }
-    }
-
-    let manager = {
-        let mut buffer_guard = remote_screen_share.buffer.lock().unwrap();
-        if let Some(existing) = buffer_guard.as_ref() {
-            existing.clone()
-        } else {
-            let new = Arc::new(VideoBufferManager::default());
-            *buffer_guard = Some(new.clone());
-            new
-        }
+    let (stop_tx, stop_rx) = mpsc::unbounded_channel();
+    let Some((manager, generation)) =
+        remote_screen_share.start(participant_identity, video_track.sid().as_str(), stop_tx)
+    else {
+        return;
     };
-
-    *remote_screen_share.publisher_identity.lock().unwrap() =
-        Some(participant_identity.to_string());
     let mut app_veil_snapshot = remote_screen_share.app_veil_snapshot.lock().unwrap();
     if app_veil_snapshot
         .as_ref()
@@ -2218,9 +2265,6 @@ fn start_remote_screen_share_stream(
         app_veil_snapshot.take();
     }
     drop(app_veil_snapshot);
-
-    let (stop_tx, stop_rx) = mpsc::unbounded_channel();
-    *remote_screen_share.stop_tx.lock().unwrap() = Some(stop_tx);
 
     let (redraw_tx, redraw_rx) =
         std::sync::mpsc::channel::<crate::window::screensharing_window::RedrawCommand>();
@@ -2261,6 +2305,7 @@ fn start_remote_screen_share_stream(
     snapshot_sender.send_participants_snapshot();
 
     if let Err(e) = event_loop_proxy.send_event(UserEvent::OpenScreenShareWindow {
+        stream_generation: Some(generation),
         participants: participants.clone(),
         sharer_identity: Some(sharer_identity),
         redraw_rx: Some(redraw_rx),
@@ -2579,28 +2624,11 @@ async fn handle_room_events(ctx: RoomEventContext) {
 
                 log::info!("handle_room_events: Participant disconnected: {}", identity);
 
-                let disconnected_current_sharer = remote_screen_share
-                    .publisher_identity
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|publisher| participant_identities_match(publisher, &identity));
-                if disconnected_current_sharer {
-                    if let Some(tx) = remote_screen_share.stop_tx.lock().unwrap().take() {
-                        let _ = tx.send(());
-                    }
-                    remote_screen_share
-                        .publisher_identity
-                        .lock()
-                        .unwrap()
-                        .take();
-                    remote_screen_share.app_veil_snapshot.lock().unwrap().take();
+                if let Some(generation) = remote_screen_share.stop(&identity, None) {
                     if let Err(error) =
-                        event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                        event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow(generation))
                     {
-                        log::error!(
-                            "handle_room_events: Failed to send CloseScreenShareWindow event: {error:?}"
-                        );
+                        log::error!("handle_room_events: Failed to close disconnected sharer window: {error:?}");
                     }
                 }
 
@@ -2701,8 +2729,10 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         log::info!("handle_room_events: Camera track muted for {}", identity);
                         let any_camera_active = {
                             let mut guard = participants.write().unwrap();
-                            if let Some(info) = guard.get_mut(&identity) {
-                                info.stop_camera_stream();
+                            if !guard.get_mut(&identity).is_some_and(|info| {
+                                info.stop_camera_track(publication.sid().as_str())
+                            }) {
+                                continue;
                             }
                             guard.values().any(|info| info.camera_active())
                         };
@@ -2720,38 +2750,14 @@ async fn handle_room_events(ctx: RoomEventContext) {
                     (livekit::track::TrackKind::Video, TrackSource::Screenshare) => {
                         log::info!("handle_room_events: Screen share muted from {}", identity);
 
-                        // Only clean up if this is the current publisher
-                        let is_current = {
-                            let publisher_guard =
-                                remote_screen_share.publisher_identity.lock().unwrap();
-                            publisher_guard.as_deref() == Some(identity.as_str())
-                        };
-
-                        if !is_current {
-                            log::info!(
-                                "handle_room_events: Ignoring mute from non-current publisher {}",
-                                identity,
-                            );
+                        if !publication.is_muted() {
                             continue;
                         }
-
-                        // Send stop signal
-                        {
-                            let mut stop_tx_guard = remote_screen_share.stop_tx.lock().unwrap();
-                            if let Some(tx) = stop_tx_guard.take() {
-                                let _ = tx.send(());
-                            }
-                        }
-
-                        // Clear publisher identity (keep the buffer for reuse)
-                        {
-                            remote_screen_share
-                                .publisher_identity
-                                .lock()
-                                .unwrap()
-                                .take();
-                            remote_screen_share.app_veil_snapshot.lock().unwrap().take();
-                        }
+                        let Some(generation) =
+                            remote_screen_share.stop(&identity, Some(publication.sid().as_str()))
+                        else {
+                            continue;
+                        };
 
                         // Derive the audio participant identity to clear is_screensharing
                         let audio_identity = {
@@ -2770,8 +2776,8 @@ async fn handle_room_events(ctx: RoomEventContext) {
                         snapshot_sender.send_participants_snapshot();
 
                         // Close the screen share window
-                        if let Err(e) =
-                            event_loop_proxy.send_event(UserEvent::CloseScreenShareWindow)
+                        if let Err(e) = event_loop_proxy
+                            .send_event(UserEvent::CloseScreenShareWindow(generation))
                         {
                             log::error!("handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}");
                         }
@@ -2827,6 +2833,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                             "handle_room_events: Screen share track unmuted for {}",
                             identity
                         );
+                        if publication.is_muted() {
+                            continue;
+                        }
                         let video_track = match publication.track() {
                             Some(livekit::track::Track::RemoteVideo(vt)) => vt,
                             _ => {
@@ -2977,8 +2986,10 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                 );
                                 let any_camera_active = {
                                     let mut guard = participants.write().unwrap();
-                                    if let Some(info) = guard.get_mut(&participant_identity) {
-                                        info.stop_camera_stream();
+                                    if !guard.get_mut(&participant_identity).is_some_and(|info| {
+                                        info.stop_camera_track(publication.sid().as_str())
+                                    }) {
+                                        continue;
                                     }
                                     guard.values().any(|info| info.camera_active())
                                 };
@@ -2998,28 +3009,9 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                     participant_identity
                                 );
 
-                                let is_current = {
-                                    let publisher_guard =
-                                        remote_screen_share.publisher_identity.lock().unwrap();
-                                    publisher_guard.as_deref()
-                                        == Some(participant_identity.as_str())
-                                };
-
-                                if is_current {
-                                    {
-                                        let mut stop_tx_guard =
-                                            remote_screen_share.stop_tx.lock().unwrap();
-                                        if let Some(tx) = stop_tx_guard.take() {
-                                            let _ = tx.send(());
-                                        }
-                                    }
-                                    remote_screen_share
-                                        .publisher_identity
-                                        .lock()
-                                        .unwrap()
-                                        .take();
-                                    remote_screen_share.app_veil_snapshot.lock().unwrap().take();
-
+                                if let Some(generation) = remote_screen_share
+                                    .stop(&participant_identity, Some(publication.sid().as_str()))
+                                {
                                     // Derive audio identity to clear is_screensharing
                                     let audio_identity = participant_identity
                                         .strip_suffix(":video")
@@ -3034,7 +3026,7 @@ async fn handle_room_events(ctx: RoomEventContext) {
                                     snapshot_sender.send_participants_snapshot();
 
                                     if let Err(e) = event_loop_proxy
-                                        .send_event(UserEvent::CloseScreenShareWindow)
+                                        .send_event(UserEvent::CloseScreenShareWindow(generation))
                                     {
                                         log::error!(
                                             "handle_room_events: Failed to send CloseScreenShareWindow event: {e:?}"
@@ -3212,6 +3204,43 @@ mod app_veil_tests {
             Some(&current),
             &current
         ));
+    }
+}
+
+#[cfg(test)]
+mod screen_stream_tests {
+    use super::*;
+
+    #[test]
+    fn muted_screen_restart_rejects_queued_old_close_and_old_decoder_cleanup() {
+        let screen = RemoteScreenShare::default();
+        let (old_tx, mut old_rx) = mpsc::unbounded_channel();
+        let (old, old_open) = screen.start("person:video", "A", old_tx).unwrap();
+        old.set_frame_id(20);
+        old.set_inactive(false);
+        let old_close = screen.stop("person:video", Some("A")).unwrap();
+        assert_eq!(old_rx.try_recv(), Ok(()));
+        assert!(!screen.is_current(old_open));
+        let (next_tx, mut next_rx) = mpsc::unbounded_channel();
+        // Real stop/start unmutes the same persistent publication.
+        let (next, next_open) = screen.start("person:video", "A", next_tx).unwrap();
+        assert!(!screen.is_current(old_close));
+        assert!(screen.is_current(next_open));
+        next.set_inactive(false);
+        old.set_inactive(true);
+        assert!(!next.is_inactive());
+        assert!(next.current_frame_id() > old.current_frame_id());
+        let (duplicate_tx, _) = mpsc::unbounded_channel();
+        assert!(screen.start("person:video", "A", duplicate_tx).is_none());
+        assert!(matches!(
+            next_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(screen.stop("other:video", Some("A")).is_none());
+        assert!(screen.stop("person:video", Some("old-track")).is_none());
+        let closed = screen.stop("person:audio", None).unwrap();
+        assert_eq!(next_rx.try_recv(), Ok(()));
+        assert!(screen.is_current(closed));
     }
 }
 

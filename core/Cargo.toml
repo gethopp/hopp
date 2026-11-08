@@ -10,6 +10,14 @@ authors = ["Iason Paraskevopoulos <iaswnparaskev@gmail.com>"]
 name = "hopp_core"
 path = "src/main.rs"
 
+[[bin]]
+name = "hopp_test_fixture"
+path = "src/bin/test_fixture.rs"
+required-features = ["test-support"]
+
+[features]
+test-support = ["socket_lib/test-support"]
+
 [profile.dev]
 incremental = true
 

@@ -8,14 +8,18 @@ mod audio_capture;
 mod camera;
 mod events;
 mod hang_repro;
+mod ipc;
 mod livekit_utils;
 mod local_drawing;
+mod media;
 mod remote_clipboard;
 mod remote_cursor;
 mod remote_drawing;
 mod remote_keyboard;
+mod runner;
 mod screenshare_client;
 mod screensharing;
+mod smoke;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -30,6 +34,16 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Run self-checking core lifecycle/media scenarios
+    Smoke(runner::SmokeArgs),
+    #[command(hide = true)]
+    SmokeScenario {
+        name: String,
+        #[arg(long, default_value_t = 10)]
+        cycles: u32,
+        #[arg(long)]
+        require_devices: bool,
+    },
     /// Test cursor functionality
     Cursor {
         /// Type of cursor test to run
@@ -238,6 +252,19 @@ async fn main() -> io::Result<()> {
 
     // Handle different commands
     match args.command {
+        Commands::Smoke(options) => runner::run(options)?,
+        Commands::SmokeScenario {
+            name,
+            cycles,
+            require_devices,
+        } => match smoke::run(&name, cycles, require_devices).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::Unsupported && !require_devices => {
+                println!("SKIP {name}: {error}");
+                std::process::exit(77);
+            }
+            Err(error) => return Err(error),
+        },
         Commands::Cursor { test_type } => {
             match test_type {
                 CursorTest::Complete => {

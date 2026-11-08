@@ -88,10 +88,13 @@ pub async fn test_screenshare_reconnect_hang() -> io::Result<()> {
             .join(", ")
     );
 
-    let screen_source = NativeVideoSource::new(WebrtcVideoResolution {
-        width: 1920,
-        height: 1080,
-    });
+    let screen_source = NativeVideoSource::new(
+        WebrtcVideoResolution {
+            width: 1920,
+            height: 1080,
+        },
+        true,
+    );
     let screen_track = LocalVideoTrack::create_video_track(
         "screen_share",
         RtcVideoSource::Native(screen_source.clone()),

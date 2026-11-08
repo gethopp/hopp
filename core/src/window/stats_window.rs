@@ -154,6 +154,17 @@ impl StatsWindow {
         })
     }
 
+    #[cfg(feature = "test-support")]
+    pub(crate) fn is_visible(&self) -> bool {
+        self.window.is_visible().unwrap_or(false)
+    }
+
+    pub fn show(&self) {
+        self.window.set_visible(true);
+        self.window.focus_window();
+        self.window.request_redraw();
+    }
+
     pub fn window_id(&self) -> winit::window::WindowId {
         self.window.id()
     }

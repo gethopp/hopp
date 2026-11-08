@@ -175,13 +175,18 @@ pub async fn process_video_stream(
 
     let mut sink = NativeVideoStream::new(video_track.rtc_track());
     let timeout_duration = std::time::Duration::from_secs(1);
-    let mut frame_counter: u64 = 0;
+    let mut frame_counter = manager.current_frame_id();
 
     loop {
         tokio::select! {
             result = tokio::time::timeout(timeout_duration, sink.next()) => {
                 match result {
                     Ok(Some(frame)) => {
+                        #[cfg(feature = "test-support")]
+                        {
+                            let counter = if is_camera { &crate::test_support::CAMERA_RECEIVED } else { &crate::test_support::SCREEN_RECEIVED };
+                            counter.fetch_add(1, Ordering::Relaxed);
+                        }
                         let mut latest_frame = frame;
                         let mut skipped: u64 = 0;
 

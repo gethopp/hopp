@@ -24,7 +24,9 @@ Hopp is an open-source pair programming app with screen sharing, remote control,
 
 All commands use [Taskfile](https://taskfile.dev). Run `task --list` in any directory to see available tasks.
 
-Do not run these as an agent — they require user interaction in a terminal/desktop.
+Interactive development servers and release builds require a terminal/desktop.
+Agents should run the automated checks described under Testing; local media smoke
+tests are authorized during development when the required permissions/devices are available.
 
 **Backend:** `cd backend && task run` / `task test`
 **Core:** `cd core && cargo build` / `cargo test` / `cargo fmt`
@@ -63,6 +65,20 @@ Tauri UI (React)  ←→  Tauri Backend (Rust)  ←→  Core Process (Rust)
 - **Go:** Integration tests in `backend/test/integration/`
 - **Rust:** Unit tests + visual integration tests in `core/tests/`
 - **Frontend:** Linting + typechecking (no unit test runner configured)
+- During development, run the tests relevant to the code being changed. After
+  every commit, run the relevant tests against that commit and report the result;
+  do not create a commit merely to trigger testing. Test the final working tree
+  before handing changes back, even if no commit is requested.
+- For core media, IPC, call lifecycle, or native window changes, use the existing
+  `core/tests` smoke harness (`cd core && task smoke -- <scenarios>`) alongside
+  the relevant library tests. See `core/tests/README.md` for scenario selection.
+  Screen sharing must cover normal pair calls, multi-user rooms, and changes in
+  who has control when those paths are affected.
+- Run local media tests sequentially on an available desktop. Report missing
+  microphone/camera/display permissions or devices as incomplete coverage, never
+  as a successful media test. Do not modify OS permissions or install virtual devices.
+- Keep harness execution and compilation out of CI; run it locally during
+  development and after relevant commits. Preserve existing platform CI coverage.
 
 ## Key Conventions
 

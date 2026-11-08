@@ -812,6 +812,12 @@ impl CameraWindow {
     }
 
     /// Handle a camera UI message (state update).
+    #[cfg(feature = "test-support")]
+    pub(crate) fn test_control(&mut self, control: socket_lib::TestCallControl) {
+        let message = crate::test_support::control_message(control, &self.call_controls);
+        self.update(CameraMessage::CallControls(message));
+    }
+
     fn update(&mut self, message: CameraMessage) {
         match message {
             CameraMessage::CallControls(message) => {
@@ -899,6 +905,8 @@ impl CameraWindow {
 
     /// Perform a full redraw: build UI, draw, present.
     fn redraw(&mut self) {
+        #[cfg(feature = "test-support")]
+        let previous_frames = self.last_rendered_frame_ids.clone();
         self.sync_compact_constraints();
         toast::tick_toast(&mut self.state.toast);
 
@@ -964,6 +972,11 @@ impl CameraWindow {
 
         self.window.pre_present_notify();
         output.present();
+        #[cfg(feature = "test-support")]
+        if self.last_rendered_frame_ids != previous_frames {
+            crate::test_support::CAMERA_PRESENTED
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 

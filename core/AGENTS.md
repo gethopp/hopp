@@ -23,7 +23,17 @@ This directory contains the Rust screen capture and remote control engine (`hopp
 
 - Run core library tests as an agent: `cargo test --lib` (use `--target <host-triple>` when needed, e.g. `cargo test --target aarch64-apple-darwin --lib`).
 - Verify code changes with `task build_dev`, formatting, and library tests before pushing.
-- Desktop/integration tests and ignored tests remain manual unless explicitly requested.
+- Run relevant local smoke scenarios during development, after each commit, and
+  against the final working tree before handoff (`task smoke -- <scenarios>`).
+  Select scenarios using `tests/README.md`; screen-share changes include pair
+  calls, multi-user rooms, and control handoff. Run the full local suite for
+  shared IPC/lifecycle changes when prerequisites are available.
+- Local automated desktop/media smoke runs are authorized; ignored tests and
+  physical UI/audio quality checks remain manual unless explicitly requested.
+  Report unavailable devices/permissions and skipped scenarios explicitly.
+- Do not add harness compilation/execution jobs to CI. Keep this validation local.
+- Keep the harness LiveKit dependencies and lockfile aligned with the SDK commit
+  shipped by core; codec negotiation tests must use representative peers.
 - Full testing details live in `tests/README.md`.
 
 ## Conventions & Structure

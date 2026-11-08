@@ -143,18 +143,24 @@ fn open_output_stream(
                     if data.len() <= buf.len() {
                         let rest = buf.split_off(data.len());
                         data.copy_from_slice(&buf);
+                        #[cfg(feature = "test-support")]
+                        crate::test_support::record_audio_output(data);
                         buf = rest;
                         return;
                     }
                     if !buf.is_empty() {
                         let (prefix, suffix) = data.split_at_mut(buf.len());
                         prefix.copy_from_slice(&buf);
+                        #[cfg(feature = "test-support")]
+                        crate::test_support::record_audio_output(prefix);
                         buf.clear();
                         data = suffix;
                     }
                     // Mix a new 10ms frame from all sources (mono at MIXER_SAMPLE_RATE)
                     let mut mixer_guard = mixer.lock();
                     let mixed = mixer_guard.mix(MIXER_NUM_CHANNELS as usize);
+                    #[cfg(feature = "test-support")]
+                    crate::test_support::record_audio_mixed(mixed);
                     // Feed mono mix to APM reverse stream before resampling to
                     // multi-channel output.
                     {

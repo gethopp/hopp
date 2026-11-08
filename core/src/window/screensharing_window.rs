@@ -279,12 +279,17 @@ fn spawn_redraw_thread(
     std::thread::spawn(move || loop {
         match redraw_rx.recv_timeout(REDRAW_INTERVAL) {
             Ok(RedrawCommand::ForceRedraw) => {
-                if !redraw_in_progress.load(Ordering::Acquire) {
+                if window.is_visible() != Some(false) && !redraw_in_progress.load(Ordering::Acquire)
+                {
                     window.request_redraw();
                 }
             }
             Ok(RedrawCommand::Stop) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => window.request_redraw(),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if window.is_visible() != Some(false) {
+                    window.request_redraw();
+                }
+            }
         }
     })
 }
@@ -897,6 +902,8 @@ impl ScreensharingWindow {
             self.window.set_visible(true);
         }
         self.window.focus_window();
+        self.update_cursor();
+        self.window.request_redraw();
     }
 
     pub fn hide(&self) {
@@ -1040,9 +1047,22 @@ impl ScreensharingWindow {
     }
 
     /// Update local control ownership and refresh cursor. When true, control tab uses OS cursor.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn local_in_control(&self) -> bool {
+        self.local_participant_in_control
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn test_control(&mut self, control: socket_lib::TestCallControl) {
+        let message = crate::test_support::control_message(control, &self.call_controls);
+        self.update(ScreensharingMessage::CallControls(message));
+    }
+
     pub fn set_local_participant_in_control(&mut self, in_control: bool) {
         self.local_participant_in_control = in_control;
-        self.update_cursor();
+        if self.is_visible() {
+            self.update_cursor();
+        }
     }
 
     /// Compute multi-click count using the same logic as Chromium.
@@ -2303,6 +2323,15 @@ impl ScreensharingWindow {
 
         self.window.pre_present_notify();
         output.present();
+        #[cfg(feature = "test-support")]
+        if !skip_buffer
+            && current_frame_id != self.last_rendered_frame_id
+            && stream_w > 0
+            && stream_h > 0
+        {
+            crate::test_support::SCREEN_PRESENTED
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
 
         // Keep the redraw loop alive while the segmented-control indicator
         // is animating, so the slide plays smoothly even when no user input
