@@ -29,7 +29,8 @@ import { CallCenter } from "@/components/ui/call-center";
 import { listen } from "@tauri-apps/api/event";
 import Invite from "./invite";
 import { sounds } from "@/constants/sounds";
-import { useDisableNativeContextMenu } from "@/lib/hooks";
+import { useDisableNativeContextMenu, useEndCall } from "@/lib/hooks";
+import { listenForCoreProcessFailure } from "@/lib/core-call-events";
 import { processDeepLinkUrl } from "@/lib/deepLinkUtils";
 import { Rooms } from "./tabs/Rooms";
 import { pollUpdates } from "@/lib/auto-update";
@@ -53,7 +54,9 @@ function App() {
     setCallsPresence,
   } = useStore();
 
-  const coreProcessCrashedRef = useRef(false);
+  const endCall = useEndCall();
+  const endCallRef = useRef(endCall);
+  endCallRef.current = endCall;
   useDisableNativeContextMenu();
 
   const { useQuery } = useAPI();
@@ -394,34 +397,34 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return;
     const setupCoreProcessCrashedListener = async () => {
-      const unlistenFn = await listen("core_process_crashed", (data) => {
-        if (coreProcessCrashedRef.current) return;
+      const unlistenFn = await listenForCoreProcessFailure(
+        (callId) => endCallRef.current(callId),
+        (reason) => {
+          console.debug("Core process crashed");
 
-        console.debug("Core process crashed");
-        coreProcessCrashedRef.current = true;
-
-        tauriUtils.showWindow("main");
-        toast.error(
-          (t) => (
-            <div className="flex flex-row items-center gap-2">
-              <div className="text-sm">{`${data.payload as string}`}</div>
-              <Button
-                size="sm"
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  coreProcessCrashedRef.current = false;
-                }}
-              >
-                Dismiss
-              </Button>
-            </div>
-          ),
-          {
-            duration: 60_000,
-            position: "top-center",
-          },
-        );
-      });
+          tauriUtils.showWindow("main");
+          toast.error(
+            (t) => (
+              <div className="flex flex-row items-center gap-2">
+                <div className="text-sm">{reason}</div>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            ),
+            {
+              duration: 60_000,
+              position: "top-center",
+              id: "core-process-crashed",
+            },
+          );
+        },
+      );
 
       return unlistenFn;
     };

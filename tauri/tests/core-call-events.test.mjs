@@ -14,9 +14,11 @@ test("a delayed call-ended event from A must not end the newer call B", async (t
   const directory = await mkdtemp(join(tmpdir(), "hopp-call-events-"));
   let unlisten;
   let unlistenFailure;
+  let unlistenProcessFailure;
   t.after(async () => {
     await unlisten?.();
     await unlistenFailure?.();
+    await unlistenProcessFailure?.();
     clearMocks();
     delete globalThis.window;
     await rm(directory, { recursive: true, force: true });
@@ -31,7 +33,7 @@ test("a delayed call-ended event from A must not end the newer call B", async (t
   await build({
     stdin: {
       contents: `
-        export { listenForCoreCallEnd, listenForCoreConnectionFailure } from "./src/lib/core-call-events";
+        export { listenForCoreCallEnd, listenForCoreConnectionFailure, listenForCoreProcessFailure } from "./src/lib/core-call-events";
         export { default as useStore } from "./src/store/store";
         export { tauriUtils } from "./src/windows/window-utils";
       `,
@@ -44,9 +46,8 @@ test("a delayed call-ended event from A must not end the newer call B", async (t
     format: "cjs",
     outfile: bundle,
   });
-  const { listenForCoreCallEnd, listenForCoreConnectionFailure, useStore, tauriUtils } = await import(
-    pathToFileURL(bundle)
-  );
+  const { listenForCoreCallEnd, listenForCoreConnectionFailure, listenForCoreProcessFailure, useStore, tauriUtils } =
+    await import(pathToFileURL(bundle));
   unlisten = await listenForCoreCallEnd(() => useStore.getState().setCallTokens(null));
 
   const call = (name) => ({
@@ -123,4 +124,32 @@ test("a delayed call-ended event from A must not end the newer call B", async (t
   await assert.rejects(startA, /Call ended during startup/);
   assert.equal(useStore.getState().callTokens?.callId, "B");
   await assert.rejects(tauriUtils.callStarted("A", "audio-A", "video-A"), /Call ended before startup/);
+
+  const endedCalls = [];
+  const failures = [];
+  let cleanup;
+  handleCommand = (command, args) => {
+    if (command === "reset_core_process") endedCalls.push(args.callId);
+    if (command === "plugin:window|get_all_windows") return [];
+    assert.ok(
+      ["reset_core_process", "set_tray_notification", "toggle_call_sleep_prevention"].includes(command),
+      `core failure must only clean up, unexpected command: ${command}`,
+    );
+  };
+  unlistenProcessFailure = await listenForCoreProcessFailure(
+    (callId) => {
+      cleanup = tauriUtils.endCallCleanup(callId);
+      useStore.getState().setCallTokens(null);
+    },
+    (reason) => {
+      failures.push(reason);
+    },
+  );
+  await emit("core_process_crashed", "Connection lost. Please restart Hopp.");
+  await cleanup;
+  assert.deepEqual(endedCalls, ["B"], "a failure ends the current call without a user action");
+  assert.equal(useStore.getState().callTokens, null);
+  await emit("core_process_crashed", "Core stopped.");
+  assert.deepEqual(endedCalls, ["B"], "duplicate failures must not end the call twice");
+  assert.deepEqual(failures, ["Connection lost. Please restart Hopp.", "Core stopped."]);
 });

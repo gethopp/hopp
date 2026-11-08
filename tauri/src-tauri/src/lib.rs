@@ -94,6 +94,9 @@ pub struct AppData {
     /// Whether a call is currently active.
     pub call_active: bool,
 
+    /// A failed core is unavailable until the application is restarted.
+    core_failed: bool,
+
     /// Identifies pending and active calls so stale lifecycle events cannot clear a new call.
     pub current_call_id: Option<socket_lib::CallId>,
 
@@ -142,6 +145,7 @@ impl AppData {
             suppress_hide_on_call_end,
             drawing_enabled: false,
             call_active: false,
+            core_failed: false,
             current_call_id: None,
             pending_call_media: None,
             camera_revision: 0,
@@ -152,7 +156,12 @@ impl AppData {
         }
     }
 
-    pub fn begin_call(&mut self, call_id: socket_lib::CallId) {
+    pub fn begin_call(&mut self, call_id: socket_lib::CallId) -> Result<(), String> {
+        if self.core_failed {
+            return Err(
+                "Core is unavailable. Please restart Hopp before starting another call.".into(),
+            );
+        }
         let settings = self.app_state.user_settings();
         self.current_call_id = Some(call_id);
         self.call_active = false;
@@ -161,6 +170,16 @@ impl AppData {
             camera_enabled: settings.start_camera_on_call,
         });
         self.camera_revision = self.camera_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    fn fail_core(&mut self) -> bool {
+        if self.core_failed {
+            return false;
+        }
+        self.core_failed = true;
+        self.sender.shutdown();
+        true
     }
 
     pub fn clear_call(&mut self) {
@@ -226,6 +245,9 @@ impl AppData {
         event_socket: &Arc<Mutex<EventSocket>>,
         mut message: Message,
     ) -> Result<socket_lib::RequestId, String> {
+        if self.core_failed {
+            return Err("Core is unavailable. Please restart Hopp.".into());
+        }
         if !Arc::ptr_eq(&self.event_socket, event_socket) {
             return Err("Core connection was replaced".into());
         }
@@ -547,7 +569,7 @@ mod response_tests {
     fn call_start_uses_media_actions_received_during_device_lookup() {
         for (toggle_mic, reenable) in [(false, false), (false, true), (true, false), (true, true)] {
             let (state, peer, peer_socket) = test_connection();
-            state.lock().unwrap().begin_call("A".into());
+            state.lock().unwrap().begin_call("A".into()).unwrap();
             let startup_state = state.clone();
             let startup = std::thread::spawn(move || {
                 let event_socket = startup_state.lock().unwrap().event_socket.clone();
@@ -654,7 +676,7 @@ mod response_tests {
                 let mut data = state.lock().unwrap();
                 assert!(data.pending_call_media.is_none());
                 data.clear_call();
-                data.begin_call("B".into());
+                data.begin_call("B".into()).unwrap();
                 assert!(data.camera_enabled());
                 assert!(data.pending_call_media.as_ref().unwrap().mic_enabled);
             }
@@ -749,7 +771,41 @@ mod response_tests {
     }
 
     #[test]
-    fn restart_interrupts_old_waits_and_rejects_stale_requests() {
+    fn core_failure_interrupts_waits_and_blocks_calls_after_cleanup() {
+        let (state, _peer, peer_socket) = test_connection();
+        state.lock().unwrap().begin_call("A".into()).unwrap();
+        let request_state = state.clone();
+        let (done, completed) = mpsc::channel();
+        let request = std::thread::spawn(move || {
+            done.send(request_core(&request_state, Message::ListAudioDevices, Ok))
+                .unwrap();
+        });
+        next_request(&peer_socket);
+        assert!(state.lock().unwrap().fail_core());
+        assert!(!state.lock().unwrap().fail_core());
+        assert!(completed
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_err());
+        request.join().unwrap();
+
+        let mut data = state.lock().unwrap();
+        let socket = data.event_socket.clone();
+        assert!(data
+            .send_core_request(&socket, Message::ListCameras)
+            .is_err());
+        // Ending the failed call must not make the dead core available again.
+        data.clear_call();
+        assert!(data
+            .begin_call("B".into())
+            .unwrap_err()
+            .contains("restart Hopp"));
+        assert!(data.current_call_id.is_none());
+        assert!(data.pending_call_media.is_none());
+    }
+
+    #[test]
+    fn replaced_connection_interrupts_old_waits_and_rejects_stale_requests() {
         let (state, _peer, peer_socket) = test_connection();
         let old_socket = state.lock().unwrap().event_socket.clone();
         let request_state = state.clone();
@@ -874,9 +930,22 @@ mod response_tests {
     }
 }
 
+/// Stop using the failed connection; frontend cleanup ends the call without waiting for core.
+pub fn core_process_failed(app: &AppHandle, reason: String) {
+    if let Some(state) = app.try_state::<Mutex<AppData>>() {
+        let mut data = state.lock().unwrap();
+        if !data.fail_core() {
+            return;
+        }
+    }
+    if let Err(error) = app.emit("core_process_crashed", reason) {
+        log::error!("Failed to emit core_process_crashed: {error:?}");
+    }
+}
+
 /// Monitors core process output and emits crash events.
 async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle) {
-    let mut crash_msg = String::new();
+    let mut crash_msg = "Core stopped unexpectedly. Please restart Hopp.".to_string();
     while let Some(event) = receiver.recv().await {
         match event {
             CommandEvent::Stdout(line) => {
@@ -893,37 +962,7 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                         if code == 1 {
                             crash_msg = "Core process terminated because it failed to receive messages from tauri, please restart the app".to_string();
                         } else if code == 2 {
-                            // When hopp_core is terminated because capturing failed from the OS
-                            // and couldn't be recovered, we restart it and say to the user to select
-                            // a screen again.
-                            match create_core_process(&app_handle) {
-                                Err(_) => {
-                                    crash_msg = "Core process terminated because capturing failed from the OS and couldn't be recovered, please restart the app".to_string();
-                                }
-                                Ok((_core_process, sender, event_socket)) => {
-                                    crash_msg = "Core process restarted because capturing failed from the OS and couldn't be recovered, please select screen again".to_string();
-
-                                    let data = app_handle.state::<Mutex<AppData>>();
-                                    let mut data = data.lock().unwrap();
-                                    if let Err(e) = sender.send(Message::LivekitServerUrl(
-                                        data.livekit_server_url.clone(),
-                                    )) {
-                                        log::error!(
-                                            "show_stdout: Failed to send livekit server url: {e:?}"
-                                        );
-                                    }
-                                    if let Err(e) = sender.send(Message::SetPreferredCamera(
-                                        data.app_state.last_used_camera(),
-                                    )) {
-                                        log::error!("show_stdout: failed to restore preferred camera: {e:?}");
-                                    }
-                                    data.sender.shutdown();
-                                    *app_handle.state::<Mutex<SocketSender>>().lock().unwrap() =
-                                        sender.clone();
-                                    data.sender = sender;
-                                    data.event_socket = Arc::new(Mutex::new(event_socket));
-                                }
-                            }
+                            crash_msg = "Screen capture failed. Please restart Hopp.".to_string();
                         } else if code == 3 {
                             crash_msg = "Core process terminated because the event loop stopped responding, please restart the app".to_string();
                             sentry_utils::upload_logs_event(
@@ -947,11 +986,7 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
     }
     log::info!("show_stdout: Finished");
 
-    // Communicate to the frontend that the core process has crashed.
-    let res = app_handle.emit("core_process_crashed", crash_msg);
-    if let Err(e) = res {
-        log::error!("Failed to emit core_process_crashed: {e:?}");
-    }
+    core_process_failed(&app_handle, crash_msg);
 }
 
 /// Spawns the core process sidecar with required arguments.

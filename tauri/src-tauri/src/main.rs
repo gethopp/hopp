@@ -499,7 +499,7 @@ fn call_started(
     let state = app.state::<Mutex<AppData>>();
     let (event_socket, user_settings, last_used) = {
         let mut data = state.lock().unwrap();
-        data.begin_call(call_id.clone());
+        data.begin_call(call_id.clone())?;
         let user_settings = data.app_state.user_settings();
         #[cfg(target_os = "macos")]
         if user_settings.show_dock_icon_in_call {
@@ -1223,6 +1223,10 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
         }
     }
     log::info!("forward_core_events: event forwarding thread exiting");
+    hopp::core_process_failed(
+        &app,
+        "Core connection was lost. Please restart Hopp.".into(),
+    );
 }
 
 fn main() {

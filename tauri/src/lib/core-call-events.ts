@@ -16,3 +16,11 @@ export function listenForCoreConnectionFailure(failed: (callId: string, reason: 
     failed(event.payload.call_id, event.payload.reason);
   });
 }
+
+export function listenForCoreProcessFailure(endCall: (callId: string) => void, failed: (reason: string) => void) {
+  return listen<string>("core_process_crashed", (event) => {
+    const { callTokens } = useStore.getState();
+    if (callTokens) endCall(callTokens.callId);
+    failed(event.payload);
+  });
+}
