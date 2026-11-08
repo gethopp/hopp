@@ -62,7 +62,8 @@ pub fn call_start_with_name(
 
 /// Sends a CallEnd message.
 pub fn call_end(sender: &SocketSender) -> io::Result<()> {
-    sender.send(Message::CallEnd(None))
+    sender.send(Message::CallEnd(None))?;
+    sender.flush(Duration::from_secs(1))
 }
 
 /// Sends a request to start screen sharing.

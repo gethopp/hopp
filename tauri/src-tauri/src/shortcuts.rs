@@ -167,25 +167,25 @@ fn unregister_call_shortcuts(app: &tauri::AppHandle) {
 
 fn handle_mic(app: &tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::ToggleMic) {
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.send_media_command(Message::ToggleMic) {
         log::error!("handle_mic shortcut: {e}");
     }
 }
 
 fn handle_camera(app: &tauri::AppHandle, call_id: &str) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
+    let mut data = data.lock().unwrap();
     if data.current_call_id.as_deref() != Some(call_id) {
         return;
     }
-    if data.is_camera_on {
-        if let Err(e) = data.sender.send(Message::StopCamera(call_id.to_string())) {
+    if data.camera_enabled() {
+        if let Err(e) = data.send_media_command(Message::StopCamera(call_id.to_string())) {
             log::error!("handle_camera shortcut (stop): {e}");
         }
     } else {
         let device_name = data.app_state.last_used_camera();
-        if let Err(e) = data.sender.send(Message::StartCamera(CameraStartMessage {
+        if let Err(e) = data.send_media_command(Message::StartCamera(CameraStartMessage {
             call_id: call_id.to_string(),
             device_name,
         })) {

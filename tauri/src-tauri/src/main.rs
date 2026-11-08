@@ -22,7 +22,8 @@ use hopp::{
     app_state::{resolve_microphone, AppState, AppVeilApplication, UserSettings},
     application_catalog::InstalledApplication,
     create_core_process, get_log_level, get_log_path, get_sentry_dsn, permissions, ping_frontend,
-    recv_expected_response, setup_start_on_launch, setup_tray_icon, AppData,
+    recv_expected_response, request_core, send_core_request, setup_start_on_launch,
+    setup_tray_icon, AppData,
 };
 mod shortcuts;
 #[cfg(target_os = "macos")]
@@ -167,11 +168,7 @@ fn stop_sound(app: tauri::AppHandle, sound_name: String) {
 
 #[tauri::command(async)]
 fn reset_core_process(app: tauri::AppHandle, call_id: socket_lib::CallId) {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd(Some(call_id))) {
-        log::error!("reset_core_process: failed to send message: {e:?}");
-    }
+    end_call(app, call_id);
 }
 
 #[tauri::command(async)]
@@ -438,12 +435,6 @@ fn set_drawing_enabled(app: tauri::AppHandle, enabled: bool, permanent: bool) {
 #[tauri::command(async)]
 fn quit_app(app: tauri::AppHandle) {
     log::info!("quit_app");
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::CallEnd(None)) {
-        log::error!("quit_app: failed to send CallEnd: {e:?}");
-    }
-    drop(data);
     app.exit(0);
 }
 
@@ -505,74 +496,64 @@ fn call_started(
     if call_id.is_empty() {
         return Err("Call ID must not be empty".to_string());
     }
-    let data = app.state::<Mutex<AppData>>();
-    #[allow(unused_mut)]
-    let mut data = data.lock().unwrap();
-    data.current_call_id = Some(call_id.clone());
-    data.call_active = false;
-    let user_settings = data.app_state.user_settings();
-    #[cfg(target_os = "macos")]
-    {
+    let state = app.state::<Mutex<AppData>>();
+    let (event_socket, user_settings, last_used) = {
+        let mut data = state.lock().unwrap();
+        data.begin_call(call_id.clone());
+        let user_settings = data.app_state.user_settings();
+        #[cfg(target_os = "macos")]
         if user_settings.show_dock_icon_in_call {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
             data.activation_policy_regular = true;
         }
-    }
-    // Resolve preferred → last used → system default → first → "".
-    let audio_device_name = {
-        let last_used = data.app_state.last_used_mic();
-        let devices: Vec<AudioDevice> = match data.sender.send_request(Message::ListAudioDevices) {
-            Err(e) => {
-                log::error!("call_started: failed to list audio devices: {e:?}");
-                vec![]
-            }
-            Ok(request_id) => {
-                match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-                    Message::AudioDeviceList(d) => Ok(d),
-                    other => Err(other),
-                }) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        log::error!("call_started: failed to receive audio device list: {e:?}");
-                        vec![]
-                    }
-                }
-            }
-        };
-        resolve_microphone(
-            &devices,
-            user_settings.default_mic.as_deref(),
-            last_used.as_deref(),
+        (
+            data.event_socket.clone(),
+            user_settings,
+            data.app_state.last_used_mic(),
         )
     };
-    log::info!("call_started: resolved audio_device_name={audio_device_name:?}");
-    let request_id =
-        match data
-            .sender
-            .send_request(Message::CallStart(socket_lib::CallStartMessage {
-                call_id,
-                audio_token: audio_token.clone(),
-                video_token: video_token.clone(),
-                audio_device_name,
-                start_mic_on_call: Some(user_settings.start_mic_on_call),
-                start_camera_on_call: Some(user_settings.start_camera_on_call),
-            })) {
-            Ok(request_id) => request_id,
-            Err(e) => {
-                log::error!("call_started: failed to send: {e:?}");
-                return Err("Failed to send message to hopp_core".to_string());
-            }
-        };
-    let result = match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::CallStartResult(r) => Ok(r),
+    // Only request/reply pairs wait on this lock; hang-up and other state remain available.
+    let socket = event_socket.lock().unwrap();
+    let devices = send_core_request(&state, &event_socket, Message::ListAudioDevices)
+        .and_then(|request_id| {
+            recv_expected_response(&socket, request_id, |message| match message {
+                Message::AudioDeviceList(devices) => Ok(devices),
+                other => Err(other),
+            })
+            .map_err(|error| error.to_string())
+        })
+        .unwrap_or_else(|error| {
+            log::error!("call_started: failed to list audio devices: {error}");
+            vec![]
+        });
+    let audio_device_name = resolve_microphone(
+        &devices,
+        user_settings.default_mic.as_deref(),
+        last_used.as_deref(),
+    );
+    let request_id = send_core_request(
+        &state,
+        &event_socket,
+        Message::CallStart(socket_lib::CallStartMessage {
+            call_id: call_id.clone(),
+            audio_token,
+            video_token,
+            audio_device_name,
+            start_mic_on_call: None,
+            start_camera_on_call: None,
+        }),
+    )?;
+    let result = recv_expected_response(&socket, request_id, |message| match message {
+        Message::CallStartResult(result) => Ok(result),
         other => Err(other),
-    }) {
-        Ok(result) => result,
-        Err(e) => {
-            log::error!("call_started: recv failed: {e:?}");
-            Err("Failed to receive message from hopp_core".to_string())
-        }
-    };
+    })
+    .map_err(|error| error.to_string())?;
+    let mut data = state.lock().unwrap();
+    if !Arc::ptr_eq(&data.event_socket, &event_socket)
+        || data.current_call_id.as_ref() != Some(&call_id)
+    {
+        return Err("Call ended or core restarted during startup".into());
+    }
     if result.is_ok() {
         data.call_active = true;
         data.is_camera_on = false;
@@ -847,8 +828,8 @@ fn set_remote_control_enabled(app: tauri::AppHandle, enabled: bool) {
 #[tauri::command(async)]
 fn mute_mic(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::MuteAudio) {
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.send_media_command(Message::MuteAudio) {
         log::error!("mute_mic: failed to send: {e:?}");
     }
 }
@@ -856,8 +837,8 @@ fn mute_mic(app: tauri::AppHandle) {
 #[tauri::command(async)]
 fn unmute_mic(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::UnmuteAudio) {
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.send_media_command(Message::UnmuteAudio) {
         log::error!("unmute_mic: failed to send: {e:?}");
     }
 }
@@ -865,8 +846,8 @@ fn unmute_mic(app: tauri::AppHandle) {
 #[tauri::command(async)]
 fn toggle_mic(app: tauri::AppHandle) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if let Err(e) = data.sender.send(Message::ToggleMic) {
+    let mut data = data.lock().unwrap();
+    if let Err(e) = data.send_media_command(Message::ToggleMic) {
         log::error!("toggle_mic: failed to send: {e:?}");
     }
 }
@@ -915,44 +896,23 @@ fn start_camera(
     call_id: socket_lib::CallId,
     device_name: Option<String>,
 ) -> Result<(), String> {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    if data.current_call_id.as_ref() != Some(&call_id) {
-        return Err("Call is no longer active".to_string());
-    }
-    let request_id =
-        match data
-            .sender
-            .send_request(Message::StartCamera(socket_lib::CameraStartMessage {
-                call_id,
-                device_name,
-            })) {
-            Ok(request_id) => request_id,
-            Err(e) => {
-                log::error!("start_camera: failed to send: {e:?}");
-                return Err("Failed to send message to hopp_core".to_string());
-            }
-        };
-    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::StartCameraResult(r) => Ok(r),
-        other => Err(other),
-    }) {
-        Ok(result) => result,
-        Err(e) => {
-            log::error!("start_camera: recv failed: {e:?}");
-            Err("Failed to receive message from hopp_core".to_string())
-        }
-    }
+    hopp::start_camera(
+        &app.state::<Mutex<AppData>>(),
+        socket_lib::CameraStartMessage {
+            call_id,
+            device_name,
+        },
+    )
 }
 
 #[tauri::command(async)]
 fn stop_camera(app: tauri::AppHandle, call_id: socket_lib::CallId) {
     let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
+    let mut data = data.lock().unwrap();
     if data.current_call_id.as_ref() != Some(&call_id) {
         return;
     }
-    if let Err(e) = data.sender.send(Message::StopCamera(call_id)) {
+    if let Err(e) = data.send_media_command(Message::StopCamera(call_id)) {
         log::error!("stop_camera: failed to send: {e:?}");
     }
 }
@@ -986,25 +946,18 @@ fn close_screenshare_viewer(app: tauri::AppHandle) {
 
 #[tauri::command(async)]
 fn list_microphones(app: tauri::AppHandle) -> Vec<AudioDevice> {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let request_id = match data.sender.send_request(Message::ListAudioDevices) {
-        Ok(request_id) => request_id,
-        Err(e) => {
-            log::error!("list_microphones: failed to send: {e:?}");
-            return vec![];
-        }
-    };
-    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::AudioDeviceList(d) => Ok(d),
-        other => Err(other),
-    }) {
-        Ok(devices) => devices,
-        Err(e) => {
-            log::error!("list_microphones: recv failed: {e:?}");
-            vec![]
-        }
-    }
+    request_core(
+        &app.state::<Mutex<AppData>>(),
+        Message::ListAudioDevices,
+        |message| match message {
+            Message::AudioDeviceList(devices) => Ok(devices),
+            other => Err(other),
+        },
+    )
+    .unwrap_or_else(|error| {
+        log::error!("list_microphones: {error}");
+        vec![]
+    })
 }
 
 #[tauri::command(async)]
@@ -1028,75 +981,50 @@ fn get_preferred_microphone(app: tauri::AppHandle) -> String {
 
 #[tauri::command(async)]
 fn select_microphone(app: tauri::AppHandle, device_name: String) {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let request_id =
-        match data
-            .sender
-            .send_request(Message::StartAudioCapture(AudioCaptureMessage {
-                device_name,
-            })) {
-            Ok(request_id) => request_id,
-            Err(e) => {
-                log::error!("select_microphone: failed to send: {e:?}");
-                return;
-            }
-        };
-    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::StartAudioCaptureResult(r) => Ok(r),
-        other => Err(other),
-    }) {
-        Ok(Err(e)) => log::error!("select_microphone: core failed: {e}"),
-        Err(e) => log::error!("select_microphone: no result: {e:?}"),
-        Ok(Ok(())) => {}
+    let result = request_core(
+        &app.state::<Mutex<AppData>>(),
+        Message::StartAudioCapture(AudioCaptureMessage { device_name }),
+        |message| match message {
+            Message::StartAudioCaptureResult(result) => Ok(result),
+            other => Err(other),
+        },
+    )
+    .and_then(|result| result);
+    if let Err(error) = result {
+        log::error!("select_microphone: {error}");
     }
 }
 
 #[tauri::command(async)]
 fn list_webcams(app: tauri::AppHandle) -> Vec<CameraDevice> {
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let request_id = match data.sender.send_request(Message::ListCameras) {
-        Ok(request_id) => request_id,
-        Err(e) => {
-            log::error!("list_webcams: failed to send: {e:?}");
-            return vec![];
-        }
-    };
-    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::CameraList(d) => Ok(d),
-        other => Err(other),
-    }) {
-        Ok(devices) => devices,
-        Err(e) => {
-            log::error!("list_webcams: recv failed: {e:?}");
-            vec![]
-        }
-    }
+    request_core(
+        &app.state::<Mutex<AppData>>(),
+        Message::ListCameras,
+        |message| match message {
+            Message::CameraList(devices) => Ok(devices),
+            other => Err(other),
+        },
+    )
+    .unwrap_or_else(|error| {
+        log::error!("list_webcams: {error}");
+        vec![]
+    })
 }
 
 #[tauri::command(async)]
 fn bring_windows_to_front(app: tauri::AppHandle) -> bool {
-    log::info!("bring_windows_to_front");
-    let data = app.state::<Mutex<AppData>>();
-    let data = data.lock().unwrap();
-    let request_id = match data.sender.send_request(Message::BringWindowsToFront) {
-        Ok(request_id) => request_id,
-        Err(e) => {
-            log::error!("bring_windows_to_front: failed to send: {e:?}");
-            return false;
-        }
-    };
-    match recv_expected_response(&data.event_socket, request_id, |msg| match msg {
-        Message::BringWindowsToFrontResult(f) => Ok(f),
-        other => Err(other),
-    }) {
-        Ok(focused) => focused,
-        Err(e) => {
-            log::error!("bring_windows_to_front: recv failed: {e:?}");
-            false
-        }
-    }
+    request_core(
+        &app.state::<Mutex<AppData>>(),
+        Message::BringWindowsToFront,
+        |message| match message {
+            Message::BringWindowsToFrontResult(focused) => Ok(focused),
+            other => Err(other),
+        },
+    )
+    .unwrap_or_else(|error| {
+        log::error!("bring_windows_to_front: {error}");
+        false
+    })
 }
 
 #[tauri::command(async)]
@@ -1104,16 +1032,14 @@ fn end_call(app: tauri::AppHandle, call_id: socket_lib::CallId) {
     let state = app.state::<Mutex<AppData>>();
     #[allow(unused_mut)]
     let mut data = state.lock().unwrap();
-    if data.current_call_id.as_ref() != Some(&call_id) {
-        return;
-    }
+    let is_current = data.current_call_id.as_ref() == Some(&call_id);
     if let Err(e) = data.sender.send(Message::CallEnd(Some(call_id))) {
         log::error!("end_call: failed to send: {e:?}");
     }
-    data.current_call_id = None;
-    data.call_active = false;
-    data.is_camera_on = false;
-    data.is_screensharing = false;
+    if !is_current {
+        return;
+    }
+    data.clear_call();
     #[cfg(target_os = "macos")]
     {
         data.sleep_prevention.disable();
@@ -1177,10 +1103,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 let data = app.state::<Mutex<AppData>>();
                 let mut data = data.lock().unwrap();
                 if data.current_call_id.as_ref() == Some(&call_id) {
-                    data.current_call_id = None;
-                    data.call_active = false;
-                    data.is_camera_on = false;
-                    data.is_screensharing = false;
+                    data.clear_call();
                     #[cfg(target_os = "macos")]
                     {
                         let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -1292,12 +1215,6 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
             }
             Message::ExitRequested => {
                 log::info!("forward_core_events: exit requested from core");
-                let data = app.state::<Mutex<AppData>>();
-                let data = data.lock().unwrap();
-                if let Err(e) = data.sender.send(Message::CallEnd(None)) {
-                    log::error!("forward_core_events: failed to send CallEnd: {e:?}");
-                }
-                drop(data);
                 app.exit(0);
             }
             other => {
@@ -1464,6 +1381,7 @@ fn main() {
                     log::error!("Failed to send initial telemetry_enabled: {e:?}");
                 }
             }
+            app.manage(Mutex::new(sender.clone()));
             let data = Mutex::new(AppData::new(
                 sender,
                 event_socket,
@@ -1798,6 +1716,11 @@ fn main() {
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {
             log::info!("Exit requested");
+            if let Err(error) =
+                hopp::end_core_before_exit(&app_handle.state::<Mutex<socket_lib::SocketSender>>())
+            {
+                log::error!("Failed to write CallEnd before exit: {error}");
+            }
             sentry_utils::upload_logs_event("Tauri app quit".to_string());
             sentry_utils::flush(std::time::Duration::from_secs(2));
         }

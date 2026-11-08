@@ -188,9 +188,9 @@ pub async fn test_screenshare_reconnect_hang() -> io::Result<()> {
     drop(screen_source);
     drop(audio_room);
     drop(video_room);
-    drop(event_socket);
-
     sender.send(Message::CallEnd(None))?;
+    sender.flush(Duration::from_secs(1))?;
+    drop(event_socket);
     println!("Cleanup complete.");
 
     Ok(())

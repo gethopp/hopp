@@ -3564,9 +3564,13 @@ impl RenderEventLoop {
 
         let proxy = self.event_loop.create_proxy();
         let mut application = Application::new(sender, proxy, hang_protection_counter)?;
-        self.event_loop.run_app(&mut application).map_err(|e| {
+        let result = self.event_loop.run_app(&mut application).map_err(|e| {
             log::error!("Error running application: {e:?}");
             RenderLoopError::EventLoopError(e)
-        })
+        });
+        if let Err(error) = application.socket.flush(std::time::Duration::from_secs(1)) {
+            log::warn!("Failed to flush IPC before core exits: {error}");
+        }
+        result
     }
 }

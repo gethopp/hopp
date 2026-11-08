@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 // Platform-specific imports
@@ -303,11 +303,17 @@ type Stream = UnixStream;
 #[cfg(windows)]
 type Stream = TcpStream;
 
-/// Send half of the socket. Clone-safe via Arc<Mutex<Stream>>.
+enum Outbound {
+    Write(Vec<u8>),
+    Flush(mpsc::Sender<()>),
+}
+
+/// Cloneable send half. One writer thread writes messages in enqueue order.
 #[derive(Clone)]
 pub struct SocketSender {
-    stream: Arc<Mutex<Stream>>,
+    outgoing: mpsc::Sender<Outbound>,
     next_request_id: Arc<AtomicU64>,
+    shutdown_stream: Arc<Stream>,
 }
 
 impl SocketSender {
@@ -334,15 +340,38 @@ impl SocketSender {
         })
     }
 
+    /// Success means enqueued; a write failure closes the connection and rejects later sends.
     pub fn send(&self, message: Message) -> Result<(), std::io::Error> {
         let serialized_message = serde_json::to_string(&message)?;
         let serialized_message = serialized_message.as_bytes();
         let size = serialized_message.len();
         let mut message_bytes = size.to_le_bytes().to_vec();
         message_bytes.extend_from_slice(serialized_message);
-        let mut stream = self.stream.lock().unwrap();
-        stream.write_all(&message_bytes)?;
-        Ok(())
+        self.enqueue(Outbound::Write(message_bytes))
+    }
+
+    /// Waits for preceding writes, not for the peer to process them.
+    pub fn flush(&self, timeout: Duration) -> Result<(), std::io::Error> {
+        let (done, written) = mpsc::channel();
+        self.enqueue(Outbound::Flush(done))?;
+        written.recv_timeout(timeout).map_err(|error| {
+            let kind = match error {
+                mpsc::RecvTimeoutError::Timeout => std::io::ErrorKind::TimedOut,
+                mpsc::RecvTimeoutError::Disconnected => std::io::ErrorKind::BrokenPipe,
+            };
+            std::io::Error::new(kind, error)
+        })
+    }
+
+    /// Interrupts blocked reads/writes without acquiring a socket or application lock.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_stream.shutdown(std::net::Shutdown::Both);
+    }
+
+    fn enqueue(&self, message: Outbound) -> Result<(), std::io::Error> {
+        self.outgoing
+            .send(message)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "IPC writer closed"))
     }
 }
 
@@ -433,13 +462,37 @@ impl Drop for EventSocket {
 }
 
 fn build_pair(stream: Stream) -> std::io::Result<(SocketSender, EventSocket)> {
-    let write_stream = stream.try_clone()?;
+    let mut write_stream = stream.try_clone()?;
     let read_stream = stream.try_clone()?;
     let shutdown_stream = stream;
 
+    let sender_shutdown = Arc::new(shutdown_stream.try_clone()?);
+    let writer_shutdown = sender_shutdown.clone();
+    // shortcut: unbounded control-message queue; add backpressure if high-volume data uses it.
+    let (outgoing, incoming) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("ipc-writer".into())
+        .spawn(move || {
+            for message in incoming {
+                match message {
+                    Outbound::Write(bytes) => {
+                        if let Err(error) = write_stream.write_all(&bytes) {
+                            log::error!("IPC writer failed: {error}");
+                            let _ = writer_shutdown.shutdown(std::net::Shutdown::Both);
+                            break;
+                        }
+                    }
+                    Outbound::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        })?;
+
     let sender = SocketSender {
-        stream: Arc::new(Mutex::new(write_stream)),
+        outgoing,
         next_request_id: Arc::new(AtomicU64::new(1)),
+        shutdown_stream: sender_shutdown,
     };
 
     let event_socket = EventSocket::new(read_stream, shutdown_stream);
@@ -601,6 +654,63 @@ fn calculate_port_from_hash(socket_path: &str) -> u16 {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    #[test]
+    fn blocked_writer_keeps_sends_nonblocking_and_shutdown_releases_flush() {
+        let (mut client, _peer) = UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        loop {
+            match client.write(&[0; 4096]) {
+                Ok(size) => assert!(size > 0),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("failed to fill socket: {error}"),
+            }
+        }
+        client.set_nonblocking(false).unwrap();
+        let (sender, _socket) = build_pair(client).unwrap();
+        let caller_sender = sender.clone();
+        let (done, completed) = mpsc::channel();
+        let caller = std::thread::spawn(move || {
+            caller_sender.send(Message::Ping).unwrap();
+            let error = caller_sender.flush(Duration::from_millis(50)).unwrap_err();
+            caller_sender
+                .send(Message::CallEnd(Some("A".into())))
+                .unwrap();
+            done.send(error.kind()).unwrap();
+        });
+        let result = completed.recv_timeout(Duration::from_secs(2));
+        // Release blocked I/O before reporting a failure, without locking the writer.
+        sender.shutdown();
+        caller.join().unwrap();
+        assert_eq!(result.unwrap(), std::io::ErrorKind::TimedOut);
+        assert_eq!(
+            sender.flush(Duration::from_secs(1)).unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert!(matches!(
+            _socket.responses.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_failure_closes_response_waiters_and_rejects_later_sends() {
+        let (client, _peer) = UnixStream::pair().unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let (sender, socket) = build_pair(client).unwrap();
+        sender.send(Message::Ping).unwrap();
+        assert_eq!(
+            sender.flush(Duration::from_secs(1)).unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert!(sender.send(Message::Ping).is_err());
+        assert!(matches!(
+            socket.responses.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
 
     #[cfg(unix)]
     fn test_pair() -> ((SocketSender, EventSocket), (SocketSender, EventSocket)) {
@@ -901,6 +1011,7 @@ mod tests {
         // Both should arrive (order guaranteed since same underlying stream with mutex)
         assert!(matches!(msg1, Message::Ping));
         assert!(matches!(msg2, Message::GetAvailableContent));
+        client_sender.flush(Duration::from_secs(1)).unwrap();
     }
 
     #[test]

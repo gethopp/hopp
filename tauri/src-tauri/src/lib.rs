@@ -52,6 +52,11 @@ pub struct CoreProcess {
     pub process: CommandChild,
 }
 
+struct PendingCallMedia {
+    mic_enabled: bool,
+    camera_enabled: bool,
+}
+
 /// Central application data structure that holds all the runtime state and resources
 /// needed by the Tauri application.
 pub struct AppData {
@@ -59,7 +64,7 @@ pub struct AppData {
     pub sender: SocketSender,
 
     /// Receive half that routes messages into `events` and `responses` channels.
-    pub event_socket: EventSocket,
+    pub event_socket: Arc<Mutex<EventSocket>>,
 
     /// Active sound entries currently being played by the application.
     /// Each entry contains the sound name and a channel transmitter to control playback.
@@ -92,6 +97,9 @@ pub struct AppData {
     /// Identifies pending and active calls so stale lifecycle events cannot clear a new call.
     pub current_call_id: Option<socket_lib::CallId>,
 
+    pending_call_media: Option<PendingCallMedia>,
+    camera_revision: u64,
+
     /// Whether the local camera is currently on (pushed from frontend snapshots).
     pub is_camera_on: bool,
 
@@ -121,7 +129,7 @@ impl AppData {
     ) -> Self {
         AppData {
             sender,
-            event_socket,
+            event_socket: Arc::new(Mutex::new(event_socket)),
             sound_entries: Vec::new(),
             deactivate_hiding,
             app_state,
@@ -135,12 +143,178 @@ impl AppData {
             drawing_enabled: false,
             call_active: false,
             current_call_id: None,
+            pending_call_media: None,
+            camera_revision: 0,
             is_camera_on: false,
             is_screensharing: false,
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }
     }
+
+    pub fn begin_call(&mut self, call_id: socket_lib::CallId) {
+        let settings = self.app_state.user_settings();
+        self.current_call_id = Some(call_id);
+        self.call_active = false;
+        self.pending_call_media = Some(PendingCallMedia {
+            mic_enabled: settings.start_mic_on_call,
+            camera_enabled: settings.start_camera_on_call,
+        });
+        self.camera_revision = self.camera_revision.wrapping_add(1);
+    }
+
+    pub fn clear_call(&mut self) {
+        self.current_call_id = None;
+        self.call_active = false;
+        self.is_camera_on = false;
+        self.is_screensharing = false;
+        self.pending_call_media = None;
+        self.camera_revision = self.camera_revision.wrapping_add(1);
+    }
+
+    pub fn camera_enabled(&self) -> bool {
+        self.pending_call_media
+            .as_ref()
+            .map_or(self.is_camera_on, |media| media.camera_enabled)
+    }
+
+    fn set_camera_intent(&mut self, call_id: &str, enabled: bool) -> Result<u64, String> {
+        if self.current_call_id.as_deref() != Some(call_id) {
+            return Err("Call is no longer active".into());
+        }
+        self.camera_revision = self.camera_revision.wrapping_add(1);
+        if let Some(media) = self.pending_call_media.as_mut() {
+            media.camera_enabled = enabled;
+        }
+        Ok(self.camera_revision)
+    }
+
+    pub fn send_media_command(&mut self, message: Message) -> Result<(), String> {
+        match &message {
+            Message::MuteAudio | Message::UnmuteAudio | Message::ToggleMic => {
+                if let Some(media) = self.pending_call_media.as_mut() {
+                    media.mic_enabled = match message {
+                        Message::MuteAudio => false,
+                        Message::UnmuteAudio => true,
+                        _ => !media.mic_enabled,
+                    };
+                }
+            }
+            Message::StopCamera(call_id) => {
+                self.set_camera_intent(call_id, false)?;
+            }
+            Message::StartCamera(camera) => {
+                self.set_camera_intent(&camera.call_id, true)?;
+                // Before CallStart, its media flags own camera startup.
+                if self.pending_call_media.is_some() {
+                    return match &camera.device_name {
+                        Some(name) => self
+                            .sender
+                            .send(Message::SetPreferredCamera(Some(name.clone())))
+                            .map_err(|error| error.to_string()),
+                        None => Ok(()),
+                    };
+                }
+            }
+            _ => {}
+        }
+        self.sender.send(message).map_err(|error| error.to_string())
+    }
+
+    fn send_core_request(
+        &mut self,
+        event_socket: &Arc<Mutex<EventSocket>>,
+        mut message: Message,
+    ) -> Result<socket_lib::RequestId, String> {
+        if !Arc::ptr_eq(&self.event_socket, event_socket) {
+            return Err("Core connection was replaced".into());
+        }
+        let call_id = match &message {
+            Message::CallStart(message) => Some(&message.call_id),
+            Message::StartCamera(message) => Some(&message.call_id),
+            _ => None,
+        };
+        if call_id.is_some() && self.current_call_id.as_ref() != call_id {
+            return Err("Call is no longer active".into());
+        }
+        let is_call_start = matches!(message, Message::CallStart(_));
+        if let Message::CallStart(start) = &mut message {
+            if let Some(media) = self.pending_call_media.as_ref() {
+                start.start_mic_on_call = Some(media.mic_enabled);
+                start.start_camera_on_call = Some(media.camera_enabled);
+            }
+        }
+        let request_id = self
+            .sender
+            .send_request(message)
+            .map_err(|error| error.to_string())?;
+        if is_call_start {
+            self.pending_call_media = None;
+        }
+        Ok(request_id)
+    }
+}
+
+/// This sender is managed separately from AppData so stalled requests cannot delay quit.
+pub fn end_core_before_exit(sender: &Mutex<SocketSender>) -> Result<(), std::io::Error> {
+    let sender = sender.lock().unwrap().clone();
+    sender.send(Message::CallEnd(None))?;
+    sender.flush(std::time::Duration::from_secs(1))
+}
+
+/// Serialize request/reply pairs without holding application state while waiting.
+pub fn request_core<T>(
+    state: &Mutex<AppData>,
+    message: Message,
+    extract: impl Fn(Message) -> Result<T, Message>,
+) -> Result<T, String> {
+    let event_socket = state.lock().unwrap().event_socket.clone();
+    let socket = event_socket.lock().unwrap();
+    let request_id = send_core_request(state, &event_socket, message)?;
+    recv_expected_response(&socket, request_id, extract).map_err(|error| error.to_string())
+}
+
+pub fn start_camera(
+    state: &Mutex<AppData>,
+    camera: socket_lib::CameraStartMessage,
+) -> Result<(), String> {
+    let (event_socket, revision) = {
+        let mut data = state.lock().unwrap();
+        if data.pending_call_media.is_some() {
+            return data.send_media_command(Message::StartCamera(camera));
+        }
+        let revision = data.set_camera_intent(&camera.call_id, true)?;
+        (data.event_socket.clone(), revision)
+    };
+    let socket = event_socket.lock().unwrap();
+    let request_id = {
+        let mut data = state.lock().unwrap();
+        if data.camera_revision != revision {
+            return Ok(());
+        }
+        data.send_core_request(&event_socket, Message::StartCamera(camera))?
+    };
+    let result = recv_expected_response(&socket, request_id, |message| match message {
+        Message::StartCameraResult(result) => Ok(result),
+        other => Err(other),
+    })
+    .map_err(|error| error.to_string());
+    if state.lock().unwrap().camera_revision != revision {
+        return Ok(());
+    }
+    result?
+}
+
+/// Caller holds this connection's response lock, acquired before the short AppData lock.
+pub fn send_core_request(
+    state: &Mutex<AppData>,
+    event_socket: &Arc<Mutex<EventSocket>>,
+    message: Message,
+) -> Result<socket_lib::RequestId, String> {
+    state
+        .lock()
+        .unwrap()
+        .send_core_request(event_socket, message)
 }
 
 /// Receive the reply to this request, discarding unrelated or untagged responses.
@@ -179,8 +353,450 @@ pub fn recv_expected_response<T>(
 #[cfg(all(test, unix))]
 mod response_tests {
     use super::*;
+    use std::sync::mpsc;
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::{Duration, Instant};
+
+    fn test_connection() -> (Arc<Mutex<AppData>>, SocketSender, EventSocket) {
+        let root = std::env::temp_dir().join(format!("hc-{}", rand::random::<u64>()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("s").to_str().unwrap().to_string();
+        let server_path = path.clone();
+        let server = std::thread::spawn(move || socket_lib::listen(&server_path).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let (sender, socket) = loop {
+            match socket_lib::connect(&path) {
+                Ok(pair) => break pair,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("could not connect to simulated core: {error}"),
+            }
+        };
+        let (peer, peer_socket) = server.join().unwrap();
+        let mut app_state = app_state::AppState::new(&root);
+        app_state.update_user_setting(|settings| {
+            settings.start_mic_on_call = true;
+            settings.start_camera_on_call = true;
+        });
+        let state = AppData::new(
+            sender,
+            socket,
+            Arc::new(Mutex::new(false)),
+            app_state,
+            Arc::new(AtomicBool::new(false)),
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        (Arc::new(Mutex::new(state)), peer, peer_socket)
+    }
+
+    fn next_request(socket: &EventSocket) -> (socket_lib::RequestId, Message) {
+        match socket.events.recv_timeout(Duration::from_secs(2)).unwrap() {
+            Message::Request {
+                request_id,
+                message,
+            } => (request_id, *message),
+            other => panic!("expected a request, got {other:?}"),
+        }
+    }
+
+    fn wait_for_camera_intent(state: &Mutex<AppData>, previous: u64) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while state.lock().unwrap().camera_revision == previous {
+            assert!(
+                Instant::now() < deadline,
+                "camera intent was not registered"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn camera_off_cancels_waiting_start_and_newer_on_wins() {
+        for reenable in [false, true] {
+            let (state, peer, peer_socket) = test_connection();
+            state.lock().unwrap().current_call_id = Some("A".into());
+            let event_socket = state.lock().unwrap().event_socket.clone();
+            let responses = event_socket.lock().unwrap();
+            let revision = state.lock().unwrap().camera_revision;
+            let first_state = state.clone();
+            let first = std::thread::spawn(move || {
+                start_camera(
+                    &first_state,
+                    socket_lib::CameraStartMessage {
+                        call_id: "A".into(),
+                        device_name: Some("Old".into()),
+                    },
+                )
+            });
+            wait_for_camera_intent(&state, revision);
+            {
+                let mut data = state.lock().unwrap();
+                data.send_media_command(Message::StopCamera("A".into()))
+                    .unwrap();
+            }
+            assert!(matches!(
+                peer_socket.events.recv_timeout(Duration::from_secs(2)).unwrap(),
+                Message::StopCamera(id) if id == "A"
+            ));
+            let second = if reenable {
+                let revision = state.lock().unwrap().camera_revision;
+                let second_state = state.clone();
+                let second = std::thread::spawn(move || {
+                    start_camera(
+                        &second_state,
+                        socket_lib::CameraStartMessage {
+                            call_id: "A".into(),
+                            device_name: Some("New".into()),
+                        },
+                    )
+                });
+                wait_for_camera_intent(&state, revision);
+                Some(second)
+            } else {
+                None
+            };
+            // A stale action from a previous call must not cancel the current intent.
+            {
+                let mut data = state.lock().unwrap();
+                let revision = data.camera_revision;
+                assert!(data
+                    .send_media_command(Message::StopCamera("old call".into()))
+                    .is_err());
+                assert_eq!(data.camera_revision, revision);
+            }
+            drop(responses);
+            if let Some(second) = second {
+                let (request_id, message) = next_request(&peer_socket);
+                assert!(matches!(message, Message::StartCamera(camera)
+                    if camera.device_name.as_deref() == Some("New")));
+                peer.reply(Some(request_id), Message::StartCameraResult(Ok(())))
+                    .unwrap();
+                second.join().unwrap().unwrap();
+            }
+            // Superseded starts resolve harmlessly, preserving a newer optimistic UI state.
+            first.join().unwrap().unwrap();
+            state
+                .lock()
+                .unwrap()
+                .sender
+                .flush(Duration::from_secs(1))
+                .unwrap();
+            assert!(
+                peer_socket.events.try_recv().is_err(),
+                "cancelled start reached core"
+            );
+        }
+    }
+
+    #[test]
+    fn superseded_camera_failure_does_not_fail_a_newer_on_action() {
+        let (state, peer, peer_socket) = test_connection();
+        state.lock().unwrap().current_call_id = Some("A".into());
+        let first_state = state.clone();
+        let first = std::thread::spawn(move || {
+            start_camera(
+                &first_state,
+                socket_lib::CameraStartMessage {
+                    call_id: "A".into(),
+                    device_name: Some("Missing".into()),
+                },
+            )
+        });
+        let (first_id, _) = next_request(&peer_socket);
+        state
+            .lock()
+            .unwrap()
+            .send_media_command(Message::StopCamera("A".into()))
+            .unwrap();
+        assert!(matches!(
+            peer_socket
+                .events
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            Message::StopCamera(_)
+        ));
+        let revision = state.lock().unwrap().camera_revision;
+        let second_state = state.clone();
+        let second = std::thread::spawn(move || {
+            start_camera(
+                &second_state,
+                socket_lib::CameraStartMessage {
+                    call_id: "A".into(),
+                    device_name: Some("New".into()),
+                },
+            )
+        });
+        wait_for_camera_intent(&state, revision);
+        peer.reply(
+            Some(first_id),
+            Message::StartCameraResult(Err("camera missing".into())),
+        )
+        .unwrap();
+        first.join().unwrap().unwrap();
+        let (second_id, message) = next_request(&peer_socket);
+        assert!(matches!(message, Message::StartCamera(camera)
+            if camera.device_name.as_deref() == Some("New")));
+        peer.reply(Some(second_id), Message::StartCameraResult(Ok(())))
+            .unwrap();
+        second.join().unwrap().unwrap();
+        assert!(peer_socket.events.try_recv().is_err());
+    }
+
+    #[test]
+    fn call_start_uses_media_actions_received_during_device_lookup() {
+        for (toggle_mic, reenable) in [(false, false), (false, true), (true, false), (true, true)] {
+            let (state, peer, peer_socket) = test_connection();
+            state.lock().unwrap().begin_call("A".into());
+            let startup_state = state.clone();
+            let startup = std::thread::spawn(move || {
+                let event_socket = startup_state.lock().unwrap().event_socket.clone();
+                let socket = event_socket.lock().unwrap();
+                let id =
+                    send_core_request(&startup_state, &event_socket, Message::ListAudioDevices)
+                        .unwrap();
+                recv_expected_response(&socket, id, Ok).unwrap();
+                let id = send_core_request(
+                    &startup_state,
+                    &event_socket,
+                    Message::CallStart(socket_lib::CallStartMessage {
+                        call_id: "A".into(),
+                        audio_token: String::new(),
+                        video_token: String::new(),
+                        audio_device_name: String::new(),
+                        start_mic_on_call: Some(true),
+                        start_camera_on_call: Some(true),
+                    }),
+                )
+                .unwrap();
+                recv_expected_response(&socket, id, Ok).unwrap()
+            });
+            let (lookup_id, message) = next_request(&peer_socket);
+            assert!(matches!(message, Message::ListAudioDevices));
+            {
+                let mut data = state.lock().unwrap();
+                assert!(
+                    data.camera_enabled(),
+                    "shortcut must see the pending preference"
+                );
+                data.send_media_command(if toggle_mic {
+                    Message::ToggleMic
+                } else {
+                    Message::MuteAudio
+                })
+                .unwrap();
+                data.send_media_command(Message::StopCamera("A".into()))
+                    .unwrap();
+                assert!(!data.camera_enabled());
+                if reenable {
+                    data.send_media_command(if toggle_mic {
+                        Message::ToggleMic
+                    } else {
+                        Message::UnmuteAudio
+                    })
+                    .unwrap();
+                }
+            }
+            assert!(matches!(
+                peer_socket
+                    .events
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap(),
+                Message::MuteAudio | Message::ToggleMic
+            ));
+            assert!(matches!(
+                peer_socket
+                    .events
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap(),
+                Message::StopCamera(_)
+            ));
+            if reenable {
+                start_camera(
+                    &state,
+                    socket_lib::CameraStartMessage {
+                        call_id: "A".into(),
+                        device_name: Some("Selected camera".into()),
+                    },
+                )
+                .unwrap();
+                assert!(matches!(
+                    peer_socket
+                        .events
+                        .recv_timeout(Duration::from_secs(2))
+                        .unwrap(),
+                    Message::UnmuteAudio | Message::ToggleMic
+                ));
+                assert!(
+                    matches!(peer_socket.events.recv_timeout(Duration::from_secs(2)).unwrap(),
+                    Message::SetPreferredCamera(Some(name)) if name == "Selected camera")
+                );
+            }
+            // Let lookup finish only after controls have changed the pending intent.
+            peer.reply(Some(lookup_id), Message::AudioDeviceList(vec![]))
+                .unwrap();
+            let (start_id, message) = next_request(&peer_socket);
+            match message {
+                Message::CallStart(start) => {
+                    assert_eq!(start.start_mic_on_call, Some(reenable));
+                    assert_eq!(start.start_camera_on_call, Some(reenable));
+                }
+                other => panic!("expected CallStart, got {other:?}"),
+            }
+            peer.reply(Some(start_id), Message::CallStartResult(Ok(())))
+                .unwrap();
+            startup.join().unwrap();
+            assert!(
+                peer_socket.events.try_recv().is_err(),
+                "startup sent a duplicate camera start"
+            );
+            {
+                let mut data = state.lock().unwrap();
+                assert!(data.pending_call_media.is_none());
+                data.clear_call();
+                data.begin_call("B".into());
+                assert!(data.camera_enabled());
+                assert!(data.pending_call_media.as_ref().unwrap().mic_enabled);
+            }
+        }
+    }
+
+    #[test]
+    fn pending_replies_leave_app_state_and_quit_available() {
+        let (state, peer, peer_socket) = test_connection();
+        let exit_sender = Mutex::new(state.lock().unwrap().sender.clone());
+        state.lock().unwrap().current_call_id = Some("A".into());
+        let request_state = state.clone();
+        let first =
+            std::thread::spawn(move || request_core(&request_state, Message::ListAudioDevices, Ok));
+        let request_id = match peer_socket
+            .events
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+        {
+            Message::Request { request_id, .. } => request_id,
+            other => panic!("expected a request, got {other:?}"),
+        };
+        let second_state = state.clone();
+        let second =
+            std::thread::spawn(move || request_core(&second_state, Message::ListCameras, Ok));
+        assert!(matches!(
+            peer_socket.events.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut data = loop {
+            if let Ok(data) = state.try_lock() {
+                break data;
+            }
+            assert!(Instant::now() < deadline, "reply wait holds AppData");
+            std::thread::yield_now();
+        };
+        // Exercise the actual exit helper while AppData is held and core hasn't replied.
+        end_core_before_exit(&exit_sender).unwrap();
+        assert!(matches!(
+            peer_socket
+                .events
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+            Message::CallEnd(None)
+        ));
+        data.current_call_id = None;
+        drop(data);
+        peer.reply(Some(request_id), Message::AudioDeviceList(vec![]))
+            .unwrap();
+        assert!(matches!(
+            first.join().unwrap().unwrap(),
+            Message::AudioDeviceList(_)
+        ));
+        let second_id = match peer_socket
+            .events
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+        {
+            Message::Request {
+                request_id,
+                message,
+            } => {
+                assert!(matches!(*message, Message::ListCameras));
+                request_id
+            }
+            other => panic!("expected a request, got {other:?}"),
+        };
+        peer.reply(Some(second_id), Message::CameraList(vec![]))
+            .unwrap();
+        assert!(matches!(
+            second.join().unwrap().unwrap(),
+            Message::CameraList(_)
+        ));
+        // The device lookup completed after hang-up; it must not dispatch CallStart(A).
+        let event_socket = state.lock().unwrap().event_socket.clone();
+        let _responses = event_socket.lock().unwrap();
+        assert!(send_core_request(
+            &state,
+            &event_socket,
+            Message::CallStart(socket_lib::CallStartMessage {
+                call_id: "A".into(),
+                audio_token: String::new(),
+                video_token: String::new(),
+                audio_device_name: String::new(),
+                start_mic_on_call: None,
+                start_camera_on_call: None,
+            })
+        )
+        .is_err());
+        assert!(peer_socket.events.try_recv().is_err());
+    }
+
+    #[test]
+    fn restart_interrupts_old_waits_and_rejects_stale_requests() {
+        let (state, _peer, peer_socket) = test_connection();
+        let old_socket = state.lock().unwrap().event_socket.clone();
+        let request_state = state.clone();
+        let (done, completed) = mpsc::channel();
+        let request = std::thread::spawn(move || {
+            done.send(request_core(&request_state, Message::ListAudioDevices, Ok))
+                .unwrap();
+        });
+        peer_socket
+            .events
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let (replacement, _new_peer, new_peer_socket) = test_connection();
+        {
+            let mut data = state.lock().unwrap();
+            let new_data = replacement.lock().unwrap();
+            data.sender.shutdown();
+            data.sender = new_data.sender.clone();
+            data.event_socket = new_data.event_socket.clone();
+            data.current_call_id = Some("B".into());
+        }
+        assert!(completed
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_err());
+        request.join().unwrap();
+        assert!(send_core_request(&state, &old_socket, Message::ListCameras).is_err());
+        let current_socket = state.lock().unwrap().event_socket.clone();
+        let _responses = current_socket.lock().unwrap();
+        for call_id in ["A", "B"] {
+            let result = send_core_request(
+                &state,
+                &current_socket,
+                Message::StartCamera(socket_lib::CameraStartMessage {
+                    call_id: call_id.into(),
+                    device_name: None,
+                }),
+            );
+            assert_eq!(result.is_ok(), call_id == "B");
+        }
+        assert!(matches!(
+            new_peer_socket.events.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Message::Request { message, .. } if matches!(&*message,
+                Message::StartCamera(message) if message.call_id == "B")
+        ));
+        assert!(new_peer_socket.events.try_recv().is_err());
+    }
 
     #[test]
     fn late_response_does_not_complete_next_request_of_same_type() {
@@ -224,6 +840,7 @@ mod response_tests {
                     )
                     .unwrap();
             }
+            sender.flush(Duration::from_secs(1)).unwrap();
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         let (sender, socket) = loop {
@@ -300,8 +917,11 @@ async fn show_stdout(mut receiver: Receiver<CommandEvent>, app_handle: AppHandle
                                     )) {
                                         log::error!("show_stdout: failed to restore preferred camera: {e:?}");
                                     }
+                                    data.sender.shutdown();
+                                    *app_handle.state::<Mutex<SocketSender>>().lock().unwrap() =
+                                        sender.clone();
                                     data.sender = sender;
-                                    data.event_socket = event_socket;
+                                    data.event_socket = Arc::new(Mutex::new(event_socket));
                                 }
                             }
                         } else if code == 3 {

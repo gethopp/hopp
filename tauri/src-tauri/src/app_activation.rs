@@ -75,33 +75,35 @@ impl AppActivationObserver {
                         );
                     } else {
                         bringing_to_front.store(true, Ordering::Relaxed);
-                        let data = app_handle.state::<Mutex<AppData>>();
-                        let data = data.lock().unwrap();
-                        match data.sender.send_request(Message::BringWindowsToFront) {
-                            Err(e) => log::error!(
-                                "app_activation: failed to send BringWindowsToFront: {e:?}"
-                            ),
-                            Ok(request_id) => {
-                                let focused = crate::recv_expected_response(
-                                    &data.event_socket,
-                                    request_id,
-                                    |msg| match msg {
-                                        Message::BringWindowsToFrontResult(f) => Ok(f),
-                                        other => Err(other),
-                                    },
-                                )
-                                .unwrap_or(false);
-
-                                if !focused {
-                                    log::info!("app_activation: BringWindowsToFront returned false, showing main window");
-                                    if let Some(window) = app_handle.get_webview_window("main") {
-                                        let _ = window.show();
-                                        let _ = window.set_focus();
-                                    }
+                        let app = app_handle.clone();
+                        let in_flight = bringing_to_front.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let focused = crate::request_core(
+                                &app.state::<Mutex<AppData>>(),
+                                Message::BringWindowsToFront,
+                                |message| match message {
+                                    Message::BringWindowsToFrontResult(focused) => Ok(focused),
+                                    other => Err(other),
+                                },
+                            )
+                            .unwrap_or_else(|error| {
+                                log::error!("app_activation: BringWindowsToFront failed: {error}");
+                                false
+                            });
+                            if !focused
+                                && app
+                                    .state::<Mutex<AppData>>()
+                                    .lock()
+                                    .unwrap()
+                                    .activation_policy_regular
+                            {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
                                 }
                             }
-                        }
-                        bringing_to_front.store(false, Ordering::Relaxed);
+                            in_flight.store(false, Ordering::Relaxed);
+                        });
                     }
                     return;
                 } else {
