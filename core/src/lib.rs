@@ -857,6 +857,7 @@ impl<'a> Application<'a> {
 
     fn stop_camera(&mut self) {
         log::info!("stop_camera");
+        self.start_camera_on_call = false;
         {
             let mut capturer = self.camera_capturer.lock().unwrap();
             capturer.stop_capture();
@@ -1540,7 +1541,6 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         audio_processor: processor,
                         noise_cancellation_enabled: self.noise_cancellation_enabled.clone(),
                         start_mic_on_call,
-                        start_camera_on_call,
                     }) {
                         Ok(_) => {
                             if let Err(e) = self
@@ -1606,17 +1606,18 @@ impl<'a> ApplicationHandler<UserEvent> for Application<'a> {
                         let _ = self.socket.send(Message::ParticipantsSnapshot(snapshot));
                         if self.start_camera_on_call {
                             self.start_camera_on_call = false;
-                            let res = self.event_loop_proxy.send_event(UserEvent::StartCamera {
-                                msg: CameraStartMessage {
-                                    call_id: call_id.clone(),
-                                    device_name: None,
+                            // A queued auto-start could otherwise run after a later camera-off.
+                            self.user_event(
+                                event_loop,
+                                UserEvent::StartCamera {
+                                    msg: CameraStartMessage {
+                                        call_id: call_id.clone(),
+                                        device_name: None,
+                                    },
+                                    from_socket: false,
+                                    request_id: None,
                                 },
-                                from_socket: false,
-                                request_id: None,
-                            });
-                            if res.is_err() {
-                                log::error!("user_event: CreateRoomResult failed to queue StartCamera: {res:?}");
-                            }
+                            );
                         }
                     }
                     Err(ref reason) => {

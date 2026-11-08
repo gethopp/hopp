@@ -153,7 +153,7 @@ fn wait_child(
     }
 }
 
-fn livekit_address(url: &str) -> io::Result<(String, u16)> {
+pub(crate) fn livekit_address(url: &str) -> io::Result<(String, u16)> {
     let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "invalid LIVEKIT_URL host/port");
     let (rest, default_port) = if let Some(rest) = url.strip_prefix("ws://") {
         (rest, 80)

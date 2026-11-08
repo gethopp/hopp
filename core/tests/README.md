@@ -42,7 +42,7 @@ configured remote server is an error. `--core-bin PATH` reuses a built
 | `screenshare-call` | Normal pair-call screen publishing, decoded content, start/stop/restart and control changes |
 | `screenshare-room` | Multi-user room screen publishing, participant changes and control handoff |
 | `viewer-lifecycle` | Remote sharing, mute/unmute storm, viewer close/reopen, replacement sharer and fresh rendering |
-| `camera` | Local camera delivery/restart plus remote camera/window lifecycle |
+| `camera` | Local camera delivery/restart, remote camera/window lifecycle, and camera-off during connection |
 | `camera-viewer` | Synthetic remote camera decoding/presentation and window reuse without a local camera |
 | `microphone` | Real captured PCM delivery, mute/unmute/capture restart, incoming signal receive/mix/output |
 | `audio-signal` | Opt-in configured loopback: known audio signal reaches another participant, mute suppresses it, unmute restores it |
@@ -69,6 +69,11 @@ its output path; physical speaker audibility/echo and real microphone signal
 quality still require a short hardware check or explicitly configured loopback.
 No loopback driver is installed automatically. Actual title-bar click/shortcut
 delivery and visual layout remain desktop checks.
+
+The camera-off-during-connection regression uses a loopback signaling gate with
+`ws://` LiveKit. It processes camera-off before allowing connection to finish,
+then checks capture stays off. The earlier camera checks verify actual capture
+and decoded delivery so unavailable camera hardware cannot mask this regression.
 
 Device overrides: `HOPP_TEST_MICROPHONE` and `HOPP_TEST_CAMERA` select explicit
 device names. To validate a nonzero microphone signal automatically, configure

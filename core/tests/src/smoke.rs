@@ -784,6 +784,75 @@ async fn camera(core: &mut CoreClient, cycles: u32, strict: bool) -> io::Result<
     .await?;
     expect_camera(&observer).await?;
     end_call(core, &auto, &observer).await?;
+
+    step("camera off while connecting must cancel deferred camera startup");
+    let url = std::env::var("LIVEKIT_URL").map_err(io::Error::other)?;
+    require(
+        url.starts_with("ws://"),
+        strict,
+        "connecting-camera regression requires local ws:// signaling",
+    )?;
+    let (host, port) = crate::runner::livekit_address(&url)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let upstream = url.strip_prefix("ws://").unwrap();
+    let authority = upstream.split(['/', '?', '#']).next().unwrap();
+    let suffix = &upstream[authority.len()..];
+    core.send(Message::LivekitServerUrl(format!(
+        "ws://{}{suffix}",
+        listener.local_addr()?
+    )))?;
+
+    // No signaling is forwarded until OFF has passed through core's main loop.
+    let connecting = start_call(core, false, true).await?;
+    core.send(Message::StopCamera(connecting.clone()))?;
+    core.probe()?;
+    check(
+        !status(core)?.camera_active,
+        "camera was not stopped before connection",
+    )?;
+
+    let mut proxy = tokio::task::JoinSet::<io::Result<()>>::new();
+    proxy.spawn(async move {
+        let mut streams = tokio::task::JoinSet::<io::Result<()>>::new();
+        loop {
+            tokio::select! {
+                incoming = listener.accept() => {
+                    let (mut client, _) = incoming?;
+                    let host = host.clone();
+                    streams.spawn(async move {
+                        let mut server = tokio::net::TcpStream::connect((host.as_str(), port)).await?;
+                        tokio::io::copy_bidirectional(&mut client, &mut server).await?;
+                        Ok(())
+                    });
+                }
+                completed = streams.join_next(), if !streams.is_empty() => {
+                    completed.unwrap().map_err(io::Error::other)??;
+                }
+            }
+        }
+    });
+    observer
+        .wait_present(&identity(CORE_USER, "audio"), true)
+        .await?;
+    observer
+        .wait_present(&identity(CORE_USER, "video"), true)
+        .await?;
+    let connected = core.wait_event(MEDIA_TIMEOUT, |event| matches!(event,
+        Message::ParticipantsSnapshot(participants) if participants.iter().any(|p| p.identity == "local" && p.connected)))?;
+    // Two round trips also catch an auto-start queued behind the first probe.
+    core.probe()?;
+    let after_connection = status(core)?;
+    end_call(core, &connecting, &observer).await?;
+    core.send(Message::LivekitServerUrl(url))?;
+    check(
+        !after_connection.camera_active,
+        "camera turned back on after OFF was processed while the call was connecting",
+    )?;
+    check(
+        matches!(connected, Message::ParticipantsSnapshot(participants)
+            if participants.iter().any(|p| p.identity == "local" && !p.has_camera)),
+        "the connected participant snapshot reported camera ON after it was turned OFF",
+    )?;
     observer.leave().await
 }
 
