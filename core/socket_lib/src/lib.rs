@@ -456,7 +456,6 @@ impl EventSocket {
 
         log::info!("EventSocket: spawning background reader thread");
         std::thread::spawn(move || {
-            let _ = read_stream.set_read_timeout(Some(Duration::from_secs(1)));
             loop {
                 match Self::read_message(&mut read_stream) {
                     Ok(message) => {
@@ -471,11 +470,6 @@ impl EventSocket {
                         }
                     }
                     Err(e) => {
-                        if e.kind() == std::io::ErrorKind::WouldBlock
-                            || e.kind() == std::io::ErrorKind::TimedOut
-                        {
-                            continue;
-                        }
                         log::error!("Background reader: IO error: {e:?}");
                         break;
                     }
@@ -719,6 +713,79 @@ fn calculate_port_from_hash(socket_path: &str) -> u16 {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    #[test]
+    fn delayed_partial_payload_preserves_framing_for_following_messages() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let (_sender, socket) = build_pair(client).unwrap();
+        let payload = serde_json::to_vec(&Message::Ping).unwrap();
+        let mut frame = payload.len().to_le_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+        // Complete one round trip before testing a pause in the running reader.
+        peer.write_all(&frame).unwrap();
+        assert!(matches!(
+            socket.events.recv_timeout(Duration::from_secs(2)),
+            Ok(Message::Ping)
+        ));
+
+        let split = std::mem::size_of::<usize>() + 2;
+        peer.write_all(&frame[..split]).unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        peer.write_all(&frame[split..]).unwrap();
+        assert!(
+            matches!(
+                socket.events.recv_timeout(Duration::from_secs(3)),
+                Ok(Message::Ping)
+            ),
+            "a valid delayed payload must not be discarded"
+        );
+
+        peer.write_all(&frame).unwrap();
+        assert!(
+            matches!(
+                socket.events.recv_timeout(Duration::from_secs(2)),
+                Ok(Message::Ping)
+            ),
+            "the following frame must stay aligned"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_and_drop_interrupt_idle_and_partial_frame_readers() {
+        let payload = serde_json::to_vec(&Message::Ping).unwrap();
+        let mut frame = payload.len().to_le_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+        for drop_socket in [false, true] {
+            for partial_bytes in [0, 2, std::mem::size_of::<usize>() + 2] {
+                let (client, mut peer) = UnixStream::pair().unwrap();
+                let (sender, mut socket) = build_pair(client).unwrap();
+                let events = socket.take_events();
+                let responses = socket.take_responses();
+                peer.write_all(&frame).unwrap();
+                assert!(matches!(
+                    events.recv_timeout(Duration::from_secs(2)),
+                    Ok(Message::Ping)
+                ));
+                peer.write_all(&frame[..partial_bytes]).unwrap();
+                // Keep the peer and sender alive so only explicit cancellation ends the read.
+                if drop_socket {
+                    drop(socket);
+                } else {
+                    sender.shutdown();
+                }
+                assert!(matches!(
+                    events.recv_timeout(Duration::from_secs(1)),
+                    Err(mpsc::RecvTimeoutError::Disconnected)
+                ));
+                assert!(matches!(
+                    responses.recv_timeout(Duration::from_secs(1)),
+                    Err(mpsc::RecvTimeoutError::Disconnected)
+                ));
+            }
+        }
+    }
 
     #[cfg(unix)]
     #[test]
