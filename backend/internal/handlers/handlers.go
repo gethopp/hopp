@@ -92,6 +92,25 @@ func (r *RealGothicProvider) CompleteUserAuth(res http.ResponseWriter, req *http
 }
 
 func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
+	providerName := c.Param("provider")
+	// gothic resolves the provider from the query, falling back to its session.
+	// Pin it to the route so provider-specific checks below always apply to
+	// the provider that completes the login.
+	req := c.Request()
+	q := req.URL.Query()
+	q.Set("provider", providerName)
+	req.URL.RawQuery = q.Encode()
+
+	isOIDC := providerName == oidcProviderName
+	if isOIDC {
+		if err := addOIDCCodeVerifier(c); err != nil {
+			c.Logger().Warnf("OIDC login rejected: %v", err)
+			// Returning here skips gothic's own cleanup of its session cookie.
+			_ = gothic.Logout(c.Response(), c.Request())
+			return echo.NewHTTPError(http.StatusBadRequest, "Login session expired, please sign in again")
+		}
+	}
+
 	user, err := h.SocialAuth.CompleteUserAuth(c.Response(), c.Request())
 	if err != nil {
 		return err
@@ -102,10 +121,28 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Email is required but not provided by the authentication provider")
 	}
 
+	if isOIDC {
+		// goth validates issuer, audience and expiry of the ID token but not
+		// its signature, so verify it before trusting any claim.
+		if err := verifyOIDCIDToken(c.Request().Context(), user.IDToken); err != nil {
+			c.Logger().Warnf("OIDC login rejected: %v", err)
+			return echo.NewHTTPError(http.StatusUnauthorized, "Invalid ID token")
+		}
+
+		// Accounts are matched by email, so an unverified address must not be
+		// able to take over an existing account.
+		if !oidcEmailVerified(user) {
+			c.Logger().Warn("OIDC login rejected, email is not verified by the identity provider")
+			return c.Redirect(http.StatusFound, "/login?error=email_not_verified")
+		}
+		if user.FirstName == "" {
+			user.FirstName = oidcFallbackFirstName(user)
+		}
+	}
+
 	var u models.User
 	// Will be used to get Slack's team name in case its not an invite
 	var teamName string
-	providerName := c.Param("provider")
 	isNewUser := false // Flag to track if a new user was created
 
 	// Execute everything in a transaction
@@ -133,6 +170,26 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 				// Clean up the session
 				delete(sess.Values, "team_invite_uuid")
 				sess.Save(c.Request(), c.Response())
+			}
+
+			// Single-team mode: OIDC users without an invitation join the team
+			// marked as the OIDC team, never any other team of the instance. If
+			// there is none yet, the first user falls through and creates it as
+			// admin.
+			singleTeam := isOIDC && h.Config.Auth.OIDC.SingleTeam
+			if assignedTeamID == nil && singleTeam {
+				// Held until the transaction ends, so a concurrent first
+				// sign-in waits here and then finds the team created below.
+				if err := lockOIDCTeamSetup(tx); err != nil {
+					return fmt.Errorf("failed to lock OIDC team setup: %w", err)
+				}
+				var team models.Team
+				err := tx.Where("is_oidc_team = ?", true).Order("id ASC").First(&team).Error
+				if err == nil {
+					assignedTeamID = &team.ID
+				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("failed to look up team: %w", err)
+				}
 			}
 
 			var isAdmin = false
@@ -181,7 +238,8 @@ func (h *AuthHandler) SocialLoginCallback(c echo.Context) error {
 
 				// Create a new team
 				team := models.Team{
-					Name: teamName,
+					Name:       teamName,
+					IsOIDCTeam: singleTeam,
 				}
 				if err := tx.Create(&team).Error; err != nil {
 					return fmt.Errorf("failed to create team: %w", err)
@@ -349,6 +407,10 @@ func (h *AuthHandler) SocialLogin(c echo.Context) error {
 	q := req.URL.Query()
 	q.Set("provider", provider)
 	req.URL.RawQuery = q.Encode()
+
+	if provider == oidcProviderName {
+		return beginOIDCAuth(c)
+	}
 
 	gothic.BeginAuthHandler(c.Response(), req)
 	return nil

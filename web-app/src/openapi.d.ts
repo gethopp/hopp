@@ -74,6 +74,45 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/config": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Public instance configuration
+     * @description Unauthenticated. Tells clients which login flows are available on this instance.
+     */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Instance configuration */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["InstanceConfig"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/social/:provider": {
     parameters: {
       query?: never;
@@ -2811,6 +2850,16 @@ export interface components {
       created_at?: string;
       /** Format: date-time */
       updated_at?: string;
+    };
+    /** @description Public configuration of this instance, used by clients to decide which flows to offer */
+    InstanceConfig: {
+      /** @description Generic OpenID Connect login */
+      oidc: {
+        /** @description True when an OpenID Connect provider is configured and reachable */
+        enabled: boolean;
+        /** @description Label for the login button */
+        display_name: string;
+      };
     };
   };
   responses: never;
