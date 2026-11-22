@@ -2,6 +2,7 @@ import toast from "react-hot-toast";
 import useStore, { ParticipantRole } from "@/store/store";
 import { tauriUtils } from "@/windows/window-utils";
 import { Constants } from "@/constants";
+import { socketService } from "@/services/socket";
 import { validateAndSetAuthToken } from "./authUtils";
 import type { components } from "@/openapi";
 
@@ -59,13 +60,20 @@ export const processDeepLinkUrl = async (url: string): Promise<boolean> => {
 };
 
 /**
+ * Guards against two join-session deep links being handled at the same time.
+ * Without it, a second link could overwrite the call state the first one is
+ * still setting up.
+ */
+let isJoiningSession = false;
+
+/**
  * Handles joining a Slack pairing session by fetching tokens and setting up the call.
  *
  * @param sessionId The session/room ID to join
  * @returns true if successfully joined, false otherwise
  */
 export const handleJoinSessionDeepLink = async (sessionId: string): Promise<boolean> => {
-  const { authToken, setCallTokens, setTab, user } = useStore.getState();
+  const { authToken, callTokens, setCallTokens, setTab, user } = useStore.getState();
 
   if (!authToken) {
     toast.error("Please log in first to join the session");
@@ -74,15 +82,39 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
     return false;
   }
 
+  // Already in this session, so surface the existing call instead of rejoining it.
+  if (callTokens?.room?.id === sessionId) {
+    await tauriUtils.showWindow("main");
+    setTab("call");
+    return true;
+  }
+
+  // Another call is already running. Ending it from here would change call
+  // lifecycle behaviour, so fail closed and let the user leave it themselves.
+  if (callTokens) {
+    toast.error("Leave your current call first");
+    await tauriUtils.showWindow("main");
+    return false;
+  }
+
+  if (isJoiningSession) {
+    console.warn("Ignoring join-session deep link, a join is already in progress");
+    return false;
+  }
+  isJoiningSession = true;
+
   try {
     toast.loading("Joining session", { id: "join-session" });
 
     // Fetch tokens for the session
-    const response = await fetch(`${Constants.backendUrl}/api/auth/slack/session/${sessionId}/tokens`, {
-      headers: {
-        Authorization: `Bearer ${authToken}`,
+    const response = await fetch(
+      `${Constants.backendUrl}/api/auth/slack/session/${encodeURIComponent(sessionId)}/tokens`,
+      {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
       },
-    });
+    );
 
     if (!response.ok) {
       toast.dismiss("join-session");
@@ -111,6 +143,16 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
 
     // Set up the call with the tokens
     const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
+
+    // A call may have started while the token fetch and preference lookup were
+    // pending. Read the live store rather than the snapshot taken on entry, so
+    // we never overwrite a call that is already running.
+    if (useStore.getState().callTokens) {
+      toast.dismiss("join-session");
+      toast.error("Leave your current call first");
+      return false;
+    }
+
     setCallTokens({
       ...data,
       timeStarted: new Date(),
@@ -119,6 +161,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
       role: ParticipantRole.NONE,
       isRemoteControlEnabled: true,
       isRoomCall: true,
+      isInitialisingCall: true,
       participants: [],
       room: {
         id: sessionId,
@@ -130,9 +173,24 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
       micLevel: 0,
     });
 
-    // Switch to the rooms tab and show the window
+    // Start the call in core. Without this the app shows call state for a call
+    // that was never actually started.
+    try {
+      await tauriUtils.callStarted(data.audioToken, data.videoToken);
+    } catch (err) {
+      console.error("Failed to start call for session:", err);
+      // Same rollback as the shared join path in `useJoinCall`.
+      socketService.send({ type: "call_end", payload: { participant_id: data.participant } });
+      tauriUtils.endCallCleanup();
+      setCallTokens(null);
+      toast.dismiss("join-session");
+      toast.error("Failed to start call");
+      return false;
+    }
+
+    // Show the window. The app navigates to the call tab itself once call
+    // tokens are set, so setting a tab here would fight that navigation.
     await tauriUtils.showWindow("main");
-    setTab("rooms");
 
     toast.dismiss("join-session");
     return true;
@@ -141,5 +199,7 @@ export const handleJoinSessionDeepLink = async (sessionId: string): Promise<bool
     toast.dismiss("join-session");
     toast.error("Failed to join room");
     return false;
+  } finally {
+    isJoiningSession = false;
   }
 };
