@@ -1,0 +1,67 @@
+---
+title: Raycast
+description: Start a call with a teammate or join a room in Hopp straight from Raycast.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components";
+
+The Raycast extension lets you start a Hopp call with a teammate or join a room without leaving
+your keyboard. It lives in the [`raycast/`](https://github.com/gethopp/hopp/tree/main/raycast)
+directory of the repository.
+
+## Commands
+
+- **Call Teammate** — lists your teammates with their live status and rings them in Hopp.
+  When a teammate is already in a call, the primary action becomes **Join Call** instead.
+- **Join Room** — lists your team's rooms with live participant counts and joins the selected room.
+
+## How it works
+
+The extension combines two pieces of the desktop app:
+
+1. **App state** — the macOS app stores its session token and (for self-hosted setups) its custom
+   server URL in `~/Library/Application Support/com.hopp.app/app_state.json`. The extension reads it
+   to query the Hopp API, so there's no separate sign-in.
+2. **Deep links** — the app registers the `hopp://` URL scheme:
+
+   | Deep link                    | Action in the app                           |
+   | ---------------------------- | ------------------------------------------- |
+   | `hopp:///call/{userId}`      | Ring a teammate (same as the "Call" button) |
+   | `hopp:///join-call/{userId}` | Join a teammate's ongoing call              |
+   | `hopp:///room/{roomId}`      | Join a named room                           |
+
+   The handlers live in `tauri/src/lib/deepLinkUtils.ts`.
+
+<Aside type="note">
+  The desktop app must be installed and signed in. If it isn't running, macOS launches it when the deep link is opened.
+</Aside>
+
+## Installing for development
+
+<Steps>
+
+1. **Install dependencies**
+
+   ```bash
+   cd raycast
+   npm install
+   ```
+
+2. **Run the extension**
+
+   ```bash
+   npm run dev
+   ```
+
+   This installs the extension into Raycast with live reload via `ray develop`.
+
+3. **Use the commands**
+
+   Open Raycast and run **Call Teammate** or **Join Room**.
+
+</Steps>
+
+## Preferences
+
+- **Server URL** — optional override of the backend URL. Leave empty to use the server configured in
+  the app (defaults to the Hopp cloud at `pair.gethopp.app`).

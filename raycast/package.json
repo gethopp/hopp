@@ -1,0 +1,57 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "hopp",
+  "title": "Hopp",
+  "description": "Start a call with a teammate or join a room in Hopp, straight from Raycast.",
+  "icon": "icon.png",
+  "author": "hopp",
+  "categories": [
+    "Communication",
+    "Productivity"
+  ],
+  "license": "AGPL-3.0-only",
+  "platforms": [
+    "macOS"
+  ],
+  "commands": [
+    {
+      "name": "start-call",
+      "title": "Call Teammate",
+      "subtitle": "Hopp",
+      "description": "Ring a teammate or join their ongoing call in Hopp.",
+      "mode": "view"
+    },
+    {
+      "name": "join-room",
+      "title": "Join Room",
+      "subtitle": "Hopp",
+      "description": "Join one of your team's rooms in Hopp.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "serverUrl",
+      "type": "textfield",
+      "required": false,
+      "title": "Server URL",
+      "description": "Override the Hopp backend URL. Leave empty to use the server configured in the app (defaults to the Hopp cloud).",
+      "placeholder": "pair.gethopp.app"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.8",
+    "typescript": "^5.6.3"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}
