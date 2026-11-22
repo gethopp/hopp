@@ -4,6 +4,7 @@ import { useHoppStore } from "@/store/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "react-hot-toast";
 import CopyButton from "@/components/ui/copy-button";
 
@@ -49,6 +50,27 @@ export function Settings() {
   }, [teamName]);
 
   const updateTeamMutation = useMutation("patch", "/api/auth/team");
+
+  // Server-wide settings. Only the instance owner (the earliest account) can change them, and
+  // the endpoint reports whether the caller is that owner, so team admins never see this.
+  const { data: instanceSettings, refetch: refetchInstanceSettings } = useQuery(
+    "get",
+    "/api/auth/instance-settings",
+    undefined,
+    { queryHash: `instance-settings-${authToken}` },
+  );
+  const updateInstanceSettingsMutation = useMutation("put", "/api/auth/instance-settings");
+
+  const handleSignupRequiresInviteChange = async (checked: boolean) => {
+    try {
+      await updateInstanceSettingsMutation.mutateAsync({ body: { signup_requires_invite: checked } });
+      await refetchInstanceSettings();
+      toast.success(checked ? "Sign-up now requires an invite" : "Sign-up is now open");
+    } catch (error) {
+      toast.error("Failed to update instance settings");
+      console.error(error);
+    }
+  };
 
   const handleTeamSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,6 +171,28 @@ export function Settings() {
             Save Team Name
           </Button>
         </form>
+      )}
+
+      {instanceSettings?.is_owner && (
+        <div className="space-y-4 pt-4">
+          <h3 className="h3-subsection">Instance</h3>
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="signupRequiresInvite">Require an invite to sign up</Label>
+              <p id="signupRequiresInviteHelp" className="text-sm text-muted-foreground">
+                When on, new accounts can only be created with a team invite link. Anyone without a valid invite is
+                turned away at sign-up. Existing accounts are not affected. Off by default.
+              </p>
+            </div>
+            <Switch
+              id="signupRequiresInvite"
+              aria-describedby="signupRequiresInviteHelp"
+              checked={instanceSettings.signup_requires_invite}
+              disabled={updateInstanceSettingsMutation.isPending}
+              onCheckedChange={handleSignupRequiresInviteChange}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
