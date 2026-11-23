@@ -562,6 +562,7 @@ fn call_started(
         data.call_active = true;
         data.is_camera_on = false;
         data.is_screensharing = false;
+        data.mic_muted = None;
         shortcuts::register_call_shortcuts(&app, resolved_call_shortcuts(&data.app_state));
     }
     result
@@ -1084,6 +1085,7 @@ fn end_call(app: tauri::AppHandle) {
     data.call_active = false;
     data.is_camera_on = false;
     data.is_screensharing = false;
+    data.mic_muted = None;
     #[cfg(target_os = "macos")]
     {
         data.sleep_prevention.disable();
@@ -1126,6 +1128,32 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                     "forward_core_events: participants snapshot ({} participants)",
                     snapshot.len()
                 );
+                /*
+                 * Play a sound when the local participant's mic is muted or
+                 * unmuted so the user gets feedback when the action is
+                 * performed from keybindings, where no UI may be visible.
+                 * The first snapshot of a call only sets the baseline and
+                 * plays no sound.
+                 */
+                if let Some(local) = snapshot.iter().find(|p| p.identity == "local") {
+                    let previous_muted = {
+                        let data = app.state::<Mutex<AppData>>();
+                        let mut data = data.lock().unwrap();
+                        let previous_muted = data.mic_muted;
+                        data.mic_muted = Some(local.muted);
+                        previous_muted
+                    };
+                    if let Some(previous_muted) = previous_muted {
+                        if previous_muted != local.muted {
+                            let sound_name = if local.muted {
+                                "mic-muted"
+                            } else {
+                                "mic-unmuted"
+                            };
+                            play_sound(app.clone(), sound_name.to_string());
+                        }
+                    }
+                }
                 if let Err(e) = app.emit("core_participants_snapshot", &snapshot) {
                     log::error!("forward_core_events: failed to emit participants snapshot: {e:?}");
                 }
@@ -1149,6 +1177,7 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                 data.call_active = false;
                 data.is_camera_on = false;
                 data.is_screensharing = false;
+                data.mic_muted = None;
                 #[cfg(target_os = "macos")]
                 {
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);

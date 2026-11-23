@@ -182,5 +182,21 @@ pub fn get_all_sounds() -> Vec<(&'static str, SoundConfig)> {
                 looped: true,
             },
         ),
+        (
+            "resources/sounds/mic-muted.wav",
+            SoundConfig {
+                speed: DEFAULT_SPEED,
+                volume: MEDIUM_VOLUME,
+                looped: false,
+            },
+        ),
+        (
+            "resources/sounds/mic-unmuted.wav",
+            SoundConfig {
+                speed: DEFAULT_SPEED,
+                volume: MEDIUM_VOLUME,
+                looped: false,
+            },
+        ),
     ]
 }
