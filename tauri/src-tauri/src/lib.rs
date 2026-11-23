@@ -95,6 +95,11 @@ pub struct AppData {
     /// Whether the local participant is currently screensharing (pushed from frontend snapshots).
     pub is_screensharing: bool,
 
+    /// Whether the local participant's microphone is muted, as last reported by a
+    /// participants snapshot from core. `None` until the first snapshot of a call
+    /// arrives, so the baseline state does not trigger a mute/unmute sound.
+    pub mic_muted: Option<bool>,
+
     /// macOS app activation observer — keeps the NSNotificationCenter observer alive.
     #[cfg(target_os = "macos")]
     pub activation_observer: Option<app_activation::AppActivationObserver>,
@@ -133,6 +138,7 @@ impl AppData {
             call_active: false,
             is_camera_on: false,
             is_screensharing: false,
+            mic_muted: None,
             #[cfg(target_os = "macos")]
             sleep_prevention: sleep_prevention::SleepPrevention::new(),
         }
