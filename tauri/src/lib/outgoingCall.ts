@@ -64,6 +64,18 @@ export const startCallWithTokens = async (
   const { setCallTokens } = useStore.getState();
   const callRoom = room ?? tokens.room ?? undefined;
 
+  // Issuing these tokens added us to the call's room server-side (accept and
+  // join endpoints do this before returning them). Refusals below owe the
+  // backend a `call_end` so a refused start cannot leave stale room
+  // membership or a peer waiting alone in the room — but only while no other
+  // call owns the slot locally, since the backend removes us from our
+  // *current* room and that could already be the replacement call's.
+  const releasePeer = () => {
+    const { callTokens } = useStore.getState();
+    if (callTokens && callTokens.audioToken !== tokens.audioToken) return;
+    socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
+  };
+
   sounds.callAccepted.play();
 
   let startMic: boolean, startCamera: boolean;
@@ -71,6 +83,7 @@ export const startCallWithTokens = async (
     ({ startMic, startCamera } = await tauriUtils.getCallStartPreferences());
   } catch (e) {
     console.error("Failed to read call start preferences:", e);
+    releasePeer();
     toast.error("Failed to start call");
     return false;
   }
@@ -78,6 +91,7 @@ export const startCallWithTokens = async (
   // Another call may have claimed the slot while preferences were loading —
   // only the first claimant applies tokens (no await between check and set).
   if (useStore.getState().callTokens !== null) {
+    releasePeer();
     return false;
   }
 
@@ -102,6 +116,7 @@ export const startCallWithTokens = async (
   // The peer may have ended the call while core was getting ready — only
   // start core if this attempt still owns the call state.
   if (useStore.getState().callTokens?.audioToken !== tokens.audioToken) {
+    releasePeer();
     return false;
   }
 
@@ -109,11 +124,11 @@ export const startCallWithTokens = async (
     await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
   } catch (e) {
     console.error("CallStart failed:", e);
-    // Only touch state and notify the backend while this attempt still owns
-    // the call — a replacement call must not be torn down by our rollback.
+    releasePeer();
     const current = useStore.getState().callTokens;
+    // Only touch the store while this attempt still owns the call — a
+    // replacement call must not be torn down by our rollback.
     if (current?.audioToken === tokens.audioToken) {
-      socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
       setCallTokens(null);
     }
     // Undo the native half-start only while no other call owns the slot —
@@ -132,6 +147,7 @@ export const startCallWithTokens = async (
   // The call may have ended while core was starting up.
   const current = useStore.getState().callTokens;
   if (current?.audioToken !== tokens.audioToken) {
+    releasePeer();
     // Only clean up the zombie native call when the slot is empty — a
     // replacement call owns core now.
     if (current === null) {
