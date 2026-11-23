@@ -75,6 +75,12 @@ export const startCallWithTokens = async (
     return false;
   }
 
+  // Another call may have claimed the slot while preferences were loading —
+  // only the first claimant applies tokens (no await between check and set).
+  if (useStore.getState().callTokens !== null) {
+    return false;
+  }
+
   setCallTokens({
     ...tokens,
     isRoomCall: !!callRoom,
@@ -105,25 +111,35 @@ export const startCallWithTokens = async (
     console.error("CallStart failed:", e);
     // Only touch state and notify the backend while this attempt still owns
     // the call — a replacement call must not be torn down by our rollback.
-    if (useStore.getState().callTokens?.audioToken === tokens.audioToken) {
+    const current = useStore.getState().callTokens;
+    if (current?.audioToken === tokens.audioToken) {
       socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
       setCallTokens(null);
     }
-    try {
-      await tauriUtils.endCallCleanup();
-    } catch (cleanupError) {
-      console.error("Call cleanup failed after CallStart error:", cleanupError);
+    // Undo the native half-start only while no other call owns the slot —
+    // endCallCleanup would otherwise tear down the replacement call.
+    if (!current || current.audioToken === tokens.audioToken) {
+      try {
+        await tauriUtils.endCallCleanup();
+      } catch (cleanupError) {
+        console.error("Call cleanup failed after CallStart error:", cleanupError);
+      }
     }
     toast.error("Failed to start call");
     return false;
   }
 
   // The call may have ended while core was starting up.
-  if (useStore.getState().callTokens?.audioToken !== tokens.audioToken) {
-    try {
-      await tauriUtils.endCallCleanup();
-    } catch (e) {
-      console.error("Call cleanup failed after call ended during start:", e);
+  const current = useStore.getState().callTokens;
+  if (current?.audioToken !== tokens.audioToken) {
+    // Only clean up the zombie native call when the slot is empty — a
+    // replacement call owns core now.
+    if (current === null) {
+      try {
+        await tauriUtils.endCallCleanup();
+      } catch (e) {
+        console.error("Call cleanup failed after call ended during start:", e);
+      }
     }
     return false;
   }
@@ -192,9 +208,10 @@ export const requestOutgoingCall = (userId: string, name: string): Promise<boole
     };
 
     const release = () => {
-      if (activeCall === op) activeCall = null;
-      // Release `calling` only while this operation still owns it, so a stale
-      // settle cannot clear a newer request's reservation.
+      // No-op once a newer operation owns the slot — a stale release must not
+      // clear a replacement request's `calling` reservation.
+      if (activeCall !== op) return;
+      activeCall = null;
       if (useStore.getState().calling === userId) {
         useStore.getState().setCalling(null);
       }
