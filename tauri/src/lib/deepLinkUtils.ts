@@ -4,13 +4,11 @@ import { tauriUtils } from "@/windows/window-utils";
 import { Constants } from "@/constants";
 import { validateAndSetAuthToken } from "./authUtils";
 import { endCallAndWait } from "./hooks";
+import { requestOutgoingCall, startCallWithTokens } from "./outgoingCall";
 import { socketService } from "@/services/socket";
 import { sounds } from "@/constants/sounds";
 import type { components } from "@/openapi";
-import type { TCallRequestMessage, TCallTokensMessage, TWebSocketMessage } from "@/payloads";
 
-/** How long to wait for the callee to answer before giving up. */
-const CALL_RESPONSE_TIMEOUT_MS = 65_000;
 /** How long to wait for the websocket to connect when the app was just launched. */
 const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
 
@@ -188,124 +186,13 @@ const endCurrentCall = () => {
 };
 
 /**
- * Applies fetched session tokens to the store and starts the call in core.
- * Rolls back the call state and notifies the backend when core fails to start.
- */
-const startCallWithTokens = async (
-  tokens: components["schemas"]["SessionTokensResponse"],
-  room?: components["schemas"]["Room"] | null,
-): Promise<boolean> => {
-  const { setCallTokens } = useStore.getState();
-  const callRoom = room ?? tokens.room ?? undefined;
-
-  sounds.callAccepted.play();
-  const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
-  setCallTokens({
-    ...tokens,
-    isRoomCall: !!callRoom,
-    timeStarted: new Date(),
-    hasAudioEnabled: startMic,
-    hasCameraEnabled: startCamera,
-    role: ParticipantRole.NONE,
-    isRemoteControlEnabled: true,
-    room: callRoom,
-    participants: [],
-    isInitialisingCall: true,
-    micLevel: 0,
-  });
-
-  try {
-    await tauriUtils.callStarted(tokens.audioToken, tokens.videoToken);
-  } catch {
-    socketService.send({ type: "call_end", payload: { participant_id: tokens.participant } });
-    await tauriUtils.endCallCleanup();
-    setCallTokens(null);
-    toast.error("Failed to start call");
-    return false;
-  }
-
-  await tauriUtils.showWindow("main");
-  return true;
-};
-
-/**
- * Sends a call_request to a teammate and waits for the callee to answer.
- * Resolves with the LiveKit tokens on accept, null on reject/offline/timeout.
- */
-const waitForCallTokens = (userId: string, name: string): Promise<TCallTokensMessage["payload"] | null> => {
-  const handlerId = `deep-link-call-${userId}`;
-
-  return new Promise((resolve) => {
-    let settled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const settle = (result: TCallTokensMessage["payload"] | null) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      socketService.removeHandler(handlerId);
-      resolve(result);
-    };
-
-    socketService.on(handlerId, (data: TWebSocketMessage) => {
-      switch (data.type) {
-        case "call_tokens":
-          // For the caller-side message `participant` holds the callee id.
-          if (data.payload.participant === userId) settle(data.payload);
-          break;
-        case "call_reject": {
-          const reason = data.payload.reject_reason;
-          if (reason === "in-call") {
-            toast.error(`${name} is already in a call`);
-          } else if (reason === "trial-ended") {
-            toast.error("Trial has expired, contact us if you want to extend it");
-          } else if (reason === "already-calling") {
-            toast.error(`Already calling ${name}, please wait`);
-          } else {
-            toast.error(`${name} rejected your call`);
-          }
-          sounds.unavailable.play();
-          settle(null);
-          break;
-        }
-        case "callee_offline":
-          if (data.payload.callee_id === userId) {
-            toast.error(`${name} appears to be offline`);
-            sounds.unavailable.play();
-            settle(null);
-          }
-          break;
-        case "call_accept":
-          toast.success(`${name} accepted your call`, { duration: 1500 });
-          break;
-      }
-    });
-
-    socketService.send({
-      type: "call_request",
-      payload: { callee_id: userId },
-    } as TCallRequestMessage);
-
-    // 5 secs more from auto-reject from callee's timeout.
-    timeoutId = setTimeout(() => {
-      socketService.send({
-        type: "call_end",
-        payload: { participant_id: userId },
-      });
-      toast.error(`${name} didn't answer`);
-      settle(null);
-    }, CALL_RESPONSE_TIMEOUT_MS);
-  });
-};
-
-/**
  * Handles hopp:///call/{userId} - rings a teammate to start a call, the same
  * way the "Call" button in the teammate list does.
  */
 export const handleCallTeammateDeepLink = async (userId: string): Promise<boolean> => {
   if (!(await ensureAuthenticated("start a call"))) return false;
 
-  const { callTokens, incomingCallCallerId, calling, teammates, setCalling } = useStore.getState();
+  const { callTokens, incomingCallCallerId, calling, teammates } = useStore.getState();
   const teammate = teammates?.find((t) => t.id === userId);
   const name = teammate ? `${teammate.first_name} ${teammate.last_name}`.trim() : "your teammate";
 
@@ -335,17 +222,10 @@ export const handleCallTeammateDeepLink = async (userId: string): Promise<boolea
     return false;
   }
 
-  setCalling(userId);
-  sounds.ringing.play();
-  toast.success(`Calling ${name}...`);
-
-  const tokens = await waitForCallTokens(userId, name);
-  sounds.ringing.stop();
-  setCalling(null);
-
-  if (!tokens) return false;
-
-  return await startCallWithTokens(tokens);
+  // The shared outgoing-call controller owns the request: it rechecks
+  // `calling` after the socket wait and is the only place that applies the
+  // returned tokens via `startCallWithTokens`.
+  return await requestOutgoingCall(userId, name);
 };
 
 /**

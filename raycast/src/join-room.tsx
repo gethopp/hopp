@@ -14,10 +14,27 @@ export default function Command() {
 
   const error = rooms.error ?? presence.error;
 
+  const refreshAction = (
+    <Action
+      title="Refresh"
+      icon={Icon.ArrowClockwise}
+      shortcut={{ modifiers: ["cmd"], key: "r" }}
+      onAction={() => {
+        rooms.revalidate();
+        presence.revalidate();
+      }}
+    />
+  );
+
   if (error) {
     return (
       <List>
-        <List.EmptyView icon={Icon.ExclamationMark} title="Couldn't reach Hopp" description={error.message} />
+        <List.EmptyView
+          icon={Icon.ExclamationMark}
+          title="Couldn't reach Hopp"
+          description={error.message}
+          actions={<ActionPanel>{refreshAction}</ActionPanel>}
+        />
       </List>
     );
   }
@@ -41,15 +58,7 @@ export default function Command() {
                   icon={Icon.ArrowRightCircle}
                   onAction={() => openInHopp(deepLink.room(room.id))}
                 />
-                <Action
-                  title="Refresh"
-                  icon={Icon.ArrowClockwise}
-                  shortcut={{ modifiers: ["cmd"], key: "r" }}
-                  onAction={() => {
-                    rooms.revalidate();
-                    presence.revalidate();
-                  }}
-                />
+                {refreshAction}
                 <Action.CopyToClipboard title="Copy Room ID" content={room.id} />
               </ActionPanel>
             }
@@ -61,6 +70,7 @@ export default function Command() {
           icon={Icon.TwoPeople}
           title="No rooms"
           description="Create a room in the Hopp app to join it from here."
+          actions={<ActionPanel>{refreshAction}</ActionPanel>}
         />
       )}
     </List>

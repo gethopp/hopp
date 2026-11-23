@@ -15,10 +15,27 @@ export default function Command() {
 
   const error = teammates.error ?? presence.error;
 
+  const refreshAction = (
+    <Action
+      title="Refresh"
+      icon={Icon.ArrowClockwise}
+      shortcut={{ modifiers: ["cmd"], key: "r" }}
+      onAction={() => {
+        teammates.revalidate();
+        presence.revalidate();
+      }}
+    />
+  );
+
   if (error) {
     return (
       <List>
-        <List.EmptyView icon={Icon.ExclamationMark} title="Couldn't reach Hopp" description={error.message} />
+        <List.EmptyView
+          icon={Icon.ExclamationMark}
+          title="Couldn't reach Hopp"
+          description={error.message}
+          actions={<ActionPanel>{refreshAction}</ActionPanel>}
+        />
       </List>
     );
   }
@@ -59,15 +76,7 @@ export default function Command() {
                     onAction={() => openInHopp(deepLink.call(teammate.id))}
                   />
                 )}
-                <Action
-                  title="Refresh"
-                  icon={Icon.ArrowClockwise}
-                  shortcut={{ modifiers: ["cmd"], key: "r" }}
-                  onAction={() => {
-                    teammates.revalidate();
-                    presence.revalidate();
-                  }}
-                />
+                {refreshAction}
                 <Action.CopyToClipboard title="Copy User ID" content={teammate.id} />
               </ActionPanel>
             }
@@ -79,6 +88,7 @@ export default function Command() {
           icon={Icon.Person}
           title="No teammates"
           description="Invite teammates to your Hopp team to call them from here."
+          actions={<ActionPanel>{refreshAction}</ActionPanel>}
         />
       )}
     </List>
