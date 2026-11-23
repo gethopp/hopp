@@ -6,7 +6,7 @@ import { socketService } from "@/services/socket";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { sleep } from "@/lib/utils";
-import { TRejectCallMessage, TCallRequestMessage, TInviteRequestMessage, TWebSocketMessage } from "@/payloads";
+import { TInviteRequestMessage, TWebSocketMessage } from "@/payloads";
 import useStore, { ParticipantRole } from "@/store/store";
 import { sounds } from "@/constants/sounds";
 import { usePostHog } from "posthog-js/react";
@@ -15,6 +15,7 @@ import { tauriUtils } from "@/windows/window-utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAPI } from "@/services/query";
 import { endCallAndWait, useEndCall, useJoinCall } from "@/lib/hooks";
+import { cancelOutgoingCall, requestOutgoingCall } from "@/lib/outgoingCall";
 
 const TruncatedName = ({ text, className }: { text: string; className?: string }) => {
   const textRef = useRef<HTMLDivElement>(null);
@@ -61,7 +62,7 @@ export const ParticipantRow = (props: {
   const inviting = useStore((state) => state.inviting);
   const isCalling = useStore((state) => state.calling === props.user.id);
   const isInviting = useStore((state) => state.inviting === props.user.id);
-  const { setCalling, setInviting, callTokens, setCallTokens } = useStore((state) => state);
+  const { setInviting, callTokens, setCallTokens } = useStore((state) => state);
   const inACall = useStore((state) => state.callTokens !== null);
   const hasIncomingCall = useStore((state) => state.incomingCallCallerId !== null);
   const callsPresence = useStore((state) => state.callsPresence);
@@ -152,8 +153,6 @@ export const ParticipantRow = (props: {
     }
   }, [targetRoom, callTokens, props.user, setCallTokens, endCall, getRoomTokens, posthog]);
 
-  const callbackIdRef = useRef<string>(`call-response-${props.user.id}`);
-  const callResolvedRef = useRef(false);
   const inviteIdRef = useRef("");
 
   const joinOngoingCall = useJoinCall();
@@ -182,7 +181,6 @@ export const ParticipantRow = (props: {
     if (!props.user.is_active) {
       console.log(`${props.user.first_name} is currently offline, playing failure sound`);
 
-      setCalling(null);
       const playThreeTimes = async () => {
         for (let i = 0; i < 3; i++) {
           sounds.unavailable.play();
@@ -196,19 +194,10 @@ export const ParticipantRow = (props: {
       return;
     }
 
-    callResolvedRef.current = false;
-    sounds.ringing.play();
-    setCalling(props.user.id);
-
-    toast.success(`Calling ${props.user.first_name}...`);
-    // Send call request
-    socketService.send({
-      type: "call_request",
-      payload: {
-        callee_id: props.user.id,
-      },
-    } as TCallRequestMessage);
-  }, [props.user, hasIncomingCall]);
+    // The shared outgoing-call controller owns the request and the call
+    // responses; this row only displays `calling` from the store.
+    void requestOutgoingCall(props.user.id, props.user.first_name);
+  }, [props.user, hasIncomingCall, posthog]);
 
   const inviteUser = useCallback(() => {
     posthog.capture("user_invite_request", {
@@ -234,117 +223,6 @@ export const ParticipantRow = (props: {
       },
     } as TInviteRequestMessage);
   }, [props.user, setInviting, posthog]);
-
-  // Add a useEffect to listen for call responses
-  // that will unsubscribe from the socket when the component unmounts
-  useEffect(() => {
-    // Add listener for call response
-    socketService.on(callbackIdRef.current, async (data: TWebSocketMessage) => {
-      if (!isCalling) return;
-
-      switch (data.type) {
-        case "call_reject": {
-          const { payload } = data as TRejectCallMessage;
-          if (payload.reject_reason == "in-call") {
-            toast.error(`${props.user.first_name} is already in a call`, {
-              duration: 2500,
-            });
-          } else if (payload.reject_reason === "trial-ended") {
-            toast.error(`Trial has expired, contact us if you want to extend it`, {
-              duration: 2500,
-            });
-          } else if (payload.reject_reason === "already-calling") {
-            toast.error(`Already calling ${props.user.first_name}, please wait`, {
-              duration: 2500,
-            });
-          } else {
-            toast.error(`${props.user.first_name} rejected your call`, {
-              duration: 2500,
-            });
-          }
-          callResolvedRef.current = true;
-          setCalling(null);
-          sounds.ringing.stop();
-          sounds.unavailable.play();
-          break;
-        }
-        case "callee_offline":
-          toast.error(`${props.user.first_name} appears to be offline`, {
-            duration: 2500,
-          });
-          callResolvedRef.current = true;
-          setCalling(null);
-          sounds.ringing.stop();
-          sounds.unavailable.play();
-          break;
-        case "call_accept":
-          toast.success(`${props.user.first_name} accepted your call`, {
-            duration: 1500,
-          });
-          break;
-        case "call_tokens": {
-          callResolvedRef.current = true;
-          setCalling(null);
-          sounds.ringing.stop();
-          sounds.callAccepted.play();
-          tauriUtils.showWindow("main");
-          const { startMic, startCamera } = await tauriUtils.getCallStartPreferences();
-          setCallTokens({
-            ...data.payload,
-            timeStarted: new Date(),
-            hasAudioEnabled: startMic,
-            hasCameraEnabled: startCamera,
-            role: ParticipantRole.NONE,
-            isRemoteControlEnabled: true,
-            participants: [],
-            isInitialisingCall: true,
-            micLevel: 0,
-          });
-          try {
-            await tauriUtils.callStarted(data.payload.audioToken, data.payload.videoToken);
-          } catch {
-            setCallTokens(null);
-          }
-          break;
-        }
-      }
-    });
-
-    const timeoutId =
-      isCalling ?
-        setTimeout(
-          () => {
-            callResolvedRef.current = true;
-            sounds.ringing.stop();
-            setCalling(null);
-            socketService.send({
-              type: "call_end",
-              payload: { participant_id: props.user.id },
-            });
-            toast.error(`${props.user.first_name} didn't answer`, { duration: 1500 });
-          },
-          // 5 secs more from auto-reject from callee's timeout
-          65_000,
-        )
-      : undefined;
-
-    return () => {
-      if (!isCalling) return;
-      console.debug("Unsubscribing from call response for user:", props.user.id);
-      if (callbackIdRef.current) {
-        socketService.removeHandler(callbackIdRef.current);
-      }
-      sounds.ringing.stop();
-      setCalling(null);
-      if (!callResolvedRef.current) {
-        socketService.send({
-          type: "call_end",
-          payload: { participant_id: props.user.id },
-        });
-      }
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [isCalling]);
 
   // Listen for invite responses (invite_accept / invite_reject / callee_offline)
   const inviteCallbackIdRef = useRef<string>(`invite-response-${props.user.id}`);
@@ -497,13 +375,7 @@ export const ParticipantRow = (props: {
             variant="gradient-white"
             onClick={() => {
               if (isCalling) {
-                callResolvedRef.current = true;
-                sounds.ringing.stop();
-                setCalling(null);
-                socketService.send({
-                  type: "call_end",
-                  payload: { participant_id: props.user.id },
-                });
+                cancelOutgoingCall(props.user.id);
               } else {
                 callUser();
               }

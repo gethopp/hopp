@@ -57,7 +57,10 @@ export default defineConfig({
         },
         {
           label: "Integrations",
-          items: [{ label: "Slack", slug: "integrations/slack" }],
+          items: [
+            { label: "Slack", slug: "integrations/slack" },
+            { label: "Raycast", slug: "integrations/raycast" },
+          ],
         },
         {
           label: "Community",
