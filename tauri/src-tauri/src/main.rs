@@ -1150,6 +1150,14 @@ fn forward_core_events(events_rx: std_mpsc::Receiver<Message>, app: tauri::AppHa
                             } else {
                                 "mic-unmuted"
                             };
+                            /*
+                             * Latest state wins: stop any active mic cue before
+                             * playing the new one so rapid toggles can't leave a
+                             * stale cue playing or have the new cue dropped by
+                             * play_sound's duplicate check.
+                             */
+                            stop_sound(app.clone(), "mic-muted".to_string());
+                            stop_sound(app.clone(), "mic-unmuted".to_string());
                             play_sound(app.clone(), sound_name.to_string());
                         }
                     }
